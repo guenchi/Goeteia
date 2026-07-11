@@ -1135,12 +1135,26 @@
   ;; compile in source order: codegen effects (function indices,
   ;; interned literals) must not depend on the host's argument
   ;; evaluation order
-  (let* ((t (compile-exp (cadr e) locals cell #f))
+  (let* ((t (compile-test (cadr e) locals cell))
          (c (compile-exp (caddr e) locals cell tail?))
          (a (if (null? (cdddr e))
                 (global-get G-VOID)
                 (compile-exp (cadddr e) locals cell tail?))))
-    (list t (truthy) #x04 T-EQREF c #x05 a #x0B)))
+    (list t #x04 T-EQREF c #x05 a #x0B)))
+;; a test position wants an i32; predicates skip the boolean
+;; boxing/unboxing round trip
+(define (compile-test e locals cell)
+  (if (and (pair? e)
+           (symbol? (car e))
+           (memq (unmark (car e)) i32-predicates)
+           (let ((expect (assq (unmark (car e)) prim-arity)))
+             (and expect (= (length (cdr e)) (cdr expect))))
+           (not (assq (car e) locals))
+           (not (assq (unmark (car e)) *fns*)))
+      (pred-i32 (unmark (car e))
+                (map-in-order (lambda (a) (compile-exp a locals cell #f))
+                              (cdr e)))
+      (list (compile-exp e locals cell #f) (truthy))))
 
 (define (compile-let e locals cell tail?)
   (let loop ((bs (cadr e)) (code '()) (scope locals))
@@ -1400,6 +1414,24 @@
      #x0B                               ; end if
      #x0B)))                            ; end try
 
+;; predicates that produce a raw i32 truth value; used directly in
+;; test position (no boolean boxing) and boolified elsewhere
+(define i32-predicates '(= < zero? eq? pair? null? string? symbol?
+                         procedure? eof-object?))
+(define (pred-i32 op argc)
+  (define (arg i) (list-ref argc i))
+  (case op
+    ((=) (list (arg 0) (untag) (arg 1) (untag) #x46))
+    ((<) (list (arg 0) (untag) (arg 1) (untag) #x48))
+    ((zero?) (list (arg 0) (untag) OP-I32-EQZ))
+    ((eq?) (list (arg 0) (arg 1) OP-REF-EQ))
+    ((pair?) (list (arg 0) (ref-test TY-PAIR)))
+    ((null?) (list (arg 0) (global-get G-NULL) OP-REF-EQ))
+    ((string?) (list (arg 0) (ref-test TY-STRING)))
+    ((symbol?) (list (arg 0) (ref-test TY-SYMBOL)))
+    ((procedure?) (list (arg 0) (ref-test TY-CLOSBASE)))
+    ((eof-object?) (list (arg 0) (global-get G-EOF) OP-REF-EQ))))
+
 (define (compile-prim op args locals cell)
   ;; arguments compile once, in source order
   (define argc (map-in-order (lambda (a) (compile-exp a locals cell #f)) args))
@@ -1430,14 +1462,7 @@
                          #x6D (wrap-int)))
        ((remainder) (list (arg 0) (untag) (arg 1) (untag)
                           #x6F (gc-op #x1C)))))
-    ((= < )
-     ;; tagged comparison is order-preserving
-     (let ((ints (list (arg 0) (untag) (arg 1) (untag))))
-       (case op
-         ((=) (list ints #x46 (boolify)))
-         ((<) (list ints #x48 (boolify))))))
-    ((zero?) (list (arg 0) (untag) OP-I32-EQZ (boolify)))
-    ((eq?) (list (arg 0) (arg 1) OP-REF-EQ (boolify)))
+    ((= < zero? eq?) (list (pred-i32 op argc) (boolify)))
     ((cons) (list (arg 0) (arg 1) (struct-new TY-PAIR)))
     ((car) (list (arg 0) (ref-cast TY-PAIR) (struct-get TY-PAIR 0)))
     ((cdr) (list (arg 0) (ref-cast TY-PAIR) (struct-get TY-PAIR 1)))
@@ -1445,8 +1470,7 @@
                       (struct-set TY-PAIR 0) (global-get G-VOID)))
     ((set-cdr!) (list (arg 0) (ref-cast TY-PAIR) (arg 1)
                       (struct-set TY-PAIR 1) (global-get G-VOID)))
-    ((pair?) (list (arg 0) (ref-test TY-PAIR) (boolify)))
-    ((null?) (list (arg 0) (global-get G-NULL) OP-REF-EQ (boolify)))
+    ((pair? null?) (list (pred-i32 op argc) (boolify)))
     ((number? char?)
      ;; i31 with the right tag bit
      (let ((tmp (fresh-local! cell)))
@@ -1459,9 +1483,7 @@
              (if (eq? op 'number?) OP-I32-EQZ '())
              #x05 (i32const 0) #x0B
              (boolify))))
-    ((string?) (list (arg 0) (ref-test TY-STRING) (boolify)))
-    ((symbol?) (list (arg 0) (ref-test TY-SYMBOL) (boolify)))
-    ((procedure?) (list (arg 0) (ref-test TY-CLOSBASE) (boolify)))
+    ((string? symbol? procedure?) (list (pred-i32 op argc) (boolify)))
     ((boolean?)
      (let ((tmp (fresh-local! cell)))
        (list (arg 0) (local-set tmp)
@@ -1492,7 +1514,7 @@
            (gc-op #x0E (uleb TY-STRING))              ; array.set
            (global-get G-VOID)))
     ((eof-object) (global-get G-EOF))
-    ((eof-object?) (list (arg 0) (global-get G-EOF) OP-REF-EQ (boolify)))
+    ((eof-object?) (list (pred-i32 op argc) (boolify)))
     ((bitwise-and bitwise-ior bitwise-xor)
      ;; the *2 fixnum tag passes through and/ior/xor unchanged
      (list (arg 0) (untag) (arg 1) (untag)
@@ -1590,6 +1612,61 @@
       (cons 'define (cdr f))
       f))
 
+;; ---- dead code elimination ----
+;; The prelude is compiled into every module; keep only definitions
+;; reachable from the program's expressions.  Any identifier occurring
+;; outside quote counts as a reference (safe for macros, since this
+;; runs after expansion).
+
+(define (def-name f)
+  (if (pair? (cadr f)) (car (cadr f)) (cadr f)))
+(define (form-refs e acc)
+  (cond
+   ((symbol? e) (if (memq e acc) acc (cons e acc)))
+   ((pair? e)
+    (if (eq? (resolve-tag (car e)) 'quote)
+        acc
+        (form-refs (car e) (form-refs (cdr e) acc))))
+   (else acc)))
+(define (pure-init? e)
+  (cond
+   ((pair? e)
+    (case (resolve-tag (car e))
+      ((quote) #t)
+      ((cons) (and (pure-init? (cadr e)) (pure-init? (caddr e))))
+      (else #f)))
+   ((symbol? e) #f)
+   (else #t)))
+(define (prune-dead forms)
+  (let ((table (fold-left (lambda (acc f)
+                            (if (define-form? f)
+                                (cons (cons (def-name f) f) acc)
+                                acc))
+                          '()
+                          forms)))
+    (let grow ((live '())
+               (queue (fold-left (lambda (acc f)
+                                   (if (define-form? f) acc (form-refs f acc)))
+                                 '()
+                                 forms)))
+      (cond
+       ((null? queue)
+        (filter (lambda (f)
+                  (or (not (define-form? f))
+                      (memq (def-name f) live)
+                      ;; keep variables whose initializer has effects
+                      (and (var-define? f)
+                           (pair? (cddr f))
+                           (not (pure-init? (caddr f))))))
+                forms))
+       ((memq (car queue) live) (grow live (cdr queue)))
+       (else
+        (let ((entry (assq (car queue) table)))
+          (if entry
+              (grow (cons (car queue) live)
+                    (form-refs (cdr entry) (cdr queue)))
+              (grow live (cdr queue)))))))))
+
 (define (compile-program forms)
   (set! *marks* '())
   (set! *renames* '())
@@ -1597,8 +1674,9 @@
   ;; collect explicit macro definitions first so they can be used
   ;; before their definition
   (for-each (lambda (f) (when (macro-def? f) (add-macro! f))) forms)
-  (let* ((forms (map-in-order convert-assignments
-                     (expand-forms (filter (lambda (f) (not (macro-def? f))) forms))))
+  (let* ((forms (prune-dead
+                 (map-in-order convert-assignments
+                     (expand-forms (filter (lambda (f) (not (macro-def? f))) forms)))))
          (fn-defs (filter fn-define? forms))
          (var-defs (filter var-define? forms))
          (main-steps (map (lambda (f)
