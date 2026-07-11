@@ -16,7 +16,7 @@
 ;;
 ;; Copyright (c) 2026 guenchi. MIT license; see LICENSE.
 (library (web rpc)
-  (export rpc rpc! rpc-serialize rpc-parse)
+  (export rpc rpc! rpc-get rpc-serialize rpc-parse)
   (import (rnrs) (web js) (web fetch))
 
   (define (rpc-serialize datum)
@@ -30,6 +30,11 @@
   ;; needs (fetch-direct?); otherwise use the callback rpc! below
   (define (rpc url datum)
     (rpc-parse (http-post url (rpc-serialize datum) "application/sexpr")))
+
+  ;; REST-style resources: GET a datum -- any route serving
+  ;; application/sexpr (Igropyr's send-sexpr!), not just app-rpc
+  (define (rpc-get url)
+    (rpc-parse (http-get url)))
 
   (define (rpc! url datum on-reply . more)
     (let ((on-error (if (pair? more) (car more) (lambda (e) (js-undefined))))
