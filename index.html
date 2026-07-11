@@ -11,8 +11,8 @@
         --bg2: #ffffff;
         --ink: #14203a;
         --dim: #566080;
-        --lapis: #1e5cb3;
-        --azure: #4d8de0;
+        --lapis: #1550c4;
+        --azure: #4788ee;
         --green: #1e7d34;
         --line: #dbe2ee;
         --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
@@ -27,11 +27,38 @@
       a:hover { text-decoration: underline; }
       .wrap { max-width: 60em; margin: 0 auto; padding: 0 1.2em; }
 
-      header { padding: 4.5em 0 3em; text-align: center; }
-      .greek {
-        font-size: 1.05em; letter-spacing: .45em; color: var(--azure);
-        margin-bottom: .4em;
+      /* top navigation bar */
+      .nav {
+        position: sticky; top: 0; z-index: 20;
+        background: rgba(255,255,255,.82);
+        backdrop-filter: saturate(1.2) blur(10px);
+        -webkit-backdrop-filter: saturate(1.2) blur(10px);
+        border-bottom: 1px solid var(--line);
       }
+      .nav-inner {
+        display: flex; align-items: center; justify-content: space-between;
+        height: 3.4em;
+      }
+      .brand {
+        font-weight: 700; font-size: 1.15em; color: var(--lapis);
+        letter-spacing: .01em;
+      }
+      .brand:hover { text-decoration: none; }
+      #top { padding-top: 6em; }
+      .nav-links { display: flex; gap: 1.5em; align-items: center; }
+      .nav-links a { color: var(--dim); font-size: .92em; }
+      .nav-links a:hover { color: var(--lapis); text-decoration: none; }
+      .nav-links a.gh {
+        border: 1px solid var(--line); border-radius: 6px;
+        padding: .3em .9em; color: var(--ink);
+      }
+      .nav-links a.gh:hover { border-color: var(--lapis); }
+      @media (max-width: 42em) {
+        .nav-links a.sec { display: none; }
+      }
+
+      header { padding: 4.5em 0 3em; text-align: center; }
+      .gname { color: var(--azure); font-weight: 600; }
       h1 {
         font-size: 3.2em; margin: 0; font-weight: 650; letter-spacing: .02em;
         background: linear-gradient(120deg, var(--lapis), var(--azure));
@@ -52,7 +79,7 @@
       .links a.primary { background: var(--lapis); color: #ffffff; border-color: var(--lapis); font-weight: 600; }
       .links a:hover { text-decoration: none; border-color: var(--lapis); }
 
-      section { padding: 2.5em 0; border-top: 1px solid var(--line); }
+      section { padding: 2.5em 0; border-top: 1px solid var(--line); scroll-margin-top: 4em; }
       h2 { font-size: 1.5em; font-weight: 600; }
       h2 .g { color: var(--azure); font-weight: 400; }
 
@@ -87,6 +114,8 @@
       code { font-family: var(--mono); color: var(--lapis); font-size: .92em; }
       pre code { color: var(--ink); }
       .hint { color: var(--dim); font-size: .85em; }
+      /* fixed height so output never resizes the box: scroll inside instead */
+      #out { height: 10em; overflow: auto; }
 
       /* features */
       .grid {
@@ -113,23 +142,32 @@
           display: grid;
           grid-template-columns: minmax(0, 1fr) minmax(0, 1.05fr);
           gap: 0 3em;
-          align-items: center;
+          align-items: start;
         }
         .cols > * { min-width: 0; }
         .col-main { text-align: left; padding: 3em 0; }
         .col-main h1 { font-size: 3.6em; }
-        .col-main .greek { margin-left: .15em; }
         .col-side { border-top: none; padding-top: 0; }
       }
     </style>
   </head>
   <body>
-    <div class="wrap">
+    <nav class="nav">
+      <div class="wrap nav-inner">
+        <a class="brand" href="#top">Goeteia</a>
+        <div class="nav-links">
+          <a class="sec" href="#playground">Playground</a>
+          <a class="sec" href="#features">What's inside</a>
+          <a class="sec" href="#quickstart">Quick start</a>
+          <a class="gh" href="https://github.com/guenchi/Goeteia">GitHub</a>
+        </div>
+      </div>
+    </nav>
+    <div class="wrap" id="top">
       <div class="cols">
       <header class="col-main">
-        <div class="greek">Γ ο η τ ε ί α</div>
         <h1>Goeteia</h1>
-        <p class="tagline">The black art of commanding what lies beneath.<br>
+        <p class="tagline"><span class="gname">Γοητεία:</span> The black art of commanding what lies beneath.<br>
         A self-hosting Scheme for the WebAssembly GC era.</p>
         <div class="fixpoint">$ ./build-self.sh &nbsp;→&nbsp; fixpoint: stage1 == stage2 ✓</div>
         <div class="links">
@@ -139,13 +177,10 @@
       </header>
 
       <section id="playground" class="col-side">
-        <h2>The playground <span class="g">— the compiler is running in your browser</span></h2>
         <p class="hint">
-          <code>goeteia.wasm</code> is Goeteia compiled by itself: a
-          WebAssembly GC module that reads Scheme and writes WebAssembly.
-          This page feeds it what you type and runs the result on the spot.
-          No server, no JavaScript compiler.  The program's value is its
-          last expression; Ctrl/⌘-Enter runs.
+          <code>goeteia.wasm</code> is Goeteia compiled by itself: it reads
+          Scheme and writes WebAssembly, right here — no server, no JS
+          compiler. The value is the last expression; Ctrl/⌘-Enter runs.
         </p>
         <textarea id="src" rows="16" spellcheck="false"></textarea>
         <div class="bar">
@@ -159,7 +194,7 @@
       </section>
       </div>
 
-      <section>
+      <section id="features">
         <h2>What's inside</h2>
         <div class="grid">
           <div class="card">
@@ -221,7 +256,7 @@
         </div>
       </section>
 
-      <section>
+      <section id="quickstart">
         <h2>Quick start</h2>
         <pre><code>$ git clone https://github.com/guenchi/Goeteia
 $ cd Goeteia
