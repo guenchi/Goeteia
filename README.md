@@ -14,7 +14,16 @@ Proper tail calls compile to `return_call`.
 
 ## Status
 
-Milestone 2: closures (typed function references, `call_ref`),
+**schwasm is self-hosting**: the compiler is written in the Scheme
+subset it compiles, `./build-self.sh` builds `schwasm-self.wasm` (the
+compiler as a Wasm GC module) and verifies that it recompiles itself
+byte-for-byte.  The language covers closures, `set!`, variadic
+procedures and `apply`, `values`, hygienic macros (`syntax-rules` /
+`syntax-case`), strings/symbols/characters, `read`/`write`/`display`,
+and the derived forms (`cond` `case` `do` `let*` `letrec` named-`let`
+quasiquote, internal defines).  See `docs/design.md`.
+
+Earlier milestone notes -- M2: closures (typed function references, `call_ref`),
 `set!` with assignment conversion, top-level variables, first-class
 top-level functions, and the derived forms `and` `or` `not` `when`
 `unless` `cond` `let*` `letrec` `letrec*` named-`let` `do`, on top of

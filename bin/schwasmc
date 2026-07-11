@@ -2,4 +2,4 @@
 # schwasm compiler driver: schwasmc <input.ss> <output.wasm>
 # Requires Chez Scheme as the host until schwasm is self-hosting.
 DIR="$(cd "$(dirname "$0")/.." && pwd)"
-exec "${CHEZ-chez}" --script "$DIR/src/compiler.ss" "$@"
+exec "${CHEZ-chez}" --script "$DIR/src/chez-driver.ss" "$@"

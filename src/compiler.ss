@@ -11,17 +11,63 @@
 ;; expressions run in order and the last one's value is the result,
 ;; exported as `main`.
 
-(import (chezscheme))
+;; The compiler is written in the subset of Scheme that schwasm
+;; itself compiles, so it can compile itself.  Under the Chez host,
+;; src/chez-driver.ss loads this file; under the self-hosted build,
+;; src/wasm-driver.ss is appended and the whole thing is compiled to
+;; wasm.
+
+;;;; ------------------------------------------------------------------
+;;;; portable helpers (schwasm has these in the prelude; the names
+;;;; below avoid clashing with Chez builtins)
+
+(define (nums-below n)
+  (let loop ((i 0))
+    (if (= i n) '() (cons i (loop (+ i 1))))))
+(define (repeat-n n x)
+  (if (zero? n) '() (cons x (repeat-n (- n 1) x))))
+(define (first-n ls n)
+  (if (zero? n) '() (cons (car ls) (first-n (cdr ls) (- n 1)))))
+(define (all-true? f ls)
+  (or (null? ls) (and (f (car ls)) (all-true? f (cdr ls)))))
+(define (map2* f l1 l2)
+  (if (null? l1)
+      '()
+      (cons (f (car l1) (car l2)) (map2* f (cdr l1) (cdr l2)))))
+;; stable ascending insertion sort keyed by a numeric projection
+(define (sort-by key ls)
+  (if (null? ls)
+      '()
+      (insert-by key (car ls) (sort-by key (cdr ls)))))
+(define (insert-by key x ls)
+  (cond
+   ((null? ls) (list x))
+   ((< (key x) (key (car ls))) (cons x ls))
+   (else (cons (car ls) (insert-by key x (cdr ls))))))
+(define (self-id x) x)
+;; R6RS map may process elements in any order; codegen effects
+;; (function indices, interned literals) need source order
+(define (map-in-order f ls)
+  (if (null? ls)
+      '()
+      (let ((head (f (car ls))))
+        (cons head (map-in-order f (cdr ls))))))
 
 ;;;; ------------------------------------------------------------------
 ;;;; byte trees
 
 (define (flatten tree)
-  (let walk ((x tree) (tail '()))
+  ;; iterative with an explicit worklist: byte trees have spines far
+  ;; deeper than the wasm call stack allows
+  (let walk ((stack (cons tree '())) (acc '()))
     (cond
-     ((null? x) tail)
-     ((pair? x) (walk (car x) (walk (cdr x) tail)))
-     (else (cons x tail)))))
+     ((null? stack) (reverse acc))
+     ((null? (car stack)) (walk (cdr stack) acc))
+     ((pair? (car stack))
+      (walk (cons (car (car stack))
+                  (cons (cdr (car stack)) (cdr stack)))
+            acc))
+     (else (walk (cdr stack) (cons (car stack) acc))))))
 
 (define (uleb n)
   (let ((lo (bitwise-and n #x7f))
@@ -244,7 +290,51 @@
                                                (caddr b)
                                                (car b)))
                                          bs))))))))
+        ((quasiquote) (xpand-qq (cadr e) 0))
+        ((case)
+         ;; (case E ((d ...) body ...) ... (else body ...))
+         (let ((t (gensym "t")))
+           (xpand
+            (list 'let (list (list t (cadr e)))
+                  (build-case t (cddr e))))))
         (else (xpand* e))))
+;; case compiles to eq? chains; fixnums, characters, symbols and
+;; booleans are all eq-comparable in schwasm
+(define (build-case t clauses)
+  (if (null? clauses)
+      '(begin)
+      (let ((c (car clauses)))
+        (if (eq? (resolve-tag (car c)) 'else)
+            (cons 'begin (cdr c))
+            (list 'if
+                  (cons 'or (map (lambda (d) (list 'eq? t (list 'quote d)))
+                                 (car c)))
+                  (cons 'begin (cdr c))
+                  (build-case t (cdr clauses)))))))
+;; quasiquote, with unquote-splicing via append
+(define (xpand-qq t level)
+  (cond
+   ((pair? t)
+    (let ((tag (resolve-tag (car t))))
+      (cond
+       ((and (eq? tag 'unquote) (pair? (cdr t)) (null? (cddr t)))
+        (if (= level 0)
+            (xpand (cadr t))
+            (list 'cons ''unquote
+                  (xpand-qq (cdr t) (- level 1)))))
+       ((and (eq? tag 'quasiquote) (pair? (cdr t)) (null? (cddr t)))
+        (list 'cons ''quasiquote
+              (xpand-qq (cdr t) (+ level 1))))
+       ((and (= level 0)
+             (pair? (car t))
+             (eq? (resolve-tag (caar t)) 'unquote-splicing)
+             (pair? (cdar t)))
+        (list 'append (xpand (cadr (car t)))
+              (xpand-qq (cdr t) level)))
+       (else
+        (list 'cons (xpand-qq (car t) level)
+              (xpand-qq (cdr t) level))))))
+   (else (list 'quote t))))
 (define (xpand* es)
   (if (pair? es)
       (cons (xpand (car es)) (xpand* (cdr es)))
@@ -343,9 +433,10 @@
         ((letrec letrec*)
          (let* ((slots (map (lambda (b) (cons (car b) #f)) (cadr e)))
                 (env (append slots env)))
-           (for-each (lambda (slot b)
-                       (set-cdr! slot (meta-eval (cadr b) env)))
-                     slots (cadr e))
+           (let fill ((ss slots) (bs (cadr e)))
+             (unless (null? ss)
+               (set-cdr! (car ss) (meta-eval (cadr (car bs)) env))
+               (fill (cdr ss) (cdr bs))))
            (meta-seq (cddr e) env)))
         ((lambda) (list mv-closure (cadr e) (cddr e) env))
         ((begin) (meta-seq (cdr e) env))
@@ -471,14 +562,14 @@
     ((<=) (<= (a) (b))) ((>=) (>= (a) (b))) ((=) (= (a) (b)))
     ((max) (max (a) (b)))
     ((map) (if (pair? (cddr args))
-               (map (lambda (x y) (meta-apply (a) (list x y)))
-                    (b) (caddr args))
+               (map2* (lambda (x y) (meta-apply (a) (list x y)))
+                      (b) (caddr args))
                (map (lambda (x) (meta-apply (a) (list x))) (b))))
     ((error) (errorf 'macro-transformer "~s" args))
     ((gensym) (gensym (if (and (pair? args) (string? (a))) (a) "g")))
     ((string->symbol) (string->symbol (a)))
     ((symbol->string) (symbol->string (unmark (a))))
-    ((string-append) (apply string-append args))
+    ((string-append) (fold-left string-append "" args))
     ((string=?) (string=? (a) (b)))
     ((free-identifier=?) (eq? (unmark (a)) (unmark (b))))
     ((bound-identifier=?) (eq? (a) (b)))
@@ -660,7 +751,7 @@
     (when (null? vars)
       (errorf 'schwasm "no pattern variables under ellipsis in template"))
     (let ((n (length (pvar-value (cdar vars)))))
-      (unless (for-all (lambda (v) (= (length (pvar-value (cdr v))) n)) vars)
+      (unless (all-true? (lambda (v) (= (length (pvar-value (cdr v))) n)) vars)
         (errorf 'schwasm "mismatched ellipsis counts in template"))
       (let iterate ((i 0))
         (if (= i n)
@@ -731,7 +822,7 @@
                                      (cons p (and (memq p assigned) #t)))
                                    names)
                               scope))
-              (body (avc* (cddr e) scope* assigned)))
+              (body (avc-body (cddr e) scope* assigned)))
          (if (null? boxed)
              `(lambda ,formals . ,body)
              `(lambda ,formals
@@ -750,13 +841,47 @@
                              `(,(car b) (cons ,init '()))
                              `(,(car b) ,init))))
                      bs)
-            . ,(avc* (cddr e) scope* assigned))))
+            . ,(avc-body (cddr e) scope* assigned))))
       (else (avc* e scope assigned))))
    (else e)))
 (define (avc* es scope assigned)
   (if (pair? es)
       (cons (avc (car es) scope assigned) (avc* (cdr es) scope assigned))
       es))
+;; a body may open with internal defines; they become boxed
+;; letrec*-style bindings so mutual recursion works
+(define (internal-def? f)
+  (and (pair? f) (eq? (resolve-tag (car f)) 'define)))
+(define (internal-def-name d)
+  (if (pair? (cadr d)) (car (cadr d)) (cadr d)))
+(define (internal-def-value d)
+  (if (pair? (cadr d))
+      (cons 'lambda (cons (cdr (cadr d)) (cddr d)))
+      (caddr d)))
+(define (avc-body body scope assigned)
+  (if (and (pair? body) (internal-def? (car body)))
+      (let* ((defs (let take ((b body))
+                     (if (and (pair? b) (internal-def? (car b)))
+                         (cons (car b) (take (cdr b)))
+                         '())))
+             (rest (let skip ((b body))
+                     (if (and (pair? b) (internal-def? (car b)))
+                         (skip (cdr b))
+                         b)))
+             (names (map (lambda (d) (internal-def-name d)) defs))
+             (scope* (fold-left (lambda (sc n) (cons (cons n #t) sc))
+                                scope names)))
+        (list
+         (cons 'let
+               (cons (map (lambda (n) (list n (list 'cons '(begin) ''())))
+                          names)
+                     (append
+                      (map (lambda (d)
+                             (list 'set-car! (internal-def-name d)
+                                   (avc (internal-def-value d) scope* assigned)))
+                           defs)
+                      (avc-body rest scope* assigned))))))
+      (avc* body scope assigned)))
 
 (define (convert-assignments form)
   (let ((assigned (assigned-vars form '())))
@@ -766,7 +891,7 @@
                (boxed (filter (lambda (p) (memq p assigned)) names))
                (scope (map (lambda (p) (cons p (and (memq p assigned) #t)))
                            names))
-               (body (avc* (cddr form) scope assigned)))
+               (body (avc-body (cddr form) scope assigned)))
           (if (null? boxed)
               `(define ,(cadr form) . ,body)
               `(define ,(cadr form)
@@ -799,6 +924,8 @@
     (set! *next-fn* (+ i 1))
     i))
 (define (record-fn! idx entry)
+  (when (assv idx *lifted*)
+    (errorf 'schwasm "duplicate function index ~s" idx))
   (set! *lifted* (cons (cons idx entry) *lifted*)))
 
 (define (clos-ty arity)
@@ -814,7 +941,7 @@
         (set! *next-global* (+ g 1))
         (set! *interned* (cons (cons (cons kind datum) g) *interned*))
         g))
-     ((and (eq? (caaar es) kind) (equal? (cdaar es) datum))
+     ((and (eq? (car (caar es)) kind) (equal? (cdr (caar es)) datum))
       (cdar es))
      (else (find (cdr es))))))
 
@@ -850,12 +977,30 @@
     (set-car! cell (+ i 1))
     i))
 
+(define prim-arity
+  '((car . 1) (cdr . 1) (cons . 2) (pair? . 1) (null? . 1) (zero? . 1)
+    (+ . 2) (- . 2) (* . 2) (quotient . 2) (remainder . 2)
+    (= . 2) (< . 2) (eq? . 2)
+    (set-car! . 2) (set-cdr! . 2)
+    (number? . 1) (char? . 1) (string? . 1) (symbol? . 1)
+    (boolean? . 1) (procedure? . 1)
+    (char->integer . 1) (integer->char . 1)
+    (string-length . 1) (string-ref . 2) (string-set! . 3)
+    (symbol->string . 1) (eof-object? . 1)
+    (bitwise-and . 2) (bitwise-ior . 2) (bitwise-xor . 2)
+    (bitwise-arithmetic-shift-left . 2)
+    (bitwise-arithmetic-shift-right . 2)
+    (%write-byte . 1)))
+
 (define primitives
   '(+ - * quotient remainder = < eq? cons car cdr pair? null? zero?
     set-car! set-cdr! number? char? string? symbol? boolean? procedure?
     char->integer integer->char string-length string-ref symbol->string
     string-set! eof-object eof-object?
-    %write-byte %read-byte %make-string %make-symbol %interned-symbols))
+    bitwise-and bitwise-ior bitwise-xor
+    bitwise-arithmetic-shift-left bitwise-arithmetic-shift-right
+    %write-byte %read-byte %make-string %make-symbol %interned-symbols
+    %unreachable))
 
 (define (compile-exp e locals cell tail?)
   (cond
@@ -879,14 +1024,25 @@
 (define (compile-ref e locals cell)
   ;; lexical bindings are found by identity; unbound marked
   ;; identifiers resolve like the identifier they renamed
-  (cond
-   ((assq e locals) => (lambda (s) (local-get (cdr s))))
-   (else
-    (let ((r (unmark e)))
-      (cond
-       ((assq r *vars*) => (lambda (v) (global-get (cdr v))))
-       ((assq r *fns*) => (lambda (f) (compile-fn-value (car f) (cdr f))))
-       (else (errorf 'schwasm "unbound variable ~s" e)))))))
+  (let ((slot (assq e locals)))
+    (if slot
+        (local-get (cdr slot))
+        (let* ((r (unmark e))
+               (v (assq r *vars*)))
+          (if v
+              (global-get (cdr v))
+              (let ((f (assq r *fns*)))
+                (if f
+                    (compile-fn-value (car f) (cdr f))
+                    (let ((p (assq r prim-arity)))
+                      (if p
+                          ;; a primitive used as a value: synthesize
+                          ;; the eta-expansion and close over nothing
+                          (let ((ps (map (lambda (i) (gensym "p"))
+                                         (nums-below (cdr p)))))
+                            (compile-lambda ps (list (cons r ps))
+                                            locals cell))
+                          (errorf 'schwasm "unbound variable ~s" e))))))))))
 
 ;; walk an argument list held in local t, pushing n elements
 (define (unpack-args t n)
@@ -894,7 +1050,7 @@
          (list (local-get t) (ref-cast TY-PAIR) (struct-get TY-PAIR 0)
                (local-get t) (ref-cast TY-PAIR) (struct-get TY-PAIR 1)
                (local-set t)))
-       (iota n)))
+       (nums-below n)))
 
 ;; the shared generic entry for fixed-arity closures: unpack the
 ;; argument list and forward to the fast entry
@@ -945,7 +1101,7 @@
                  widx
                  (list (car tys) (+ nfixed 1) 0
                        (list (map (lambda (i) (local-get (+ i 1)))
-                                  (iota nfixed))
+                                  (nums-below nfixed))
                              #x12 (uleb idx))))
                 (let ((gidx (adapter! nfixed)))
                   (set! *wrappers*
@@ -966,21 +1122,22 @@
    ((string? d) (global-get (intern! 'str d)))
    ((symbol? d) (global-get (intern! 'sym d)))
    ((null? d) (global-get G-NULL))
-   ((pair? d) (list (compile-datum (car d))
-                    (compile-datum (cdr d))
-                    (struct-new TY-PAIR)))
+   ((pair? d)
+    (let* ((head (compile-datum (car d)))
+           (tail (compile-datum (cdr d))))
+      (list head tail (struct-new TY-PAIR))))
    (else (errorf 'schwasm "unsupported datum ~s" d))))
 
 (define (compile-if e locals cell tail?)
-  (list (compile-exp (cadr e) locals cell #f)
-        (truthy)
-        #x04 T-EQREF
-        (compile-exp (caddr e) locals cell tail?)
-        #x05
-        (if (null? (cdddr e))
-            (global-get G-VOID)
-            (compile-exp (cadddr e) locals cell tail?))
-        #x0B))
+  ;; compile in source order: codegen effects (function indices,
+  ;; interned literals) must not depend on the host's argument
+  ;; evaluation order
+  (let* ((t (compile-exp (cadr e) locals cell #f))
+         (c (compile-exp (caddr e) locals cell tail?))
+         (a (if (null? (cdddr e))
+                (global-get G-VOID)
+                (compile-exp (cadddr e) locals cell tail?))))
+    (list t (truthy) #x04 T-EQREF c #x05 a #x0B)))
 
 (define (compile-let e locals cell tail?)
   (let loop ((bs (cadr e)) (code '()) (scope locals))
@@ -999,9 +1156,10 @@
   (cond
    ((null? es) (global-get G-VOID))
    ((null? (cdr es)) (compile-exp (car es) locals cell tail?))
-   (else (list (compile-exp (car es) locals cell #f)
-               OP-DROP
-               (compile-body (cdr es) locals cell tail?)))))
+   (else
+    (let* ((head (compile-exp (car es) locals cell #f))
+           (rest (compile-body (cdr es) locals cell tail?)))
+      (list head OP-DROP rest)))))
 
 (define (compile-global-set e locals cell)
   (let ((v (assq (unmark (cadr e)) *vars*)))
@@ -1129,44 +1287,50 @@
         (let ((n (length args)))
           (when (< n nfixed)
             (errorf 'schwasm "too few arguments in ~s" e))
-          (list (map (lambda (a) (compile-exp a locals cell #f))
-                     (list-head args nfixed))
-                (arg-chain (list-tail args nfixed) (global-get G-NULL)
-                           locals cell)
-                (if tail? #x12 #x10)
-                (uleb idx)))
+          (let* ((fixed (map-in-order (lambda (a) (compile-exp a locals cell #f))
+                                      (first-n args nfixed)))
+                 (extras (arg-chain (list-tail args nfixed)
+                                    (global-get G-NULL) locals cell)))
+            (list fixed extras (if tail? #x12 #x10) (uleb idx))))
         (begin
           (unless (= nfixed (length args))
             (errorf 'schwasm "wrong argument count in ~s" e))
-          (list (map (lambda (a) (compile-exp a locals cell #f)) args)
+          (list (map-in-order (lambda (a) (compile-exp a locals cell #f)) args)
                 (if tail? #x12 #x10)
                 (uleb idx))))))
 
 (define (arg-chain args tail-code locals cell)
   (if (null? args)
       tail-code
-      (list (compile-exp (car args) locals cell #f)
-            (arg-chain (cdr args) tail-code locals cell)
-            (struct-new TY-PAIR))))
+      (let* ((head (compile-exp (car args) locals cell #f))
+             (rest (arg-chain (cdr args) tail-code locals cell)))
+        (list head rest (struct-new TY-PAIR)))))
 
 (define (compile-indirect fcode args locals cell tail?)
   ;; dual dispatch: the fast arity-typed entry when the callee's
   ;; closure type matches this call's arity, the generic list-taking
-  ;; entry otherwise (variadic callee or arity mismatch)
+  ;; entry otherwise (variadic callee or arity mismatch).  The
+  ;; arguments compile once; both branches spill them to locals.
   (let* ((arity (length args))
          (tys (clos-ty arity))
-         (tmp (fresh-local! cell)))
+         (tmp (fresh-local! cell))
+         (argc (map-in-order (lambda (a) (compile-exp a locals cell #f)) args))
+         (slots (map-in-order (lambda (a) (fresh-local! cell)) args)))
     (list fcode (local-set tmp)
+          (map2* (lambda (code slot) (list code (local-set slot))) argc slots)
           (local-get tmp) (ref-test (cdr tys))
           #x04 T-EQREF
           (local-get tmp) (ref-cast (cdr tys))
-          (map (lambda (a) (compile-exp a locals cell #f)) args)
+          (map (lambda (slot) (local-get slot)) slots)
           (local-get tmp) (ref-cast (cdr tys)) (struct-get (cdr tys) 0)
           (if tail? #x15 #x14)
           (uleb (car tys))
           #x05
           (local-get tmp) (ref-cast TY-CLOSBASE)
-          (arg-chain args (global-get G-NULL) locals cell)
+          (fold-right (lambda (slot rest)
+                        (list (local-get slot) rest (struct-new TY-PAIR)))
+                      (global-get G-NULL)
+                      slots)
           (local-get tmp) (ref-cast TY-CLOSBASE) (struct-get TY-CLOSBASE 1)
           (if tail? #x15 #x14)
           (uleb TY-FNG)
@@ -1179,25 +1343,49 @@
         (args (cddr e)))
     (when (null? args)
       (errorf 'schwasm "apply needs an argument list in ~s" e))
-    (let* ((leading (list-head args (- (length args) 1)))
+    (let* ((leading (first-n args (- (length args) 1)))
            (final (car (list-tail args (- (length args) 1))))
-           (tmp (fresh-local! cell)))
-      (list (compile-exp f locals cell #f) (local-set tmp)
+           (tmp (fresh-local! cell))
+           (fc (compile-exp f locals cell #f))
+           (chain (let build ((as leading))
+                    (if (null? as)
+                        (compile-exp final locals cell #f)
+                        (let* ((head (compile-exp (car as) locals cell #f))
+                               (rest (build (cdr as))))
+                          (list head rest (struct-new TY-PAIR)))))))
+      (list fc (local-set tmp)
             (local-get tmp) (ref-cast TY-CLOSBASE)
-            (arg-chain leading (compile-exp final locals cell #f) locals cell)
+            chain
             (local-get tmp) (ref-cast TY-CLOSBASE) (struct-get TY-CLOSBASE 1)
             (if tail? #x15 #x14)
             (uleb TY-FNG)))))
 
 (define (compile-prim op args locals cell)
-  (define (arg i) (compile-exp (list-ref args i) locals cell #f))
+  ;; arguments compile once, in source order
+  (define argc (map-in-order (lambda (a) (compile-exp a locals cell #f)) args))
+  (define (arg i) (list-ref argc i))
+  ;; a silently dropped argument is a miscompile; check arities here
+  (let ((expect (assq op prim-arity)))
+    (when (and expect
+               (not (memq op '(+ - *)))
+               (not (= (length args) (cdr expect))))
+      (errorf 'schwasm "wrong argument count for primitive ~s" op)))
   (case op
-    ((+ - * quotient remainder)
-     ;; fixnums carry a *2 tag; + and - preserve it directly
+    ((+ - *)
+     ;; n-ary, folded into binary chains; fixnums carry a *2 tag
+     ;; which + and - preserve directly
+     (when (< (length args) 2)
+       (errorf 'schwasm "primitive ~s needs two or more arguments" op))
+     (let fold ((code (list (arg 0) (untag))) (i 1))
+       (if (= i (length args))
+           (list code (gc-op #x1C))
+           (fold (list code
+                       (arg i)
+                       (if (eq? op '*) (unwrap-int) (untag))
+                       (case op ((+) #x6A) ((-) #x6B) (else #x6C)))
+                 (+ i 1)))))
+    ((quotient remainder)
      (case op
-       ((+) (list (arg 0) (untag) (arg 1) (untag) #x6A (gc-op #x1C)))
-       ((-) (list (arg 0) (untag) (arg 1) (untag) #x6B (gc-op #x1C)))
-       ((*) (list (arg 0) (unwrap-int) (arg 1) (untag) #x6C (gc-op #x1C)))
        ((quotient) (list (arg 0) (unwrap-int) (arg 1) (unwrap-int)
                          #x6D (wrap-int)))
        ((remainder) (list (arg 0) (untag) (arg 1) (untag)
@@ -1265,6 +1453,19 @@
            (global-get G-VOID)))
     ((eof-object) (global-get G-EOF))
     ((eof-object?) (list (arg 0) (global-get G-EOF) OP-REF-EQ (boolify)))
+    ((bitwise-and bitwise-ior bitwise-xor)
+     ;; the *2 fixnum tag passes through and/ior/xor unchanged
+     (list (arg 0) (untag) (arg 1) (untag)
+           (case op ((bitwise-and) #x71) ((bitwise-ior) #x72) (else #x73))
+           (gc-op #x1C)))
+    ((bitwise-arithmetic-shift-left)
+     ;; (n<<1) << k = (n<<k) << 1
+     (list (arg 0) (untag) (arg 1) (unwrap-int) #x74 (gc-op #x1C)))
+    ((bitwise-arithmetic-shift-right)
+     ;; ((n<<1) >> k) & -2 = (n>>k) << 1
+     (list (arg 0) (untag) (arg 1) (unwrap-int) #x75
+           (i32const -2) #x71 (gc-op #x1C)))
+    ((%unreachable) (list #x00))
     ((%write-byte)
      (list (arg 0) (unwrap-int) #x10 (uleb FN-WRITE-BYTE)
            (global-get G-VOID)))
@@ -1352,8 +1553,8 @@
   ;; collect explicit macro definitions first so they can be used
   ;; before their definition
   (for-each (lambda (f) (when (macro-def? f) (add-macro! f))) forms)
-  (let* ((forms (map convert-assignments
-                     (expand-forms (remp macro-def? forms))))
+  (let* ((forms (map-in-order convert-assignments
+                     (expand-forms (filter (lambda (f) (not (macro-def? f))) forms))))
          (fn-defs (filter fn-define? forms))
          (var-defs (filter var-define? forms))
          (main-steps (map (lambda (f)
@@ -1387,13 +1588,13 @@
         (number (cdr ds) (+ g 1))))
     (set! *next-global* (+ G-FIRST-VAR (length var-defs)))
     ;; type table
-    (let* ((plain-arities (sort < (fold-left
+    (let* ((plain-arities (sort-by self-id (fold-left
                                    (lambda (acc d)
                                      (let ((a (length (formals-names (cdadr d)))))
                                        (if (memv a acc) acc (cons a acc))))
                                    '(0)
                                    fn-defs)))
-           (clos-arities (sort < (scan-arities forms '())))
+           (clos-arities (sort-by self-id (scan-arities forms '())))
            (next (let number ((as plain-arities) (i TY-FIRST-FREE))
                    (if (null? as)
                        i
@@ -1404,7 +1605,7 @@
         (unless (null? as)
           (set! *clos-ty* (cons (cons (car as) (cons i (+ i 1))) *clos-ty*))
           (number (cdr as) (+ i 2))))
-      (let* ((fn-entries (map compile-toplevel-fn fn-defs))
+      (let* ((fn-entries (map-in-order compile-toplevel-fn fn-defs))
              (main-entry
               (let ((cell (list 0)))
                 (list (cdr (assv 0 *plain-ty*))
@@ -1425,7 +1626,7 @@
                                       acc))
                                 (global-get G-NULL)
                                 *interned*))))
-             (lifted (sort (lambda (a b) (< (car a) (car b))) *lifted*))
+             (lifted (sort-by car *lifted*))
              (entries (append
                        (map (lambda (e)
                               (list (car e) (cadr e)
@@ -1480,7 +1681,7 @@
                  ;; plain function types
                  (map (lambda (a)
                         (list #x60
-                              (counted (make-list a T-EQREF))
+                              (counted (repeat-n a T-EQREF))
                               (counted (list T-EQREF))))
                       plain-arities)
                  ;; per-arity closure rec groups, each closN <: closbase
@@ -1490,7 +1691,7 @@
                                 (list #x60
                                       (counted
                                        (cons (list #x64 (sleb (cdr tys)))
-                                             (make-list a T-EQREF)))
+                                             (repeat-n a T-EQREF)))
                                       (counted (list T-EQREF)))
                                 (list #x4F (counted (list (uleb TY-CLOSBASE)))
                                       #x5F
@@ -1520,9 +1721,9 @@
                         (list T-EQREF #x01
                               #xD0 T-EQREF ; ref.null eq
                               #x0B))
-                      (iota n-vars))
+                      (nums-below n-vars))
                  (map emit-interned
-                      (sort (lambda (a b) (< (cdr a) (cdr b))) *interned*)))))
+                      (sort-by cdr *interned*)))))
     ;; export section
     (section 7 (counted
                 (list (export-entry "main" #x00 main-idx)
@@ -1547,7 +1748,7 @@
   (let* ((kind (caar entry))
          (datum (cdar entry))
          (str (if (eq? kind 'sym) (symbol->string datum) datum))
-         (bytes (map char->integer (string->list str)))
+         (bytes (map (lambda (c) (char->integer c)) (string->list str)))
          (build-string
           (list (map i32const bytes)
                 (gc-op #x08 (uleb TY-STRING) (uleb (length bytes))))))
@@ -1559,47 +1760,7 @@
 
 (define (name-bytes s)
   (let ((chars (string->list s)))
-    (list (uleb (length chars)) (map char->integer chars))))
+    (list (uleb (length chars)) (map (lambda (c) (char->integer c)) chars))))
 
 (define (export-entry name kind idx)
   (list (name-bytes name) kind (uleb idx)))
-
-;;;; ------------------------------------------------------------------
-;;;; driver
-
-(define (read-forms port)
-  (let ((form (read port)))
-    (if (eof-object? form)
-        '()
-        (cons form (read-forms port)))))
-
-(define (load-prelude user-forms)
-  ;; the prelude lives next to this script; user definitions override
-  ;; same-named prelude definitions
-  (let* ((here (path-parent (car (command-line))))
-         (file (string-append here "/prelude.ss"))
-         (forms (call-with-input-file file read-forms))
-         (user-names (fold-left (lambda (acc f)
-                                  (if (fn-define? f)
-                                      (cons (car (cadr f)) acc)
-                                      acc))
-                                '()
-                                user-forms)))
-    (filter (lambda (f)
-              (not (and (fn-define? f)
-                        (memq (car (cadr f)) user-names))))
-            forms)))
-
-(define (compile-file in out)
-  (let* ((user (call-with-input-file in read-forms))
-         (forms (append (load-prelude user) user))
-         (bytes (compile-program forms)))
-    (when (file-exists? out) (delete-file out))
-    (call-with-port (open-file-output-port out)
-      (lambda (p) (put-bytevector p (u8-list->bytevector bytes))))))
-
-(let ((args (cdr (command-line))))
-  (if (or (null? args) (null? (cdr args)))
-      (begin (display "usage: schwasmc <input.ss> <output.wasm>\n")
-             (exit 1))
-      (compile-file (car args) (cadr args))))

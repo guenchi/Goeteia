@@ -51,9 +51,10 @@ source forms
   → emit        (instruction list → binary module)
 ```
 
-The compiler is written in R6RS Scheme and runs under Chez Scheme as
-the host.  Self-hosting (compiling itself to Wasm) is a long-term
-goal; the source deliberately sticks to a small Scheme subset.
+The compiler is written in the subset of Scheme that it compiles.
+Chez Scheme hosts it for bootstrapping; the self-hosted build
+(`build-self.sh`) compiles the compiler with itself and checks that
+the result is a byte-identical fixpoint.
 
 ## Program shape
 
@@ -125,4 +126,19 @@ Tail calls use `return_call_ref` on either path.
   resolution (keywords, variables, literals) falls back through the
   table while `quote`/`syntax->datum` strip it.  Macros may expand
   into `define-syntax`.
-- **M7**: self-hosting.
+- **M7 (done)**: self-hosting.  The compiler is written in the
+  subset schwasm compiles.  `src/chez-driver.ss` hosts it under Chez
+  (stage0); `src/wasm-driver.ss` appended to `src/compiler.ss` and
+  compiled by stage0 yields `schwasm-self.wasm` (stage1), a wasm
+  module that reads Scheme source on its input and emits a wasm
+  module on its output.  Stage1 compiling the compiler reproduces
+  itself byte-for-byte (`./build-self.sh` verifies the fixpoint), and
+  the test suite runs against both stages.
+
+  Self-hosting forced the codegen to be independent of the host's
+  evaluation order: argument-, binding- and map-orderings around
+  side-effecting codegen (function index allocation, literal
+  interning, local slots) are all explicitly sequenced.  It also
+  motivated n-ary `+`/`-`/`*` with strict arity checking for the
+  other primitives -- a silently dropped argument cost a day of
+  index-space debugging.

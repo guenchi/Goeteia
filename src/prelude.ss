@@ -65,10 +65,21 @@
 (define (%length ls n)
   (if (null? ls) n (%length (cdr ls) (+ n 1))))
 
-(define (append a b)
+(define (append . ls)
+  (cond
+   ((null? ls) '())
+   ((null? (cdr ls)) (car ls))
+   (else ($append2 (car ls) (apply append (cdr ls))))))
+(define ($append2 a b)
   (if (null? a)
       b
-      (cons (car a) (append (cdr a) b))))
+      (cons (car a) ($append2 (cdr a) b))))
+
+(define (filter pred ls)
+  (cond
+   ((null? ls) '())
+   ((pred (car ls)) (cons (car ls) (filter pred (cdr ls))))
+   (else (filter pred (cdr ls)))))
 
 (define (reverse ls)
   (%reverse ls '()))
@@ -193,6 +204,12 @@
      ((< b 0) (eof-object))
      ((= b 40) (%next-byte) (%read-list))          ; (
      ((= b 39) (%next-byte) (list 'quote (read)))  ; '
+     ((= b 96) (%next-byte) (list 'quasiquote (read))) ; `
+     ((= b 44)                                     ; , or ,@
+      (%next-byte)
+      (if (= (%peek-byte) 64)
+          (begin (%next-byte) (list 'unquote-splicing (read)))
+          (list 'unquote (read))))
      ((= b 34) (%next-byte) (%read-string '()))    ; "
      ((= b 35) (%next-byte) (%read-hash))          ; #
      (else (%finish-atom (%read-token '()))))))
@@ -283,6 +300,8 @@
     (cond
      ((= b 116) #t)                                ; t
      ((= b 102) #f)                                ; f
+     ((= b 39) (list 'syntax (read)))              ; ' -- #'x
+     ((= b 120) (%read-hex 0))                     ; x -- hex literal
      ((= b 92)                                     ; \ -- character
       (let ((first (%next-byte)))
         (if (%delimiter? (%peek-byte))
@@ -290,6 +309,20 @@
             (%named-char (%bytes->string
                           (cons first (%read-token '())))))))
      (else (eof-object)))))
+
+(define (%read-hex acc)
+  (let ((b (%peek-byte)))
+    (cond
+     ((and (< 47 b) (< b 58))                      ; 0-9
+      (%next-byte)
+      (%read-hex (+ (* acc 16) (- b 48))))
+     ((and (< 96 b) (< b 103))                     ; a-f
+      (%next-byte)
+      (%read-hex (+ (* acc 16) (+ 10 (- b 97)))))
+     ((and (< 64 b) (< b 71))                      ; A-F
+      (%next-byte)
+      (%read-hex (+ (* acc 16) (+ 10 (- b 65)))))
+     (else acc))))
 
 (define (%named-char name)
   (cond
@@ -342,3 +375,93 @@
      ((= n 10) (%display-string "newline" 0))
      ((= n 9) (%display-string "tab" 0))
      (else (%write-byte n)))))
+
+;; ---- additions for self-hosting ----
+
+(define (void) (begin))
+
+(define (> a b) (< b a))
+(define (<= a b) (if (< b a) #f #t))
+(define (>= a b) (if (< a b) #f #t))
+(define (max a b) (if (< a b) b a))
+(define (min a b) (if (< a b) a b))
+
+(define (list? x)
+  (if (null? x) #t (and (pair? x) (list? (cdr x)))))
+
+(define (memv x ls) (memq x ls))
+(define (assv x ls) (assq x ls))
+(define (member x ls)
+  (cond
+   ((null? ls) #f)
+   ((equal? (car ls) x) ls)
+   (else (member x (cdr ls)))))
+(define (assoc x ls)
+  (cond
+   ((null? ls) #f)
+   ((equal? (caar ls) x) (car ls))
+   (else (assoc x (cdr ls)))))
+
+(define (list-tail ls n)
+  (if (zero? n) ls (list-tail (cdr ls) (- n 1))))
+(define (list-ref ls n)
+  (car (list-tail ls n)))
+
+(define (fold-left f init ls)
+  (if (null? ls)
+      init
+      (fold-left f (f init (car ls)) (cdr ls))))
+(define (fold-right f init ls)
+  (if (null? ls)
+      init
+      (f (car ls) (fold-right f init (cdr ls)))))
+
+(define (caddr p) (car (cddr p)))
+(define (cdddr p) (cdr (cddr p)))
+(define (cadddr p) (car (cdddr p)))
+(define (cdadr p) (cdr (cadr p)))
+(define (caadr p) (car (cadr p)))
+
+(define (make-list n x)
+  (if (zero? n) '() (cons x (make-list (- n 1) x))))
+
+(define (string-append a b)
+  (let* ((la (string-length a))
+         (lb (string-length b))
+         (s (%make-string (+ la lb))))
+    (%blit! s a 0 la 0)
+    (%blit! s b 0 lb la)
+    s))
+(define (%blit! dst src i n at)
+  (when (< i n)
+    (string-set! dst (+ at i) (string-ref src i))
+    (%blit! dst src (+ i 1) n at)))
+
+(define (number->string n)
+  (if (< n 0)
+      (string-append "-" (number->string (- 0 n)))
+      (%bytes->string (%digits n '()))))
+(define (%digits n acc)
+  (let ((acc (cons (+ 48 (remainder n 10)) acc)))
+    (if (< n 10) acc (%digits (quotient n 10) acc))))
+
+;; gensyms: fresh uninterned symbol structs; identity comes from the
+;; struct allocation, so even same-named gensyms are distinct
+(define $gensym-count 0)
+(define (gensym prefix)
+  (set! $gensym-count (+ $gensym-count 1))
+  (%make-symbol (string-append prefix (number->string $gensym-count))))
+
+(define (%abort) (%unreachable))
+
+;; compatible with the host Chez errorf; format directives print as-is
+(define (errorf who msg . irritants)
+  (display who) (display ": ") (display msg)
+  (for-each (lambda (x) (display " ") (write x)) irritants)
+  (newline)
+  (%abort))
+
+(define (eqv? a b) (eq? a b))
+(define (integer? x) (number? x))
+(define (exact? x) (number? x))
+(define (cadar p) (car (cdar p)))
