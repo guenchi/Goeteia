@@ -25,6 +25,8 @@ which compiles to `ref.eq`).
 | fixnum        | `i31ref`, value `n << 1` (30-bit, unboxed)         |
 | bignum        | `(struct i32-sign (ref $vector))`, 14-bit limbs; fixnum arithmetic promotes on overflow (bits 30/31 disagree after a tagged add/sub; products checked in i64) |
 | flonum        | `(struct f64)`; contagion via prelude generics, IEEE-754 bits for literals computed in pure Scheme so both hosts emit identical bytes |
+| ratio         | `(struct eqref eqref)`, canonical (positive denominator, gcd-reduced, denominator 1 collapses); exact `/` returns these |
+| complex       | `(struct eqref (mut eqref))` — the mutable slot only distinguishes it from `$ratio` under structural canonicalization; exact zero imaginary collapses |
 | character     | `i31ref`, value `(c << 1) | 1`                     |
 | boolean, `()`, unspecified | singleton structs held in globals     |
 | pair          | `(struct (field mut eqref) (field mut eqref))`     |
@@ -39,7 +41,10 @@ The fixnum/character tag bit keeps both unboxed and `eq?`-comparable;
 `+`, `-`, `remainder` and the comparisons operate directly on the
 tagged values.
 
-The only host import is `io.write_byte`; the runtime library
+Console I/O uses `io.write_byte`/`io.read_byte`; file ports add six
+more imports (a byte-pushed path, open/read/write/close on fds) with
+real implementations in the Node runners and stubs in the browser.
+Beyond that, the runtime library
 (`display`, `string=?`, ...) is written in schwasm's own Scheme
 (`src/prelude.ss`) and compiled into every module, with user
 definitions overriding same-named prelude definitions.

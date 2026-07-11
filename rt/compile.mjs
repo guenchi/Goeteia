@@ -144,6 +144,9 @@ async function main() {
             io: {
                 write_byte: b => out.push(b),
                 read_byte: () => (pos < input.length ? input[pos++] : -1),
+                // the compiler itself does no file I/O
+                path_byte: () => {}, open_read: () => -1, open_write: () => -1,
+                fread: () => -1, fwrite: () => {}, fclose: () => {},
             },
         });
     try {

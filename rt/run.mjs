@@ -7,10 +7,45 @@ import fs from 'fs';
 export async function runModule(bytes, input = []) {
     const out = [];
     let pos = 0;
+
+    // file ports: path pushed byte by byte, then opened
+    let pathBuf = [];
+    const files = new Map();
+    let nextFd = 1;
+    const fileIO = {
+        path_byte: b => pathBuf.push(b),
+        open_read: () => {
+            const p = Buffer.from(pathBuf).toString(); pathBuf = [];
+            try {
+                const data = fs.readFileSync(p);
+                const fd = nextFd++;
+                files.set(fd, { data, pos: 0 });
+                return fd;
+            } catch { return -1; }
+        },
+        open_write: () => {
+            const p = Buffer.from(pathBuf).toString(); pathBuf = [];
+            const fd = nextFd++;
+            files.set(fd, { path: p, out: [] });
+            return fd;
+        },
+        fread: fd => {
+            const f = files.get(fd);
+            return f && f.pos < f.data.length ? f.data[f.pos++] : -1;
+        },
+        fwrite: (fd, b) => { files.get(fd).out.push(b); },
+        fclose: fd => {
+            const f = files.get(fd);
+            if (f && f.out) fs.writeFileSync(f.path, Buffer.from(f.out));
+            files.delete(fd);
+        },
+    };
+
     const { instance } = await WebAssembly.instantiate(bytes, {
         io: {
             write_byte: b => out.push(b),
             read_byte: () => (pos < input.length ? input[pos++] : -1),
+            ...fileIO,
         },
     });
     const ex = instance.exports;

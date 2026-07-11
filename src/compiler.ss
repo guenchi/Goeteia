@@ -133,12 +133,22 @@
 (define TY-RECBASE 12)      ; open (struct (field eqref)) -- the rtd slot
 (define TY-FLONUM 13)       ; (struct (field f64))
 (define TY-BIGNUM 14)       ; (struct (field i32 sign) (field (ref $vector)))
-(define TY-FIRST-FREE 15)
+(define TY-RATIO 15)        ; (struct (field eqref num) (field eqref den))
+(define TY-COMPLEX 16)      ; (struct (field eqref re) (field eqref im))
+(define TY-IOIN1 17)        ; (func (param i32) (result i32))
+(define TY-IOOUT2 18)       ; (func (param i32 i32))
+(define TY-FIRST-FREE 19)
 
 ;; imported functions come first in the function index space
 (define FN-WRITE-BYTE 0)
 (define FN-READ-BYTE 1)
-(define N-IMPORTS 2)
+(define FN-PATH-BYTE 2)     ; push a path byte to the host
+(define FN-OPEN-READ 3)     ; open accumulated path; fd or -1
+(define FN-OPEN-WRITE 4)
+(define FN-FREAD 5)         ; (fd) -> byte or -1
+(define FN-FWRITE 6)        ; (fd byte)
+(define FN-FCLOSE 7)
+(define N-IMPORTS 8)
 
 ;; singleton globals, in index order
 (define G-FALSE 0)
@@ -1109,6 +1119,9 @@
     flonum? fl+ fl- fl* fl/ fl=? fl<? flsqrt flfloor fltruncate
     fixnum->flonum %fl->fx
     %bignum? %make-bignum %bignum-sign %bignum-limbs
+    %ratio? %make-ratio %ratio-num %ratio-den
+    %complex? %make-complex %cx-re %cx-im
+    %path-byte %open-read %open-write %fread %fwrite %fclose
     char->integer integer->char string-length string-ref symbol->string
     string-set! eof-object eof-object?
     bitwise-and bitwise-ior bitwise-xor
@@ -1123,7 +1136,7 @@
 (define (compile-exp e locals cell tail?)
   (cond
    ((and (integer? e) (exact? e) (fits-fixnum? e)) (emit-fixnum e))
-   ((or (and (integer? e) (exact? e)) (flonum? e)) (compile-datum e))
+   ((number? e) (compile-datum e))
    ((boolean? e) (global-get (if e G-TRUE G-FALSE)))
    ((char? e) (emit-char e))
    ((string? e) (global-get (intern! 'str e)))
@@ -1299,6 +1312,15 @@
             (struct-new TY-BIGNUM))))
    ((flonum? d)
     (list #x44 (ieee-bytes d) (struct-new TY-FLONUM)))
+   ((and (rational? d) (exact? d))
+    ;; an exact ratio, already canonical from either host's reader
+    (let* ((n (compile-datum (numerator d)))
+           (dd (compile-datum (denominator d))))
+      (list n dd (struct-new TY-RATIO))))
+   ((and (number? d) (not (real? d)))
+    (let* ((re (compile-datum (real-part d)))
+           (im (compile-datum (imag-part d))))
+      (list re im (struct-new TY-COMPLEX))))
    ((boolean? d) (global-get (if d G-TRUE G-FALSE)))
    ((char? d) (emit-char d))
    ((string? d) (global-get (intern! 'str d)))
@@ -1775,6 +1797,25 @@
      (list (arg 0) (ref-cast TY-BIGNUM) (struct-get TY-BIGNUM 0) (wrap-int)))
     ((%bignum-limbs)
      (list (arg 0) (ref-cast TY-BIGNUM) (struct-get TY-BIGNUM 1)))
+    ((%ratio?) (list (arg 0) (ref-test TY-RATIO) (boolify)))
+    ((%make-ratio) (list (arg 0) (arg 1) (struct-new TY-RATIO)))
+    ((%ratio-num) (list (arg 0) (ref-cast TY-RATIO) (struct-get TY-RATIO 0)))
+    ((%ratio-den) (list (arg 0) (ref-cast TY-RATIO) (struct-get TY-RATIO 1)))
+    ((%complex?) (list (arg 0) (ref-test TY-COMPLEX) (boolify)))
+    ((%make-complex) (list (arg 0) (arg 1) (struct-new TY-COMPLEX)))
+    ((%cx-re) (list (arg 0) (ref-cast TY-COMPLEX) (struct-get TY-COMPLEX 0)))
+    ((%cx-im) (list (arg 0) (ref-cast TY-COMPLEX) (struct-get TY-COMPLEX 1)))
+    ((%path-byte)
+     (list (arg 0) (unwrap-int) #x10 (uleb FN-PATH-BYTE) (global-get G-VOID)))
+    ((%open-read) (list #x10 (uleb FN-OPEN-READ) (wrap-int)))
+    ((%open-write) (list #x10 (uleb FN-OPEN-WRITE) (wrap-int)))
+    ((%fread)
+     (list (arg 0) (unwrap-int) #x10 (uleb FN-FREAD) (wrap-int)))
+    ((%fwrite)
+     (list (arg 0) (unwrap-int) (arg 1) (unwrap-int)
+           #x10 (uleb FN-FWRITE) (global-get G-VOID)))
+    ((%fclose)
+     (list (arg 0) (unwrap-int) #x10 (uleb FN-FCLOSE) (global-get G-VOID)))
     ((string? symbol? procedure?) (list (pred-i32 op argc cell) (boolify)))
     ((boolean?)
      (let ((tmp (fresh-local! cell)))
@@ -2246,10 +2287,20 @@
                         #x5F (counted (list (list T-EQREF #x00))))
                   ;; $flonum
                   (list #x5F (counted (list (list #x7C #x00))))
-                  ;; $bignum: sign flag and a vector of 15-bit limbs
+                  ;; $bignum: sign flag and a vector of 14-bit limbs
                   (list #x5F (counted
                               (list (list T-I32 #x00)
-                                    (list #x64 (sleb TY-VECTOR) #x00)))))
+                                    (list #x64 (sleb TY-VECTOR) #x00))))
+                  ;; $ratio and $complex: structurally identical
+                  ;; shapes canonicalize to one type, so the complex
+                  ;; imaginary slot is mutable purely to tell them apart
+                  (list #x5F (counted (list (list T-EQREF #x00)
+                                            (list T-EQREF #x00))))
+                  (list #x5F (counted (list (list T-EQREF #x00)
+                                            (list T-EQREF #x01))))
+                  ;; io types for file ports
+                  (list #x60 (counted (list T-I32)) (counted (list T-I32)))
+                  (list #x60 (counted (list T-I32 T-I32)) (counted '())))
                  ;; plain function types
                  (map (lambda (a)
                         (list #x60
@@ -2285,7 +2336,19 @@
                 (list (list (name-bytes "io") (name-bytes "write_byte")
                             #x00 (uleb TY-IOFN))
                       (list (name-bytes "io") (name-bytes "read_byte")
-                            #x00 (uleb TY-IOIN)))))
+                            #x00 (uleb TY-IOIN))
+                      (list (name-bytes "io") (name-bytes "path_byte")
+                            #x00 (uleb TY-IOFN))
+                      (list (name-bytes "io") (name-bytes "open_read")
+                            #x00 (uleb TY-IOIN))
+                      (list (name-bytes "io") (name-bytes "open_write")
+                            #x00 (uleb TY-IOIN))
+                      (list (name-bytes "io") (name-bytes "fread")
+                            #x00 (uleb TY-IOIN1))
+                      (list (name-bytes "io") (name-bytes "fwrite")
+                            #x00 (uleb TY-IOOUT2))
+                      (list (name-bytes "io") (name-bytes "fclose")
+                            #x00 (uleb TY-IOFN)))))
     ;; function section
     (section 3 (counted (map (lambda (e) (uleb (car e))) entries)))
     ;; tag section: the escape-continuation tag
