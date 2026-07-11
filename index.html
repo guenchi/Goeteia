@@ -7,14 +7,14 @@
     <meta name="description" content="Goeteia (Γοητεία) — the black art of commanding what lies beneath. A self-hosting Scheme-to-WebAssembly compiler built on Wasm GC; it compiles itself byte-for-byte and runs in your browser.">
     <style>
       :root {
-        --bg: #f3f5fb;
+        --bg: #f2f4fa;
         --bg2: #ffffff;
-        --ink: #10142a;
-        --dim: #5b6480;
-        --klein: #002fa7;
-        --sky: #2f6bff;
+        --ink: #14203a;
+        --dim: #566080;
+        --lapis: #1e5cb3;
+        --azure: #4d8de0;
         --green: #1e7d34;
-        --line: #dde2ef;
+        --line: #dbe2ee;
         --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
       }
       * { box-sizing: border-box; }
@@ -23,18 +23,18 @@
         font-family: -apple-system, system-ui, "Segoe UI", sans-serif;
         line-height: 1.6;
       }
-      a { color: var(--klein); text-decoration: none; }
+      a { color: var(--lapis); text-decoration: none; }
       a:hover { text-decoration: underline; }
       .wrap { max-width: 60em; margin: 0 auto; padding: 0 1.2em; }
 
       header { padding: 4.5em 0 3em; text-align: center; }
       .greek {
-        font-size: 1.05em; letter-spacing: .45em; color: var(--sky);
+        font-size: 1.05em; letter-spacing: .45em; color: var(--azure);
         margin-bottom: .4em;
       }
       h1 {
         font-size: 3.2em; margin: 0; font-weight: 650; letter-spacing: .02em;
-        background: linear-gradient(120deg, var(--klein), var(--sky));
+        background: linear-gradient(120deg, var(--lapis), var(--azure));
         -webkit-background-clip: text; background-clip: text; color: transparent;
       }
       .tagline { color: var(--dim); font-size: 1.15em; margin-top: .7em; }
@@ -49,12 +49,12 @@
         display: inline-block; margin: 0 .5em; padding: .5em 1.4em;
         border: 1px solid var(--line); border-radius: 6px; color: var(--ink);
       }
-      .links a.primary { background: var(--klein); color: #ffffff; border-color: var(--klein); font-weight: 600; }
-      .links a:hover { text-decoration: none; border-color: var(--klein); }
+      .links a.primary { background: var(--lapis); color: #ffffff; border-color: var(--lapis); font-weight: 600; }
+      .links a:hover { text-decoration: none; border-color: var(--lapis); }
 
       section { padding: 2.5em 0; border-top: 1px solid var(--line); }
       h2 { font-size: 1.5em; font-weight: 600; }
-      h2 .g { color: var(--sky); font-weight: 400; }
+      h2 .g { color: var(--azure); font-weight: 400; }
 
       /* playground */
       textarea {
@@ -63,11 +63,11 @@
         border: 1px solid var(--line); border-radius: 8px; padding: .8em;
         resize: vertical; box-shadow: inset 0 1px 3px rgba(16,20,42,.06);
       }
-      textarea:focus { outline: none; border-color: var(--sky); }
+      textarea:focus { outline: none; border-color: var(--azure); }
       .bar { display: flex; gap: .9em; align-items: center; margin: .9em 0; flex-wrap: wrap; }
       button {
         font-size: 15px; padding: .45em 2em; border-radius: 6px;
-        background: var(--klein); color: #ffffff; border: none; font-weight: 600;
+        background: var(--lapis); color: #ffffff; border: none; font-weight: 600;
         cursor: pointer;
       }
       button:hover { filter: brightness(1.1); }
@@ -84,7 +84,7 @@
         white-space: pre-wrap; font-family: var(--mono); font-size: 14px;
         overflow-x: auto;
       }
-      code { font-family: var(--mono); color: var(--klein); font-size: .92em; }
+      code { font-family: var(--mono); color: var(--lapis); font-size: .92em; }
       pre code { color: var(--ink); }
       .hint { color: var(--dim); font-size: .85em; }
 
@@ -98,7 +98,7 @@
         border-radius: 10px; padding: 1.1em 1.2em;
         box-shadow: 0 1px 3px rgba(16,20,42,.06);
       }
-      .card h3 { margin: 0 0 .4em; font-size: 1em; color: var(--klein); font-weight: 600; }
+      .card h3 { margin: 0 0 .4em; font-size: 1em; color: var(--lapis); font-weight: 600; }
       .card p { margin: 0; color: var(--dim); font-size: .92em; }
 
       footer {
