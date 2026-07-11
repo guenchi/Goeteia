@@ -93,23 +93,25 @@ const workerUrl = URL.createObjectURL(
 // ---- examples ----
 
 const examples = {
-    'fib 1000 (bignums)': `;; the naive doubly-recursive fib is O(phi^n) -- fib(1000) that way
-;; outlives the universe in any language.  Iterate instead, and let
-;; fixnums overflow into bignums:
-(define (fib n)
-  (let loop ((i 0) (a 0) (b 1))
-    (if (= i n) a (loop (+ i 1) b (+ a b)))))
-
-(fib 1000)`,
-
     'fibonacci (naive)': `;; exponential on purpose -- try 30, not 100.
 ;; (the Stop button is right there if you get ambitious)
+
 (define (fib n)
   (if (< n 2) n (+ (fib (- n 1)) (fib (- n 2)))))
 
 (display (fib 30))
 (newline)
 (fib 30)`,
+
+    'fib 1000 (bignums)': `;; the naive doubly-recursive fib is O(phi^n) -- fib(1000) that way
+;; outlives the universe in any language.  Iterate instead, and let
+;; fixnums overflow into bignums:
+
+(define (fib n)
+  (let loop ((i 0) (a 0) (b 1))
+    (if (= i n) a (loop (+ i 1) b (+ a b)))))
+
+(fib 1000)`,
 
     'hygienic macros': `(define-syntax my-or
   (syntax-rules ()
@@ -118,6 +120,7 @@ const examples = {
     ((_ e1 e2 ...) (let ((t e1)) (if t t (my-or e2 ...))))))
 
 ;; the t inside my-or cannot capture this one
+
 (let ((t 'mine))
   (my-or #f t))`,
 
@@ -178,7 +181,7 @@ for (const name of Object.keys(examples)) {
 exSelect.addEventListener('change', () => {
     srcBox.value = examples[exSelect.value];
 });
-srcBox.value = examples['fib 1000 (bignums)'];
+srcBox.value = examples['fibonacci (naive)'];
 
 let worker = null;
 let ticker = null;
