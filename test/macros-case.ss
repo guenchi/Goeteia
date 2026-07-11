@@ -1,0 +1,47 @@
+;; expect: #t
+(define-syntax swap2
+  (lambda (x)
+    (syntax-case x ()
+      ((_ f a b) #'(f b a)))))
+(define-syntax mylet
+  (lambda (x)
+    (syntax-case x ()
+      ((_ ((v e) ...) b1 b2 ...)
+       #'((lambda (v ...) b1 b2 ...) e ...)))))
+(define-syntax kind
+  (lambda (x)
+    (syntax-case x ()
+      ((_ v) (identifier? #'v) #''id)
+      ((_ v) (number? (syntax->datum #'v)) #''num)
+      ((_ v) #''other))))
+(define-syntax plus2
+  (lambda (x)
+    (syntax-case x ()
+      ((_ n) (+ (syntax->datum #'n) 2)))))
+(define-syntax revcall
+  (lambda (x)
+    (syntax-case x ()
+      ((_ f a ...)
+       (with-syntax (((t ...) (generate-temporaries #'(a ...))))
+         #'((lambda (t ...) (f t ...)) a ...))))))
+(define-syntax aif
+  (lambda (x)
+    (syntax-case x ()
+      ((k t c)
+       (with-syntax ((it (datum->syntax #'k 'it)))
+         #'(let ((it t)) (if it c #f)))))))
+(define-syntax hyg
+  (lambda (x)
+    (syntax-case x ()
+      ((_ e) #'(let ((tmp 5)) (+ tmp e))))))
+(define (sub a b) (- a b))
+(and (eq? (swap2 sub 2 10) 8)
+     (eq? (mylet ((a 1) (b 2)) (+ a b)) 3)
+     (eq? (kind sub) 'id)
+     (eq? (kind 42) 'num)
+     (eq? (kind "s") 'other)
+     (eq? (plus2 40) 42)
+     (eq? (revcall sub 30 10) 20)
+     (eq? (aif 42 it) 42)
+     (eq? (aif #f it) #f)
+     (let ((tmp 100)) (eq? (hyg tmp) 105)))

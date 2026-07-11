@@ -138,14 +138,62 @@
   (list (global-get G-FALSE) OP-REF-EQ OP-I32-EQZ))
 
 ;;;; ------------------------------------------------------------------
-;;;; the expander: derived forms (non-hygienic until the macro
-;;;; milestone).  Core forms after expansion: quote if let begin
-;;;; lambda set! define, plus applications.
+;;;; hygiene
+;;;;
+;;;; Identifiers a macro template introduces are renamed to fresh
+;;;; gensyms, one per identifier per expansion.  *marks* maps each
+;;;; gensym back to the identifier it renamed; resolution everywhere
+;;;; (keyword recognition, variable lookup, literal matching) falls
+;;;; back through the table, and quote/syntax->datum strip it.
+;;;; Binding forms bind the gensym itself, so introduced bindings
+;;;; can't capture user code and vice versa.
+
+(define *marks* '())      ; fresh -> original
+(define *renames* '())    ; original -> fresh, per macro application
+(define *macros* '())     ; name -> transformer meta-value
+
+(define (marked-origin s)
+  (let ((e (assq s *marks*)))
+    (and e (cdr e))))
+(define (unmark s)
+  (let ((o (marked-origin s)))
+    (if o (unmark o) s)))
+(define (resolve-tag x)
+  (if (symbol? x) (unmark x) x))
+(define (strip-marks x)
+  (cond
+   ((symbol? x) (unmark x))
+   ((pair? x) (cons (strip-marks (car x)) (strip-marks (cdr x))))
+   (else x)))
+(define (rename-introduced s)
+  (let ((e (assq s *renames*)))
+    (if e
+        (cdr e)
+        (let ((f (gensym (symbol->string (unmark s)))))
+          (set! *marks* (cons (cons f s) *marks*))
+          (set! *renames* (cons (cons s f) *renames*))
+          f))))
+
+;;;; ------------------------------------------------------------------
+;;;; the expander: derived forms and user macros.  Core forms after
+;;;; expansion: quote if let begin lambda set! define, plus
+;;;; applications.
 
 (define (xpand e)
   (if (pair? e)
-      (case (car e)
-        ((quote) e)
+      (let ((macro (let ((tag (resolve-tag (car e))))
+                     (and (symbol? tag)
+                          (not (eq? tag 'quote))
+                          (not (eq? tag 'define-syntax))
+                          (assq tag *macros*)))))
+        (if macro
+            (xpand (apply-macro (cdr macro) e))
+            (xpand-core e)))
+      e))
+
+(define (xpand-core e)
+  (case (resolve-tag (car e))
+        ((quote define-syntax) e)
         ((lambda) `(lambda ,(cadr e) . ,(xpand* (cddr e))))
         ((and)
          (cond
@@ -196,8 +244,7 @@
                                                (caddr b)
                                                (car b)))
                                          bs))))))))
-        (else (xpand* e)))
-      e))
+        (else (xpand* e))))
 (define (xpand* es)
   (if (pair? es)
       (cons (xpand (car es)) (xpand* (cdr es)))
@@ -207,7 +254,7 @@
       '(begin)
       (let ((c (car clauses)))
         (cond
-         ((eq? (car c) 'else) (xpand `(begin . ,(cdr c))))
+         ((eq? (resolve-tag (car c)) 'else) (xpand `(begin . ,(cdr c))))
          ((null? (cdr c))
           (let ((t (gensym "t")))
             `(let ((,t ,(xpand (car c))))
@@ -215,6 +262,420 @@
          (else `(if ,(xpand (car c))
                     ,(xpand `(begin . ,(cdr c)))
                     ,(xpand-cond (cdr clauses))))))))
+
+;;;; ------------------------------------------------------------------
+;;;; macro transformers
+;;;;
+;;;; define-syntax accepts syntax-rules or a (lambda (x) ...) using
+;;;; syntax-case.  Since the compiled program can't run at compile
+;;;; time, transformers execute in a small interpreter over a Scheme
+;;;; subset.  Syntax objects are plain s-expressions.
+
+(define mv-closure (list 'mv-closure))  ; unique tag objects
+(define mv-prim (list 'mv-prim))
+(define mv-pvar (list 'mv-pvar))
+(define (mv? tag v) (and (pair? v) (eq? (car v) tag)))
+(define (make-pvar level value) (cons mv-pvar (cons level value)))
+(define (pvar-level v) (cadr v))
+(define (pvar-value v) (cddr v))
+
+(define meta-prims
+  '(car cdr caar cadr cdar cddr caddr cdddr cadddr cons list append
+    reverse length list-ref list-tail memq member assq assoc
+    pair? null? symbol? identifier? string? number? boolean? char?
+    procedure? not eq? eqv? equal? zero? + - * quotient remainder
+    < > <= >= = max map error gensym string->symbol symbol->string
+    string-append string=? free-identifier=? bound-identifier=?
+    syntax->datum datum->syntax generate-temporaries void))
+(define (base-meta-env)
+  (map (lambda (n) (cons n (cons mv-prim n))) meta-prims))
+
+(define (make-transformer spec)
+  (let ((v (meta-eval spec (base-meta-env))))
+    (unless (mv? mv-closure v)
+      (errorf 'schwasm "transformer is not a procedure: ~s" spec))
+    v))
+(define (macro-def? f)
+  (and (pair? f) (symbol? (car f)) (eq? (unmark (car f)) 'define-syntax)))
+(define (add-macro! f)
+  (set! *macros* (cons (cons (unmark (cadr f)) (make-transformer (caddr f)))
+                       *macros*)))
+(define (apply-macro tf form)
+  ;; each application gets a fresh rename table; that is what keeps
+  ;; separate expansions of the same macro hygienic
+  (let ((saved *renames*))
+    (set! *renames* '())
+    (let ((out (meta-apply tf (list form))))
+      (set! *renames* saved)
+      out)))
+
+(define (meta-eval e env)
+  (cond
+   ((symbol? e) (meta-ref e env))
+   ((pair? e)
+    (let ((tag (resolve-tag (car e))))
+      (case tag
+        ((quote) (strip-marks (cadr e)))
+        ((syntax) (transcribe (cadr e) env #f))
+        ((quasiquote) (meta-qq (cadr e) env 0))
+        ((if)
+         (if (not (eq? (meta-eval (cadr e) env) #f))
+             (meta-eval (caddr e) env)
+             (if (pair? (cdddr e)) (meta-eval (cadddr e) env) (void))))
+        ((and) (meta-and (cdr e) env))
+        ((or) (meta-or (cdr e) env))
+        ((when)
+         (if (not (eq? (meta-eval (cadr e) env) #f))
+             (meta-seq (cddr e) env)
+             (void)))
+        ((unless)
+         (if (eq? (meta-eval (cadr e) env) #f)
+             (meta-seq (cddr e) env)
+             (void)))
+        ((cond) (meta-clauses (cdr e) env))
+        ((let)
+         (meta-seq (cddr e)
+                   (append (map (lambda (b)
+                                  (cons (car b) (meta-eval (cadr b) env)))
+                                (cadr e))
+                           env)))
+        ((let*) (meta-let* (cadr e) (cddr e) env))
+        ((letrec letrec*)
+         (let* ((slots (map (lambda (b) (cons (car b) #f)) (cadr e)))
+                (env (append slots env)))
+           (for-each (lambda (slot b)
+                       (set-cdr! slot (meta-eval (cadr b) env)))
+                     slots (cadr e))
+           (meta-seq (cddr e) env)))
+        ((lambda) (list mv-closure (cadr e) (cddr e) env))
+        ((begin) (meta-seq (cdr e) env))
+        ((set!)
+         (let ((slot (assq (cadr e) env)))
+           (unless slot
+             (errorf 'schwasm "set! of unbound ~s in transformer" (cadr e)))
+           (set-cdr! slot (meta-eval (caddr e) env))
+           (void)))
+        ((syntax-case) (meta-syntax-case e env))
+        ((with-syntax) (meta-with-syntax e env))
+        ((syntax-rules) (meta-eval (desugar-rules e) env))
+        (else (meta-apply (meta-eval (car e) env)
+                          (map (lambda (a) (meta-eval a env)) (cdr e)))))))
+   (else e)))
+
+(define (meta-ref name env)
+  (let ((slot (assq name env)))
+    (if slot
+        (let ((v (cdr slot)))
+          (if (mv? mv-pvar v)
+              (if (zero? (pvar-level v))
+                  (pvar-value v)
+                  (errorf 'schwasm "pattern variable ~s at wrong depth" name))
+              v))
+        (let ((o (marked-origin name)))
+          (if o
+              (meta-ref o env)
+              (errorf 'schwasm "unbound ~s in transformer" name))))))
+(define (meta-seq es env)
+  (cond
+   ((null? es) (void))
+   ((null? (cdr es)) (meta-eval (car es) env))
+   (else (meta-eval (car es) env) (meta-seq (cdr es) env))))
+(define (meta-and es env)
+  (cond
+   ((null? es) #t)
+   ((null? (cdr es)) (meta-eval (car es) env))
+   ((eq? (meta-eval (car es) env) #f) #f)
+   (else (meta-and (cdr es) env))))
+(define (meta-or es env)
+  (if (null? es)
+      #f
+      (let ((v (meta-eval (car es) env)))
+        (if (eq? v #f) (meta-or (cdr es) env) v))))
+(define (meta-clauses clauses env)
+  (if (null? clauses)
+      (void)
+      (let ((c (car clauses)))
+        (if (eq? (resolve-tag (car c)) 'else)
+            (meta-seq (cdr c) env)
+            (let ((t (meta-eval (car c) env)))
+              (cond
+               ((eq? t #f) (meta-clauses (cdr clauses) env))
+               ((null? (cdr c)) t)
+               (else (meta-seq (cdr c) env))))))))
+(define (meta-let* bs body env)
+  (if (null? bs)
+      (meta-seq body env)
+      (meta-let* (cdr bs) body
+                 (cons (cons (caar bs) (meta-eval (cadar bs) env)) env))))
+(define (meta-qq t env level)
+  (if (pair? t)
+      (let ((tag (resolve-tag (car t))))
+        (cond
+         ((and (eq? tag 'unquote) (pair? (cdr t)) (null? (cddr t)))
+          (if (zero? level)
+              (meta-eval (cadr t) env)
+              (list 'unquote (meta-qq (cadr t) env (- level 1)))))
+         ((and (eq? tag 'quasiquote) (pair? (cdr t)) (null? (cddr t)))
+          (list 'quasiquote (meta-qq (cadr t) env (+ level 1))))
+         (else (cons (meta-qq (car t) env level)
+                     (meta-qq (cdr t) env level)))))
+      t))
+
+(define (meta-apply f args)
+  (cond
+   ((mv? mv-closure f)
+    (let* ((params (cadr f))
+           (body (caddr f))
+           (cenv (cadddr f))
+           (rest (formals-rest params)))
+      (let bind ((ps (formals-fixed params)) (as args) (env cenv))
+        (cond
+         ((pair? ps)
+          (unless (pair? as)
+            (errorf 'schwasm "too few arguments in transformer call"))
+          (bind (cdr ps) (cdr as) (cons (cons (car ps) (car as)) env)))
+         (rest (meta-seq body (cons (cons rest as) env)))
+         ((null? as) (meta-seq body env))
+         (else (errorf 'schwasm "too many arguments in transformer call"))))))
+   ((mv? mv-prim f) (meta-prim-apply (cdr f) args))
+   (else (errorf 'schwasm "transformer applied a non-procedure"))))
+
+(define (meta-prim-apply name args)
+  (define (a) (car args))
+  (define (b) (cadr args))
+  (case name
+    ((car) (car (a))) ((cdr) (cdr (a)))
+    ((caar) (caar (a))) ((cadr) (cadr (a)))
+    ((cdar) (cdar (a))) ((cddr) (cddr (a)))
+    ((caddr) (caddr (a))) ((cdddr) (cdddr (a))) ((cadddr) (cadddr (a)))
+    ((cons) (cons (a) (b)))
+    ((list) args)
+    ((append) (if (null? args) '() (append (a) (if (pair? (cdr args)) (b) '()))))
+    ((reverse) (reverse (a)))
+    ((length) (length (a)))
+    ((list-ref) (list-ref (a) (b)))
+    ((list-tail) (list-tail (a) (b)))
+    ((memq) (memq (a) (b))) ((member) (member (a) (b)))
+    ((assq) (assq (a) (b))) ((assoc) (assoc (a) (b)))
+    ((pair?) (pair? (a))) ((null?) (null? (a)))
+    ((symbol?) (symbol? (a))) ((identifier?) (symbol? (a)))
+    ((string?) (string? (a))) ((number?) (number? (a)))
+    ((boolean?) (boolean? (a))) ((char?) (char? (a)))
+    ((procedure?) (or (mv? mv-closure (a)) (mv? mv-prim (a))))
+    ((not) (not (a)))
+    ((eq?) (eq? (a) (b))) ((eqv?) (eqv? (a) (b))) ((equal?) (equal? (a) (b)))
+    ((zero?) (zero? (a)))
+    ((+) (+ (a) (b))) ((-) (- (a) (b))) ((*) (* (a) (b)))
+    ((quotient) (quotient (a) (b))) ((remainder) (remainder (a) (b)))
+    ((<) (< (a) (b))) ((>) (> (a) (b)))
+    ((<=) (<= (a) (b))) ((>=) (>= (a) (b))) ((=) (= (a) (b)))
+    ((max) (max (a) (b)))
+    ((map) (if (pair? (cddr args))
+               (map (lambda (x y) (meta-apply (a) (list x y)))
+                    (b) (caddr args))
+               (map (lambda (x) (meta-apply (a) (list x))) (b))))
+    ((error) (errorf 'macro-transformer "~s" args))
+    ((gensym) (gensym (if (and (pair? args) (string? (a))) (a) "g")))
+    ((string->symbol) (string->symbol (a)))
+    ((symbol->string) (symbol->string (unmark (a))))
+    ((string-append) (apply string-append args))
+    ((string=?) (string=? (a) (b)))
+    ((free-identifier=?) (eq? (unmark (a)) (unmark (b))))
+    ((bound-identifier=?) (eq? (a) (b)))
+    ((syntax->datum) (strip-marks (a)))
+    ((datum->syntax) (b))
+    ((generate-temporaries) (map (lambda (x) (gensym "t")) (a)))
+    ((void) (void))
+    (else (errorf 'schwasm "unhandled transformer primitive ~s" name))))
+
+;;;; syntax-case pattern matching.  Match results are alists of
+;;;; (pvar level . value); level is the ellipsis depth.
+
+(define (ellipsis-id? x)
+  (and (symbol? x) (eq? (unmark x) '...)))
+(define (ellipsis-escape? x)
+  ;; (... <form>) escapes the ellipses inside <form>
+  (and (pair? x) (ellipsis-id? (car x))
+       (pair? (cdr x)) (null? (cddr x))))
+(define (sc-literal? x lits)
+  (let ((u (unmark x)))
+    (let scan ((ls lits))
+      (and (pair? ls)
+           (or (eq? u (unmark (car ls)))
+               (scan (cdr ls)))))))
+(define (improper-length ls)
+  (if (pair? ls) (+ 1 (improper-length (cdr ls))) 0))
+
+(define (sc-match pat v lits)
+  (sc-match-pat pat v lits #f '()))
+(define (sc-match-pat pat v lits esc acc)
+  (cond
+   ((symbol? pat)
+    (cond
+     ((eq? (unmark pat) '_) acc)
+     ((sc-literal? pat lits)
+      (and (symbol? v) (eq? (unmark v) (unmark pat)) acc))
+     (else (cons (cons pat (cons 0 v)) acc))))
+   ((pair? pat)
+    (cond
+     ((and (not esc) (ellipsis-escape? pat))
+      (sc-match-pat (cadr pat) v lits #t acc))
+     ((and (not esc) (pair? (cdr pat)) (ellipsis-id? (cadr pat)))
+      (sc-match-ellipsis (car pat) (cddr pat) v lits acc))
+     ((pair? v)
+      (let ((acc (sc-match-pat (car pat) (car v) lits esc acc)))
+        (and acc (sc-match-pat (cdr pat) (cdr v) lits esc acc))))
+     (else #f)))
+   ((null? pat) (and (null? v) acc))
+   (else (and (equal? pat v) acc))))
+(define (sc-match-ellipsis sub tailpat v lits acc)
+  (let ((nrep (- (improper-length v) (improper-length tailpat))))
+    (and (>= nrep 0)
+         (let collect ((v v) (n nrep) (per-item '()))
+           (if (zero? n)
+               (let ((vars (sc-pattern-vars sub lits 0)))
+                 (sc-match-pat tailpat v lits #f
+                               (append (sc-zip vars (reverse per-item)) acc)))
+               (let ((m (sc-match-pat sub (car v) lits #f '())))
+                 (and m (collect (cdr v) (- n 1) (cons m per-item)))))))))
+(define (sc-pattern-vars pat lits depth)
+  ;; -> ((pvar . depth) ...)
+  (cond
+   ((symbol? pat)
+    (cond
+     ((eq? (unmark pat) '_) '())
+     ((ellipsis-id? pat) '())
+     ((sc-literal? pat lits) '())
+     (else (list (cons pat depth)))))
+   ((pair? pat)
+    (cond
+     ((ellipsis-escape? pat) (sc-pattern-vars (cadr pat) lits depth))
+     ((and (pair? (cdr pat)) (ellipsis-id? (cadr pat)))
+      (append (sc-pattern-vars (car pat) lits (+ depth 1))
+              (sc-pattern-vars (cddr pat) lits depth)))
+     (else (append (sc-pattern-vars (car pat) lits depth)
+                   (sc-pattern-vars (cdr pat) lits depth)))))
+   (else '())))
+(define (sc-zip vars per-item)
+  ;; rebind each pvar to the list of its per-item values, one level up
+  (map (lambda (var)
+         (cons (car var)
+               (cons (+ (cdr var) 1)
+                     (map (lambda (m)
+                            (let ((e (assq (car var) m)))
+                              (unless e
+                                (errorf 'schwasm "missing pattern variable ~s"
+                                        (car var)))
+                              (cddr e)))
+                          per-item))))
+       vars))
+(define (sc-extend bindings env)
+  (append (map (lambda (bnd)
+                 (cons (car bnd) (make-pvar (cadr bnd) (cddr bnd))))
+               bindings)
+          env))
+
+(define (meta-syntax-case e env)
+  ;; (syntax-case E (lit ...) clause ...)
+  (let ((v (meta-eval (cadr e) env))
+        (lits (caddr e)))
+    (let try ((clauses (cdddr e)))
+      (if (null? clauses)
+          (errorf 'schwasm "no matching syntax-case clause for ~s" v)
+          (let* ((clause (car clauses))
+                 (bindings (sc-match (car clause) v lits)))
+            (if bindings
+                (let ((env* (sc-extend bindings env)))
+                  (if (null? (cddr clause))
+                      (meta-eval (cadr clause) env*)
+                      ;; (pattern fender output)
+                      (if (eq? (meta-eval (cadr clause) env*) #f)
+                          (try (cdr clauses))
+                          (meta-eval (caddr clause) env*))))
+                (try (cdr clauses))))))))
+(define (meta-with-syntax e env)
+  ;; (with-syntax ((pat expr) ...) body ...)
+  (let bind ((bs (cadr e)) (env* env))
+    (if (null? bs)
+        (meta-seq (cddr e) env*)
+        (let ((m (sc-match (caar bs) (meta-eval (cadar bs) env) '())))
+          (unless m
+            (errorf 'schwasm "with-syntax pattern mismatch: ~s" (caar bs)))
+          (bind (cdr bs) (sc-extend m env*))))))
+(define (desugar-rules e)
+  ;; (syntax-rules (lit ...) (pattern template) ...)
+  (let ((x (gensym "stx")))
+    `(lambda (,x)
+       (syntax-case ,x ,(cadr e)
+         . ,(map (lambda (rule)
+                   (let ((pat (car rule)) (tmpl (cadr rule)))
+                     `((_ . ,(if (pair? pat) (cdr pat) '()))
+                       (syntax ,tmpl))))
+                 (cddr e))))))
+
+;;;; template transcription
+
+(define (transcribe tmpl env esc)
+  (cond
+   ((symbol? tmpl)
+    (let ((slot (assq tmpl env)))
+      (if (and slot (mv? mv-pvar (cdr slot)))
+          (let ((pv (cdr slot)))
+            (if (zero? (pvar-level pv))
+                (pvar-value pv)
+                (errorf 'schwasm "too few ellipses after ~s" tmpl)))
+          (rename-introduced tmpl))))
+   ((pair? tmpl)
+    (cond
+     ((and (not esc) (ellipsis-escape? tmpl))
+      (transcribe (cadr tmpl) env #t))
+     ((and (not esc) (pair? (cdr tmpl)) (ellipsis-id? (cadr tmpl)))
+      (let* ((extra (let count ((t (cddr tmpl)) (n 0))
+                      (if (and (pair? t) (ellipsis-id? (car t)))
+                          (count (cdr t) (+ n 1))
+                          n)))
+             (rest (list-tail (cddr tmpl) extra)))
+        (append (transcribe-repeat (car tmpl) env (+ 1 extra))
+                (transcribe rest env #f))))
+     (else (cons (transcribe (car tmpl) env esc)
+                 (transcribe (cdr tmpl) env esc)))))
+   (else tmpl)))
+(define (template-vars tmpl env acc)
+  ;; pattern variables of depth > 0 occurring in tmpl
+  (cond
+   ((symbol? tmpl)
+    (let ((slot (assq tmpl env)))
+      (if (and slot
+               (mv? mv-pvar (cdr slot))
+               (> (pvar-level (cdr slot)) 0)
+               (not (assq tmpl acc)))
+          (cons (cons tmpl (cdr slot)) acc)
+          acc)))
+   ((pair? tmpl)
+    (template-vars (cdr tmpl) env (template-vars (car tmpl) env acc)))
+   (else acc)))
+(define (transcribe-repeat sub env depth)
+  ;; each extra ellipsis iterates a level deeper and splices
+  (let ((vars (template-vars sub env '())))
+    (when (null? vars)
+      (errorf 'schwasm "no pattern variables under ellipsis in template"))
+    (let ((n (length (pvar-value (cdar vars)))))
+      (unless (for-all (lambda (v) (= (length (pvar-value (cdr v))) n)) vars)
+        (errorf 'schwasm "mismatched ellipsis counts in template"))
+      (let iterate ((i 0))
+        (if (= i n)
+            '()
+            (let ((env* (append
+                         (map (lambda (v)
+                                (cons (car v)
+                                      (make-pvar (- (pvar-level (cdr v)) 1)
+                                                 (list-ref (pvar-value (cdr v)) i))))
+                              vars)
+                         env)))
+              (if (= depth 1)
+                  (cons (transcribe sub env* #f) (iterate (+ i 1)))
+                  (append (transcribe-repeat sub env* (- depth 1))
+                          (iterate (+ i 1))))))))))
 
 ;;;; ------------------------------------------------------------------
 ;;;; lambda formals: a proper list (fixed), an improper list (fixed
@@ -240,7 +701,7 @@
 
 (define (assigned-vars e acc)
   (if (pair? e)
-      (case (car e)
+      (case (resolve-tag (car e))
         ((quote) acc)
         ((set!) (assigned-vars (caddr e)
                                (if (memq (cadr e) acc)
@@ -255,7 +716,7 @@
     (let ((s (assq e scope)))
       (if (and s (cdr s)) `(car ,e) e)))
    ((pair? e)
-    (case (car e)
+    (case (resolve-tag (car e))
       ((quote) e)
       ((set!)
        (let ((v (avc (caddr e) scope assigned)))
@@ -404,8 +865,8 @@
    ((string? e) (global-get (intern! 'str e)))
    ((symbol? e) (compile-ref e locals cell))
    ((pair? e)
-    (case (car e)
-      ((quote) (compile-datum (cadr e)))
+    (case (resolve-tag (car e))
+      ((quote) (compile-datum (strip-marks (cadr e))))
       ((if) (compile-if e locals cell tail?))
       ((let) (compile-let e locals cell tail?))
       ((begin) (compile-body (cdr e) locals cell tail?))
@@ -416,11 +877,16 @@
    (else (errorf 'schwasm "cannot compile ~s" e))))
 
 (define (compile-ref e locals cell)
+  ;; lexical bindings are found by identity; unbound marked
+  ;; identifiers resolve like the identifier they renamed
   (cond
    ((assq e locals) => (lambda (s) (local-get (cdr s))))
-   ((assq e *vars*) => (lambda (v) (global-get (cdr v))))
-   ((assq e *fns*) => (lambda (f) (compile-fn-value (car f) (cdr f))))
-   (else (errorf 'schwasm "unbound variable ~s" e))))
+   (else
+    (let ((r (unmark e)))
+      (cond
+       ((assq r *vars*) => (lambda (v) (global-get (cdr v))))
+       ((assq r *fns*) => (lambda (f) (compile-fn-value (car f) (cdr f))))
+       (else (errorf 'schwasm "unbound variable ~s" e)))))))
 
 ;; walk an argument list held in local t, pushing n elements
 (define (unpack-args t n)
@@ -538,7 +1004,7 @@
                (compile-body (cdr es) locals cell tail?)))))
 
 (define (compile-global-set e locals cell)
-  (let ((v (assq (cadr e) *vars*)))
+  (let ((v (assq (unmark (cadr e)) *vars*)))
     (unless v (errorf 'schwasm "set! of unbound variable ~s" (cadr e)))
     (list (compile-exp (caddr e) locals cell #f)
           (global-set (cdr v))
@@ -638,16 +1104,17 @@
 ;;; applications
 
 (define (compile-app e locals cell tail?)
-  (let ((op (car e))
-        (args (cdr e)))
+  (let* ((op (car e))
+         (args (cdr e))
+         (rop (and (symbol? op) (unmark op))))
     (cond
      ((and (symbol? op) (assq op locals))
       (compile-indirect (compile-ref op locals cell) args locals cell tail?))
-     ((and (symbol? op) (memq op primitives) (not (assq op *fns*)))
-      (compile-prim op args locals cell))
-     ((and (symbol? op) (assq op *fns*))
-      (compile-direct (cdr (assq op *fns*)) e args locals cell tail?))
-     ((and (symbol? op) (assq op *vars*))
+     ((and rop (memq rop primitives) (not (assq rop *fns*)))
+      (compile-prim rop args locals cell))
+     ((and rop (assq rop *fns*))
+      (compile-direct (cdr (assq rop *fns*)) e args locals cell tail?))
+     ((and rop (assq rop *vars*))
       (compile-indirect (compile-ref op locals cell) args locals cell tail?))
      ((pair? op)
       (compile-indirect (compile-exp op locals cell #f) args locals cell tail?))
@@ -863,8 +1330,30 @@
                code
                #x0B)))
 
+;; expand each top-level form; a define-syntax produced by a macro is
+;; collected, so macros can define macros
+(define (expand-forms fs)
+  (if (null? fs)
+      '()
+      (let ((x (xpand (car fs))))
+        (if (macro-def? x)
+            (begin (add-macro! x) (expand-forms (cdr fs)))
+            (cons (normalize-define x) (expand-forms (cdr fs)))))))
+(define (normalize-define f)
+  ;; top-level forms built by macros have marked heads
+  (if (and (pair? f) (symbol? (car f)) (eq? (unmark (car f)) 'define))
+      (cons 'define (cdr f))
+      f))
+
 (define (compile-program forms)
-  (let* ((forms (map convert-assignments (map xpand forms)))
+  (set! *marks* '())
+  (set! *renames* '())
+  (set! *macros* '())
+  ;; collect explicit macro definitions first so they can be used
+  ;; before their definition
+  (for-each (lambda (f) (when (macro-def? f) (add-macro! f))) forms)
+  (let* ((forms (map convert-assignments
+                     (expand-forms (remp macro-def? forms))))
          (fn-defs (filter fn-define? forms))
          (var-defs (filter var-define? forms))
          (main-steps (map (lambda (f)

@@ -113,6 +113,16 @@ Tail calls use `return_call_ref` on either path.
   compiler-generated function that lists the module's interned symbol
   globals, so symbols built at runtime are `eq?` to compile-time
   literals.
-- **M6**: hygienic macros (`syntax-rules`, `syntax-case` with a
-  compile-time meta-interpreter, hygiene by renaming).
+- **M6 (done)**: hygienic macros.  `define-syntax` takes
+  `syntax-rules` or a `(lambda (x) ...)` transformer using
+  `syntax-case` (patterns with `_`, literals, nested ellipses, tail
+  patterns, `(... ...)` escapes, fenders), `with-syntax`,
+  `syntax->datum`, `datum->syntax`, `identifier?`,
+  `free-identifier=?`, `bound-identifier=?`, `generate-temporaries`.
+  Transformers run in a compile-time interpreter over a Scheme
+  subset.  Hygiene is by renaming: template-introduced identifiers
+  become fresh gensyms recorded in a mark table, and identifier
+  resolution (keywords, variables, literals) falls back through the
+  table while `quote`/`syntax->datum` strip it.  Macros may expand
+  into `define-syntax`.
 - **M7**: self-hosting.
