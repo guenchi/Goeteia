@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Goeteia — a page that compiles itself</title>
+    <meta name="description" content="The Goeteia homepage renders itself: its Scheme source is compiled to WebAssembly in your browser and mounted live. Edit the source, press Run, and the page below re-renders.">
+    <style>
+      :root {
+        --bg: #f2f4fa; --bg2: #ffffff; --ink: #14203a; --dim: #566080;
+        --lapis: #1550c4; --azure: #4788ee; --green: #1e7d34; --line: #dbe2ee;
+        --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0; background: var(--bg); color: var(--ink);
+        font-family: -apple-system, system-ui, "Segoe UI", sans-serif; line-height: 1.6;
+      }
+      a { color: var(--lapis); text-decoration: none; }
+      a:hover { text-decoration: underline; }
+      .wrap { max-width: 60em; margin: 0 auto; padding: 0 1.2em; }
+
+      .nav { position: sticky; top: 0; z-index: 20;
+        background: rgba(255,255,255,.82); backdrop-filter: saturate(1.2) blur(10px);
+        -webkit-backdrop-filter: saturate(1.2) blur(10px); border-bottom: 1px solid var(--line); }
+      .nav-inner { display: flex; align-items: center; justify-content: space-between; height: 3.4em; }
+      .brand { font-weight: 700; font-size: 1.15em; color: var(--lapis); }
+      .brand:hover { text-decoration: none; }
+      .nav-links { display: flex; gap: 1.5em; align-items: center; }
+      .nav-links a { color: var(--dim); font-size: .92em; }
+      .nav-links a:hover { color: var(--lapis); text-decoration: none; }
+      .nav-links a.gh { border: 1px solid var(--line); border-radius: 6px; padding: .3em .9em; color: var(--ink); }
+      @media (max-width: 42em) { .nav-links a.sec { display: none; } }
+
+      /* the live-rendered hero (built by Goeteia, mounted into #live) */
+      #live { min-height: 15em; padding: 3.5em 0 1em; }
+      .hero { text-align: center; }
+      .hero h1 {
+        font-size: 3.4em; margin: 0; font-weight: 650; letter-spacing: .02em;
+        background: linear-gradient(120deg, var(--lapis), var(--azure));
+        -webkit-background-clip: text; background-clip: text; color: transparent;
+      }
+      .hero .tagline { color: var(--dim); font-size: 1.2em; margin-top: .7em; }
+      .hero .gname { color: var(--azure); font-weight: 600; }
+      .hero .sub { color: var(--dim); margin-top: .2em; }
+      .hero .cmd {
+        display: inline-block; margin: 1.4em auto 0; padding: .7em 1.2em;
+        background: #eef1f9; border: 1px solid var(--line); border-radius: 8px;
+        font-family: var(--mono); font-size: 14px; color: var(--ink);
+      }
+      .hero .links { margin-top: 1.6em; }
+      .hero .btn {
+        display: inline-block; margin: 0 .4em; padding: .55em 1.5em;
+        border: 1px solid var(--line); border-radius: 6px; color: var(--ink); font-weight: 600;
+      }
+      .hero .btn.primary { background: var(--lapis); color: #fff; border-color: var(--lapis); }
+      .hero .btn:hover { text-decoration: none; border-color: var(--lapis); }
+
+      /* the editor: the page's own source */
+      #editor { padding: 2em 0 4em; border-top: 1px solid var(--line); scroll-margin-top: 4em; }
+      .lead { color: var(--dim); font-size: .95em; margin: 0 0 1em; }
+      .lead b { color: var(--ink); }
+      textarea {
+        width: 100%; font-family: var(--mono); font-size: 13px; line-height: 1.5;
+        background: var(--bg2); color: var(--ink); border: 1px solid var(--line);
+        border-radius: 8px; padding: 1em; resize: vertical;
+        box-shadow: inset 0 1px 3px rgba(16,20,42,.06);
+      }
+      textarea:focus { outline: none; border-color: var(--azure); }
+      .bar { display: flex; gap: .9em; align-items: center; margin: .9em 0 0; flex-wrap: wrap; }
+      button {
+        font-size: 15px; padding: .45em 2em; border-radius: 6px;
+        background: var(--lapis); color: #fff; border: none; font-weight: 600; cursor: pointer; min-width: 7em;
+      }
+      button:hover { filter: brightness(1.1); }
+      button:disabled { opacity: .5; cursor: default; }
+      .status { font-family: var(--mono); font-size: .82em; color: var(--dim); }
+      .status.err { color: #b0483f; }
+      .hint { color: var(--dim); font-size: .85em; margin-top: .5em; }
+      .hint code { background: #eef1f9; padding: .1em .4em; border-radius: 5px; font-family: var(--mono); }
+    </style>
+  </head>
+  <body>
+    <nav class="nav">
+      <div class="wrap nav-inner">
+        <a class="brand" href="index.html">Goeteia</a>
+        <div class="nav-links">
+          <a class="sec" href="why.html">Why Scheme?</a>
+          <a class="sec" href="manual.html">Manual</a>
+          <a class="sec" href="agent.html">Agents</a>
+          <a class="gh" href="https://github.com/guenchi/Goeteia">GitHub</a>
+        </div>
+      </div>
+    </nav>
+
+    <div class="wrap">
+      <!-- Goeteia mounts the hero here, from the source in the editor below -->
+      <div id="live"></div>
+
+      <section id="editor">
+        <p class="lead"><b>Everything above is rendered by Goeteia.</b> The Scheme
+        below is compiled to WebAssembly <em>in your browser</em> and mounted live.
+        Edit it and press Run — the hero re-renders. (⌘/Ctrl-Enter runs.)</p>
+        <textarea id="src" rows="20" spellcheck="false">loading…</textarea>
+        <div class="bar">
+          <button id="run" disabled>Run</button>
+          <span id="status" class="status">booting the compiler…</span>
+        </div>
+        <p class="hint">Try changing a string, or drive the <code>spell</code> signal.
+        This page carries the whole compiler (<code>goeteia.wasm</code>, ~70 KB gzipped,
+        cached after first load); each recompile takes ~15 ms.</p>
+      </section>
+    </div>
+
+    <script type="module">
+      import { boot, render } from './live.js';
+
+      const srcBox = document.getElementById('src');
+      const runBtn = document.getElementById('run');
+      const statusEl = document.getElementById('status');
+      const liveEl = document.getElementById('live');
+
+      function setStatus(msg, err = false) {
+        statusEl.textContent = msg;
+        statusEl.classList.toggle('err', err);
+      }
+
+      async function go() {
+        runBtn.disabled = true;
+        setStatus('compiling…');
+        try {
+          const { compileMs, bytes } = await render(srcBox.value, liveEl);
+          setStatus(`compiled ${bytes} bytes in ${compileMs.toFixed(1)} ms — rendered live`);
+        } catch (e) {
+          setStatus(`error: ${e.message}`, true);
+        } finally {
+          runBtn.disabled = false;
+        }
+      }
+
+      (async () => {
+        try {
+          // load the compiler + libraries and the page's own source in parallel
+          const [, heroSrc] = await Promise.all([
+            boot(),
+            fetch('hero.ss').then(r => r.text()),
+          ]);
+          srcBox.value = heroSrc;
+          runBtn.disabled = false;
+          await go();                       // first render, from the seeded source
+        } catch (e) {
+          setStatus(`boot failed: ${e.message}`, true);
+        }
+      })();
+
+      runBtn.addEventListener('click', go);
+      srcBox.addEventListener('keydown', e => {
+        if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); go(); }
+      });
+    </script>
+  </body>
+</html>
