@@ -84,7 +84,11 @@
          (else
           (write-char #\> o)
           (if (tag-in? tag raw-tags)
-              (for-each (lambda (k) (display (->text k) o)) kids)
+              ;; script/style content is emitted unescaped; a (raw ...)
+              ;; node here is fine too -- emit its literal, don't ->text it
+              (for-each (lambda (k)
+                          (display (if (raw? k) (cadr k) (->text k)) o))
+                        kids)
               (for-each (lambda (k) (emit k o)) kids))
           (display "</" o) (display t o) (write-char #\> o)))))
      (else (error 'sxml->html "bad node" node))))

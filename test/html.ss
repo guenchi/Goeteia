@@ -28,6 +28,9 @@
  ;; raw node injects literal markup
  (t (sxml->html (list 'div (raw "<b>x</b>")))
     "<div><b>x</b></div>")
+ ;; a raw node inside a raw-text element (style/script) emits its literal
+ (t (sxml->html (list 'style (raw "a>b{x:1}")))
+    "<style>a>b{x:1}</style>")
  ;; element with no attrs and no kids
  (t (sxml->html '(br)) "<br>")
  ;; html-escape standalone
