@@ -309,6 +309,7 @@
         ((quasiquote) (xpand-qq (cadr e) 0))
         ((define-record-type) (xpand-record e))
         ((import) '(begin))            ; resolved by the driver
+        ((export) e)                   ; top-level export declaration
         ((library)
          ;; (library (name ...) (export ...) (import ...) body ...)
          ;; libraries splice their definitions; exports are advisory
@@ -1115,7 +1116,7 @@
     vector? vector-length vector-ref vector-set!
     bytevector? bytevector-length bytevector-u8-ref bytevector-u8-set!
     %make-vector %make-bytevector
-    %record %record? %record-ref %record-set!
+    %record %record? %record-ref %record-set! %recbase? %record-rtd
     %write-byte %read-byte %make-string %make-symbol %interned-symbols
     %unreachable %throw-k))
 
@@ -1850,6 +1851,9 @@
     ((%record)
      ;; (%record rtd v ...): field count decides the struct type
      (list argc (struct-new (rec-ty (- (length args) 1)))))
+    ((%recbase?) (list (arg 0) (ref-test TY-RECBASE) (boolify)))
+    ((%record-rtd)
+     (list (arg 0) (ref-cast TY-RECBASE) (struct-get TY-RECBASE 0)))
     ((%record?)
      ;; (%record? x rtd)
      (let ((tmp (fresh-local! cell)))
@@ -2020,7 +2024,7 @@
       (else #f)))
    ((symbol? e) #f)
    (else #t)))
-(define (prune-dead forms)
+(define (prune-dead forms extra-roots)
   (let ((table (fold-left (lambda (acc f)
                             (if (define-form? f)
                                 (cons (cons (def-name f) f) acc)
@@ -2041,8 +2045,9 @@
                                 (cons 'zero? '(begin $eq2)))
                           forms)))
     (let grow ((live '())
-               ;; roots: program expressions, plus the initializers of
-               ;; top-level variables kept for their side effects
+               ;; roots: program expressions, exported names, plus the
+               ;; initializers of top-level variables kept for their
+               ;; side effects
                (queue (fold-left (lambda (acc f)
                                    (cond
                                     ((not (define-form? f)) (form-refs f acc))
@@ -2051,7 +2056,7 @@
                                           (not (pure-init? (caddr f))))
                                      (form-refs (caddr f) acc))
                                     (else acc)))
-                                 '()
+                                 extra-roots
                                  forms)))
       (cond
        ((null? queue)
@@ -2078,9 +2083,25 @@
   ;; collect explicit macro definitions first so they can be used
   ;; before their definition
   (for-each (lambda (f) (when (macro-def? f) (add-macro! f))) forms)
-  (let* ((forms (prune-dead
+  (let* ((expanded (expand-forms
+                    (filter (lambda (f) (not (macro-def? f))) forms)))
+         ;; top-level (export name ...): keep through DCE, expose as
+         ;; wasm exports so the host can call them
+         (export-names
+          (fold-left (lambda (acc f)
+                       (if (and (pair? f) (symbol? (car f))
+                                (eq? (unmark (car f)) 'export))
+                           (append acc (map (lambda (n) (unmark n)) (cdr f)))
+                           acc))
+                     '()
+                     expanded))
+         (forms (prune-dead
                  (map-in-order convert-assignments
-                     (expand-forms (filter (lambda (f) (not (macro-def? f))) forms)))))
+                     (filter (lambda (f)
+                               (not (and (pair? f) (symbol? (car f))
+                                         (eq? (unmark (car f)) 'export))))
+                             expanded))
+                 export-names))
          (fn-defs (filter fn-define? forms))
          (var-defs (filter var-define? forms))
          (main-steps (map (lambda (f)
@@ -2172,9 +2193,10 @@
              (declared (map car lifted)))
         (emit-module plain-arities clos-arities rec-fields
                      (length var-defs)
-                     entries declared (+ N-IMPORTS (length fn-defs)))))))
+                     entries declared (+ N-IMPORTS (length fn-defs))
+                     export-names)))))
 
-(define (emit-module plain-arities clos-arities rec-fields n-vars entries declared main-idx)
+(define (emit-module plain-arities clos-arities rec-fields n-vars entries declared main-idx export-names)
   (flatten
    (list
     #x00 #x61 #x73 #x6D  #x01 #x00 #x00 #x00
@@ -2286,11 +2308,18 @@
                       (sort-by cdr *interned*)))))
     ;; export section
     (section 7 (counted
-                (list (export-entry "main" #x00 main-idx)
-                      (export-entry "false" #x03 G-FALSE)
-                      (export-entry "true" #x03 G-TRUE)
-                      (export-entry "null" #x03 G-NULL)
-                      (export-entry "void" #x03 G-VOID))))
+                (append
+                 (list (export-entry "main" #x00 main-idx)
+                       (export-entry "false" #x03 G-FALSE)
+                       (export-entry "true" #x03 G-TRUE)
+                       (export-entry "null" #x03 G-NULL)
+                       (export-entry "void" #x03 G-VOID))
+                 (map (lambda (n)
+                        (let ((f (assq n *fns*)))
+                          (unless f
+                            (errorf 'schwasm "exported name is not a function ~s" n))
+                          (export-entry (symbol->string n) #x00 (cadr f))))
+                      export-names))))
     ;; element section: functions referenced by ref.func
     (if (null? declared)
         '()
