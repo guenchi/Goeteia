@@ -7,14 +7,14 @@
     <meta name="description" content="Goeteia (Γοητεία) — the black art of commanding what lies beneath. A self-hosting Scheme-to-WebAssembly compiler built on Wasm GC; it compiles itself byte-for-byte and runs in your browser.">
     <style>
       :root {
-        --bg: #0e0d12;
-        --bg2: #16141d;
-        --ink: #d8d4e8;
-        --dim: #8a84a0;
-        --gold: #d4af6a;
-        --violet: #9d7cd8;
-        --green: #7fbf7f;
-        --line: #2a2635;
+        --bg: #faf9f6;
+        --bg2: #ffffff;
+        --ink: #2b2733;
+        --dim: #6f6a7c;
+        --gold: #a8781f;
+        --violet: #6d4fc0;
+        --green: #1e7d34;
+        --line: #e5e1d8;
         --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
       }
       * { box-sizing: border-box; }
@@ -49,7 +49,7 @@
         display: inline-block; margin: 0 .5em; padding: .5em 1.4em;
         border: 1px solid var(--line); border-radius: 6px; color: var(--ink);
       }
-      .links a.primary { background: var(--gold); color: #1a1408; border-color: var(--gold); font-weight: 600; }
+      .links a.primary { background: var(--gold); color: #fffdf7; border-color: var(--gold); font-weight: 600; }
       .links a:hover { text-decoration: none; border-color: var(--gold); }
 
       section { padding: 2.5em 0; border-top: 1px solid var(--line); }
@@ -61,13 +61,13 @@
         width: 100%; font-family: var(--mono); font-size: 14px;
         background: var(--bg2); color: var(--ink);
         border: 1px solid var(--line); border-radius: 8px; padding: .8em;
-        resize: vertical;
+        resize: vertical; box-shadow: inset 0 1px 3px rgba(43,39,51,.05);
       }
       textarea:focus { outline: none; border-color: var(--violet); }
       .bar { display: flex; gap: .9em; align-items: center; margin: .9em 0; flex-wrap: wrap; }
       button {
         font-size: 15px; padding: .45em 2em; border-radius: 6px;
-        background: var(--gold); color: #1a1408; border: none; font-weight: 600;
+        background: var(--gold); color: #fffdf7; border: none; font-weight: 600;
         cursor: pointer;
       }
       button:hover { filter: brightness(1.1); }
@@ -78,7 +78,7 @@
       }
       label { color: var(--dim); font-size: .9em; }
       pre {
-        background: var(--bg2); border: 1px solid var(--line);
+        background: #f4f2ec; border: 1px solid var(--line);
         padding: .9em; border-radius: 8px; min-height: 2.2em;
         white-space: pre-wrap; font-family: var(--mono); font-size: 14px;
         overflow-x: auto;
@@ -95,6 +95,7 @@
       .card {
         background: var(--bg2); border: 1px solid var(--line);
         border-radius: 10px; padding: 1.1em 1.2em;
+        box-shadow: 0 1px 3px rgba(43,39,51,.05);
       }
       .card h3 { margin: 0 0 .4em; font-size: 1em; color: var(--gold); font-weight: 600; }
       .card p { margin: 0; color: var(--dim); font-size: .92em; }
