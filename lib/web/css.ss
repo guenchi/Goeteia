@@ -15,10 +15,10 @@
 ;;   integer           -> itself ("0", "650" for z-index / rgb parts)
 ;;   string            -> literal ("#fff", "solid")
 ;;   symbol            -> its name (none, inherit, ...)
-;;   (dec 1 6)         -> "1.6"   ; a unitless decimal (line-height, alpha)
+;;   (dec 1 6)         -> "1.6"   ; a unitless decimal (line-height)
 ;;   (var ink)         -> "var(--ink)"
 ;;   (calc V ...)      -> "calc(V ...)"
-;;   (rgba 16 20 42 (dec 0 6)) -> "rgba(16,20,42,0.06)"
+;;   (rgba 16 20 42 (pct 6)) -> "rgba(16,20,42,6%)"  ; 6% alpha = 0.06
 ;;   (A B ...)         -> "A B ..."  ; a space-joined compound value
 ;; @media / @keyframes / @supports nest rules.
 ;;
@@ -48,7 +48,10 @@
      ((and (integer? n) (exact? n)) (number->string n))
      (else (error 'css "use an exact integer, a two-arg unit form, or a string" n))))
 
-  ;; a unit value: (em 1) -> "1em"; (em 0 92) -> "0.92em" (whole . frac)
+  ;; a unit value: (em 1) -> "1em"; (em 0 92) -> "0.92em" (whole . frac).
+  ;; The fraction is written as literal digits (3 4 -> ".4", 0 92 ->
+  ;; ".92"); leading-zero fractions (an alpha like 0.06) use a percentage
+  ;; instead -- (pct 6) is 6% is 0.06.
   (define (unit->css args suffix)
     (string-append
      (cond
