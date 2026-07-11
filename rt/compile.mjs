@@ -115,7 +115,7 @@ function loadLibrary(spec, dirs, visited) {
     for (const d of dirs) {
         const p = path.join(d, ...spec) + '.ss';
         if (fs.existsSync(p)) {
-            const text = fs.readFileSync(p, 'utf8');
+            const text = fs.readFileSync(p, 'latin1');
             const deps = libraryImports(text)
                 .map(s => loadLibrary(s, dirs, visited))
                 .join('\n');
@@ -133,8 +133,8 @@ async function main() {
     }
     const inDir = path.dirname(path.resolve(sourceFile));
     const dirs = [inDir, path.join(inDir, 'lib'), path.join(here, '../lib')];
-    const prelude = fs.readFileSync(path.join(here, '../src/prelude.ss'), 'utf8');
-    const source = resolveImports(fs.readFileSync(sourceFile, 'utf8'), dirs);
+    const prelude = fs.readFileSync(path.join(here, '../src/prelude.ss'), 'latin1');
+    const source = resolveImports(fs.readFileSync(sourceFile, 'latin1'), dirs);
     const input = Buffer.from(prelude + '\n' + source, 'latin1');
 
     const out = [];

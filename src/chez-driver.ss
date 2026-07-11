@@ -16,7 +16,15 @@
         (cons form (read-forms port)))))
 
 (define (read-file-forms path)
-  (call-with-input-file path read-forms))
+  ;; read the source as raw bytes (latin-1: one byte = one char) so
+  ;; multi-byte UTF-8 in string literals survives verbatim, matching
+  ;; the self-hosted byte reader -- otherwise Chez decodes UTF-8 to
+  ;; code points and compile-datum truncates them, and the two hosts
+  ;; disagree on every non-ASCII literal
+  (call-with-port
+   (open-file-input-port path (file-options) (buffer-mode block)
+                         (make-transcoder (latin-1-codec)))
+   read-forms))
 
 ;; ---- library resolution ----
 ;; (import (math utils)) reads math/utils.ss -- a single (library ...)
