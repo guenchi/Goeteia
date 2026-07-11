@@ -4,8 +4,16 @@
 ;; are the same on every page. Rendered to a string by Goeteia.
 (library (chrome)
   (export render-page read-file write-file base-styles footer-styles palette
-          card feat section*)
+          card feat section* soft-box inline-code)
   (import (rnrs) (web html) (web css))
+
+  ;; ---- reusable (web css) declaration helpers ----
+  ;; the pale rounded panel used for code blocks and command chips
+  (define (soft-box)
+    '((background "#eef1f9") (border (px 1) solid (var line)) (border-radius (px 8))))
+  ;; monospace + accent colour for inline code
+  (define (inline-code)
+    '((font-family (var mono)) (color (var lapis))))
 
   ;; ---- reusable content helpers (SXML-returning) ----
   ;; a titled box: (card "Title" "body " (code "x") " ...")
