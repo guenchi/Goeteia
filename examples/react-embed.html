@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <title>Goeteia inside React</title>
+    <style>
+      body { font-family: system-ui; max-width: 40em; margin: 3em auto; }
+      .react-box { border: 2px solid #61dafb; border-radius: 8px; padding: 1em; }
+      .g-counter, .g-ticker {
+        border: 2px solid #1550c4; border-radius: 8px;
+        padding: .8em; margin: .6em 0; display: inline-block;
+      }
+      .g-counter span { font-size: 1.6em; margin: 0 .6em; font-weight: 700; }
+      button { font-size: 1.1em; padding: .1em .8em; }
+      label { display: block; margin: .8em 0; }
+    </style>
+  </head>
+  <body>
+    <h1>Goeteia inside React</h1>
+    <p>The outer box is a React app; the blue-bordered widgets inside
+    are Goeteia components (<code>react-widgets.ss</code>) mounted
+    through <code>(web react)</code>.  Changing <code>start</code>
+    remounts the counter with the new prop.</p>
+    <div id="root"></div>
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script type="module">
+      import { loadGoeteia } from '../rt/web.mjs';
+      import { goeteiaComponent } from '../rt/react.mjs';
+      loadGoeteia('react-widgets.wasm');
+
+      const e = React.createElement;
+      const Counter = goeteiaComponent(React, 'Counter');
+      const Ticker = goeteiaComponent(React, 'Ticker');
+
+      function App() {
+        const [start, setStart] = React.useState(10);
+        const [showTicker, setShowTicker] = React.useState(true);
+        return e('div', { className: 'react-box' },
+          e('label', null, 'start (React state): ',
+            e('input', {
+              type: 'number', value: start,
+              onChange: ev => setStart(Number(ev.target.value)),
+            })),
+          e(Counter, { start }),
+          e('label', null,
+            e('input', {
+              type: 'checkbox', checked: showTicker,
+              onChange: ev => setShowTicker(ev.target.checked),
+            }), ' show ticker (unmount runs the Goeteia dispose)'),
+          showTicker ? e(Ticker, {}) : null);
+      }
+      ReactDOM.createRoot(document.getElementById('root')).render(e(App));
+    </script>
+  </body>
+</html>

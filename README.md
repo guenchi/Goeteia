@@ -41,6 +41,34 @@ wasmtime).  Proper tail calls compile to `return_call`.
 See `docs/design.md` for the object representation, the calling
 convention, and the milestone-by-milestone build log.
 
+## Web
+
+A small UI stack over the JS bridge, in `lib/web/`:
+
+- `(web js)` / `(web dom)` — JavaScript interop and DOM sugar;
+  Scheme closures convert to callable JS functions and back
+- `(web reactive)` — fine-grained signals: `signal` / `effect` /
+  `batch`, with automatic dependency tracking and ownership
+- `(web sx)` — reactive DOM templates.  The `sx` macro splits a
+  template at expansion time: static structure is built once,
+  each unquote becomes a hole updated by its own effect — no
+  virtual DOM, the DOM is a write-only surface
+
+  ```scheme
+  (define n (signal 0))
+  (sx (div (span ,(signal-ref n))
+           (button (@ (on-click ,(lambda _ (signal-update! n 1+))))
+             "+")))
+  ```
+- `(web react)` — embed Goeteia components into an existing React
+  app: `react-component` registers a factory the React side wraps
+  in one `useEffect` (`rt/react.mjs`); props flow in as JS objects,
+  the dispose thunk flows back as a JS function
+
+`examples/counter.html` is a page scripted entirely in Goeteia;
+`examples/react-embed.html` is a React app with Goeteia widgets
+inside.
+
 ## Usage
 
 Node 22+ (or any Wasm GC engine) is all you need: the compiler ships
