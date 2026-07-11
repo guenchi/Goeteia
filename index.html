@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Goeteia — a self-hosting Scheme for the WebAssembly GC era</title>
+    <meta name="description" content="Goeteia (Γοητεία) is a Scheme-to-WebAssembly compiler built on Wasm GC. It compiles itself, byte for byte — and it compiles you, right here in the browser.">
+    <style>
+      :root {
+        --bg: #0e0d12;
+        --bg2: #16141d;
+        --ink: #d8d4e8;
+        --dim: #8a84a0;
+        --gold: #d4af6a;
+        --violet: #9d7cd8;
+        --green: #7fbf7f;
+        --line: #2a2635;
+        --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0; background: var(--bg); color: var(--ink);
+        font-family: -apple-system, system-ui, "Segoe UI", sans-serif;
+        line-height: 1.6;
+      }
+      a { color: var(--gold); text-decoration: none; }
+      a:hover { text-decoration: underline; }
+      .wrap { max-width: 60em; margin: 0 auto; padding: 0 1.2em; }
+
+      header { padding: 4.5em 0 3em; text-align: center; }
+      .greek {
+        font-size: 1.05em; letter-spacing: .45em; color: var(--violet);
+        margin-bottom: .4em;
+      }
+      h1 {
+        font-size: 3.2em; margin: 0; font-weight: 650; letter-spacing: .02em;
+        background: linear-gradient(120deg, var(--gold), var(--violet));
+        -webkit-background-clip: text; background-clip: text; color: transparent;
+      }
+      .tagline { color: var(--dim); font-size: 1.15em; margin-top: .7em; }
+      .fixpoint {
+        display: inline-block; margin-top: 1.4em; padding: .45em 1.1em;
+        border: 1px solid var(--line); border-radius: 2em;
+        font-family: var(--mono); font-size: .85em; color: var(--green);
+        background: var(--bg2);
+      }
+      .links { margin-top: 1.6em; }
+      .links a {
+        display: inline-block; margin: 0 .5em; padding: .5em 1.4em;
+        border: 1px solid var(--line); border-radius: 6px; color: var(--ink);
+      }
+      .links a.primary { background: var(--gold); color: #1a1408; border-color: var(--gold); font-weight: 600; }
+      .links a:hover { text-decoration: none; border-color: var(--gold); }
+
+      section { padding: 2.5em 0; border-top: 1px solid var(--line); }
+      h2 { font-size: 1.5em; font-weight: 600; }
+      h2 .g { color: var(--violet); font-weight: 400; }
+
+      /* playground */
+      textarea {
+        width: 100%; font-family: var(--mono); font-size: 14px;
+        background: var(--bg2); color: var(--ink);
+        border: 1px solid var(--line); border-radius: 8px; padding: .8em;
+        resize: vertical;
+      }
+      textarea:focus { outline: none; border-color: var(--violet); }
+      .bar { display: flex; gap: .9em; align-items: center; margin: .9em 0; flex-wrap: wrap; }
+      button {
+        font-size: 15px; padding: .45em 2em; border-radius: 6px;
+        background: var(--gold); color: #1a1408; border: none; font-weight: 600;
+        cursor: pointer;
+      }
+      button:hover { filter: brightness(1.1); }
+      button:disabled { opacity: .5; }
+      select {
+        font-size: 14px; padding: .35em .6em; border-radius: 6px;
+        background: var(--bg2); color: var(--ink); border: 1px solid var(--line);
+      }
+      label { color: var(--dim); font-size: .9em; }
+      pre {
+        background: var(--bg2); border: 1px solid var(--line);
+        padding: .9em; border-radius: 8px; min-height: 2.2em;
+        white-space: pre-wrap; font-family: var(--mono); font-size: 14px;
+        overflow-x: auto;
+      }
+      code { font-family: var(--mono); color: var(--gold); font-size: .92em; }
+      pre code { color: var(--ink); }
+      .hint { color: var(--dim); font-size: .85em; }
+
+      /* features */
+      .grid {
+        display: grid; grid-template-columns: repeat(auto-fit, minmax(16em, 1fr));
+        gap: 1em; margin-top: 1.4em;
+      }
+      .card {
+        background: var(--bg2); border: 1px solid var(--line);
+        border-radius: 10px; padding: 1.1em 1.2em;
+      }
+      .card h3 { margin: 0 0 .4em; font-size: 1em; color: var(--gold); font-weight: 600; }
+      .card p { margin: 0; color: var(--dim); font-size: .92em; }
+
+      footer {
+        padding: 2.5em 0 3.5em; border-top: 1px solid var(--line);
+        text-align: center; color: var(--dim); font-size: .9em;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <header>
+        <div class="greek">Γ ο η τ ε ί α</div>
+        <h1>Goeteia</h1>
+        <p class="tagline">A self-hosting Scheme for the WebAssembly GC era.</p>
+        <div class="fixpoint">$ ./build-self.sh &nbsp;→&nbsp; fixpoint: stage1 == stage2 ✓</div>
+        <div class="links">
+          <a class="primary" href="#playground">Try it now</a>
+          <a href="https://github.com/guenchi/Goeteia">GitHub</a>
+        </div>
+      </header>
+
+      <section id="playground">
+        <h2>The playground <span class="g">— the compiler is running in your browser</span></h2>
+        <p class="hint">
+          <code>schwasm-self.wasm</code> is Goeteia compiled by itself: a
+          WebAssembly GC module that reads Scheme and writes WebAssembly.
+          This page feeds it what you type and runs the result on the spot.
+          No server, no JavaScript compiler.  The program's value is its
+          last expression; Ctrl/⌘-Enter runs.
+        </p>
+        <textarea id="src" rows="16" spellcheck="false"></textarea>
+        <div class="bar">
+          <button id="run">Run</button>
+          <label>examples:
+            <select id="examples"></select>
+          </label>
+        </div>
+        <pre id="out"></pre>
+      </section>
+
+      <section>
+        <h2>What's inside</h2>
+        <div class="grid">
+          <div class="card">
+            <h3>Self-hosting, to the byte</h3>
+            <p>The compiler is written in the Scheme subset it compiles.
+            The self-hosted build recompiles itself and the output is
+            byte-identical — the fixpoint is checked in CI fashion on
+            every change, and every test runs through both stages.</p>
+          </div>
+          <div class="card">
+            <h3>Native Wasm GC objects</h3>
+            <p>Fixnums are unboxed <code>i31ref</code>s, pairs and records
+            are GC structs, <code>eq?</code> is one <code>ref.eq</code>.
+            No shadow heap in JavaScript: the host supplies two byte-stream
+            imports and nothing else.</p>
+          </div>
+          <div class="card">
+            <h3>Hygienic macros</h3>
+            <p><code>syntax-rules</code> and procedural
+            <code>syntax-case</code> with fenders, nested ellipses and
+            <code>datum-&gt;syntax</code>, running in a compile-time
+            interpreter with hygiene by renaming.</p>
+          </div>
+          <div class="card">
+            <h3>Real closures, real tail calls</h3>
+            <p>Typed function references with a fast per-arity entry and a
+            generic entry per closure — variadic procedures and
+            <code>apply</code> are cheap, and every tail call is a
+            <code>return_call</code>.  A 100M-iteration loop runs in
+            constant stack, in ~150ms.</p>
+          </div>
+          <div class="card">
+            <h3>The numeric tower</h3>
+            <p>Fixnums promote to bignums on overflow (checked inline, two
+            bit-compares), flonums have contagion, and float literals are
+            encoded to IEEE-754 by pure Scheme — so both hosts of the
+            compiler emit identical bytes.</p>
+          </div>
+          <div class="card">
+            <h3>call/cc &amp; dynamic-wind</h3>
+            <p>Escape continuations ride the Wasm exception-handling
+            proposal: capture is O(1), the normal path costs one try
+            block, and winders unwind inner-to-outer on the way out.</p>
+          </div>
+          <div class="card">
+            <h3>Records, hashtables, vectors</h3>
+            <p><code>define-record-type</code> compiles to GC structs with
+            an identity slot — a record predicate is one type test plus one
+            <code>ref.eq</code>.  Hashtables are pure Scheme over vectors,
+            and dead code elimination keeps programs lean.</p>
+          </div>
+          <div class="card">
+            <h3>Libraries</h3>
+            <p>R6RS-style <code>(library ...)</code> files with
+            <code>(import (math utils))</code> resolution, dependencies
+            first; exports are advisory because unused code is pruned
+            anyway.</p>
+          </div>
+        </div>
+      </section>
+
+      <section>
+        <h2>Quick start</h2>
+        <pre><code>$ git clone https://github.com/guenchi/Goeteia
+$ cd Goeteia
+$ ./run-tests.sh                # every test, both compiler stages
+$ ./build-self.sh               # rebuild the compiler with itself
+
+$ echo '(define (fact n) (if (zero? n) 1 (* n (fact (- n 1)))))
+(fact 20)' > fact.ss
+$ node rt/compile.mjs schwasm-self.wasm fact.ss fact.wasm
+$ node rt/run.mjs fact.wasm
+2432902008176640000</code></pre>
+        <p class="hint">Compiled modules run on any engine with Wasm GC and
+        tail calls: Node 22+, current Chrome / Firefox / Safari, wasmtime.
+        Bootstrapping from source needs Chez Scheme; the checked-in
+        compiler wasm works without it.</p>
+      </section>
+
+      <footer>
+        Goeteia · MIT license ·
+        <a href="https://github.com/guenchi/Goeteia">github.com/guenchi/Goeteia</a>
+      </footer>
+    </div>
+    <script type="module" src="playground.js"></script>
+  </body>
+</html>
