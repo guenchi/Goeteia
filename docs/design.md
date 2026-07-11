@@ -146,7 +146,7 @@ Tail calls use `return_call_ref` on either path.
 - **M7 (done)**: self-hosting.  The compiler is written in the
   subset schwasm compiles.  `src/chez-driver.ss` hosts it under Chez
   (stage0); `src/wasm-driver.ss` appended to `src/compiler.ss` and
-  compiled by stage0 yields `schwasm-self.wasm` (stage1), a wasm
+  compiled by stage0 yields `goeteia.wasm` (stage1), a wasm
   module that reads Scheme source on its input and emits a wasm
   module on its output.  Stage1 compiling the compiler reproduces
   itself byte-for-byte (`./build-self.sh` verifies the fixpoint), and

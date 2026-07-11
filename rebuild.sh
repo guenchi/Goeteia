@@ -11,14 +11,14 @@ cd "$(dirname "$0")"
 cat src/compiler.ss src/wasm-driver.ss > /tmp/schwasm-self-src.ss
 
 echo "candidate: current snapshot compiling the source..."
-${NODE-node} rt/compile.mjs schwasm-self.wasm /tmp/schwasm-self-src.ss /tmp/schwasm-candidate.wasm
+${NODE-node} rt/compile.mjs goeteia.wasm /tmp/schwasm-self-src.ss /tmp/schwasm-candidate.wasm
 
 echo "verify: candidate compiling the source..."
 ${NODE-node} rt/compile.mjs /tmp/schwasm-candidate.wasm /tmp/schwasm-self-src.ss /tmp/schwasm-verify.wasm
 
 if cmp -s /tmp/schwasm-candidate.wasm /tmp/schwasm-verify.wasm; then
-    mv /tmp/schwasm-candidate.wasm schwasm-self.wasm
-    echo "fixpoint: candidate == verify; snapshot updated ($(wc -c < schwasm-self.wasm) bytes)"
+    mv /tmp/schwasm-candidate.wasm goeteia.wasm
+    echo "fixpoint: candidate == verify; snapshot updated ($(wc -c < goeteia.wasm) bytes)"
 else
     echo "FIXPOINT FAILED: candidate and verify differ; snapshot unchanged"
     exit 1

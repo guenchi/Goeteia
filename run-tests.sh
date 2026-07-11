@@ -1,6 +1,6 @@
 #!/bin/sh
 # Compile and run every test, with the Chez-hosted compiler (stage0)
-# and, if schwasm-self.wasm is present, with the self-hosted compiler
+# and, if goeteia.wasm is present, with the self-hosted compiler
 # (stage1).  Each test's first line declares the expected output as
 # ";; expect: <value>".
 cd "$(dirname "$0")"
@@ -24,8 +24,8 @@ for t in test/*.ss; do
     else
         echo "FAIL $t (stage0: want '$want', got '$got')"; fail=1
     fi
-    if [ -f schwasm-self.wasm ]; then
-        if ! ${NODE-node} rt/compile.mjs schwasm-self.wasm "$t" /tmp/schwasm-test1.wasm 2>/dev/null; then
+    if [ -f goeteia.wasm ]; then
+        if ! ${NODE-node} rt/compile.mjs goeteia.wasm "$t" /tmp/schwasm-test1.wasm 2>/dev/null; then
             echo "FAIL $t (stage1 compile error)"; fail=1; continue
         fi
         got=$(run_one /tmp/schwasm-test1.wasm "$t")

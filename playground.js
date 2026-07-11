@@ -1,8 +1,8 @@
 // schwasm playground: the self-hosted compiler runs in the browser.
 // Copyright (c) 2026 guenchi. MIT license; see LICENSE.
 
-const compilerBytes = fetch('schwasm-self.wasm').then(r => {
-    if (!r.ok) throw new Error('schwasm-self.wasm not found — run ./build-self.sh first');
+const compilerBytes = fetch('goeteia.wasm').then(r => {
+    if (!r.ok) throw new Error('goeteia.wasm not found — run ./build-self.sh first');
     return r.arrayBuffer();
 });
 const preludeText = fetch('src/prelude.ss').then(r => r.text());

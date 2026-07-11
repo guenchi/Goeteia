@@ -9,14 +9,14 @@ cd "$(dirname "$0")"
 cat src/compiler.ss src/wasm-driver.ss > /tmp/schwasm-self-src.ss
 
 echo "stage1: Chez-hosted compiler compiling the compiler..."
-./bin/schwasmc /tmp/schwasm-self-src.ss schwasm-self.wasm
-echo "  schwasm-self.wasm: $(wc -c < schwasm-self.wasm) bytes"
+./bin/schwasmc /tmp/schwasm-self-src.ss goeteia.wasm
+echo "  goeteia.wasm: $(wc -c < goeteia.wasm) bytes"
 
 echo "stage2: self-hosted compiler compiling the compiler..."
-${NODE-node} rt/compile.mjs schwasm-self.wasm /tmp/schwasm-self-src.ss /tmp/schwasm-stage2.wasm
+${NODE-node} rt/compile.mjs goeteia.wasm /tmp/schwasm-self-src.ss /tmp/schwasm-stage2.wasm
 echo "  stage2: $(wc -c < /tmp/schwasm-stage2.wasm) bytes"
 
-if cmp -s schwasm-self.wasm /tmp/schwasm-stage2.wasm; then
+if cmp -s goeteia.wasm /tmp/schwasm-stage2.wasm; then
     echo "fixpoint: stage1 == stage2"
 else
     echo "FIXPOINT FAILED: stage1 and stage2 differ"

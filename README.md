@@ -45,10 +45,10 @@ convention, and the milestone-by-milestone build log.
 ## Usage
 
 Node 22+ (or any Wasm GC engine) is all you need: the compiler ships
-as `schwasm-self.wasm`, itself a Wasm GC module.
+as `goeteia.wasm`, itself a Wasm GC module.
 
 ```
-$ node rt/compile.mjs schwasm-self.wasm program.ss program.wasm
+$ node rt/compile.mjs goeteia.wasm program.ss program.wasm
 $ node rt/run.mjs program.wasm
 ```
 
@@ -63,7 +63,7 @@ value of the last expression is printed.
 
 ## Self-hosting
 
-`schwasm-self.wasm` is Goeteia compiled by Goeteia.  After editing
+`goeteia.wasm` is Goeteia compiled by Goeteia.  After editing
 the compiler:
 
 ```
