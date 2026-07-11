@@ -4,20 +4,19 @@
 ;; a rule is (selector (prop value ...) ...). Selectors are symbols
 ;; (element names) or strings (anything with . # : > space).
 ;;
-;; No floats anywhere -- the flonum printer isn't exact, so values are
-;; exact integers (or strings). em/rem/ex/ch take their argument scaled
-;; by 100, so fractional lengths stay integers:
-;;   (em 92)  -> "0.92em"   (em 10) -> "0.1em"   (em 100) -> "1em"
-;;   (px 1300)-> "13px"     (px 1350) -> "13.5px"     (px 100) -> "1px"
-;; Whole-number units take a natural integer:
-;;   (pct 50) -> "50%"      (vh 100) -> "100vh"       (deg 45) -> "45deg"
-;; Values:
-;;   integer           -> itself ("0", "650")
+;; No floats anywhere -- the flonum printer isn't exact. One uniform
+;; rule, no special cases: every unit's argument is scaled by 100
+;; (centi-units), so fractional values stay exact integers:
+;;   (em 92) -> "0.92em"   (px 1300) -> "13px"   (px 1350) -> "13.5px"
+;;   (pct 5000) -> "50%"   (vh 10000) -> "100vh" (deg 4500) -> "45deg"
+;;   (em 100) -> "1em"     (em 10) -> "0.1em"
+;; Non-unit values:
+;;   integer           -> itself ("0", "650" for z-index / rgb parts)
 ;;   string            -> literal ("#fff", "solid", "1.6")
 ;;   symbol            -> its name (none, inherit, ...)
 ;;   (var ink)         -> "var(--ink)"
 ;;   (calc V ...)      -> "calc(V ...)"
-;;   (rgba 16 20 42 6) -> "rgba(16,20,42,6)"
+;;   (rgba 16 20 42 "0.06") -> "rgba(16,20,42,0.06)"
 ;;   (A B ...)         -> "A B ..."  ; a space-joined compound value
 ;; @media / @keyframes / @supports nest rules.
 ;;
@@ -73,11 +72,10 @@
     '((px . "px") (em . "em") (rem . "rem") (pct . "%") (vh . "vh")
       (vw . "vw") (vmin . "vmin") (vmax . "vmax") (fr . "fr") (deg . "deg")
       (s . "s") (ms . "ms") (ch . "ch") (ex . "ex")))
-  ;; fraction-prone length units take their argument scaled by 100 --
-  ;; (em 92) -> 0.92em, (px 1300) -> 13px, (px 1350) -> 13.5px, (em 100)
-  ;; -> 1em -- so fractional lengths stay integers. Whole-number units
-  ;; (% vh vw deg fr s ms) take a natural integer, so 50% is (pct 50).
-  (define hundredths-units '(em rem px ex ch))
+  ;; ONE rule, no special cases: every unit's argument is scaled by 100.
+  ;; (em 92) -> 0.92em, (px 1300) -> 13px, (pct 5000) -> 50%,
+  ;; (vh 10000) -> 100vh, (deg 4500) -> 45deg. The number is always
+  ;; centi-units, so fractional values stay exact integers -- no floats.
   (define (val->css v)
     (cond
      ((string? v) v)
@@ -86,10 +84,7 @@
      ((pair? v)
       (let* ((h (car v)) (u (and (symbol? h) (assq h units))))
         (cond
-         (u (string-append (if (memq h hundredths-units)
-                               (hundredths (cadr v))
-                               (num->css (cadr v)))
-                           (cdr u)))
+         (u (string-append (hundredths (cadr v)) (cdr u)))
          ((eq? h 'var) (string-append "var(--" (symbol->string (cadr v)) ")"))
          ((eq? h 'calc) (string-append "calc(" (join (map val->css (cdr v)) " ") ")"))
          ((eq? h 'rgba) (string-append "rgba(" (join (map val->css (cdr v)) ",") ")"))
