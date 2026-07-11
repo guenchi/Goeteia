@@ -38,7 +38,7 @@ wasmtime).  Proper tail calls compile to `return_call`.
   `math/utils.ss`-style `(library ...)` files, dependencies first
 - Dead code elimination: programs carry only what they use
 
-See `docs/design.md` for the object representation, the calling
+See `design.md` for the object representation, the calling
 convention, and the milestone-by-milestone build log.
 
 ## Web
