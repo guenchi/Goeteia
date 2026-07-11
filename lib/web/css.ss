@@ -5,20 +5,21 @@
 ;; (element names) or strings (anything with . # : > space).
 ;;
 ;; No floats anywhere -- the flonum printer isn't exact. Unit forms take
-;; variable arity: one integer is the whole value, two integers are the
-;; integer and fractional parts, so whole values stay natural (no x100
-;; inflation) and fractions stay exact integers (no floats):
-;;   (em 1)     -> "1em"      (em 0 92) -> "0.92em"   (em 3 4) -> "3.4em"
-;;   (px 13)    -> "13px"     (px 13 5) -> "13.5px"
-;;   (pct 50)   -> "50%"      (vh 100)  -> "100vh"    (deg 120) -> "120deg"
+;; variable arity: one integer is the whole value, two are the whole
+;; part and the fraction-in-hundredths. Whole values stay natural (no
+;; x100 inflation), fractions stay exact integers (no floats), and every
+;; value -- including a leading zero -- is expressible:
+;;   (em 1)   -> "1em"     (em 0 92) -> "0.92em"  (em 3 40) -> "3.4em"
+;;   (em 3 4) -> "3.04em"  (px 13 50) -> "13.5px" (px 13)   -> "13px"
+;;   (pct 50) -> "50%"     (vh 100)  -> "100vh"   (deg 120) -> "120deg"
 ;; Non-unit values:
 ;;   integer           -> itself ("0", "650" for z-index / rgb parts)
 ;;   string            -> literal ("#fff", "solid")
 ;;   symbol            -> its name (none, inherit, ...)
-;;   (dec 1 6)         -> "1.6"   ; a unitless decimal (line-height)
+;;   (dec 1 60)        -> "1.6"   ; a unitless decimal (line-height)
 ;;   (var ink)         -> "var(--ink)"
 ;;   (calc V ...)      -> "calc(V ...)"
-;;   (rgba 16 20 42 (pct 6)) -> "rgba(16,20,42,6%)"  ; 6% alpha = 0.06
+;;   (rgba 16 20 42 (dec 0 6)) -> "rgba(16,20,42,0.06)"  ; alpha
 ;;   (A B ...)         -> "A B ..."  ; a space-joined compound value
 ;; @media / @keyframes / @supports nest rules.
 ;;
@@ -48,16 +49,28 @@
      ((and (integer? n) (exact? n)) (number->string n))
      (else (error 'css "use an exact integer, a two-arg unit form, or a string" n))))
 
-  ;; a unit value: (em 1) -> "1em"; (em 0 92) -> "0.92em" (whole . frac).
-  ;; The fraction is written as literal digits (3 4 -> ".4", 0 92 ->
-  ;; ".92"); leading-zero fractions (an alpha like 0.06) use a percentage
-  ;; instead -- (pct 6) is 6% is 0.06.
+  ;; the fractional part is in hundredths, padded to two digits then
+  ;; trailing zeros dropped -- so a leading zero survives and every
+  ;; value is expressible: 92 -> ".92", 4 -> ".04", 40 -> ".4", 6 ->
+  ;; ".06". More digits give more precision: 625 -> ".625".
+  (define (strip-trailing-zeros s)
+    (let loop ((i (string-length s)))
+      (if (and (> i 0) (char=? (string-ref s (- i 1)) #\0))
+          (loop (- i 1))
+          (substring s 0 i))))
+  (define (frac->css f)
+    (let loop ((s (number->string f)))
+      (if (< (string-length s) 2)
+          (loop (string-append "0" s))
+          (strip-trailing-zeros s))))
+  ;; a unit value: (em 1) -> "1em"; (em 0 92) -> "0.92em" (whole . frac);
+  ;; (em 3 4) -> "3.04em", (em 3 40) -> "3.4em"
   (define (unit->css args suffix)
     (string-append
      (cond
       ((null? args) (error 'css "unit form needs an argument"))
       ((null? (cdr args)) (num->css (car args)))
-      (else (string-append (num->css (car args)) "." (num->css (cadr args)))))
+      (else (string-append (num->css (car args)) "." (frac->css (cadr args)))))
      suffix))
 
   (define units
