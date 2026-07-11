@@ -1,7 +1,6 @@
 # Goeteia
 
-*Γοητεία — 操纵底层存在的黑魔法。
-The black art of commanding what lies beneath.*
+*Γοητεία — the black art of commanding what lies beneath.*
 
 A self-hosting Scheme for the WebAssembly GC era.
 
