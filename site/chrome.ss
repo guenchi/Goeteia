@@ -37,7 +37,7 @@
             (-webkit-backdrop-filter "saturate(1.2) blur(10px)")
             (border-bottom (px 1) solid (var line)))
      '(.nav-inner (display flex) (align-items center) (justify-content space-between)
-                  (height (em 3 40)) (max-width (em 60)))
+                  (height (em 3 40)))
      '(.brand (font-weight 700) (font-size (em 1 15)) (color (var lapis))
               (letter-spacing (em 0 1)))
      '(".brand:hover" (text-decoration none))
