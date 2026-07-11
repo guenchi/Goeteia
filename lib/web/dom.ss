@@ -2,8 +2,9 @@
 ;; Copyright (c) 2026 guenchi. MIT license; see LICENSE.
 (library (web dom)
   (export window document body
-          get-element-by-id query-selector create-element
-          append-child! set-inner-html! inner-text set-text!
+          get-element-by-id query-selector create-element make-text
+          append-child! replace-child! remove-all-children!
+          set-inner-html! inner-text set-text!
           set-attribute! set-style!
           add-event-listener! console-log alert)
   (import (rnrs) (web js))
@@ -17,8 +18,14 @@
     (js-method (document) "querySelector" sel))
   (define (create-element tag)
     (js-method (document) "createElement" tag))
+  (define (make-text s)
+    (js-method (document) "createTextNode" s))
   (define (append-child! parent child)
     (js-method parent "appendChild" child))
+  (define (replace-child! parent new old)
+    (js-method parent "replaceChild" new old))
+  (define (remove-all-children! el)
+    (js-set! el "textContent" ""))
   (define (set-inner-html! el s) (js-set! el "innerHTML" s))
   (define (inner-text el) (js->string (js-get el "innerText")))
   (define (set-text! el s) (js-set! el "textContent" s))

@@ -516,7 +516,8 @@
     pair? null? symbol? identifier? string? number? boolean? char?
     procedure? not eq? eqv? equal? zero? + - * quotient remainder
     < > <= >= = max map error gensym string->symbol symbol->string
-    string-append string=? free-identifier=? bound-identifier=?
+    string-append string=? string-length substring
+    free-identifier=? bound-identifier=?
     syntax->datum datum->syntax generate-temporaries void))
 (define (base-meta-env)
   (map (lambda (n) (cons n (cons mv-prim n))) meta-prims))
@@ -712,6 +713,8 @@
     ((symbol->string) (symbol->string (unmark (a))))
     ((string-append) (fold-left string-append "" args))
     ((string=?) (string=? (a) (b)))
+    ((string-length) (string-length (a)))
+    ((substring) (substring (a) (b) (caddr args)))
     ((free-identifier=?) (eq? (unmark (a)) (unmark (b))))
     ((bound-identifier=?) (eq? (a) (b)))
     ((syntax->datum) (strip-marks (a)))
@@ -2101,15 +2104,13 @@
 (define (expand-spliced x acc)
   (cond
    ((and (pair? x) (symbol? (car x)) (eq? (unmark (car x)) 'begin))
-    ;; top-level begin splices (its subforms are already expanded),
-    ;; so macros and define-record-type can produce several defines
+    ;; top-level begin splices recursively (its subforms are already
+    ;; expanded), so macros, define-record-type and libraries can nest
+    ;; groups of defines
     (let splice ((subs (cdr x)) (acc acc))
       (if (null? subs)
           acc
-          (let ((sub (car subs)))
-            (if (macro-def? sub)
-                (begin (add-macro! sub) (splice (cdr subs) acc))
-                (splice (cdr subs) (cons (normalize-define sub) acc)))))))
+          (splice (cdr subs) (expand-spliced (car subs) acc)))))
    ((macro-def? x) (add-macro! x) acc)
    (else (cons (normalize-define x) acc))))
 (define (normalize-define f)

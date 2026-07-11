@@ -170,6 +170,12 @@
    ((eq? (caar ls) x) (car ls))
    (else (assq x (cdr ls)))))
 
+(define (remq x ls)
+  (cond
+   ((null? ls) '())
+   ((eq? (car ls) x) (remq x (cdr ls)))
+   (else (cons (car ls) (remq x (cdr ls))))))
+
 (define (caar p) (car (car p)))
 (define (cadr p) (car (cdr p)))
 (define (cdar p) (cdr (car p)))
