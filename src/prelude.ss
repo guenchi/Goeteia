@@ -2,19 +2,22 @@
 ;; Scheme and compiled into every module.
 ;; Copyright (c) 2026 guenchi. MIT license; see LICENSE.
 
-(define (newline) (%write-byte 10))
+(define (newline . p)
+  (if (null? p) ($wb 10) ($write-byte-port (car p) 10)))
 
-(define (display x)
+(define (display x . p)
+  (if (null? p) ($display x) ($with-out (car p) (lambda () ($display x)))))
+(define ($display x)
   (cond
    ((number? x) (%display-number x))
-   ((char? x) (%write-byte (char->integer x)))
+   ((char? x) ($wb (char->integer x)))
    ((string? x) (%display-string x 0))
    ((symbol? x) (%display-string (symbol->string x) 0))
-   ((null? x) (%write-byte 40) (%write-byte 41))
-   ((eq? x #t) (%write-byte 35) (%write-byte 116))
-   ((eq? x #f) (%write-byte 35) (%write-byte 102))
+   ((null? x) ($wb 40) ($wb 41))
+   ((eq? x #t) ($wb 35) ($wb 116))
+   ((eq? x #f) ($wb 35) ($wb 102))
    ((pair? x)
-    (%write-byte 40)
+    ($wb 40)
     (display (car x))
     (%display-tail (cdr x)))
    ((procedure? x) (%display-string "#<procedure>" 0))
@@ -22,63 +25,63 @@
 
 (define (%display-tail x)
   (cond
-   ((null? x) (%write-byte 41))
+   ((null? x) ($wb 41))
    ((pair? x)
-    (%write-byte 32)
+    ($wb 32)
     (display (car x))
     (%display-tail (cdr x)))
    (else
-    (%write-byte 32) (%write-byte 46) (%write-byte 32)
+    ($wb 32) ($wb 46) ($wb 32)
     (display x)
-    (%write-byte 41))))
+    ($wb 41))))
 
 (define (%display-string s i)
   (when (< i (string-length s))
-    (%write-byte (char->integer (string-ref s i)))
+    ($wb (char->integer (string-ref s i)))
     (%display-string s (+ i 1))))
 
 (define (%display-number n)
   (cond
    ((flonum? n) ($display-flonum n))
    ((%bignum? n) ($display-bignum n))
-   ((< n 0) (%write-byte 45) (%display-digits (- 0 n)))
+   ((< n 0) ($wb 45) (%display-digits (- 0 n)))
    (else (%display-digits n))))
 (define ($display-bignum b)
-  (when ($bn-neg? b) (%write-byte 45))
+  (when ($bn-neg? b) ($wb 45))
   ($display-mag (%bignum-limbs b)))
 (define ($display-mag m)
   (if (and (= ($mag-len m) 1) (< (vector-ref m 0) 10))
-      (%write-byte (+ 48 (vector-ref m 0)))
+      ($wb (+ 48 (vector-ref m 0)))
       (let ((qr ($mag-divmod-small m 10)))
         ($display-mag (car qr))
-        (%write-byte (+ 48 (cdr qr))))))
+        ($wb (+ 48 (cdr qr))))))
 (define ($display-flonum x)
   (let* ((zero (fixnum->flonum 0))
          (neg (fl<? x zero))
          (mag (if neg (fl- zero x) x)))
-    (when neg (%write-byte 45))
+    (when neg ($wb 45))
     (if (fl<? (fixnum->flonum 536870911) mag)
         (%display-string "<big-flonum>" 0)
         (let* ((ip (%fl->fx mag))
                (frac (fl- mag (fixnum->flonum ip))))
           (%display-digits ip)
-          (%write-byte 46)
+          ($wb 46)
           ($display-frac frac 0)))))
 (define ($display-frac f i)
   ;; up to 12 digits, trimmed via lookahead: stop when the rest is 0
   (if (or (= i 12) (fl=? f (fixnum->flonum 0)))
-      (when (zero? i) (%write-byte 48))
+      (when (zero? i) ($wb 48))
       (let* ((scaled (fl* f (fixnum->flonum 10)))
              (d (%fl->fx scaled)))
-        (%write-byte (+ 48 d))
+        ($wb (+ 48 d))
         ($display-frac (fl- scaled (fixnum->flonum d)) (+ i 1)))))
 
 (define (%display-digits n)
   (if (< n 10)
-      (%write-byte (+ 48 n))
+      ($wb (+ 48 n))
       (begin
         (%display-digits (quotient n 10))
-        (%write-byte (+ 48 (remainder n 10))))))
+        ($wb (+ 48 (remainder n 10))))))
 
 (define (string=? a b)
   (and (= (string-length a) (string-length b))
@@ -199,41 +202,114 @@
    ((string=? (symbol->string (car tab)) s) (car tab))
    (else (%intern s (cdr tab)))))
 
-;; ---- input port (one byte of pushback) ----
+;; ---- ports ----
+;;
+;; Console I/O rides the two host imports; string ports are plain
+;; records.  The reader and the printers dispatch through the current
+;; ports, so with-output-to-string and friends need no host support.
 
-(define $peeked -2)
+(define-record-type ($port $make-port port?)
+  (fields (immutable kind $port-kind)
+          (mutable a $port-a $port-a!)
+          (mutable b $port-b $port-b!)))
+;; kinds: console-in (a = one-byte pushback), console-out,
+;;        string-in (a = string, b = position),
+;;        string-out (a = reversed char list)
 
-(define (%peek-byte)
-  (when (= $peeked -2)
-    (set! $peeked (%read-byte)))
-  $peeked)
-(define (%next-byte)
-  (let ((b (%peek-byte)))
-    (set! $peeked -2)
+(define $console-in ($make-port 'console-in -2 0))
+(define $console-out ($make-port 'console-out 0 0))
+(define $cip $console-in)
+(define $cop $console-out)
+(define (current-input-port) $cip)
+(define (current-output-port) $cop)
+(define (input-port? p)
+  (and (port? p) (memq ($port-kind p) '(console-in string-in))))
+(define (output-port? p)
+  (and (port? p) (memq ($port-kind p) '(console-out string-out))))
+
+(define (open-input-string s) ($make-port 'string-in s 0))
+(define (open-output-string) ($make-port 'string-out '() 0))
+(define (get-output-string p) (list->string (reverse ($port-a p))))
+
+(define ($peek-byte-port p)
+  (let ((k ($port-kind p)))
+    (cond
+     ((eq? k 'console-in)
+      (when (= ($port-a p) -2) ($port-a! p (%read-byte)))
+      ($port-a p))
+     ((eq? k 'string-in)
+      (let ((s ($port-a p)) (i ($port-b p)))
+        (if (< i (string-length s))
+            (char->integer (string-ref s i))
+            -1)))
+     (else (errorf 'read "not an input port")))))
+(define ($next-byte-port p)
+  (let ((b ($peek-byte-port p)))
+    (let ((k ($port-kind p)))
+      (cond
+       ((eq? k 'console-in) ($port-a! p -2))
+       ((eq? k 'string-in)
+        (when (< -1 b) ($port-b! p (+ ($port-b p) 1))))))
     b))
+(define ($write-byte-port p byte)
+  (let ((k ($port-kind p)))
+    (cond
+     ((eq? k 'console-out) (%write-byte byte))
+     ((eq? k 'string-out)
+      ($port-a! p (cons (integer->char byte) ($port-a p))))
+     (else (errorf 'write "not an output port")))))
 
-(define (read-char)
-  (let ((b (%next-byte)))
+(define (%peek-byte) ($peek-byte-port $cip))
+(define (%next-byte) ($next-byte-port $cip))
+(define ($wb byte) ($write-byte-port $cop byte))
+
+(define ($with-out p thunk)
+  (let ((old $cop))
+    (dynamic-wind
+      (lambda () (set! $cop p))
+      thunk
+      (lambda () (set! $cop old)))))
+(define ($with-in p thunk)
+  (let ((old $cip))
+    (dynamic-wind
+      (lambda () (set! $cip p))
+      thunk
+      (lambda () (set! $cip old)))))
+(define (with-output-to-string thunk)
+  (let ((p (open-output-string)))
+    ($with-out p thunk)
+    (get-output-string p)))
+(define (with-input-from-string s thunk)
+  ($with-in (open-input-string s) thunk))
+
+(define (read-char . p)
+  (let ((b ($next-byte-port (if (null? p) $cip (car p)))))
     (if (< b 0) (eof-object) (integer->char b))))
-(define (peek-char)
-  (let ((b (%peek-byte)))
+(define (peek-char . p)
+  (let ((b ($peek-byte-port (if (null? p) $cip (car p)))))
     (if (< b 0) (eof-object) (integer->char b))))
+(define (write-char c . p)
+  ($write-byte-port (if (null? p) $cop (car p)) (char->integer c)))
 
 ;; ---- the reader ----
 
-(define (read)
+(define (read . p)
+  (if (null? p)
+      ($read)
+      ($with-in (car p) (lambda () ($read)))))
+(define ($read)
   (%skip-blanks)
   (let ((b (%peek-byte)))
     (cond
      ((< b 0) (eof-object))
      ((= b 40) (%next-byte) (%read-list))          ; (
-     ((= b 39) (%next-byte) (list 'quote (read)))  ; '
-     ((= b 96) (%next-byte) (list 'quasiquote (read))) ; `
+     ((= b 39) (%next-byte) (list 'quote ($read)))  ; '
+     ((= b 96) (%next-byte) (list 'quasiquote ($read))) ; `
      ((= b 44)                                     ; , or ,@
       (%next-byte)
       (if (= (%peek-byte) 64)
-          (begin (%next-byte) (list 'unquote-splicing (read)))
-          (list 'unquote (read))))
+          (begin (%next-byte) (list 'unquote-splicing ($read)))
+          (list 'unquote ($read))))
      ((= b 34) (%next-byte) (%read-string '()))    ; "
      ((= b 35) (%next-byte) (%read-hash))          ; #
      (else (%finish-atom (%read-token '()))))))
@@ -288,7 +364,7 @@
 (define (%number-token? bs)
   (if (and (pair? bs) (= (car bs) 45))             ; leading -
       (and (pair? (cdr bs)) (%all-digits? (cdr bs)))
-      (%all-digits? bs)))
+      (and (pair? bs) (%all-digits? bs))))
 (define (%decimal-token? bs)
   (let ((bs (if (and (pair? bs) (= (car bs) 45)) (cdr bs) bs)))
     (let scan ((bs bs) (digits-before 0) (seen-dot #f) (digits-after 0))
@@ -328,18 +404,19 @@
   (%skip-blanks)
   (let ((b (%peek-byte)))
     (cond
+     ((< b 0) (errorf 'read "unexpected end of input in list"))
      ((= b 41) (%next-byte) '())                   ; )
      ((= b 46)                                     ; . -- dotted tail
       (%next-byte)                                 ;      or dot-initial
       (if (%delimiter? (%peek-byte))               ;      symbol
-          (let ((d (read)))
+          (let ((d ($read)))
             (%skip-blanks)
             (%next-byte)                           ; consume )
             d)
           (cons (%finish-atom (cons 46 (%read-token '())))
                 (%read-list))))
      (else
-      (let ((x (read)))
+      (let ((x ($read)))
         (cons x (%read-list)))))))
 
 (define (%read-string acc)
@@ -354,7 +431,7 @@
     (cond
      ((= b 116) #t)                                ; t
      ((= b 102) #f)                                ; f
-     ((= b 39) (list 'syntax (read)))              ; ' -- #'x
+     ((= b 39) (list 'syntax ($read)))              ; ' -- #'x
      ((= b 40) (list->vector (%read-list)))        ; ( -- #(...) vector
      ((= b 120) (%read-hex 0))                     ; x -- hex literal
      ((= b 92)                                     ; \ -- character
@@ -388,39 +465,41 @@
 
 ;; ---- write ----
 
-(define (write x)
+(define (write x . p)
+  (if (null? p) ($write x) ($with-out (car p) (lambda () ($write x)))))
+(define ($write x)
   (cond
    ((string? x)
-    (%write-byte 34)
+    ($wb 34)
     (%write-escaped x 0)
-    (%write-byte 34))
+    ($wb 34))
    ((char? x)
-    (%write-byte 35) (%write-byte 92)
+    ($wb 35) ($wb 92)
     (%write-char-name x))
    ((pair? x)
-    (%write-byte 40)
+    ($wb 40)
     (write (car x))
     (%write-tail (cdr x)))
    (else (display x))))
 
 (define (%write-tail x)
   (cond
-   ((null? x) (%write-byte 41))
+   ((null? x) ($wb 41))
    ((pair? x)
-    (%write-byte 32)
+    ($wb 32)
     (write (car x))
     (%write-tail (cdr x)))
    (else
-    (%write-byte 32) (%write-byte 46) (%write-byte 32)
+    ($wb 32) ($wb 46) ($wb 32)
     (write x)
-    (%write-byte 41))))
+    ($wb 41))))
 
 (define (%write-escaped s i)
   (when (< i (string-length s))
     (let ((c (char->integer (string-ref s i))))
       (when (or (= c 34) (= c 92))
-        (%write-byte 92))
-      (%write-byte c))
+        ($wb 92))
+      ($wb c))
     (%write-escaped s (+ i 1))))
 
 (define (%write-char-name c)
@@ -429,7 +508,7 @@
      ((= n 32) (%display-string "space" 0))
      ((= n 10) (%display-string "newline" 0))
      ((= n 9) (%display-string "tab" 0))
-     (else (%write-byte n)))))
+     (else ($wb n)))))
 
 ;; ---- additions for self-hosting ----
 
@@ -480,25 +559,14 @@
 (define (make-list n x)
   (if (zero? n) '() (cons x (make-list (- n 1) x))))
 
-(define (string-append a b)
-  (let* ((la (string-length a))
-         (lb (string-length b))
-         (s (%make-string (+ la lb))))
-    (%blit! s a 0 la 0)
-    (%blit! s b 0 lb la)
-    s))
-(define (%blit! dst src i n at)
-  (when (< i n)
-    (string-set! dst (+ at i) (string-ref src i))
-    (%blit! dst src (+ i 1) n at)))
-
 (define (number->string n)
-  (if (< n 0)
-      (string-append "-" (number->string (- 0 n)))
-      (%bytes->string (%digits n '()))))
-(define (%digits n acc)
-  (let ((acc (cons (+ 48 (remainder n 10)) acc)))
-    (if (< n 10) acc (%digits (quotient n 10) acc))))
+  (with-output-to-string (lambda () (display n))))
+(define (string->number s)
+  (let ((bs (map (lambda (c) (char->integer c)) (string->list s))))
+    (cond
+     ((%number-token? bs) (%parse-int bs))
+     ((%decimal-token? bs) (%parse-decimal bs))
+     (else #f))))
 
 ;; gensyms: fresh uninterned symbol structs; identity comes from the
 ;; struct allocation, so even same-named gensyms are distinct
@@ -507,14 +575,12 @@
   (set! $gensym-count (+ $gensym-count 1))
   (%make-symbol (string-append prefix (number->string $gensym-count))))
 
+
 (define (%abort) (%unreachable))
 
 ;; compatible with the host Chez errorf; format directives print as-is
 (define (errorf who msg . irritants)
-  (display who) (display ": ") (display msg)
-  (for-each (lambda (x) (display " ") (write x)) irritants)
-  (newline)
-  (%abort))
+  (raise ($make-error who msg irritants)))
 
 (define (eqv? a b)
   (or (eq? a b)
@@ -970,3 +1036,134 @@
 (define (floor x) (if (flonum? x) (flfloor x) x))
 (define (truncate x) (if (flonum? x) (fltruncate x) x))
 (define (sqrt x) (flsqrt ($->fl x)))
+
+;; ---- the string library ----
+
+(define (make-string n . fill)
+  (let ((s (%make-string n)))
+    (unless (null? fill) (string-fill! s (car fill)))
+    s))
+(define (string-fill! s c)
+  (let loop ((i 0))
+    (when (< i (string-length s))
+      (string-set! s i c)
+      (loop (+ i 1)))))
+(define (string . chars) (list->string chars))
+(define (substring s start end)
+  (let ((r (%make-string (- end start))))
+    (let loop ((i start))
+      (when (< i end)
+        (string-set! r (- i start) (string-ref s i))
+        (loop (+ i 1))))
+    r))
+(define (string-copy s) (substring s 0 (string-length s)))
+(define (string-append . ss)
+  ($strings-join ss))
+(define ($strings-join ss)
+  (let* ((total (fold-left (lambda (n s) (+ n (string-length s))) 0 ss))
+         (r (%make-string total)))
+    (let outer ((ss ss) (at 0))
+      (if (null? ss)
+          r
+          (let ((s (car ss)))
+            (let inner ((i 0))
+              (when (< i (string-length s))
+                (string-set! r (+ at i) (string-ref s i))
+                (inner (+ i 1))))
+            (outer (cdr ss) (+ at (string-length s))))))))
+
+(define ($string-cmp a b)               ; lexicographic: -1 0 1
+  (let ((la (string-length a)) (lb (string-length b)))
+    (let loop ((i 0))
+      (cond
+       ((and (= i la) (= i lb)) 0)
+       ((= i la) -1)
+       ((= i lb) 1)
+       ((< (char->integer (string-ref a i)) (char->integer (string-ref b i))) -1)
+       ((< (char->integer (string-ref b i)) (char->integer (string-ref a i))) 1)
+       (else (loop (+ i 1)))))))
+(define (string<? a b) (< ($string-cmp a b) 0))
+(define (string>? a b) (< 0 ($string-cmp a b)))
+(define (string<=? a b) (< ($string-cmp a b) 1))
+(define (string>=? a b) (< -1 ($string-cmp a b)))
+
+(define (char=? a b) (eq? a b))
+(define (char<? a b) (< (char->integer a) (char->integer b)))
+(define (char>? a b) (< (char->integer b) (char->integer a)))
+(define (char<=? a b) (not (char>? a b)))
+(define (char>=? a b) (not (char<? a b)))
+(define (char-upcase c)
+  (let ((n (char->integer c)))
+    (if (and (< 96 n) (< n 123)) (integer->char (- n 32)) c)))
+(define (char-downcase c)
+  (let ((n (char->integer c)))
+    (if (and (< 64 n) (< n 91)) (integer->char (+ n 32)) c)))
+(define (char-alphabetic? c)
+  (let ((n (char->integer c)))
+    (or (and (< 64 n) (< n 91)) (and (< 96 n) (< n 123)))))
+(define (char-numeric? c)
+  (let ((n (char->integer c)))
+    (and (< 47 n) (< n 58))))
+(define (char-whitespace? c)
+  (memv (char->integer c) '(32 9 10 13 12)))
+
+(define (string-upcase s) (string-map (lambda (c) (char-upcase c)) s))
+(define (string-downcase s) (string-map (lambda (c) (char-downcase c)) s))
+(define (string-map f s) (list->string (map f (string->list s))))
+(define (string-for-each f s) (for-each f (string->list s)))
+
+;; ---- exceptions: raise and guard over escape continuations ----
+;;
+;; A guard pushes its escape continuation on a handler stack; raise
+;; pops the nearest one and escapes to it (running dynamic-wind after
+;; thunks on the way).  An unmatched guard clause re-raises outward.
+
+(define $handlers '())
+(define $exn-mark (cons 0 0))
+
+(define (raise obj)
+  (if (null? $handlers)
+      ($unhandled obj)
+      (let ((k (car $handlers)))
+        (set! $handlers (cdr $handlers))
+        (k (cons $exn-mark obj)))))
+(define (raise-continuable obj) (raise obj))
+
+(define ($try thunk)
+  ;; -> result, or ($exn-mark . obj) if something raised
+  (call/cc
+   (lambda (k)
+     (set! $handlers (cons k $handlers))
+     (let ((v (thunk)))
+       (set! $handlers (cdr $handlers))
+       v))))
+(define ($guard-hit? r)
+  (and (pair? r) (eq? (car r) $exn-mark)))
+
+(define-syntax guard
+  (syntax-rules ()
+    ((_ (var clause ...) body ...)
+     (let ((r ($try (lambda () body ...))))
+       (if ($guard-hit? r)
+           (let ((var (cdr r)))
+             (cond clause ... (else (raise var))))
+           r)))))
+
+;; error conditions
+(define-record-type ($error-object $make-error error?)
+  (fields (immutable who condition-who)
+          (immutable msg condition-message)
+          (immutable irritants condition-irritants)))
+(define (error who msg . irritants)
+  (raise ($make-error who msg irritants)))
+(define ($unhandled obj)
+  (display "unhandled exception: ")
+  (if (error? obj)
+      (begin
+        (display (condition-who obj)) (display ": ")
+        (display (condition-message obj))
+        (for-each (lambda (x) (display " ") (write x))
+                  (condition-irritants obj)))
+      (write obj))
+  (newline)
+  (%abort))

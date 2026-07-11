@@ -2041,8 +2041,16 @@
                                 (cons 'zero? '(begin $eq2)))
                           forms)))
     (let grow ((live '())
+               ;; roots: program expressions, plus the initializers of
+               ;; top-level variables kept for their side effects
                (queue (fold-left (lambda (acc f)
-                                   (if (define-form? f) acc (form-refs f acc)))
+                                   (cond
+                                    ((not (define-form? f)) (form-refs f acc))
+                                    ((and (var-define? f)
+                                          (pair? (cddr f))
+                                          (not (pure-init? (caddr f))))
+                                     (form-refs (caddr f) acc))
+                                    (else acc)))
                                  '()
                                  forms)))
       (cond

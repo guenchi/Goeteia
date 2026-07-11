@@ -29,17 +29,40 @@ function topLevelSpans(text) {
     return spans;
 }
 
-function parseSpecs(form) {
-    // "(import (a b) (c))" -> [["a","b"],["c"]]
-    const specs = [];
-    const re = /\(([^()]*)\)/g;
-    let m;
-    const inner = form.replace(/^\s*\(\s*import/, '');
-    while ((m = re.exec(inner)) !== null) {
-        const parts = m[1].trim().split(/\s+/).filter(x => x);
-        if (parts.length) specs.push(parts);
+// a minimal sexpr reader for import clauses: symbols and nesting
+function parseSexpr(text) {
+    let i = 0;
+    function skip() { while (i < text.length && /[\s]/.test(text[i])) i++; }
+    function one() {
+        skip();
+        if (text[i] === '(') {
+            i++;
+            const items = [];
+            for (skip(); text[i] !== ')'; skip()) items.push(one());
+            i++;
+            return items;
+        }
+        const start = i;
+        while (i < text.length && !/[\s()]/.test(text[i])) i++;
+        return text.slice(start, i);
     }
-    return specs;
+    return one();
+}
+
+function parseSpecs(form) {
+    // "(import (a b) (only (c) d))" -> [["a","b"],["only",["c"],"d"]]
+    return parseSexpr(form).slice(1);
+}
+
+function specTarget(spec) {
+    return ['only', 'except', 'rename', 'prefix'].includes(spec[0])
+        ? spec[1] : spec;
+}
+function specAliases(spec) {
+    if (spec[0] !== 'rename') return '';
+    return spec.slice(2)
+        .map(pr => `(define ${pr[1]} ${pr[0]})`)
+        .join('\n');
 }
 
 function libraryImports(text) {
@@ -73,7 +96,8 @@ function resolveImports(text, dirs, visited = new Set()) {
         if (/^\(\s*import[\s)]/.test(form)) {
             result += text.slice(at, start);
             result += parseSpecs(form)
-                .map(spec => loadLibrary(spec, dirs, visited))
+                .map(spec => loadLibrary(specTarget(spec), dirs, visited)
+                             + '\n' + specAliases(spec))
                 .join('\n');
             at = end;
         }

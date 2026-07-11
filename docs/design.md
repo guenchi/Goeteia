@@ -63,6 +63,21 @@ Chez Scheme hosts it for bootstrapping; the self-hosted build
 (`build-self.sh`) compiles the compiler with itself and checks that
 the result is a byte-identical fixpoint.
 
+## Ports and exceptions
+
+String ports are plain records; the reader and printers dispatch
+through `current-input-port`/`current-output-port`, so
+`with-output-to-string`, `number->string` and `string->number` need
+no host support (console I/O remains the two byte-stream imports).
+
+`guard`/`raise` ride the same escape-continuation machinery as
+call/cc: a guard pushes its continuation on a handler stack, raise
+escapes to the nearest one (running dynamic-wind afters on the way),
+and an unmatched clause re-raises outward.  `error` and `errorf`
+raise a condition record (`error?`, `condition-who/-message/
+-irritants`); an unhandled exception prints and traps, so compiler
+errors read exactly as before but user code can guard them.
+
 ## Libraries
 
 A library is one `(library (name parts) (export ...) (import ...)
@@ -71,7 +86,9 @@ file, its `lib/`, or the repo `lib/`.  The drivers inline imports
 (dependencies first, each library once); the expander splices library
 bodies -- exports are advisory, and dead code elimination prunes
 whatever a program doesn't use.  `(rnrs ...)` names are satisfied by
-the prelude.  `only`/`rename` import specs are not yet supported.
+the prelude.  `rename` import specs create top-level aliases; `only`/`except` are
+advisory in the flat-splice model (dead code elimination prunes the
+unused anyway).
 
 ## Program shape
 
