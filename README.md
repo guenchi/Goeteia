@@ -68,6 +68,11 @@ A small UI stack over the JS bridge, in `lib/web/`:
   template builds the scene graph once, unquoted attributes become
   signal-driven holes, and `three-loop!` pumps frames into Scheme —
   bridge traffic is O(changes), rendering stays on the GPU
+- `(web gl)` — raw WebGL through a command buffer: Scheme encodes a
+  frame of GL commands as words in the shared linear memory and one
+  bridge call replays them; vertex data uploads zero-copy from the
+  same memory (`examples/gl-particles.html`: 10,000 particles,
+  one call per frame)
 
 `examples/counter.html` is a page scripted entirely in Goeteia;
 `examples/react-embed.html` is a React app with Goeteia widgets
