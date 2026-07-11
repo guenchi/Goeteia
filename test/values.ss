@@ -1,0 +1,12 @@
+;; expect: #t
+(define (div-mod a b)
+  (values (quotient a b) (remainder a b)))
+(and (eq? (call-with-values (lambda () (values 1 2 3))
+            (lambda (a b c) (+ a (+ b c))))
+          6)
+     (eq? (call-with-values (lambda () 42) (lambda (x) x)) 42)
+     (eq? (call-with-values (lambda () (values)) (lambda () 7)) 7)
+     (equal? (call-with-values (lambda () (values 1 2)) (lambda args args))
+             '(1 2))
+     (call-with-values (lambda () (div-mod 17 5))
+       (lambda (q r) (and (eq? q 3) (eq? r 2)))))

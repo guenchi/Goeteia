@@ -63,13 +63,27 @@ the program's result, exported as `main`.
 
 ## Calling convention
 
-Milestone 1 has direct calls only: top-level functions become wasm
-functions of type `(eqref^n) → eqref`.
+Top-level functions are wasm functions of type `(eqref^n) → eqref`
+called directly (`call`/`return_call`); a variadic definition takes
+its rest parameter as one final list-valued argument, consed up at
+the call site.
 
-Closures (later milestones) will be structs carrying a typed function
-reference, invoked with `call_ref`; variadic procedures will use an
-argument-list convention so that arity is a runtime property, making
-`apply` and rest parameters natural.
+Every closure struct carries **two entry points**:
+
+* field 0 — the fast entry, typed per arity: `$fnN = (func (ref
+  $closN) eqref^n → eqref)`, invoked with `call_ref` after a
+  `ref.test`-guarded cast;
+* field 1 — the generic entry `$fnG = (func (ref $closbase) eqref →
+  eqref)`, which takes the arguments as a list.
+
+A call site with a statically known argument count tests the callee
+against `$closN`: on a hit it uses the fast entry with the arguments
+on the wasm stack (no allocation); otherwise it conses the arguments
+and calls the generic entry.  Fixed-arity closures share one generic
+adapter per arity (unpack the list, forward to the fast entry);
+variadic closures' body *is* their generic entry.  `apply` always
+targets the generic entry, so `(apply f a b lst)` is just two conses.
+Tail calls use `return_call_ref` on either path.
 
 ## Roadmap
 
@@ -88,8 +102,12 @@ argument-list convention so that arity is a runtime property, making
   `quotient`/`remainder`, and `display`/`newline` through the
   `io.write_byte` import, with the runtime library written in
   schwasm's own Scheme.
-- **M4**: a reader in Scheme, variadic procedures and `apply`,
-  `values`.
-- **M5**: hygienic macros (`syntax-rules`, `syntax-case` with a
+- **M4 (done)**: variadic procedures (`(lambda args ...)`, dotted
+  formals) via the dual-entry closure convention, `apply`, `values` /
+  `call-with-values`, and the list library (`list`, `length`,
+  `append`, `reverse`, `map`, `for-each`, `memq`, `assq`, `equal?`).
+- **M5**: a reader in Scheme (`io.read_byte`), `string->symbol`
+  with runtime interning, `write`.
+- **M6**: hygienic macros (`syntax-rules`, `syntax-case` with a
   compile-time meta-interpreter, hygiene by renaming).
-- **M6**: self-hosting.
+- **M7**: self-hosting.

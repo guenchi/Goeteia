@@ -65,13 +65,22 @@
 (define T-FUNCREF #x70)
 
 ;; fixed type-table prefix
+;;
+;; Every closure struct carries two entry points: a fast arity-typed
+;; one (field 0, used when the argument count matches statically) and
+;; a generic one taking the arguments as a list (field 1, type $fnG,
+;; used by apply, by variadic procedures, and when arities differ).
+;; Fixed-arity closures share one generic adapter per arity that
+;; unpacks the list and forwards to the fast entry.
 (define TY-PAIR 0)          ; (struct (mut eqref) (mut eqref))
 (define TY-SINGLETON 1)     ; (struct i32)
 (define TY-STRING 2)        ; (array (mut i8))
 (define TY-SYMBOL 3)        ; (struct (ref $string))
-(define TY-CLOSBASE 4)      ; open supertype of all closures
-(define TY-IOFN 5)          ; (func (param i32))
-(define TY-FIRST-FREE 6)
+(define TY-FNG 4)           ; (func (ref $closbase) eqref -> eqref)
+(define TY-CLOSBASE 5)      ; open (struct funcref (ref $fnG))
+(define TY-CLOSV 6)         ; variadic closures: base + env field
+(define TY-IOFN 7)          ; (func (param i32))
+(define TY-FIRST-FREE 8)
 
 ;; imported functions come first in the function index space
 (define FN-WRITE-BYTE 0)
@@ -205,6 +214,25 @@
                     ,(xpand-cond (cdr clauses))))))))
 
 ;;;; ------------------------------------------------------------------
+;;;; lambda formals: a proper list (fixed), an improper list (fixed
+;;;; plus rest), or a single symbol (all arguments as a list)
+
+(define (formals-fixed f)
+  (if (pair? f)
+      (cons (car f) (formals-fixed (cdr f)))
+      '()))
+(define (formals-rest f)
+  (cond
+   ((symbol? f) f)
+   ((pair? f) (formals-rest (cdr f)))
+   (else #f)))
+(define (formals-names f)
+  (let ((r (formals-rest f)))
+    (if r
+        (append (formals-fixed f) (list r))
+        (formals-fixed f))))
+
+;;;; ------------------------------------------------------------------
 ;;;; assignment conversion: assigned lexicals are boxed in pairs
 
 (define (assigned-vars e acc)
@@ -233,10 +261,11 @@
              `(set! ,(cadr e) ,v))))
       ((lambda)
        (let* ((formals (cadr e))
-              (boxed (filter (lambda (p) (memq p assigned)) formals))
+              (names (formals-names formals))
+              (boxed (filter (lambda (p) (memq p assigned)) names))
               (scope* (append (map (lambda (p)
                                      (cons p (and (memq p assigned) #t)))
-                                   formals)
+                                   names)
                               scope))
               (body (avc* (cddr e) scope* assigned)))
          (if (null? boxed)
@@ -269,9 +298,10 @@
   (let ((assigned (assigned-vars form '())))
     (if (and (pair? form) (eq? (car form) 'define) (pair? (cadr form)))
         (let* ((formals (cdadr form))
-               (boxed (filter (lambda (p) (memq p assigned)) formals))
+               (names (formals-names formals))
+               (boxed (filter (lambda (p) (memq p assigned)) names))
                (scope (map (lambda (p) (cons p (and (memq p assigned) #t)))
-                           formals))
+                           names))
                (body (avc* (cddr form) scope assigned)))
           (if (null? boxed)
               `(define ,(cadr form) . ,body)
@@ -283,13 +313,14 @@
 ;;;; ------------------------------------------------------------------
 ;;;; program state (one program per compiler run)
 
-(define *fns* '())        ; name -> (index . arity)
+(define *fns* '())        ; name -> (index n-fixed variadic?)
 (define *vars* '())       ; name -> global index
 (define *plain-ty* '())   ; arity -> type index (top-level functions)
 (define *clos-ty* '())    ; arity -> (fn-type . struct-type)
 (define *lifted* '())     ; fn index -> (type-idx n-params extra code)
 (define *next-fn* 0)
 (define *wrappers* '())   ; top-level fn name -> wrapper fn index
+(define *adapters* '())   ; arity -> generic-entry adapter fn index
 (define *interned* '())   ; (kind . datum) -> global index
 (define *next-global* 0)
 
@@ -327,7 +358,8 @@
     (case (car e)
       ((quote) '())
       ((set!) (free-vars (caddr e) bound))
-      ((lambda) (free-vars-body (cddr e) (append (cadr e) bound)))
+      ((lambda) (free-vars-body (cddr e)
+                                (append (formals-names (cadr e)) bound)))
       ((let)
        (union (free-vars-body (map cadr (cadr e)) bound)
               (free-vars-body (cddr e)
@@ -369,6 +401,7 @@
       ((begin) (compile-body (cdr e) locals cell tail?))
       ((lambda) (compile-lambda (cadr e) (cddr e) locals cell))
       ((set!) (compile-global-set e locals cell))
+      ((apply) (compile-apply e locals cell tail?))
       (else (compile-app e locals cell tail?))))
    (else (errorf 'schwasm "cannot compile ~s" e))))
 
@@ -376,30 +409,78 @@
   (cond
    ((assq e locals) => (lambda (s) (local-get (cdr s))))
    ((assq e *vars*) => (lambda (v) (global-get (cdr v))))
-   ((assq e *fns*) =>
-    (lambda (f) (compile-fn-value (car f) (cadr f) (cddr f))))
+   ((assq e *fns*) => (lambda (f) (compile-fn-value (car f) (cdr f))))
    (else (errorf 'schwasm "unbound variable ~s" e))))
 
-(define (compile-fn-value name idx arity)
+;; walk an argument list held in local t, pushing n elements
+(define (unpack-args t n)
+  (map (lambda (_)
+         (list (local-get t) (ref-cast TY-PAIR) (struct-get TY-PAIR 0)
+               (local-get t) (ref-cast TY-PAIR) (struct-get TY-PAIR 1)
+               (local-set t)))
+       (iota n)))
+
+;; the shared generic entry for fixed-arity closures: unpack the
+;; argument list and forward to the fast entry
+(define (adapter! arity)
+  (let ((a (assv arity *adapters*)))
+    (if a
+        (cdr a)
+        (let ((idx (alloc-fn!))
+              (tys (clos-ty arity)))
+          (set! *adapters* (cons (cons arity idx) *adapters*))
+          (record-fn!
+           idx
+           (list TY-FNG 2 1
+                 (let ((t 2))
+                   (list (local-get 0) (ref-cast (cdr tys))
+                         (local-get 1) (local-set t)
+                         (unpack-args t arity)
+                         (local-get 0) (ref-cast (cdr tys))
+                         (struct-get (cdr tys) 0)
+                         #x15 (uleb (car tys)))))) ; return_call_ref
+          idx))))
+
+(define (compile-fn-value name entry)
   ;; a top-level function used as a value: wrap it in a closure
-  (let ((w (assq name *wrappers*)))
-    (list (ref-func
-           (if w
-               (cdr w)
-               (let* ((widx (alloc-fn!))
-                      (tys (clos-ty arity)))
-                 (set! *wrappers* (cons (cons name widx) *wrappers*))
-                 (record-fn!
-                  widx
-                  (list (car tys)
-                        (+ arity 1)
-                        0
-                        (list (map (lambda (i) (local-get (+ i 1)))
-                                   (iota arity))
-                              #x12 (uleb idx)))) ; return_call f
-                 widx)))
-          (global-get G-NULL)
-          (struct-new (cdr (clos-ty arity))))))
+  (let ((idx (car entry))
+        (nfixed (cadr entry))
+        (variadic? (caddr entry))
+        (w (assq name *wrappers*)))
+    (if w
+        (make-closure-code (cadr w) (cddr w) nfixed variadic?)
+        (let ((widx (alloc-fn!)))
+          (if variadic?
+              ;; generic-only wrapper: unpack the fixed arguments,
+              ;; pass the remainder as the rest list
+              (let ((t 2))
+                (record-fn!
+                 widx
+                 (list TY-FNG 2 1
+                       (list (local-get 1) (local-set t)
+                             (unpack-args t nfixed)
+                             (local-get t)
+                             #x12 (uleb idx))))   ; return_call f
+                (set! *wrappers* (cons (cons name (cons widx widx)) *wrappers*))
+                (make-closure-code widx widx nfixed #t))
+              ;; typed wrapper plus the shared per-arity adapter
+              (let ((tys (clos-ty nfixed)))
+                (record-fn!
+                 widx
+                 (list (car tys) (+ nfixed 1) 0
+                       (list (map (lambda (i) (local-get (+ i 1)))
+                                  (iota nfixed))
+                             #x12 (uleb idx))))
+                (let ((gidx (adapter! nfixed)))
+                  (set! *wrappers*
+                        (cons (cons name (cons widx gidx)) *wrappers*))
+                  (make-closure-code widx gidx nfixed #f))))))))
+
+(define (make-closure-code code-idx generic-idx arity variadic?)
+  (list (ref-func code-idx)
+        (ref-func generic-idx)
+        (global-get G-NULL)
+        (struct-new (if variadic? TY-CLOSV (cdr (clos-ty arity))))))
 
 (define (compile-datum d)
   (cond
@@ -456,15 +537,25 @@
 ;;; closures
 
 (define (compile-lambda formals body locals cell)
-  (let* ((arity (length formals))
-         (tys (clos-ty arity))
+  (let* ((rest (formals-rest formals))
+         (names (formals-names formals))
          (free (filter (lambda (v) (assq v locals))
-                       (free-vars-body body formals)))
+                       (free-vars-body body names)))
          (idx (alloc-fn!)))
-    (lift-lambda! idx (car tys) formals body free)
-    (list (ref-func idx)
-          (env-chain free locals)
-          (struct-new (cdr tys)))))
+    (if rest
+        (begin
+          (lift-variadic! idx (formals-fixed formals) rest body free)
+          (list (ref-func idx)
+                (ref-func idx)
+                (env-chain free locals)
+                (struct-new TY-CLOSV)))
+        (let ((arity (length formals))
+              (gidx (adapter! (length formals))))
+          (lift-fixed! idx formals body free)
+          (list (ref-func idx)
+                (ref-func gidx)
+                (env-chain free locals)
+                (struct-new (cdr (clos-ty arity))))))))
 
 (define (env-chain free locals)
   (if (null? free)
@@ -473,36 +564,66 @@
             (env-chain (cdr free) locals)
             (struct-new TY-PAIR))))
 
-(define (lift-lambda! idx fn-ty formals body free)
+;; bind the captured environment chain (field 2) into fresh locals
+(define (env-prologue free locals cell env-ty)
+  (if (null? free)
+      '()
+      (let ((envtmp (fresh-local! cell)))
+        (list (local-get 0)
+              (if (eqv? env-ty TY-CLOSV) (ref-cast TY-CLOSV) '())
+              (struct-get env-ty 2)
+              (local-set envtmp)
+              (map (lambda (v)
+                     (list (local-get envtmp) (ref-cast TY-PAIR)
+                           (struct-get TY-PAIR 0)
+                           (local-set (cdr (assq v locals)))
+                           (local-get envtmp) (ref-cast TY-PAIR)
+                           (struct-get TY-PAIR 1)
+                           (local-set envtmp)))
+                   free)))))
+
+(define (number-locals names first)
+  (let loop ((ns names) (i first))
+    (if (null? ns)
+        '()
+        (cons (cons (car ns) i) (loop (cdr ns) (+ i 1))))))
+
+(define (slot-locals! names cell acc)
+  (if (null? names)
+      acc
+      (slot-locals! (cdr names) cell
+                    (cons (cons (car names) (fresh-local! cell)) acc))))
+
+(define (lift-fixed! idx formals body free)
   (let* ((arity (length formals))
+         (tys (clos-ty arity))
          (cell (list (+ arity 1)))
-         (locals (let number ((fs formals) (i 1))
-                   (if (null? fs)
-                       '()
-                       (cons (cons (car fs) i)
-                             (number (cdr fs) (+ i 1))))))
-         (envtmp (and (pair? free) (fresh-local! cell)))
-         (locals (let slot ((vs free) (acc locals))
-                   (if (null? vs)
-                       acc
-                       (slot (cdr vs)
-                             (cons (cons (car vs) (fresh-local! cell)) acc)))))
-         (prologue
-          (if (null? free)
-              '()
-              (list (local-get 0)
-                    (struct-get (cdr (clos-ty arity)) 1)
-                    (local-set envtmp)
-                    (map (lambda (v)
-                           (list (local-get envtmp) (ref-cast TY-PAIR)
-                                 (struct-get TY-PAIR 0)
-                                 (local-set (cdr (assq v locals)))
-                                 (local-get envtmp) (ref-cast TY-PAIR)
-                                 (struct-get TY-PAIR 1)
-                                 (local-set envtmp)))
-                         free))))
+         (locals (slot-locals! free cell (number-locals formals 1)))
+         (prologue (env-prologue free locals cell (cdr tys)))
          (code (list prologue (compile-body body locals cell #t))))
-    (record-fn! idx (list fn-ty (+ arity 1) (- (car cell) (+ arity 1)) code))))
+    (record-fn! idx (list (car tys) (+ arity 1)
+                          (- (car cell) (+ arity 1)) code))))
+
+(define (lift-variadic! idx fixed rest body free)
+  ;; the body is its own generic entry: (closure args-list) -> value
+  (let* ((cell (list 2))
+         (t (fresh-local! cell))
+         (locals (slot-locals! (cons rest fixed) cell '()))
+         (locals (slot-locals! free cell locals))
+         (prologue
+          (list (local-get 1) (local-set t)
+                (map (lambda (p)
+                       (list (local-get t) (ref-cast TY-PAIR)
+                             (struct-get TY-PAIR 0)
+                             (local-set (cdr (assq p locals)))
+                             (local-get t) (ref-cast TY-PAIR)
+                             (struct-get TY-PAIR 1)
+                             (local-set t)))
+                     fixed)
+                (local-get t) (local-set (cdr (assq rest locals)))
+                (env-prologue free locals cell TY-CLOSV)))
+         (code (list prologue (compile-body body locals cell #t))))
+    (record-fn! idx (list TY-FNG 2 (- (car cell) 2) code))))
 
 ;;; applications
 
@@ -515,28 +636,81 @@
      ((and (symbol? op) (memq op primitives) (not (assq op *fns*)))
       (compile-prim op args locals cell))
      ((and (symbol? op) (assq op *fns*))
-      (let ((f (cdr (assq op *fns*))))
-        (unless (= (cdr f) (length args))
-          (errorf 'schwasm "wrong argument count in ~s" e))
-        (list (map (lambda (a) (compile-exp a locals cell #f)) args)
-              (if tail? #x12 #x10)
-              (uleb (car f)))))
+      (compile-direct (cdr (assq op *fns*)) e args locals cell tail?))
      ((and (symbol? op) (assq op *vars*))
       (compile-indirect (compile-ref op locals cell) args locals cell tail?))
      ((pair? op)
       (compile-indirect (compile-exp op locals cell #f) args locals cell tail?))
      (else (errorf 'schwasm "cannot call ~s" op)))))
 
+(define (compile-direct entry e args locals cell tail?)
+  (let ((idx (car entry))
+        (nfixed (cadr entry))
+        (variadic? (caddr entry)))
+    (if variadic?
+        ;; extra arguments are consed into the rest list at the call
+        (let ((n (length args)))
+          (when (< n nfixed)
+            (errorf 'schwasm "too few arguments in ~s" e))
+          (list (map (lambda (a) (compile-exp a locals cell #f))
+                     (list-head args nfixed))
+                (arg-chain (list-tail args nfixed) (global-get G-NULL)
+                           locals cell)
+                (if tail? #x12 #x10)
+                (uleb idx)))
+        (begin
+          (unless (= nfixed (length args))
+            (errorf 'schwasm "wrong argument count in ~s" e))
+          (list (map (lambda (a) (compile-exp a locals cell #f)) args)
+                (if tail? #x12 #x10)
+                (uleb idx))))))
+
+(define (arg-chain args tail-code locals cell)
+  (if (null? args)
+      tail-code
+      (list (compile-exp (car args) locals cell #f)
+            (arg-chain (cdr args) tail-code locals cell)
+            (struct-new TY-PAIR))))
+
 (define (compile-indirect fcode args locals cell tail?)
+  ;; dual dispatch: the fast arity-typed entry when the callee's
+  ;; closure type matches this call's arity, the generic list-taking
+  ;; entry otherwise (variadic callee or arity mismatch)
   (let* ((arity (length args))
          (tys (clos-ty arity))
          (tmp (fresh-local! cell)))
     (list fcode (local-set tmp)
+          (local-get tmp) (ref-test (cdr tys))
+          #x04 T-EQREF
           (local-get tmp) (ref-cast (cdr tys))
           (map (lambda (a) (compile-exp a locals cell #f)) args)
           (local-get tmp) (ref-cast (cdr tys)) (struct-get (cdr tys) 0)
           (if tail? #x15 #x14)
-          (uleb (car tys)))))
+          (uleb (car tys))
+          #x05
+          (local-get tmp) (ref-cast TY-CLOSBASE)
+          (arg-chain args (global-get G-NULL) locals cell)
+          (local-get tmp) (ref-cast TY-CLOSBASE) (struct-get TY-CLOSBASE 1)
+          (if tail? #x15 #x14)
+          (uleb TY-FNG)
+          #x0B)))
+
+(define (compile-apply e locals cell tail?)
+  ;; (apply f a b ... lst): always through the generic entry, with
+  ;; the leading arguments consed onto the final list
+  (let ((f (cadr e))
+        (args (cddr e)))
+    (when (null? args)
+      (errorf 'schwasm "apply needs an argument list in ~s" e))
+    (let* ((leading (list-head args (- (length args) 1)))
+           (final (car (list-tail args (- (length args) 1))))
+           (tmp (fresh-local! cell)))
+      (list (compile-exp f locals cell #f) (local-set tmp)
+            (local-get tmp) (ref-cast TY-CLOSBASE)
+            (arg-chain leading (compile-exp final locals cell #f) locals cell)
+            (local-get tmp) (ref-cast TY-CLOSBASE) (struct-get TY-CLOSBASE 1)
+            (if tail? #x15 #x14)
+            (uleb TY-FNG)))))
 
 (define (compile-prim op args locals cell)
   (define (arg i) (compile-exp (list-ref args i) locals cell #f))
@@ -627,7 +801,7 @@
         ((quote) acc)
         ((lambda)
          (scan-arities (cddr e)
-                       (let ((a (length (cadr e))))
+                       (let ((a (length (formals-fixed (cadr e)))))
                          (if (memv a acc) acc (cons a acc)))))
         ((if begin set! define)
          (scan-arities (cdr e) acc))
@@ -635,20 +809,21 @@
          (scan-arities (map cadr (cadr e))
                        (scan-arities (cddr e) acc)))
         (else
-         (let ((a (length (cdr e))))
-           (scan-arities (car e)
-                         (scan-arities (cdr e)
-                                       (if (memv a acc) acc (cons a acc)))))))
+         (let ((acc (if (list? e)
+                        (let ((a (length (cdr e))))
+                          (if (memv a acc) acc (cons a acc)))
+                        acc)))
+           (scan-arities (car e) (scan-arities (cdr e) acc)))))
       acc))
 
 (define (compile-toplevel-fn form)
+  ;; a variadic definition's rest parameter is its final wasm
+  ;; parameter and receives a list
   (let* ((formals (cdadr form))
-         (arity (length formals))
+         (names (formals-names formals))
+         (arity (length names))
          (cell (list arity))
-         (locals (let number ((fs formals) (i 0))
-                   (if (null? fs)
-                       '()
-                       (cons (cons (car fs) i) (number (cdr fs) (+ i 1)))))))
+         (locals (number-locals names 0)))
     (list (cdr (assv arity *plain-ty*))
           arity
           (let ((code (compile-body (cddr form) locals cell #t)))
@@ -676,14 +851,18 @@
     (set! *clos-ty* '())
     (set! *lifted* '())
     (set! *wrappers* '())
+    (set! *adapters* '())
     (set! *interned* '())
     ;; function index space: imports, top-level functions, main, lifted
     (set! *next-fn* (+ N-IMPORTS (length fn-defs) 1))
     (let number ((ds fn-defs) (i N-IMPORTS))
       (unless (null? ds)
-        (set! *fns* (cons (cons (car (cadr (car ds)))
-                                (cons i (length (cdadr (car ds)))))
-                          *fns*))
+        (let ((formals (cdadr (car ds))))
+          (set! *fns* (cons (list (car (cadr (car ds)))
+                                  i
+                                  (length (formals-fixed formals))
+                                  (and (formals-rest formals) #t))
+                            *fns*)))
         (number (cdr ds) (+ i 1))))
     (let number ((ds var-defs) (g G-FIRST-VAR))
       (unless (null? ds)
@@ -693,7 +872,7 @@
     ;; type table
     (let* ((plain-arities (sort < (fold-left
                                    (lambda (acc d)
-                                     (let ((a (length (cdadr d))))
+                                     (let ((a (length (formals-names (cdadr d)))))
                                        (if (memv a acc) acc (cons a acc))))
                                    '(0)
                                    fn-defs)))
@@ -748,9 +927,23 @@
                   (list #x5E T-I8 #x01)
                   ;; $symbol
                   (list #x5F (counted (list (list #x64 (sleb TY-STRING) #x00))))
-                  ;; $closbase: non-final (struct (field funcref))
-                  (list #x50 #x00
-                        #x5F (counted (list (list T-FUNCREF #x00))))
+                  ;; rec { $fnG : (func (ref $closbase) eqref -> eqref)
+                  ;;       $closbase : open (struct funcref (ref $fnG)) }
+                  (list #x4E (uleb 2)
+                        (list #x60
+                              (counted (list (list #x64 (sleb TY-CLOSBASE))
+                                             T-EQREF))
+                              (counted (list T-EQREF)))
+                        (list #x50 #x00
+                              #x5F (counted
+                                    (list (list T-FUNCREF #x00)
+                                          (list #x64 (sleb TY-FNG) #x00)))))
+                  ;; $closV: variadic closures, base plus environment
+                  (list #x4F (counted (list (uleb TY-CLOSBASE)))
+                        #x5F (counted
+                              (list (list T-FUNCREF #x00)
+                                    (list #x64 (sleb TY-FNG) #x00)
+                                    (list T-EQREF #x00))))
                   ;; $iofn
                   (list #x60 (counted (list T-I32)) (counted '())))
                  ;; plain function types
@@ -759,7 +952,7 @@
                               (counted (make-list a T-EQREF))
                               (counted (list T-EQREF))))
                       plain-arities)
-                 ;; closure rec groups, each closN <: closbase
+                 ;; per-arity closure rec groups, each closN <: closbase
                  (map (lambda (a)
                         (let ((tys (clos-ty a)))
                           (list #x4E (uleb 2)
@@ -772,6 +965,7 @@
                                       #x5F
                                       (counted
                                        (list (list #x64 (sleb (car tys)) #x00)
+                                             (list #x64 (sleb TY-FNG) #x00)
                                              (list T-EQREF #x00)))))))
                       clos-arities))))
     ;; import section: io.write_byte
