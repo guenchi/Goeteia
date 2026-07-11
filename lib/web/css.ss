@@ -13,11 +13,12 @@
 ;;   (pct 50)   -> "50%"      (vh 100)  -> "100vh"    (deg 120) -> "120deg"
 ;; Non-unit values:
 ;;   integer           -> itself ("0", "650" for z-index / rgb parts)
-;;   string            -> literal ("#fff", "solid", "1.6")
+;;   string            -> literal ("#fff", "solid")
 ;;   symbol            -> its name (none, inherit, ...)
+;;   (dec 1 6)         -> "1.6"   ; a unitless decimal (line-height, alpha)
 ;;   (var ink)         -> "var(--ink)"
 ;;   (calc V ...)      -> "calc(V ...)"
-;;   (rgba 16 20 42 "0.06") -> "rgba(16,20,42,0.06)"
+;;   (rgba 16 20 42 (dec 0 6)) -> "rgba(16,20,42,0.06)"
 ;;   (A B ...)         -> "A B ..."  ; a space-joined compound value
 ;; @media / @keyframes / @supports nest rules.
 ;;
@@ -69,6 +70,9 @@
       (let* ((h (car v)) (u (and (symbol? h) (assq h units))))
         (cond
          (u (unit->css (cdr v) (cdr u)))
+         ;; a unitless decimal, same whole/frac convention as units:
+         ;; (dec 0 6) -> "0.06" (rgba alpha), (dec 1 6) -> "1.6" (line-height)
+         ((eq? h 'dec) (unit->css (cdr v) ""))
          ((eq? h 'var) (string-append "var(--" (symbol->string (cadr v)) ")"))
          ((eq? h 'calc) (string-append "calc(" (join (map val->css (cdr v)) " ") ")"))
          ((eq? h 'rgba) (string-append "rgba(" (join (map val->css (cdr v)) ",") ")"))
