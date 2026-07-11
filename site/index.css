@@ -83,12 +83,13 @@
       .hl .tok-l { color: #8a5cf5; }                       /* #t #f #\ */
       .hl .tok-p { color: var(--dim); }                    /* parens  */
       .bar { display: flex; gap: .9em; align-items: center; margin: .9em 0 0; flex-wrap: wrap; }
-      button {
+      /* scoped to #run so it can't leak into the source-overlay/badge buttons */
+      #run {
         font-size: 15px; padding: .45em 2em; border-radius: 6px;
         background: var(--lapis); color: #fff; border: none; font-weight: 600; cursor: pointer; min-width: 7em;
       }
-      button:hover { filter: brightness(1.1); }
-      button:disabled { opacity: .5; cursor: default; }
+      #run:hover { filter: brightness(1.1); }
+      #run:disabled { opacity: .5; cursor: default; }
       .status { font-family: var(--mono); font-size: .82em; color: var(--dim); }
       .status.err { color: #b0483f; }
       .hint { color: var(--dim); font-size: .85em; margin-top: .5em; }

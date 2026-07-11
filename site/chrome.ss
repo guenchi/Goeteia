@@ -101,9 +101,9 @@
   ;; ---- CSS for the badge + overlay, appended to each page's styles ----
   (define badge-css
     (string-append
-     ".src-badge{position:fixed;top:4.3em;right:1.2em;z-index:30;"
+     ".src-badge{position:fixed;top:4.3em;right:1.2em;z-index:30;min-width:0;"
      "border:1px solid var(--line);border-radius:6px;padding:.32em .8em;"
-     "background:var(--bg2);color:var(--dim);font-size:.8em;cursor:pointer;"
+     "background:var(--bg2);color:var(--dim);font-size:.8em;font-weight:400;cursor:pointer;"
      "font-family:inherit;box-shadow:0 1px 3px rgba(16,20,42,.08)}"
      ".src-badge:hover{border-color:var(--lapis);color:var(--lapis)}"
      "@media (max-width:36em){.src-badge{display:none}}"
@@ -116,7 +116,8 @@
      ".src-bar{display:flex;align-items:center;justify-content:space-between;"
      "padding:.6em 1em;border-bottom:1px solid var(--line)}"
      ".src-title{font-family:var(--mono);font-size:.85em;color:var(--dim)}"
-     ".src-close{border:none;background:none;font-size:1.5em;line-height:1;"
+     ".src-close{border:none;background:none;min-width:0;padding:0 .2em;"
+     "font-size:1.5em;font-weight:400;line-height:1;"
      "color:var(--dim);cursor:pointer}.src-close:hover{color:var(--lapis)}"
      ".src-code{margin:0;padding:1.2em;overflow:auto;font-family:var(--mono);"
      "font-size:12.5px;line-height:1.5;color:var(--ink);white-space:pre}"
