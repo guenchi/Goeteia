@@ -72,6 +72,7 @@
       }
       button:hover { filter: brightness(1.1); }
       button:disabled { opacity: .5; }
+      button.stop { background: #b0483f; }
       select {
         font-size: 14px; padding: .35em .6em; border-radius: 6px;
         background: var(--bg2); color: var(--ink); border: 1px solid var(--line);
@@ -132,6 +133,7 @@
         <textarea id="src" rows="16" spellcheck="false"></textarea>
         <div class="bar">
           <button id="run">Run</button>
+          <button id="stop" class="stop" style="display:none">Stop</button>
           <label>examples:
             <select id="examples"></select>
           </label>

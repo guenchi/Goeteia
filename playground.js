@@ -1,4 +1,5 @@
-// schwasm playground: the self-hosted compiler runs in the browser.
+// Goeteia playground: the self-hosted compiler runs in the browser,
+// inside a Web Worker so runaway programs can't freeze the page.
 // Copyright (c) 2026 guenchi. MIT license; see LICENSE.
 
 const compilerBytes = fetch('goeteia.wasm').then(r => {
@@ -7,36 +8,17 @@ const compilerBytes = fetch('goeteia.wasm').then(r => {
 });
 const preludeText = fetch('src/prelude.ss').then(r => r.text());
 
+// ---- the worker: compile, instantiate, run, report ----
+
+const workerSource = `
 function latin1(bytes) {
     let s = '';
     for (const b of bytes) s += String.fromCharCode(b);
     return s;
 }
-
-async function compileScheme(source) {
-    const [bytes, prelude] = await Promise.all([compilerBytes, preludeText]);
-    const input = [];
-    for (const ch of prelude + '\n' + source) input.push(ch.charCodeAt(0) & 0xff);
-    const out = [];
-    let pos = 0;
-    const { instance } = await WebAssembly.instantiate(bytes, {
-        io: {
-            write_byte: b => out.push(b),
-            read_byte: () => (pos < input.length ? input[pos++] : -1),
-        },
-    });
-    try {
-        instance.exports.main();
-    } catch (e) {
-        // compile errors print through the output channel before trapping
-        throw new Error(latin1(out).trim() || e.message);
-    }
-    return new Uint8Array(out);
-}
-
 function decode(v, ex) {
     if (typeof v === 'number') {
-        return (v & 1) ? `#\\${String.fromCharCode(v >> 1)}` : String(v >> 1);
+        return (v & 1) ? '#\\\\' + String.fromCharCode(v >> 1) : String(v >> 1);
     }
     if (v === ex.false.value) return '#f';
     if (v === ex.true.value) return '#t';
@@ -44,22 +26,68 @@ function decode(v, ex) {
     if (v === ex.void.value) return '';
     return '#<object>';
 }
-
-async function runCompiled(bytes) {
-    const out = [];
-    const { instance } = await WebAssembly.instantiate(bytes, {
-        io: { write_byte: b => out.push(b), read_byte: () => -1 },
-    });
+onmessage = async (e) => {
+    const { compiler, prelude, source } = e.data;
     try {
-        const result = instance.exports.main();
-        return { text: latin1(out), result: decode(result, instance.exports) };
-    } catch (e) {
-        return { text: latin1(out), error: e.message };
+        const input = [];
+        for (const ch of prelude + '\\n' + source) input.push(ch.charCodeAt(0) & 0xff);
+        const out = [];
+        let pos = 0;
+        const t0 = performance.now();
+        const { instance } = await WebAssembly.instantiate(compiler, {
+            io: {
+                write_byte: b => out.push(b),
+                read_byte: () => (pos < input.length ? input[pos++] : -1),
+            },
+        });
+        try {
+            instance.exports.main();
+        } catch (err) {
+            postMessage({ compileError: latin1(out).trim() || err.message });
+            return;
+        }
+        const wasm = new Uint8Array(out);
+        const t1 = performance.now();
+
+        const runOut = [];
+        const mod = await WebAssembly.instantiate(wasm, {
+            io: { write_byte: b => runOut.push(b), read_byte: () => -1 },
+        });
+        let result = '', error = null;
+        try {
+            result = decode(mod.instance.exports.main(), mod.instance.exports);
+        } catch (err) {
+            error = err.message;
+        }
+        const t2 = performance.now();
+        postMessage({
+            text: latin1(runOut), result, error,
+            bytes: wasm.length,
+            tCompile: t1 - t0, tRun: t2 - t1,
+        });
+    } catch (err) {
+        postMessage({ compileError: err.message });
     }
-}
+};
+`;
+const workerUrl = URL.createObjectURL(
+    new Blob([workerSource], { type: 'text/javascript' }));
+
+// ---- examples ----
 
 const examples = {
-    'fibonacci': `(define (fib n)
+    'fib 1000 (bignums)': `;; the naive doubly-recursive fib is O(phi^n) -- fib(1000) that way
+;; outlives the universe in any language.  Iterate instead, and let
+;; fixnums overflow into bignums:
+(define (fib n)
+  (let loop ((i 0) (a 0) (b 1))
+    (if (= i n) a (loop (+ i 1) b (+ a b)))))
+
+(fib 1000)`,
+
+    'fibonacci (naive)': `;; exponential on purpose -- try 30, not 100.
+;; (the Stop button is right there if you get ambitious)
+(define (fib n)
   (if (< n 2) n (+ (fib (- n 1)) (fib (- n 2)))))
 
 (display (fib 30))
@@ -116,9 +144,12 @@ const examples = {
 (reverse log)`,
 };
 
+// ---- wiring ----
+
 const srcBox = document.getElementById('src');
 const outBox = document.getElementById('out');
 const runBtn = document.getElementById('run');
+const stopBtn = document.getElementById('stop');
 const exSelect = document.getElementById('examples');
 
 for (const name of Object.keys(examples)) {
@@ -130,32 +161,60 @@ for (const name of Object.keys(examples)) {
 exSelect.addEventListener('change', () => {
     srcBox.value = examples[exSelect.value];
 });
-srcBox.value = examples['fibonacci'];
+srcBox.value = examples['fib 1000 (bignums)'];
+
+let worker = null;
+let ticker = null;
+
+function setRunning(running) {
+    runBtn.disabled = running;
+    stopBtn.style.display = running ? '' : 'none';
+    if (!running && ticker) { clearInterval(ticker); ticker = null; }
+}
 
 async function go() {
-    runBtn.disabled = true;
-    outBox.textContent = 'compiling…';
+    setRunning(true);
+    const started = performance.now();
+    outBox.textContent = 'running…';
+    ticker = setInterval(() => {
+        outBox.textContent =
+            `running… ${((performance.now() - started) / 1000).toFixed(1)}s (Stop to interrupt)`;
+    }, 250);
     try {
-        const t0 = performance.now();
-        const wasm = await compileScheme(srcBox.value);
-        const t1 = performance.now();
-        const { text, result, error } = await runCompiled(wasm);
-        const t2 = performance.now();
-        let msg = text;
-        if (error) {
-            msg += (msg && !msg.endsWith('\n') ? '\n' : '') + `runtime error: ${error}`;
-        } else if (result) {
-            msg += (msg && !msg.endsWith('\n') ? '\n' : '') + `⇒ ${result}`;
-        }
-        msg += `\n\n— ${wasm.length} bytes, compiled ${(t1 - t0).toFixed(1)} ms, ran ${(t2 - t1).toFixed(1)} ms`;
-        outBox.textContent = msg;
+        const [compiler, prelude] = await Promise.all([compilerBytes, preludeText]);
+        worker = new Worker(workerUrl);
+        worker.onmessage = (e) => {
+            setRunning(false);
+            const m = e.data;
+            if (m.compileError) {
+                outBox.textContent = `compile error: ${m.compileError}`;
+                return;
+            }
+            let msg = m.text;
+            if (m.error) {
+                msg += (msg && !msg.endsWith('\n') ? '\n' : '') + `runtime error: ${m.error}`;
+            } else if (m.result) {
+                msg += (msg && !msg.endsWith('\n') ? '\n' : '') + `⇒ ${m.result}`;
+            }
+            msg += `\n\n— ${m.bytes} bytes, compiled ${m.tCompile.toFixed(1)} ms, ran ${m.tRun.toFixed(1)} ms`;
+            outBox.textContent = msg;
+        };
+        worker.postMessage({ compiler, prelude, source: srcBox.value });
     } catch (e) {
-        outBox.textContent = `compile error: ${e.message}`;
+        setRunning(false);
+        outBox.textContent = `error: ${e.message}`;
     }
-    runBtn.disabled = false;
+}
+
+function stop() {
+    if (worker) { worker.terminate(); worker = null; }
+    setRunning(false);
+    outBox.textContent = 'stopped.';
 }
 
 runBtn.addEventListener('click', go);
+stopBtn.addEventListener('click', stop);
 srcBox.addEventListener('keydown', e => {
     if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') go();
 });
+setRunning(false);
