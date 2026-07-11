@@ -1,8 +1,9 @@
-# schwasm design
+# Goeteia design
 
-schwasm is a Scheme-to-WebAssembly compiler built on the WebAssembly
-GC extension (Wasm 3.0).  It is an independent implementation written
-from the R6RS and WebAssembly specifications.
+Goeteia (γοητεία, "sorcery"; formerly schwasm — the toolchain file
+names keep the old prefix) is a Scheme-to-WebAssembly compiler built
+on the WebAssembly GC extension (Wasm 3.0).  It is an independent
+implementation written from the R6RS and WebAssembly specifications.
 
 ## Why Wasm GC
 
