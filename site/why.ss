@@ -69,6 +69,39 @@
    `(section
      (div (@ (class "layer"))
        (span (@ (class "n")) "3")
+       (div (h2 "The frontend program is data too — the ground Lisp stands on")
+            (div (@ (class "sub")) "The homoiconic advantage doesn't stop at logic; it covers the whole UI.")))
+     (div (@ (class "layer-body"))
+       (p "An HTML document is a tree; a stylesheet is a list of selector-and-"
+          "declaration rules — the exact shapes s-expr was made for. So "
+          (code "(web html)") " and its dual " (code "(web css)") " are just two pure "
+          "functions over one representation, and the UI becomes ordinary program "
+          "data: built and checked the same way as the logic beside it.")
+       (ul (@ (class "points"))
+         (li (b "One language, top to bottom.") " Markup, styles and logic are all "
+             "s-expr — no second templating dialect, no string interpolation to get "
+             "wrong.")
+         (li (b "A colour is a value, not a convention.") " "
+             (code "(define lapis \"#1550c4\")") " is one binding shared by CSS and "
+             "code — computed, reused, checked once — where a stylesheet would leave "
+             "you copying " (code "var(--x)") " strings and hoping they line up.")
+         (li (b "Abstraction is just functions and macros.") " A "
+             (code "(define (card radius) …)") " factors a family of rules; "
+             (code "(media-down 42 …)") " and " (code "(prefixed transform …)")
+             " expand the boilerplate. The model writes intent; the expander writes "
+             "the correct CSS — the same division of labour as homoiconic codegen, "
+             "now for the UI.")
+         (li (b "DRY is an ordinary list operation.") " A stylesheet is a list, so "
+             (code "(append base-css page-css)") " composes shared chrome with the "
+             "page's own rules. No preprocessor, no build DSL — just values."))
+       (p "The proof is the page you are on: its markup and every rule in its "
+          "stylesheet are " (code "site/why.ss") ", a Scheme program Goeteia compiled "
+          "and ran to emit this HTML. The site is built exactly the way the argument "
+          "says to build it.")))
+
+   `(section
+     (div (@ (class "layer"))
+       (span (@ (class "n")) "4")
        (div (h2 "In networking, make the protocol verifiable data")
             (div (@ (class "sub")) "The bugs a model ships are protocol bugs — move them earlier.")))
      (div (@ (class "layer-body"))
