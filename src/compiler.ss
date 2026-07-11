@@ -1389,18 +1389,24 @@
 ;; does not resume, it traps as an uncaught exception.
 (define (compile-callcc e locals cell)
   (let* ((tok (fresh-local! cell))
+         (wind (fresh-local! cell))
          (tokname (gensym "ktok"))
+         (wname (gensym "kwind"))
          (vname (gensym "v"))
          (fcode (compile-exp (cadr e) locals cell #f))
          (kcode (compile-lambda (list vname)
-                                (list (list '%throw-k tokname vname))
-                                (cons (cons tokname tok) locals)
+                                (list (list '$escape tokname wname vname))
+                                (cons (cons tokname tok)
+                                      (cons (cons wname wind) locals))
                                 cell))
          (tmp (fresh-local! cell)))
     (list
      ;; the token: a fresh pair, compared by identity
      (global-get G-NULL) (global-get G-NULL) (struct-new TY-PAIR)
      (local-set tok)
+     ;; capture the winder stack for dynamic-wind
+     (global-get (cdr (assq '$winders *vars*)))
+     (local-set wind)
      #x06 T-EQREF                       ; try (result eqref)
      (indirect-call-code fcode (list kcode) cell #f)
      #x07 (uleb 0)                      ; catch $escape -> payload
@@ -1622,7 +1628,10 @@
   (if (pair? (cadr f)) (car (cadr f)) (cadr f)))
 (define (form-refs e acc)
   (cond
-   ((symbol? e) (if (memq e acc) acc (cons e acc)))
+   ((symbol? e)
+    ;; macro-introduced identifiers reference what they renamed
+    (let ((u (unmark e)))
+      (if (memq u acc) acc (cons u acc))))
    ((pair? e)
     (if (eq? (resolve-tag (car e)) 'quote)
         acc
@@ -1642,7 +1651,11 @@
                             (if (define-form? f)
                                 (cons (cons (def-name f) f) acc)
                                 acc))
-                          '()
+                          ;; call/cc expands to code that calls the
+                          ;; escape machinery behind the scenes
+                          (list (cons 'call/cc '(begin $escape $winders))
+                                (cons 'call-with-current-continuation
+                                      '(begin $escape $winders)))
                           forms)))
     (let grow ((live '())
                (queue (fold-left (lambda (acc f)

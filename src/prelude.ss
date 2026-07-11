@@ -86,16 +86,6 @@
 (define (%reverse ls acc)
   (if (null? ls) acc (%reverse (cdr ls) (cons (car ls) acc))))
 
-(define (map f ls)
-  (if (null? ls)
-      '()
-      (cons (f (car ls)) (map f (cdr ls)))))
-
-(define (for-each f ls)
-  (unless (null? ls)
-    (f (car ls))
-    (for-each f (cdr ls))))
-
 (define (memq x ls)
   (cond
    ((null? ls) #f)
@@ -465,3 +455,74 @@
 (define (integer? x) (number? x))
 (define (exact? x) (number? x))
 (define (cadar p) (car (cdar p)))
+
+;; ---- derived binding forms (macros live in the prelude too) ----
+
+;; both bind sequentially
+(define-syntax let-values
+  (syntax-rules ()
+    ((_ () body1 body2 ...) (let () body1 body2 ...))
+    ((_ ((formals expr) rest ...) body1 body2 ...)
+     (call-with-values (lambda () expr)
+       (lambda formals (let-values (rest ...) body1 body2 ...))))))
+(define-syntax let*-values
+  (syntax-rules ()
+    ((_ bindings body1 body2 ...) (let-values bindings body1 body2 ...))))
+
+(define-syntax assert
+  (syntax-rules ()
+    ((_ e) (let ((t e)) (if t t (errorf 'assert "assertion failed"))))))
+
+(define (cons* a . rest) ($cons* a rest))
+(define ($cons* a rest)
+  (if (null? rest) a (cons a ($cons* (car rest) (cdr rest)))))
+
+;; n-ary map and for-each
+(define (map f ls . more)
+  (if (null? more) ($map1 f ls) ($mapn f (cons ls more))))
+(define ($map1 f ls)
+  (if (null? ls) '() (cons (f (car ls)) ($map1 f (cdr ls)))))
+(define ($mapn f lists)
+  (if ($any-null? lists)
+      '()
+      (cons (apply f ($heads lists)) ($mapn f ($tails lists)))))
+(define ($any-null? ls)
+  (and (pair? ls) (or (null? (car ls)) ($any-null? (cdr ls)))))
+(define ($heads ls) (if (null? ls) '() (cons (caar ls) ($heads (cdr ls)))))
+(define ($tails ls) (if (null? ls) '() (cons (cdar ls) ($tails (cdr ls)))))
+(define (for-each f ls . more)
+  (if (null? more) ($for-each1 f ls) ($for-eachn f (cons ls more))))
+(define ($for-each1 f ls)
+  (unless (null? ls)
+    (f (car ls))
+    ($for-each1 f (cdr ls))))
+(define ($for-eachn f lists)
+  (unless ($any-null? lists)
+    (apply f ($heads lists))
+    ($for-eachn f ($tails lists))))
+
+;; ---- dynamic-wind ----
+;;
+;; $winders holds (before . after) frames.  Escaping continuations
+;; capture the winder stack; $escape runs the after thunks of every
+;; frame being exited, then throws to the matching call/cc.
+
+(define $winders '())
+
+(define (dynamic-wind before thunk after)
+  (before)
+  (set! $winders (cons (cons before after) $winders))
+  (let ((r (thunk)))
+    (set! $winders (cdr $winders))
+    (after)
+    r))
+
+(define ($escape tok saved v)
+  ($unwind-to saved)
+  (%throw-k tok v))
+(define ($unwind-to saved)
+  (unless (eq? $winders saved)
+    (let ((w (car $winders)))
+      (set! $winders (cdr $winders))
+      ((cdr w))
+      ($unwind-to saved))))
