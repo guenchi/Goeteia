@@ -85,6 +85,10 @@ A small UI stack over the JS bridge, in `lib/web/`:
 - `(web json)` — the same safe JSON codec as the Igropyr server side
   (ported from its `json.sc`): recursive-descent parser, `\uXXXX` and
   surrogate pairs to UTF-8, exact bignums, `json-ref` path access
+- `(web ws)` / `(web sse)` — pushed s-expressions: every WebSocket
+  message / SSE event is one datum, matching Igropyr's
+  `ws-send-sexpr!` / `sse-send-sexpr!` on the server; multi-line
+  datums survive SSE framing intact
 
 `examples/counter.html` is a page scripted entirely in Goeteia;
 `examples/react-embed.html` is a React app with Goeteia widgets
