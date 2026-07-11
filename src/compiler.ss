@@ -1147,7 +1147,12 @@
     (bytevector? . 1) (bytevector-length . 1)
     (bytevector-u8-ref . 2) (bytevector-u8-set! . 3)
     (%make-vector . 2) (%make-bytevector . 2)
-    (%write-byte . 1)))
+    (%write-byte . 1)
+    (%mem-u8-ref . 1) (%mem-u8-set! . 2)
+    (%mem-i32-ref . 1) (%mem-i32-set! . 2)
+    (%mem-f32-ref . 1) (%mem-f32-set! . 2)
+    (%mem-f64-ref . 1) (%mem-f64-set! . 2)
+    (%mem-size . 0) (%mem-grow . 1)))
 
 (define primitives
   '(+ - * quotient remainder = < eq? cons car cdr pair? null? zero?
@@ -1171,6 +1176,9 @@
     %make-vector %make-bytevector
     %record %record? %record-ref %record-set! %recbase? %record-rtd
     %write-byte %read-byte %make-string %make-symbol %interned-symbols
+    %mem-u8-ref %mem-u8-set! %mem-i32-ref %mem-i32-set!
+    %mem-f32-ref %mem-f32-set! %mem-f64-ref %mem-f64-set!
+    %mem-size %mem-grow
     %unreachable %throw-k))
 
 (define (compile-exp e locals cell tail?)
@@ -1936,6 +1944,35 @@
            (global-get G-VOID)))
     ((eof-object) (global-get G-EOF))
     ((eof-object?) (list (pred-i32 op argc cell) (boolify)))
+    ;; ---- the linear staging memory ----
+    ;; a plain wasm memory, exported as "memory": Scheme writes bulk
+    ;; numeric data here and the host reads it zero-copy as a typed
+    ;; array (and vice versa). Addresses are byte offsets (fixnums);
+    ;; i32 slots carry fixnum-range values.
+    ((%mem-u8-ref)
+     (list (arg 0) (unwrap-int) #x2D (uleb 0) (uleb 0) (wrap-int)))
+    ((%mem-u8-set!)
+     (list (arg 0) (unwrap-int) (arg 1) (unwrap-int)
+           #x3A (uleb 0) (uleb 0) (global-get G-VOID)))
+    ((%mem-i32-ref)
+     (list (arg 0) (unwrap-int) #x28 (uleb 2) (uleb 0) (wrap-int)))
+    ((%mem-i32-set!)
+     (list (arg 0) (unwrap-int) (arg 1) (unwrap-int)
+           #x36 (uleb 2) (uleb 0) (global-get G-VOID)))
+    ((%mem-f32-ref)                                  ; load f32, promote, box
+     (list (arg 0) (unwrap-int) #x2A (uleb 2) (uleb 0)
+           #xBB (struct-new TY-FLONUM)))
+    ((%mem-f32-set!)                                 ; unbox f64, demote, store
+     (list (arg 0) (unwrap-int) (arg 1) (unwrap-fl)
+           #xB6 #x38 (uleb 2) (uleb 0) (global-get G-VOID)))
+    ((%mem-f64-ref)
+     (list (arg 0) (unwrap-int) #x2B (uleb 3) (uleb 0)
+           (struct-new TY-FLONUM)))
+    ((%mem-f64-set!)
+     (list (arg 0) (unwrap-int) (arg 1) (unwrap-fl)
+           #x39 (uleb 3) (uleb 0) (global-get G-VOID)))
+    ((%mem-size) (list #x3F #x00 (wrap-int)))        ; pages (64 KiB each)
+    ((%mem-grow) (list (arg 0) (unwrap-int) #x40 #x00 (wrap-int)))
     ((bitwise-and bitwise-ior bitwise-xor)
      ;; the *2 fixnum tag passes through and/ior/xor unchanged
      (list (arg 0) (untag) (arg 1) (untag)
@@ -2488,6 +2525,9 @@
                             #x00 (uleb TY-JPUSH)))))
     ;; function section
     (section 3 (counted (map (lambda (e) (uleb (car e))) entries)))
+    ;; memory section: one unbounded memory, the staging buffer for
+    ;; bulk numeric transfer (%mem-*); exported below as "memory"
+    (section 5 (counted (list (list #x00 (uleb 1)))))
     ;; tag section: the escape-continuation tag
     (section 13 (counted (list (list #x00 (uleb TY-KTAG)))))
     ;; global section: singletons, variables, interned literals
@@ -2510,6 +2550,7 @@
     (section 7 (counted
                 (append
                  (list (export-entry "main" #x00 main-idx)
+                       (export-entry "memory" #x02 0)
                        (export-entry "false" #x03 G-FALSE)
                        (export-entry "true" #x03 G-TRUE)
                        (export-entry "null" #x03 G-NULL)
