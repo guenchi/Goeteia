@@ -21,7 +21,7 @@
         (h1 "Goeteia")
         (p (@ (class "tagline"))
            (span (@ (class "gname")) "Γοητεία")
-           ": " ,(black-ars) " of " ,(signal-ref spell) ".")
+           " " ,(black-ars) " of " ,(signal-ref spell) ".")
         (p (@ (class "sub")) "A self-hosting Scheme for the WebAssembly GC era.")
         (pre (@ (class "cmd")) "$ git clone https://github.com/guenchi/Goeteia")
         (div (@ (class "links"))
