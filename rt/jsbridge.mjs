@@ -6,8 +6,12 @@ export function makeJsBridge(getExports) {
     let argStack = [];
     let staged = [];
     const cbStack = [];
+    const utf8Decoder = new TextDecoder();
+    const utf8Encoder = new TextEncoder();
     const takeName = () => {
-        const s = String.fromCharCode(...nameBuf);
+        // Goeteia strings are UTF-8 byte arrays; decode to a real JS
+        // string so non-ASCII (Γ, —, →) crosses correctly
+        const s = utf8Decoder.decode(new Uint8Array(nameBuf));
         nameBuf = [];
         return s;
     };
@@ -25,7 +29,7 @@ export function makeJsBridge(getExports) {
         call: (f, thisv) => f.apply(thisv, takeArgs()),
         new: ctor => new ctor(...takeArgs()),
         string: () => takeName(),
-        str_len: s => { staged = [...String(s)].map(c => c.charCodeAt(0) & 0xff); return staged.length; },
+        str_len: s => { staged = [...utf8Encoder.encode(String(s))]; return staged.length; },
         str_byte: i => staged[i],
         number: x => x,
         to_number: v => Number(v),
