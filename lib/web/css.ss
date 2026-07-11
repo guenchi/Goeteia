@@ -4,12 +4,13 @@
 ;; a rule is (selector (prop value ...) ...). Selectors are symbols
 ;; (element names) or strings (anything with . # : > space).
 ;;
-;; No floats anywhere -- the flonum printer isn't exact. One uniform
-;; rule, no special cases: every unit's argument is scaled by 100
-;; (centi-units), so fractional values stay exact integers:
-;;   (em 92) -> "0.92em"   (px 1300) -> "13px"   (px 1350) -> "13.5px"
-;;   (pct 5000) -> "50%"   (vh 10000) -> "100vh" (deg 4500) -> "45deg"
-;;   (em 100) -> "1em"     (em 10) -> "0.1em"
+;; No floats anywhere -- the flonum printer isn't exact. Unit forms take
+;; variable arity: one integer is the whole value, two integers are the
+;; integer and fractional parts, so whole values stay natural (no x100
+;; inflation) and fractions stay exact integers (no floats):
+;;   (em 1)     -> "1em"      (em 0 92) -> "0.92em"   (em 3 4) -> "3.4em"
+;;   (px 13)    -> "13px"     (px 13 5) -> "13.5px"
+;;   (pct 50)   -> "50%"      (vh 100)  -> "100vh"    (deg 120) -> "120deg"
 ;; Non-unit values:
 ;;   integer           -> itself ("0", "650" for z-index / rgb parts)
 ;;   string            -> literal ("#fff", "solid", "1.6")
@@ -23,9 +24,9 @@
 ;;   (css->string
 ;;     `((:root (--bg "#f2f4fa"))
 ;;       (body (margin 0) (background (var bg)) (line-height "1.6"))
-;;       (".nav a" (color (var dim)) (font-size (em 92)))
+;;       (".nav a" (color (var dim)) (font-size (em 0 92)))
 ;;       (@media "(max-width: 42em)"
-;;         (".nav" (gap (em 100))))))
+;;         (".nav" (gap (em 1))))))
 ;;
 ;; Copyright (c) 2026 guenchi. MIT license; see LICENSE.
 (library (web css)
@@ -38,44 +39,27 @@
      ((null? (cdr parts)) (car parts))
      (else (string-append (car parts) sep (join (cdr parts) sep)))))
 
-  ;; ---- numbers: exact only, no floats ----
-  (define (strip-trailing-zeros s)
-    (let loop ((i (string-length s)))
-      (if (and (> i 0) (char=? (string-ref s (- i 1)) #\0))
-          (loop (- i 1))
-          (substring s 0 i))))
-  ;; render an integer scaled by `scale` (a power of ten) as an exact
-  ;; decimal: hundredths 92 scale 100 -> "0.92", 340 -> "3.4", 100 -> "1"
-  (define (scaled->css n scale digits)
-    (if (string? n) n
-        (let* ((neg (< n 0)) (a (if neg (- n) n))
-               (ip (quotient a scale)) (fp (remainder a scale)))
-          (string-append
-           (if neg "-" "")
-           (number->string ip)
-           (if (= fp 0) ""
-               (string-append "." (strip-trailing-zeros (pad fp digits))))))))
-  (define (pad n digits)
-    (let loop ((s (number->string n)))
-      (if (< (string-length s) digits) (loop (string-append "0" s)) s)))
-  ;; a bare value: exact integers pass through; strings pass through.
-  ;; No floats -- use unit forms (em 92) or strings ("1.6") for fractions.
+  ;; a scalar: exact integers pass through, strings pass through. No
+  ;; floats -- fractions are written with the two-argument unit form.
   (define (num->css n)
     (cond
      ((string? n) n)
      ((and (integer? n) (exact? n)) (number->string n))
-     (else (error 'css "use an exact integer, a unit form, or a string" n))))
-  (define (hundredths n) (scaled->css n 100 2))
+     (else (error 'css "use an exact integer, a two-arg unit form, or a string" n))))
 
-  ;; ---- values ----
+  ;; a unit value: (em 1) -> "1em"; (em 0 92) -> "0.92em" (whole . frac)
+  (define (unit->css args suffix)
+    (string-append
+     (cond
+      ((null? args) (error 'css "unit form needs an argument"))
+      ((null? (cdr args)) (num->css (car args)))
+      (else (string-append (num->css (car args)) "." (num->css (cadr args)))))
+     suffix))
+
   (define units
     '((px . "px") (em . "em") (rem . "rem") (pct . "%") (vh . "vh")
       (vw . "vw") (vmin . "vmin") (vmax . "vmax") (fr . "fr") (deg . "deg")
       (s . "s") (ms . "ms") (ch . "ch") (ex . "ex")))
-  ;; ONE rule, no special cases: every unit's argument is scaled by 100.
-  ;; (em 92) -> 0.92em, (px 1300) -> 13px, (pct 5000) -> 50%,
-  ;; (vh 10000) -> 100vh, (deg 4500) -> 45deg. The number is always
-  ;; centi-units, so fractional values stay exact integers -- no floats.
   (define (val->css v)
     (cond
      ((string? v) v)
@@ -84,7 +68,7 @@
      ((pair? v)
       (let* ((h (car v)) (u (and (symbol? h) (assq h units))))
         (cond
-         (u (string-append (hundredths (cadr v)) (cdr u)))
+         (u (unit->css (cdr v) (cdr u)))
          ((eq? h 'var) (string-append "var(--" (symbol->string (cadr v)) ")"))
          ((eq? h 'calc) (string-append "calc(" (join (map val->css (cdr v)) " ") ")"))
          ((eq? h 'rgba) (string-append "rgba(" (join (map val->css (cdr v)) ",") ")"))
