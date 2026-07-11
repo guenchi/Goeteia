@@ -584,11 +584,23 @@
      (else acc))))
 
 (define (%named-char name)
+  ;; the full R6RS set; an unknown name is an error, not a silent
+  ;; first-character guess (#\return once read as #\r that way)
   (cond
    ((string=? name "space") #\space)
    ((string=? name "newline") #\newline)
-   ((string=? name "tab") #\tab)
-   (else (string-ref name 0))))
+   ((string=? name "tab") (integer->char 9))
+   ((string=? name "return") (integer->char 13))
+   ((string=? name "linefeed") (integer->char 10))
+   ((string=? name "nul") (integer->char 0))
+   ((string=? name "alarm") (integer->char 7))
+   ((string=? name "backspace") (integer->char 8))
+   ((string=? name "vtab") (integer->char 11))
+   ((string=? name "page") (integer->char 12))
+   ((string=? name "esc") (integer->char 27))
+   ((string=? name "delete") (integer->char 127))
+   ((= (string-length name) 1) (string-ref name 0))
+   (else (error 'read "unknown character name" name))))
 
 ;; ---- write ----
 
