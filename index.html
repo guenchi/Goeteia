@@ -123,7 +123,7 @@
       <section id="playground">
         <h2>The playground <span class="g">— the compiler is running in your browser</span></h2>
         <p class="hint">
-          <code>schwasm-self.wasm</code> is Goeteia compiled by itself: a
+          <code>goeteia.wasm</code> is Goeteia compiled by itself: a
           WebAssembly GC module that reads Scheme and writes WebAssembly.
           This page feeds it what you type and runs the result on the spot.
           No server, no JavaScript compiler.  The program's value is its
@@ -210,7 +210,7 @@ $ ./build-self.sh               # rebuild the compiler with itself
 
 $ echo '(define (fact n) (if (zero? n) 1 (* n (fact (- n 1)))))
 (fact 20)' > fact.ss
-$ node rt/compile.mjs schwasm-self.wasm fact.ss fact.wasm
+$ node rt/compile.mjs goeteia.wasm fact.ss fact.wasm
 $ node rt/run.mjs fact.wasm
 2432902008176640000</code></pre>
         <p class="hint">Compiled modules run on any engine with Wasm GC and
