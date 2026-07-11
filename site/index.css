@@ -2,7 +2,7 @@
       #live { min-height: 15em; padding: 3.5em 0 1em; }
       .hero { text-align: center; }
       .hero h1 {
-        font-family: "Metal Mania", "Grecian Formula", Georgia, serif;
+        font-family: "Butcherman", "Metal Mania", Georgia, serif;
         font-size: 4em; margin: 0; font-weight: 400; letter-spacing: .02em;
         background: linear-gradient(120deg, var(--lapis), var(--azure));
         -webkit-background-clip: text; background-clip: text; color: transparent;
