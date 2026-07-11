@@ -3,8 +3,19 @@
 ;; footer, the "Built in pure Scheme" badge and the view-source overlay
 ;; are the same on every page. Rendered to a string by Goeteia.
 (library (chrome)
-  (export render-page read-file write-file base-styles footer-styles palette)
+  (export render-page read-file write-file base-styles footer-styles palette
+          card feat section*)
   (import (rnrs) (web html) (web css))
+
+  ;; ---- reusable content helpers (SXML-returning) ----
+  ;; a titled box: (card "Title" "body " (code "x") " ...")
+  (define (card title . body)
+    `(div (@ (class "card")) (h3 ,title) (p ,@body)))
+  (define (feat title . body)
+    `(div (@ (class "feat")) (h4 ,title) (p ,@body)))
+  ;; a section with a heading: (section* "What's inside" node ...)
+  (define (section* id heading . body)
+    `(section (@ (id ,id)) (h2 ,heading) ,@body))
 
   ;; ---- the shared stylesheet, as data ----
   ;; the palette is Scheme data: change a colour here and every page

@@ -35,22 +35,18 @@
           " with the failing case — rather than emulating all of JavaScript.")
 
        (div (@ (class "feats"))
-         (div (@ (class "feat"))
-           (h4 "Equivalence, demonstrated")
-           (p "The single acceptance criterion is behavioral equivalence, shown "
-              "with a diff harness that runs both sides — never assumed."))
-         (div (@ (class "feat"))
-           (h4 "Reactive loop")
-           (p "Understand → translate → build the oracle → run & compare → repeat, "
-              "until the harness reports full equivalence."))
-         (div (@ (class "feat"))
-           (h4 "Idiomatic mapping")
-           (p (code "useState") "→" (code "signal") ", " (code "useEffect") "→"
-              (code "effect") ", JSX→" (code "(web sx)") " — not a transliteration."))
-         (div (@ (class "feat"))
-           (h4 "Honest residue")
-           (p "Delivers the port, the runnable harness, and a report of exactly what "
-              "diverges and what needs a human decision.")))
+         ,(feat "Equivalence, demonstrated"
+            "The single acceptance criterion is behavioral equivalence, shown "
+            "with a diff harness that runs both sides — never assumed.")
+         ,(feat "Reactive loop"
+            "Understand → translate → build the oracle → run & compare → repeat, "
+            "until the harness reports full equivalence.")
+         ,(feat "Idiomatic mapping"
+            (code "useState") "→" (code "signal") ", " (code "useEffect") "→"
+            (code "effect") ", JSX→" (code "(web sx)") " — not a transliteration.")
+         ,(feat "Honest residue"
+            "Delivers the port, the runnable harness, and a report of exactly what "
+            "diverges and what needs a human decision."))
 
        (div (@ (class "meta"))
          "tools: " (code "Bash, Read, Write, Edit, Grep, Glob"))))))

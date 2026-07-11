@@ -1,10 +1,7 @@
 ;; index.html — the homepage shell, authored in Scheme, rendered by
 ;; Goeteia. The hero inside #live is compiled and mounted live in the
 ;; browser from hero.ss (see index.js); everything else is static.
-(import (web html) (web css) (chrome))
-
-(define (card title . para)
-  `(div (@ (class "card")) (h3 ,title) (p ,@para)))
+(import (web html) (web css) (chrome))   ; card / section* come from chrome
 
 (define body
   (list
@@ -27,9 +24,8 @@
            "This page carries the whole compiler (" (code "goeteia.wasm")
            ", ~70 KB gzipped, cached after first load); each recompile takes ~15 ms.")))
 
-   `(section (@ (id "features"))
-      (h2 "What's inside")
-      (div (@ (class "grid"))
+   (section* "features" "What's inside"
+      `(div (@ (class "grid"))
         ,(card "Self-hosting, to the byte"
            "The compiler is written in the Scheme subset it compiles. "
            "The self-hosted build recompiles itself and the output is "
