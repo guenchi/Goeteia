@@ -53,6 +53,12 @@ value of the last expression is printed.
 (fact 5)          ; prints 120
 ```
 
+## Playground
+
+Serve the repo root (`python3 -m http.server`) and open
+`playground.html`: the self-hosted compiler — a Wasm GC module — runs
+in the browser and compiles what you type; no server-side anything.
+
 ## Tests
 
 ```
