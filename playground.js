@@ -29,8 +29,9 @@ function decode(v, ex) {
 onmessage = async (e) => {
     const { compiler, prelude, source } = e.data;
     try {
+        const harness = '\\n(define ($pg-write v) (write v) v)\\n(export $pg-write)\\n';
         const input = [];
-        for (const ch of prelude + '\\n' + source) input.push(ch.charCodeAt(0) & 0xff);
+        for (const ch of prelude + '\\n' + source + harness) input.push(ch.charCodeAt(0) & 0xff);
         const out = [];
         let pos = 0;
         const t0 = performance.now();
@@ -55,7 +56,18 @@ onmessage = async (e) => {
         });
         let result = '', error = null;
         try {
-            result = decode(mod.instance.exports.main(), mod.instance.exports);
+            const ex = mod.instance.exports;
+            const v = ex.main();
+            if (typeof v === 'number' || v === ex.false.value ||
+                v === ex.true.value || v === ex.null.value ||
+                v === ex.void.value || !ex['$pg-write']) {
+                result = decode(v, ex);
+            } else {
+                const before = runOut.length;
+                ex['$pg-write'](v);
+                result = latin1(runOut.slice(before));
+                runOut.length = before;
+            }
         } catch (err) {
             error = err.message;
         }
