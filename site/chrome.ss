@@ -119,7 +119,7 @@
      ".src-close{border:none;background:none;min-width:0;padding:0 .2em;"
      "font-size:1.5em;font-weight:400;line-height:1;"
      "color:var(--dim);cursor:pointer}.src-close:hover{color:var(--lapis)}"
-     ".src-code{margin:0;padding:1.2em;overflow:auto;font-family:var(--mono);"
+     ".src-code{margin:0;min-height:0;padding:1.2em;overflow:auto;font-family:var(--mono);"
      "font-size:12.5px;line-height:1.5;color:var(--ink);white-space:pre}"
      ".src-code .tok-c{color:#7a869f;font-style:italic}.src-code .tok-s{color:#1e7d34}"
      ".src-code .tok-k{color:var(--lapis);font-weight:600}.src-code .tok-n{color:#b0483f}"
