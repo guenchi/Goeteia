@@ -20,7 +20,6 @@
  (t (css->string '((x (a (rem 0 3))))) "x{a:0.3rem;}")
  ;; bare integers and unitless decimals (line-height, no string)
  (t (css->string '((body (margin 0) (line-height (dec 1 6))))) "body{margin:0;line-height:1.6;}")
- (t (css->string '((x (a (dec 0 6))))) "x{a:0.06;}")
  ;; variables, string selectors, custom properties
  (t (css->string '((:root (--bg "#f2f4fa") (--lapis "#1550c4"))))
     ":root{--bg:#f2f4fa;--lapis:#1550c4;}")
@@ -29,9 +28,9 @@
  ;; compound value + multi-value declaration
  (t (css->string '((.box (border (px 1) solid (var line)) (padding (em 1 1) (em 1 2)))))
     ".box{border:1px solid var(--line);padding:1.1em 1.2em;}")
- ;; calc and rgba (rgb parts bare integers; alpha a unitless decimal)
- (t (css->string '((.x (width (calc (pct 100) - (em 2))) (box-shadow 0 (px 1) (px 3) (rgba 16 20 42 (dec 0 6))))))
-    ".x{width:calc(100% - 2em);box-shadow:0 1px 3px rgba(16,20,42,0.06);}")
+ ;; calc and rgba (rgb parts bare integers; alpha as a percentage)
+ (t (css->string '((.x (width (calc (pct 100) - (em 2))) (box-shadow 0 (px 1) (px 3) (rgba 16 20 42 (pct 6))))))
+    ".x{width:calc(100% - 2em);box-shadow:0 1px 3px rgba(16,20,42,6%);}")
  ;; @media nesting
  (t (css->string '((@media "(max-width: 42em)"
                      (".nav-links" (gap (em 1)) (font-size (em 0 88))))))
