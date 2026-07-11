@@ -5,12 +5,17 @@
 # ";; expect: <value>".
 cd "$(dirname "$0")"
 fail=0
+# enable JSPI (js-await suspension) when this node accepts the flag
+JSPI=""
+if ${NODE-node} --experimental-wasm-jspi -e 1 >/dev/null 2>&1; then
+    JSPI="--experimental-wasm-jspi"
+fi
 run_one() { # wasmfile testfile
     input="${2%.ss}.input"
     if [ -f "$input" ]; then
-        ${NODE-node} rt/run.mjs "$1" "$input"
+        ${NODE-node} $JSPI rt/run.mjs "$1" "$input"
     else
-        ${NODE-node} rt/run.mjs "$1"
+        ${NODE-node} $JSPI rt/run.mjs "$1"
     fi
 }
 for t in test/*.ss; do

@@ -2,7 +2,7 @@
 // access through the js bridge.
 // Copyright (c) 2026 guenchi. MIT license; see LICENSE.
 
-import { makeJsBridge } from './jsbridge.mjs';
+import { makeJsBridge, callMain } from './jsbridge.mjs';
 
 export async function loadGoeteia(url) {
     let exportsRef = null;
@@ -20,7 +20,7 @@ export async function loadGoeteia(url) {
     exportsRef = instance.exports;
     // expose the staging memory so Scheme can build typed-array views
     if (instance.exports.memory) globalThis.__goeteia_mem = instance.exports.memory;
-    instance.exports.main();
+    await callMain(instance.exports);
     return instance.exports;
 }
 loadGoeteia._out = [];

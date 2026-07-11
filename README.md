@@ -77,6 +77,14 @@ A small UI stack over the JS bridge, in `lib/web/`:
   `(igropyr sexpr)` is the server half): `write` on one side, a safe
   whitelisted parser on the other, so exact integers and ratios cross
   the wire intact and there is no codec at all
+- `(web fetch)` — direct-style HTTP over JSPI: `(http-get url)` reads
+  like a blocking call, suspending the whole wasm stack on the
+  underlying promise and resuming with the value — sequential code,
+  no callbacks, no async coloring (Chrome stable; Node needs
+  `--experimental-wasm-jspi`); `(web rpc)`'s `rpc` builds on it
+- `(web json)` — the same safe JSON codec as the Igropyr server side
+  (ported from its `json.sc`): recursive-descent parser, `\uXXXX` and
+  surrogate pairs to UTF-8, exact bignums, `json-ref` path access
 
 `examples/counter.html` is a page scripted entirely in Goeteia;
 `examples/react-embed.html` is a React app with Goeteia widgets
