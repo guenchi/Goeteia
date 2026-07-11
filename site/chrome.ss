@@ -157,6 +157,7 @@
           (head
            (meta (@ (charset "utf-8")))
            (meta (@ (name "viewport") (content "width=device-width, initial-scale=1")))
+           (link (@ (rel "icon") (type "image/svg+xml") (href "favicon.svg")))
            (title ,title)
            (meta (@ (name "description") (content ,desc)))
            ;; css is either a raw CSS string or a (web css) rule list;
