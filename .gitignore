@@ -1,0 +1,3 @@
+*.wasm
+/tmp/
+node_modules/
