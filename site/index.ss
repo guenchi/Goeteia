@@ -92,9 +92,7 @@ $ node rt/run.mjs fact.wasm
                               "mounted live. Edit the source, press Run, and the page "
                               "below re-renders.")
                (string-append
-                 (string-append
-                  "@import url('https://fonts.googleapis.com/css2?family=Metal+Mania&family=Butcherman&family=Creepster&family=New+Rocker&family=Jolly+Lodger&display=swap');\n"
-                  "@font-face{font-family:'Grecian Formula';src:url('fonts/grecian.ttf') format('truetype');font-display:swap}\n")
+                 "@import url('https://fonts.googleapis.com/css2?family=New+Rocker&display=swap');\n"
                  (css->string (base-styles 60))
                  (read-file "site/index.css")
                  (css->string (footer-styles)))
