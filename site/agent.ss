@@ -42,8 +42,8 @@
             "Understand → translate → build the oracle → run & compare → repeat, "
             "until the harness reports full equivalence.")
          ,(feat "Idiomatic mapping"
-            (code "useState") "→" (code "signal") ", " (code "useEffect") "→"
-            (code "effect") ", JSX→" (code "(web sx)") " — not a transliteration.")
+            '(code "useState") "→" '(code "signal") ", " '(code "useEffect") "→"
+            '(code "effect") ", JSX→" '(code "(web sx)") " — not a transliteration.")
          ,(feat "Honest residue"
             "Delivers the port, the runnable harness, and a report of exactly what "
             "diverges and what needs a human decision."))
