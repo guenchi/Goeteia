@@ -9,8 +9,8 @@
       (div (@ (id "live")))                 ; the hero mounts here
       (section (@ (id "editor"))
         (p (@ (class "lead"))
-           (b "Everything beside this is rendered by Goeteia.") " The "
-           "Scheme below is compiled to WebAssembly " (em "in your browser")
+           (b "Everything beside this is rendered by Goeteia.") (br)
+           "The Scheme below is compiled to WebAssembly " (em "in your browser")
            " and mounted live.")
         (div (@ (class "code"))
           (pre (@ (class "hl") (id "hl") (aria-hidden "true")))
