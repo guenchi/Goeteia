@@ -67,8 +67,13 @@ argument-list convention so that arity is a runtime property, making
 - **M1 (done)**: fixnums, booleans, pairs, arithmetic, comparisons,
   `if`/`let`/`begin`/`quote`, top-level defines with direct (and tail)
   calls, binary emission, Node runner, test harness.
-- **M2**: closures (`lambda`, `call_ref`), assignment conversion for
-  `set!`, derived forms (`and`/`or`/`cond`/`named let`/`letrec`).
+- **M2 (done)**: closures (`lambda` via `call_ref` on typed function
+  references, one `(func, struct)` rec group per arity), assignment
+  conversion for `set!` (assigned lexicals boxed in pairs), top-level
+  variables as mutable globals, derived forms (`and`/`or`/`not`/
+  `when`/`unless`/`cond`/`let*`/`letrec`/`letrec*`/named `let`/`do`),
+  top-level functions as first-class values (auto-wrapped), tail
+  calls through closures via `return_call_ref`.
 - **M3**: strings, symbols (interning), characters, `write`/`display`
   via a tiny host I/O interface.
 - **M4**: a reader in Scheme, variadic procedures and `apply`,

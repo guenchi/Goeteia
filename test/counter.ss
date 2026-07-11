@@ -1,0 +1,10 @@
+;; expect: 5
+(define (make-counter)
+  (let ((n 0))
+    (lambda ()
+      (set! n (+ n 1))
+      n)))
+(define c (make-counter))
+(define d (make-counter))
+(c) (c) (c)
+(+ (c) (d))

@@ -1,0 +1,12 @@
+;; expect: #t
+(define (sign n)
+  (cond ((< n 0) 0)
+        ((= n 0) 1)
+        (else 2)))
+(and (= (sign 0) 1)
+     (= (sign 7) 2)
+     (or #f (= (sign 0) 1))
+     (not (< 2 1))
+     (when #t #t)
+     (unless #f #t)
+     (let* ((a 1) (b (+ a 1))) (= b 2)))

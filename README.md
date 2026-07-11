@@ -14,9 +14,14 @@ Proper tail calls compile to `return_call`.
 
 ## Status
 
-Milestone 1: fixnums, booleans, pairs, `quote`, arithmetic and
-comparisons, `if` / `let` / `begin`, top-level function definitions
-with direct and tail calls.  See `docs/design.md` for the object
+Milestone 2: closures (typed function references, `call_ref`),
+`set!` with assignment conversion, top-level variables, first-class
+top-level functions, and the derived forms `and` `or` `not` `when`
+`unless` `cond` `let*` `letrec` `letrec*` named-`let` `do`, on top of
+the M1 base (fixnums, booleans, pairs, `quote`, arithmetic,
+`if`/`let`/`begin`, direct and tail calls).  Tail calls through
+closures use `return_call_ref`, so loops built from named `let` run
+in constant stack.  See `docs/design.md` for the object
 representation, pipeline, and roadmap.
 
 ## Usage
