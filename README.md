@@ -80,9 +80,10 @@ host if you have it).
 
 ## Playground
 
-Serve the repo root (`python3 -m http.server`) and open
-`playground.html`: the self-hosted compiler — a Wasm GC module — runs
-in the browser and compiles what you type; no server-side anything.
+The browser playground — the self-hosted compiler running as a Wasm
+GC module, no server-side anything — lives on the
+[`website` branch](https://github.com/guenchi/Goeteia/tree/website);
+check it out and serve it statically, or visit the project page.
 
 ## Tests
 
