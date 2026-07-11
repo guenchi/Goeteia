@@ -91,8 +91,10 @@ $ node rt/run.mjs fact.wasm
                               "source is compiled to WebAssembly in your browser and "
                               "mounted live. Edit the source, press Run, and the page "
                               "below re-renders.")
-               (string-append (css->string (base-styles 60))
-                              (read-file "site/index.css")
-                              (css->string (footer-styles)))
+               (string-append
+                 "@import url('https://fonts.googleapis.com/css2?family=Eater&family=Pirata+One&display=swap');\n"
+                 (css->string (base-styles 60))
+                 (read-file "site/index.css")
+                 (css->string (footer-styles)))
                'index "site/index.ss" body
                (list '(script (@ (type "module") (src "index.js"))))))

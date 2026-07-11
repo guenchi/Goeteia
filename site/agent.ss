@@ -57,7 +57,7 @@
                               "JavaScript/TypeScript web file into Goeteia Scheme with "
                               "behavioral equivalence proved by differential testing — "
                               "download the agent definition.")
-               (string-append (css->string (base-styles 60))
+               (string-append (css->string (base-styles 52))
                               (read-file "site/agent.css")
                               (css->string (footer-styles)))
                'agent "site/agent.ss" body))
