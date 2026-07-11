@@ -542,8 +542,16 @@
   (let ((b (%next-byte)))
     (cond
      ((= b 34) (%bytes->string (reverse acc)))
-     ((= b 92) (%read-string (cons (%next-byte) acc))) ; backslash
+     ((= b 92) (%read-string (cons (%read-escape (%next-byte)) acc))) ; backslash
      (else (%read-string (cons b acc))))))
+(define (%read-escape b)
+  ;; translate the byte after a backslash; \" and \\ fall through to
+  ;; themselves, \n \t \r become the control characters
+  (cond
+   ((= b 110) 10)      ; \n -> newline
+   ((= b 116) 9)       ; \t -> tab
+   ((= b 114) 13)      ; \r -> return
+   (else b)))
 
 (define (%read-hash)
   (let ((b (%next-byte)))

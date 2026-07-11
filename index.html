@@ -30,7 +30,10 @@
       .nav-links a { color: var(--dim); font-size: .92em; }
       .nav-links a:hover { color: var(--lapis); text-decoration: none; }
       .nav-links a.gh { border: 1px solid var(--line); border-radius: 6px; padding: .3em .9em; color: var(--ink); }
-      @media (max-width: 42em) { .nav-links a.sec { display: none; } }
+      @media (max-width: 42em) {
+        .nav-inner { height: auto; min-height: 3.4em; flex-wrap: wrap; row-gap: .1em; padding: .35em 0; }
+        .nav-links { gap: 1em; font-size: .88em; }
+      }
 
       /* the live-rendered hero (built by Goeteia, mounted into #live) */
       #live { min-height: 15em; padding: 3.5em 0 1em; }
