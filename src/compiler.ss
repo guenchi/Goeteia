@@ -48,10 +48,10 @@
 ;; R6RS map may process elements in any order; codegen effects
 ;; (function indices, interned literals) need source order
 (define (map-in-order f ls)
-  (if (null? ls)
-      '()
-      (let ((head (f (car ls))))
-        (cons head (map-in-order f (cdr ls))))))
+  (let loop ((ls ls) (acc '()))
+    (if (null? ls)
+        (reverse acc)
+        (loop (cdr ls) (cons (f (car ls)) acc)))))
 
 ;;;; ------------------------------------------------------------------
 ;;;; byte trees
@@ -131,7 +131,9 @@
 (define TY-VECTOR 10)       ; (array (mut eqref))
 (define TY-BV 11)           ; bytevector: (struct (mut (ref $string)))
 (define TY-RECBASE 12)      ; open (struct (field eqref)) -- the rtd slot
-(define TY-FIRST-FREE 13)
+(define TY-FLONUM 13)       ; (struct (field f64))
+(define TY-BIGNUM 14)       ; (struct (field i32 sign) (field (ref $vector)))
+(define TY-FIRST-FREE 15)
 
 ;; imported functions come first in the function index space
 (define FN-WRITE-BYTE 0)
@@ -159,10 +161,18 @@
 
 (define (gc-op . bytes) (cons #xFB bytes))
 (define (i32const n) (list #x41 (sleb n)))
+;; sleb of n*2 (+1 for chars) computed without forming the doubled
+;; value: tagged literals near the fixnum limit would overflow it
+(define (sleb-shifted n odd)
+  (let ((lo (+ (* (bitwise-and n #x3f) 2) odd))
+        (hi (bitwise-arithmetic-shift-right n 6)))
+    (if (if (zero? (bitwise-and lo #x40)) (zero? hi) (= hi -1))
+        (list lo)
+        (cons (bitwise-ior lo #x80) (sleb hi)))))
 (define (emit-fixnum n)
-  (list (i32const (* n 2)) (gc-op #x1C)))          ; ref.i31
+  (list #x41 (sleb-shifted n 0) (gc-op #x1C)))     ; ref.i31
 (define (emit-char c)
-  (list (i32const (+ (* (char->integer c) 2) 1)) (gc-op #x1C)))
+  (list #x41 (sleb-shifted (char->integer c) 1) (gc-op #x1C)))
 ;; eqref -> raw tagged i32
 (define (untag)
   (list (gc-op #x16 T-I31) (gc-op #x1D)))          ; ref.cast i31; i31.get_s
@@ -173,6 +183,8 @@
 (define (wrap-int)
   (list (i32const 1) #x74 (gc-op #x1C)))           ; i32.shl; ref.i31
 (define (ref-cast ty) (gc-op #x16 (sleb ty)))
+(define (unwrap-fl)
+  (list (gc-op #x16 (sleb TY-FLONUM)) (gc-op #x02 (uleb TY-FLONUM) (uleb 0))))
 (define (ref-test ty) (gc-op #x14 (sleb ty)))
 (define (struct-get ty i) (gc-op #x02 (uleb ty) (uleb i)))
 (define (struct-set ty i) (gc-op #x05 (uleb ty) (uleb i)))
@@ -1060,7 +1072,11 @@
     (+ . 2) (- . 2) (* . 2) (quotient . 2) (remainder . 2)
     (= . 2) (< . 2) (eq? . 2)
     (set-car! . 2) (set-cdr! . 2)
-    (number? . 1) (char? . 1) (string? . 1) (symbol? . 1)
+    (fixnum? . 1) (char? . 1) (string? . 1) (symbol? . 1)
+    (flonum? . 1) (fl+ . 2) (fl- . 2) (fl* . 2) (fl/ . 2)
+    (fl=? . 2) (fl<? . 2) (flsqrt . 1) (flfloor . 1) (fltruncate . 1)
+    (fixnum->flonum . 1) (%fl->fx . 1)
+    (%bignum? . 1) (%make-bignum . 2) (%bignum-sign . 1) (%bignum-limbs . 1)
     (boolean? . 1) (procedure? . 1)
     (char->integer . 1) (integer->char . 1)
     (string-length . 1) (string-ref . 2) (string-set! . 3)
@@ -1076,7 +1092,10 @@
 
 (define primitives
   '(+ - * quotient remainder = < eq? cons car cdr pair? null? zero?
-    set-car! set-cdr! number? char? string? symbol? boolean? procedure?
+    set-car! set-cdr! fixnum? char? string? symbol? boolean? procedure?
+    flonum? fl+ fl- fl* fl/ fl=? fl<? flsqrt flfloor fltruncate
+    fixnum->flonum %fl->fx
+    %bignum? %make-bignum %bignum-sign %bignum-limbs
     char->integer integer->char string-length string-ref symbol->string
     string-set! eof-object eof-object?
     bitwise-and bitwise-ior bitwise-xor
@@ -1090,7 +1109,8 @@
 
 (define (compile-exp e locals cell tail?)
   (cond
-   ((and (integer? e) (exact? e)) (emit-fixnum e))
+   ((and (integer? e) (exact? e) (fits-fixnum? e)) (emit-fixnum e))
+   ((or (and (integer? e) (exact? e)) (flonum? e)) (compile-datum e))
    ((boolean? e) (global-get (if e G-TRUE G-FALSE)))
    ((char? e) (emit-char e))
    ((string? e) (global-get (intern! 'str e)))
@@ -1202,9 +1222,70 @@
         (global-get G-NULL)
         (struct-new (if variadic? TY-CLOSV (cdr (clos-ty arity))))))
 
+;; f64 bits of a flonum, little-endian, using only flonum compare
+;; and arithmetic so it runs identically under both hosts.
+;; Normal numbers and zero; source literals don't produce the rest.
+(define (ieee-bytes x)
+  (if (fl=? x (fixnum->flonum 0))
+      '(0 0 0 0 0 0 0 0)
+      (let* ((neg (fl<? x (fixnum->flonum 0)))
+             (mag (if neg (fl- (fixnum->flonum 0) x) x))
+             (one (fixnum->flonum 1))
+             (two (fixnum->flonum 2)))
+        (let scale ((m mag) (e 0))
+          (cond
+           ((fl<? m one) (scale (fl* m two) (- e 1)))
+           ((or (fl<? two m) (fl=? two m)) (scale (fl/ m two) (+ e 1)))
+           (else
+            (let bits ((frac (fl- m one)) (i 0) (acc '()))
+              (if (= i 52)
+                  (assemble-f64 neg (+ e 1023) (reverse acc))
+                  (let ((d (fl* frac two)))
+                    (if (or (fl<? one d) (fl=? one d))
+                        (bits (fl- d one) (+ i 1) (cons 1 acc))
+                        (bits d (+ i 1) (cons 0 acc))))))))))))
+(define (assemble-f64 neg biased mant)
+  ;; mant: 52 bits, most significant first -> 8 LE bytes
+  (let* ((bits (append (list (if neg 1 0))
+                       (exp-bits biased 11)
+                       mant))
+         (bytes (let byte ((bs bits) (acc '()))
+                  (if (null? bs)
+                      acc                       ; big-endian built, reversed
+                      (byte (list-tail bs 8)
+                            (cons (bits->byte (first-n bs 8)) acc))))))
+    bytes))
+(define (exp-bits n k)
+  (if (zero? k)
+      '()
+      (append (exp-bits (quotient n 2) (- k 1))
+              (list (remainder n 2)))))
+(define (bits->byte bs)
+  (fold-left (lambda (acc b) (+ (* acc 2) b)) 0 bs))
+
+(define (fits-fixnum? n)
+  (and (< n 536870912) (< -536870913 n)))
 (define (compile-datum d)
   (cond
-   ((and (integer? d) (exact? d)) (emit-fixnum d))
+   ((and (integer? d) (exact? d) (fits-fixnum? d)) (emit-fixnum d))
+   ((and (integer? d) (exact? d))
+    ;; a bignum literal: decompose into 15-bit limbs with generic
+    ;; arithmetic (works on host bignums under Chez and on schwasm
+    ;; bignums when self-hosted) and rebuild at runtime
+    (let* ((neg (< d 0))
+           (mag (if neg (- 0 d) d))
+           (limbs (let split ((m mag) (acc '()))
+                    (if (and (fits-fixnum? m) (< m 16384))
+                        (reverse (cons m acc))
+                        (split (quotient m 16384)
+                               (cons (remainder m 16384) acc)))))
+           (codes (map-in-order emit-fixnum limbs)))
+      (list (i32const (if neg 1 0))
+            codes
+            (gc-op #x08 (uleb TY-VECTOR) (uleb (length limbs)))
+            (struct-new TY-BIGNUM))))
+   ((flonum? d)
+    (list #x44 (ieee-bytes d) (struct-new TY-FLONUM)))
    ((boolean? d) (global-get (if d G-TRUE G-FALSE)))
    ((char? d) (emit-char d))
    ((string? d) (global-get (intern! 'str d)))
@@ -1241,7 +1322,8 @@
            (not (assq (unmark (car e)) *fns*)))
       (pred-i32 (unmark (car e))
                 (map-in-order (lambda (a) (compile-exp a locals cell #f))
-                              (cdr e)))
+                              (cdr e))
+                cell)
       (list (compile-exp e locals cell #f) (truthy))))
 
 (define (compile-let e locals cell tail?)
@@ -1512,12 +1594,39 @@
 ;; test position (no boolean boxing) and boolified elsewhere
 (define i32-predicates '(= < zero? eq? pair? null? string? symbol?
                          procedure? eof-object?))
-(define (pred-i32 op argc)
+;; call a generic arithmetic helper from the prelude by name
+(define (generic-call name)
+  (let ((f (assq name *fns*)))
+    (unless f (errorf 'schwasm "missing generic helper ~s" name))
+    (list #x10 (uleb (cadr f)))))
+(define (pred-i32 op argc cell)
   (define (arg i) (list-ref argc i))
   (case op
-    ((=) (list (arg 0) (untag) (arg 1) (untag) #x46))
-    ((<) (list (arg 0) (untag) (arg 1) (untag) #x48))
-    ((zero?) (list (arg 0) (untag) OP-I32-EQZ))
+    ((= <)
+     ;; both fixnums: compare tagged; otherwise the generic helper
+     (let* ((ta (fresh-local! cell)) (tb (fresh-local! cell)))
+       (list (arg 0) (local-set ta) (arg 1) (local-set tb)
+             (local-get ta) (gc-op #x14 T-I31)
+             (local-get tb) (gc-op #x14 T-I31)
+             #x71
+             #x04 T-I32
+             (local-get ta) (untag) (local-get tb) (untag)
+             (if (eq? op '=) #x46 #x48)
+             #x05
+             (local-get ta) (local-get tb)
+             (generic-call (if (eq? op '=) '$eq2 '$lt2))
+             (truthy)
+             #x0B)))
+    ((zero?)
+     (let ((ta (fresh-local! cell)))
+       (list (arg 0) (local-set ta)
+             (local-get ta) (gc-op #x14 T-I31)
+             #x04 T-I32
+             (local-get ta) (untag) OP-I32-EQZ
+             #x05
+             (local-get ta) (emit-fixnum 0) (generic-call '$eq2)
+             (truthy)
+             #x0B)))
     ((eq?) (list (arg 0) (arg 1) OP-REF-EQ))
     ((pair?) (list (arg 0) (ref-test TY-PAIR)))
     ((null?) (list (arg 0) (global-get G-NULL) OP-REF-EQ))
@@ -1525,6 +1634,60 @@
     ((symbol?) (list (arg 0) (ref-test TY-SYMBOL)))
     ((procedure?) (list (arg 0) (ref-test TY-CLOSBASE)))
     ((eof-object?) (list (arg 0) (global-get G-EOF) OP-REF-EQ))))
+
+;; one binary arithmetic op: fixnum fast path inline, generic helper
+;; otherwise.  The fast + and - work on tagged values and re-derive
+;; the sum for the 30-bit overflow check instead of spending a local;
+;; * checks its range in 64 bits.
+(define (arith2 op acode bcode cell)
+  (let* ((ta (fresh-local! cell))
+         (tb (fresh-local! cell))
+         (slow (list (local-get ta) (local-get tb)
+                     (generic-call (case op
+                                     ((+) '$add2) ((-) '$sub2) ((*) '$mul2)
+                                     ((quotient) '$quot2) (else '$rem2)))))
+         (tagged-op (lambda ()
+                      (list (local-get ta) (untag)
+                            (local-get tb) (untag)
+                            (if (eq? op '+) #x6A #x6B)))))
+    (list acode (local-set ta) bcode (local-set tb)
+          (local-get ta) (gc-op #x14 T-I31)
+          (local-get tb) (gc-op #x14 T-I31)
+          #x71
+          #x04 T-EQREF
+          (case op
+            ((+ -)
+             ;; overflow iff bits 30 and 31 of the tagged result differ
+             (list (tagged-op) (i32const 30) #x75
+                   (tagged-op) (i32const 31) #x75
+                   #x46
+                   #x04 T-EQREF
+                   (tagged-op) (gc-op #x1C)
+                   #x05 slow #x0B))
+            ((*)
+             ;; p = a * (b<<1) must fit in 31 signed bits
+             (let ((p64 (lambda ()
+                          (list (local-get ta) (unwrap-int) #xAC
+                                (local-get tb) (untag) #xAC
+                                #x7E))))
+               (list (p64) (p64) #xC4 #x51        ; i64.eq with extend32_s
+                     #x04 T-I32
+                     (p64) #xA7 (i32const 30) #x75
+                     (p64) #xA7 (i32const 31) #x75
+                     #x46
+                     #x05 (i32const 0) #x0B
+                     #x04 T-EQREF
+                     (p64) #xA7 (gc-op #x1C)
+                     #x05 slow #x0B)))
+            ((quotient)
+             (list (local-get ta) (unwrap-int)
+                   (local-get tb) (unwrap-int)
+                   #x6D (wrap-int)))
+            (else                       ; remainder
+             (list (local-get ta) (untag)
+                   (local-get tb) (untag)
+                   #x6F (gc-op #x1C))))
+          #x05 slow #x0B)))
 
 (define (compile-prim op args locals cell)
   ;; arguments compile once, in source order
@@ -1538,25 +1701,21 @@
       (errorf 'schwasm "wrong argument count for primitive ~s" op)))
   (case op
     ((+ - *)
-     ;; n-ary, folded into binary chains; fixnums carry a *2 tag
-     ;; which + and - preserve directly
-     (when (< (length args) 2)
+     ;; n-ary as nested binary ops, each with a fixnum fast path and
+     ;; a generic fallback (bignum promotion, flonum contagion)
+     (cond
+      ((and (eq? op '-) (= (length args) 1))
+       (arith2 '- (emit-fixnum 0) (arg 0) cell))
+      ((< (length args) 2)
        (errorf 'schwasm "primitive ~s needs two or more arguments" op))
-     (let fold ((code (list (arg 0) (untag))) (i 1))
-       (if (= i (length args))
-           (list code (gc-op #x1C))
-           (fold (list code
-                       (arg i)
-                       (if (eq? op '*) (unwrap-int) (untag))
-                       (case op ((+) #x6A) ((-) #x6B) (else #x6C)))
-                 (+ i 1)))))
+      (else
+       (let fold ((code (arg 0)) (i 1))
+         (if (= i (length args))
+             code
+             (fold (arith2 op code (arg i) cell) (+ i 1)))))))
     ((quotient remainder)
-     (case op
-       ((quotient) (list (arg 0) (unwrap-int) (arg 1) (unwrap-int)
-                         #x6D (wrap-int)))
-       ((remainder) (list (arg 0) (untag) (arg 1) (untag)
-                          #x6F (gc-op #x1C)))))
-    ((= < zero? eq?) (list (pred-i32 op argc) (boolify)))
+     (arith2 op (arg 0) (arg 1) cell))
+    ((= < zero? eq?) (list (pred-i32 op argc cell) (boolify)))
     ((cons) (list (arg 0) (arg 1) (struct-new TY-PAIR)))
     ((car) (list (arg 0) (ref-cast TY-PAIR) (struct-get TY-PAIR 0)))
     ((cdr) (list (arg 0) (ref-cast TY-PAIR) (struct-get TY-PAIR 1)))
@@ -1564,8 +1723,8 @@
                       (struct-set TY-PAIR 0) (global-get G-VOID)))
     ((set-cdr!) (list (arg 0) (ref-cast TY-PAIR) (arg 1)
                       (struct-set TY-PAIR 1) (global-get G-VOID)))
-    ((pair? null?) (list (pred-i32 op argc) (boolify)))
-    ((number? char?)
+    ((pair? null?) (list (pred-i32 op argc cell) (boolify)))
+    ((fixnum? char?)
      ;; i31 with the right tag bit
      (let ((tmp (fresh-local! cell)))
        (list (arg 0) (local-set tmp)
@@ -1574,10 +1733,36 @@
              (local-get tmp) (gc-op #x14 T-I31)
              #x04 T-I32
              (local-get tmp) (untag) (i32const 1) #x71 ; i32.and
-             (if (eq? op 'number?) OP-I32-EQZ '())
+             (if (eq? op 'fixnum?) OP-I32-EQZ '())
              #x05 (i32const 0) #x0B
              (boolify))))
-    ((string? symbol? procedure?) (list (pred-i32 op argc) (boolify)))
+    ((flonum?) (list (arg 0) (ref-test TY-FLONUM) (boolify)))
+    ((fl+ fl- fl* fl/)
+     (list (arg 0) (unwrap-fl) (arg 1) (unwrap-fl)
+           (case op ((fl+) #xA0) ((fl-) #xA1) ((fl*) #xA2) (else #xA3))
+           (struct-new TY-FLONUM)))
+    ((fl=? fl<?)
+     (list (arg 0) (unwrap-fl) (arg 1) (unwrap-fl)
+           (if (eq? op 'fl=?) #x61 #x63)
+           (boolify)))
+    ((flsqrt flfloor fltruncate)
+     (list (arg 0) (unwrap-fl)
+           (case op ((flsqrt) #x9F) ((flfloor) #x9C) (else #x9D))
+           (struct-new TY-FLONUM)))
+    ((fixnum->flonum)
+     (list (arg 0) (unwrap-int) #xB7 (struct-new TY-FLONUM)))
+    ((%fl->fx)
+     (list (arg 0) (unwrap-fl) #xAA (wrap-int)))
+    ((%bignum?) (list (arg 0) (ref-test TY-BIGNUM) (boolify)))
+    ((%make-bignum)
+     ;; (sign-fixnum limbs-vector)
+     (list (arg 0) (unwrap-int) (arg 1) (ref-cast TY-VECTOR)
+           (struct-new TY-BIGNUM)))
+    ((%bignum-sign)
+     (list (arg 0) (ref-cast TY-BIGNUM) (struct-get TY-BIGNUM 0) (wrap-int)))
+    ((%bignum-limbs)
+     (list (arg 0) (ref-cast TY-BIGNUM) (struct-get TY-BIGNUM 1)))
+    ((string? symbol? procedure?) (list (pred-i32 op argc cell) (boolify)))
     ((boolean?)
      (let ((tmp (fresh-local! cell)))
        (list (arg 0) (local-set tmp)
@@ -1608,7 +1793,7 @@
            (gc-op #x0E (uleb TY-STRING))              ; array.set
            (global-get G-VOID)))
     ((eof-object) (global-get G-EOF))
-    ((eof-object?) (list (pred-i32 op argc) (boolify)))
+    ((eof-object?) (list (pred-i32 op argc cell) (boolify)))
     ((bitwise-and bitwise-ior bitwise-xor)
      ;; the *2 fixnum tag passes through and/ior/xor unchanged
      (list (arg 0) (untag) (arg 1) (untag)
@@ -1724,22 +1909,25 @@
       acc))
 
 (define (scan-recs e acc)
-  (if (pair? e)
-      (if (eq? (resolve-tag (car e)) 'quote)
-          acc
-          (let ((acc (cond
-                      ((and (eq? (resolve-tag (car e)) '%record) (list? e))
-                       (let ((n (- (length (cdr e)) 1)))
-                         (if (memv n acc) acc (cons n acc))))
-                      ((and (memq (resolve-tag (car e))
-                                  '(%record-ref %record-set!))
-                            (list? e)
-                            (integer? (caddr e)))
-                       (let ((n (caddr e)))
-                         (if (memv n acc) acc (cons n acc))))
-                      (else acc))))
-            (scan-recs (car e) (scan-recs (cdr e) acc))))
-      acc))
+  (let walk ((stack (cons e '())) (acc acc))
+    (if (null? stack)
+        acc
+        (let ((e (car stack)) (stack (cdr stack)))
+          (if (and (pair? e)
+                   (not (eq? (resolve-tag (car e)) 'quote)))
+              (walk (cons (car e) (cons (cdr e) stack))
+                    (cond
+                     ((and (eq? (resolve-tag (car e)) '%record) (list? e))
+                      (let ((n (- (length (cdr e)) 1)))
+                        (if (memv n acc) acc (cons n acc))))
+                     ((and (memq (resolve-tag (car e))
+                                 '(%record-ref %record-set!))
+                           (list? e)
+                           (integer? (caddr e)))
+                      (let ((n (caddr e)))
+                        (if (memv n acc) acc (cons n acc))))
+                     (else acc)))
+              (walk stack acc))))))
 
 (define (compile-toplevel-fn form)
   ;; a variadic definition's rest parameter is its final wasm
@@ -1764,23 +1952,24 @@
 ;; expand each top-level form; a define-syntax produced by a macro is
 ;; collected, so macros can define macros
 (define (expand-forms fs)
-  (if (null? fs)
-      '()
-      (expand-spliced (xpand (car fs)) (cdr fs))))
-(define (expand-spliced x rest)
+  (let loop ((fs fs) (acc '()))
+    (if (null? fs)
+        (reverse acc)
+        (loop (cdr fs) (expand-spliced (xpand (car fs)) acc)))))
+(define (expand-spliced x acc)
   (cond
    ((and (pair? x) (symbol? (car x)) (eq? (unmark (car x)) 'begin))
     ;; top-level begin splices (its subforms are already expanded),
     ;; so macros and define-record-type can produce several defines
-    (let splice ((subs (cdr x)))
+    (let splice ((subs (cdr x)) (acc acc))
       (if (null? subs)
-          (expand-forms rest)
+          acc
           (let ((sub (car subs)))
             (if (macro-def? sub)
-                (begin (add-macro! sub) (splice (cdr subs)))
-                (cons (normalize-define sub) (splice (cdr subs))))))))
-   ((macro-def? x) (add-macro! x) (expand-forms rest))
-   (else (cons (normalize-define x) (expand-forms rest)))))
+                (begin (add-macro! sub) (splice (cdr subs) acc))
+                (splice (cdr subs) (cons (normalize-define sub) acc)))))))
+   ((macro-def? x) (add-macro! x) acc)
+   (else (cons (normalize-define x) acc))))
 (define (normalize-define f)
   ;; top-level forms built by macros have marked heads
   (if (and (pair? f) (symbol? (car f)) (eq? (unmark (car f)) 'define))
@@ -1796,16 +1985,20 @@
 (define (def-name f)
   (if (pair? (cadr f)) (car (cadr f)) (cadr f)))
 (define (form-refs e acc)
-  (cond
-   ((symbol? e)
-    ;; macro-introduced identifiers reference what they renamed
-    (let ((u (unmark e)))
-      (if (memq u acc) acc (cons u acc))))
-   ((pair? e)
-    (if (eq? (resolve-tag (car e)) 'quote)
-        acc
-        (form-refs (car e) (form-refs (cdr e) acc))))
-   (else acc)))
+  ;; worklist traversal: form spines outrun the wasm stack
+  (let walk ((stack (cons e '())) (acc acc))
+    (cond
+     ((null? stack) acc)
+     ((symbol? (car stack))
+      ;; macro-introduced identifiers reference what they renamed
+      (let ((u (unmark (car stack))))
+        (walk (cdr stack) (if (memq u acc) acc (cons u acc)))))
+     ((and (pair? (car stack))
+           (not (eq? (resolve-tag (car (car stack))) 'quote)))
+      (walk (cons (car (car stack))
+                  (cons (cdr (car stack)) (cdr stack)))
+            acc))
+     (else (walk (cdr stack) acc)))))
 (define (pure-init? e)
   (cond
    ((pair? e)
@@ -1821,10 +2014,19 @@
                                 (cons (cons (def-name f) f) acc)
                                 acc))
                           ;; call/cc expands to code that calls the
-                          ;; escape machinery behind the scenes
+                          ;; escape machinery behind the scenes, and
+                          ;; arithmetic reaches the generic helpers
                           (list (cons 'call/cc '(begin $escape $winders))
                                 (cons 'call-with-current-continuation
-                                      '(begin $escape $winders)))
+                                      '(begin $escape $winders))
+                                (cons '+ '(begin $add2))
+                                (cons '- '(begin $sub2))
+                                (cons '* '(begin $mul2))
+                                (cons 'quotient '(begin $quot2))
+                                (cons 'remainder '(begin $rem2))
+                                (cons '= '(begin $eq2))
+                                (cons '< '(begin $lt2))
+                                (cons 'zero? '(begin $eq2)))
                           forms)))
     (let grow ((live '())
                (queue (fold-left (lambda (acc f)
@@ -1999,7 +2201,13 @@
                   (list #x5F (counted (list (list #x64 (sleb TY-STRING) #x01))))
                   ;; $recbase: open supertype of all record types
                   (list #x50 #x00
-                        #x5F (counted (list (list T-EQREF #x00)))))
+                        #x5F (counted (list (list T-EQREF #x00))))
+                  ;; $flonum
+                  (list #x5F (counted (list (list #x7C #x00))))
+                  ;; $bignum: sign flag and a vector of 15-bit limbs
+                  (list #x5F (counted
+                              (list (list T-I32 #x00)
+                                    (list #x64 (sleb TY-VECTOR) #x00)))))
                  ;; plain function types
                  (map (lambda (a)
                         (list #x60

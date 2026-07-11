@@ -1,0 +1,33 @@
+;; expect: #t
+(define (fact n) (if (zero? n) 1 (* n (fact (- n 1)))))
+(define f20 (fact 20))
+(and ;; bignum promotion and arithmetic
+     (not (fixnum? f20))
+     (integer? f20)
+     (number? f20)
+     (= f20 2432902008176640000)
+     (< 2432902008176639999 f20)
+     (= (+ f20 1) 2432902008176640001)
+     (= (- (+ f20 f20) f20) f20)
+     (= (quotient f20 1000) 2432902008176640)
+     (= (remainder f20 7) (remainder 2432902008176640000 7))
+     ;; crossing the fixnum boundary and coming back
+     (= (- (+ 536870911 5) 5) 536870911)
+     (fixnum? (- (+ 536870911 1) 1))
+     ;; negative bignums
+     (= (- 0 f20) -2432902008176640000)
+     (< (- 0 f20) 0)
+     ;; flonums
+     (flonum? 3.5)
+     (not (integer? 3.5))
+     (inexact? 3.5)
+     (= (+ 1.5 2) 3.5)
+     (= (* 2 0.5) 1.0)
+     (< 1.4 1.5)
+     (= (/ 7 2) 3.5)
+     (= (/ 8 2) 4)
+     (fixnum? (/ 8 2))
+     (= (floor 3.7) 3.0)
+     (= (truncate (- 0 3.7)) (- 0 3.0))
+     (= (sqrt 16) 4.0)
+     (= (exact->inexact f20) (* (exact->inexact (quotient f20 2)) 2)))

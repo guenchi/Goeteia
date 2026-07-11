@@ -38,9 +38,40 @@
     (%display-string s (+ i 1))))
 
 (define (%display-number n)
-  (if (< n 0)
-      (begin (%write-byte 45) (%display-digits (- 0 n)))
-      (%display-digits n)))
+  (cond
+   ((flonum? n) ($display-flonum n))
+   ((%bignum? n) ($display-bignum n))
+   ((< n 0) (%write-byte 45) (%display-digits (- 0 n)))
+   (else (%display-digits n))))
+(define ($display-bignum b)
+  (when ($bn-neg? b) (%write-byte 45))
+  ($display-mag (%bignum-limbs b)))
+(define ($display-mag m)
+  (if (and (= ($mag-len m) 1) (< (vector-ref m 0) 10))
+      (%write-byte (+ 48 (vector-ref m 0)))
+      (let ((qr ($mag-divmod-small m 10)))
+        ($display-mag (car qr))
+        (%write-byte (+ 48 (cdr qr))))))
+(define ($display-flonum x)
+  (let* ((zero (fixnum->flonum 0))
+         (neg (fl<? x zero))
+         (mag (if neg (fl- zero x) x)))
+    (when neg (%write-byte 45))
+    (if (fl<? (fixnum->flonum 536870911) mag)
+        (%display-string "<big-flonum>" 0)
+        (let* ((ip (%fl->fx mag))
+               (frac (fl- mag (fixnum->flonum ip))))
+          (%display-digits ip)
+          (%write-byte 46)
+          ($display-frac frac 0)))))
+(define ($display-frac f i)
+  ;; up to 12 digits, trimmed via lookahead: stop when the rest is 0
+  (if (or (= i 12) (fl=? f (fixnum->flonum 0)))
+      (when (zero? i) (%write-byte 48))
+      (let* ((scaled (fl* f (fixnum->flonum 10)))
+             (d (%fl->fx scaled)))
+        (%write-byte (+ 48 d))
+        ($display-frac (fl- scaled (fixnum->flonum d)) (+ i 1)))))
 
 (define (%display-digits n)
   (if (< n 10)
@@ -71,15 +102,18 @@
    ((null? (cdr ls)) (car ls))
    (else ($append2 (car ls) (apply append (cdr ls))))))
 (define ($append2 a b)
-  (if (null? a)
-      b
-      (cons (car a) ($append2 (cdr a) b))))
+  ($rev-onto (reverse a) b))
+(define ($rev-onto rev tail)
+  (if (null? rev)
+      tail
+      ($rev-onto (cdr rev) (cons (car rev) tail))))
 
-(define (filter pred ls)
+(define (filter pred ls) ($filter-acc pred ls '()))
+(define ($filter-acc pred ls acc)
   (cond
-   ((null? ls) '())
-   ((pred (car ls)) (cons (car ls) (filter pred (cdr ls))))
-   (else (filter pred (cdr ls)))))
+   ((null? ls) (reverse acc))
+   ((pred (car ls)) ($filter-acc pred (cdr ls) (cons (car ls) acc)))
+   (else ($filter-acc pred (cdr ls) acc))))
 
 (define (reverse ls)
   (%reverse ls '()))
@@ -229,14 +263,44 @@
       (%read-token (cons (%next-byte) acc))))
 
 (define (%finish-atom bs)
-  (if (%number-token? bs)
-      (%parse-int bs)
-      (string->symbol (%bytes->string bs))))
+  (cond
+   ((%number-token? bs) (%parse-int bs))
+   ((%decimal-token? bs) (%parse-decimal bs))
+   (else (string->symbol (%bytes->string bs)))))
+(define (%parse-decimal bs)
+  (let* ((neg (and (pair? bs) (= (car bs) 45)))
+         (bs (if neg (cdr bs) bs)))
+    (let loop ((bs bs) (int 0) (frac (fixnum->flonum 0))
+               (scale (fixnum->flonum 1)) (seen-dot #f))
+      (cond
+       ((null? bs)
+        (let ((v (fl+ ($->fl int) frac)))
+          (if neg (fl- (fixnum->flonum 0) v) v)))
+       ((= (car bs) 46) (loop (cdr bs) int frac scale #t))
+       (seen-dot
+        (let ((scale (fl/ scale (fixnum->flonum 10))))
+          (loop (cdr bs) int
+                (fl+ frac (fl* (fixnum->flonum (- (car bs) 48)) scale))
+                scale #t)))
+       (else (loop (cdr bs) (+ (* int 10) (- (car bs) 48))
+                   frac scale #f))))))
 
 (define (%number-token? bs)
   (if (and (pair? bs) (= (car bs) 45))             ; leading -
       (and (pair? (cdr bs)) (%all-digits? (cdr bs)))
       (%all-digits? bs)))
+(define (%decimal-token? bs)
+  (let ((bs (if (and (pair? bs) (= (car bs) 45)) (cdr bs) bs)))
+    (let scan ((bs bs) (digits-before 0) (seen-dot #f) (digits-after 0))
+      (cond
+       ((null? bs) (and seen-dot (< 0 digits-before) (< 0 digits-after)))
+       ((= (car bs) 46)
+        (and (not seen-dot) (scan (cdr bs) digits-before #t 0)))
+       ((and (< 47 (car bs)) (< (car bs) 58))
+        (if seen-dot
+            (scan (cdr bs) digits-before #t (+ digits-after 1))
+            (scan (cdr bs) (+ digits-before 1) #f 0)))
+       (else #f)))))
 (define (%all-digits? bs)
   (if (null? bs)
       #t
@@ -452,9 +516,14 @@
   (newline)
   (%abort))
 
-(define (eqv? a b) (eq? a b))
-(define (integer? x) (number? x))
-(define (exact? x) (number? x))
+(define (eqv? a b)
+  (or (eq? a b)
+      (and (flonum? a) (flonum? b) (fl=? a b))
+      (and (%bignum? a) (%bignum? b) ($eq2 a b))))
+(define (number? x) (or (fixnum? x) (flonum? x) (%bignum? x)))
+(define (integer? x) (or (fixnum? x) (%bignum? x)))
+(define (exact? x) (integer? x))
+(define (inexact? x) (flonum? x))
 (define (cadar p) (car (cdar p)))
 
 ;; ---- derived binding forms (macros live in the prelude too) ----
@@ -481,8 +550,11 @@
 ;; n-ary map and for-each
 (define (map f ls . more)
   (if (null? more) ($map1 f ls) ($mapn f (cons ls more))))
-(define ($map1 f ls)
-  (if (null? ls) '() (cons (f (car ls)) ($map1 f (cdr ls)))))
+(define ($map1 f ls) ($map1-acc f ls '()))
+(define ($map1-acc f ls acc)
+  (if (null? ls)
+      (reverse acc)
+      ($map1-acc f (cdr ls) (cons (f (car ls)) acc))))
 (define ($mapn f lists)
   (if ($any-null? lists)
       '()
@@ -695,3 +767,206 @@
             (hashtable-set! ht (caar b) (cdar b))
             (scan (cdr b))))
         (loop (+ i 1))))))
+
+;; ---- the numeric tower: bignums and flonum contagion ----
+;;
+;; Bignums: sign flag plus a vector of 15-bit limbs, little-endian.
+;; The compiler's inline fixnum paths call $add2/$sub2/$mul2/$quot2/
+;; $rem2/$lt2/$eq2 on overflow or non-fixnum operands.
+
+(define ($bn-limbs-of n)                ; fixnum magnitude -> limb vector
+  (let count ((m n) (k 0))
+    (if (zero? m)
+        (let ((v (make-vector (if (< 0 k) k 1) 0)))
+          (let fill ((m n) (i 0))
+            (if (zero? m)
+                v
+                (begin (vector-set! v i (remainder m 16384))
+                       (fill (quotient m 16384) (+ i 1))))))
+        (count (quotient m 16384) (+ k 1)))))
+(define ($fx->bn n)
+  (if (< n 0)
+      (%make-bignum 1 ($bn-limbs-of (- 0 n)))
+      (%make-bignum 0 ($bn-limbs-of n))))
+(define ($->bn x) (if (fixnum? x) ($fx->bn x) x))
+(define ($bn-neg? b) (= (%bignum-sign b) 1))
+
+(define ($bn-norm sign limbs)
+  ;; strip leading zeroes; collapse to a fixnum when the value fits
+  ;; (three limbs still fit when the top one is 0 or 1)
+  (let strip ((n (vector-length limbs)))
+    (cond
+     ((and (< 1 n) (zero? (vector-ref limbs (- n 1)))) (strip (- n 1)))
+     ((or (< n 3) (and (= n 3) (< (vector-ref limbs 2) 2)))
+      (let ((v (+ (vector-ref limbs 0)
+                  (if (< 1 n) (* (vector-ref limbs 1) 16384) 0)
+                  (if (< 2 n) (* (vector-ref limbs 2) 268435456) 0))))
+        (if (= sign 1) (- 0 v) v)))
+     (else
+      (%make-bignum sign
+                    (if (= n (vector-length limbs))
+                        limbs
+                        (let ((w (make-vector n 0)))
+                          (let copy ((i 0))
+                            (if (= i n)
+                                w
+                                (begin (vector-set! w i (vector-ref limbs i))
+                                       (copy (+ i 1))))))))))))
+
+(define ($mag-cmp a b)                  ; limb vectors -> -1 0 1
+  (let ((la ($mag-len a)) (lb ($mag-len b)))
+    (cond
+     ((< la lb) -1)
+     ((< lb la) 1)
+     (else
+      (let loop ((i (- la 1)))
+        (cond
+         ((< i 0) 0)
+         ((< (vector-ref a i) (vector-ref b i)) -1)
+         ((< (vector-ref b i) (vector-ref a i)) 1)
+         (else (loop (- i 1)))))))))
+(define ($mag-len v)                    ; length ignoring leading zeroes
+  (let loop ((n (vector-length v)))
+    (if (and (< 1 n) (zero? (vector-ref v (- n 1))))
+        (loop (- n 1))
+        n)))
+
+(define ($mag-add a b)
+  (let* ((la ($mag-len a)) (lb ($mag-len b))
+         (n (+ (if (< la lb) lb la) 1))
+         (r (make-vector n 0)))
+    (let loop ((i 0) (carry 0))
+      (if (= i n)
+          r
+          (let ((s (+ carry
+                      (+ (if (< i la) (vector-ref a i) 0)
+                         (if (< i lb) (vector-ref b i) 0)))))
+            (vector-set! r i (remainder s 16384))
+            (loop (+ i 1) (quotient s 16384)))))))
+(define ($mag-sub a b)                  ; assumes a >= b
+  (let* ((la ($mag-len a))
+         (r (make-vector la 0)))
+    (let loop ((i 0) (borrow 0))
+      (if (= i la)
+          r
+          (let ((d (- (- (vector-ref a i) borrow)
+                      (if (< i ($mag-len b)) (vector-ref b i) 0))))
+            (if (< d 0)
+                (begin (vector-set! r i (+ d 16384)) (loop (+ i 1) 1))
+                (begin (vector-set! r i d) (loop (+ i 1) 0))))))))
+(define ($mag-mul a b)
+  (let* ((la ($mag-len a)) (lb ($mag-len b))
+         (r (make-vector (+ la lb) 0)))
+    (let outer ((i 0))
+      (if (= i la)
+          r
+          (begin
+            (let inner ((j 0) (carry 0))
+              (if (= j lb)
+                  (vector-set! r (+ i j)
+                               (+ (vector-ref r (+ i j)) carry))
+                  (let ((t (+ (+ (vector-ref r (+ i j)) carry)
+                              (* (vector-ref a i) (vector-ref b j)))))
+                    (vector-set! r (+ i j) (remainder t 16384))
+                    (inner (+ j 1) (quotient t 16384)))))
+            (outer (+ i 1)))))))
+(define ($mag-divmod-small v d)         ; -> (quotient-vec . rem-fixnum)
+  (let* ((n ($mag-len v))
+         (q (make-vector n 0)))
+    (let loop ((i (- n 1)) (rem 0))
+      (if (< i 0)
+          (cons q rem)
+          (let ((cur (+ (* rem 16384) (vector-ref v i))))
+            (vector-set! q i (quotient cur d))
+            (loop (- i 1) (remainder cur d)))))))
+
+(define ($bn-add a b)                   ; bignum x bignum
+  (let ((sa (%bignum-sign a)) (sb (%bignum-sign b))
+        (ma (%bignum-limbs a)) (mb (%bignum-limbs b)))
+    (cond
+     ((= sa sb) ($bn-norm sa ($mag-add ma mb)))
+     ((< ($mag-cmp ma mb) 0) ($bn-norm sb ($mag-sub mb ma)))
+     (else ($bn-norm sa ($mag-sub ma mb))))))
+(define ($bn-negate b)
+  (%make-bignum (- 1 (%bignum-sign b)) (%bignum-limbs b)))
+
+(define ($->fl x)
+  (cond
+   ((flonum? x) x)
+   ((fixnum? x) (fixnum->flonum x))
+   (else
+    (let* ((m (%bignum-limbs x))
+           (base (fixnum->flonum 16384))
+           (mag (let loop ((i (- ($mag-len m) 1)) (acc (fixnum->flonum 0)))
+                  (if (< i 0)
+                      acc
+                      (loop (- i 1)
+                            (fl+ (fl* acc base)
+                                 (fixnum->flonum (vector-ref m i))))))))
+      (if ($bn-neg? x) (fl- (fixnum->flonum 0) mag) mag)))))
+
+(define ($add2 a b)
+  (if (or (flonum? a) (flonum? b))
+      (fl+ ($->fl a) ($->fl b))
+      ($bn-add ($->bn a) ($->bn b))))
+(define ($sub2 a b)
+  (if (or (flonum? a) (flonum? b))
+      (fl- ($->fl a) ($->fl b))
+      ($bn-add ($->bn a) ($bn-negate ($->bn b)))))
+(define ($mul2 a b)
+  (if (or (flonum? a) (flonum? b))
+      (fl* ($->fl a) ($->fl b))
+      (let ((ba ($->bn a)) (bb ($->bn b)))
+        ($bn-norm (if (= (%bignum-sign ba) (%bignum-sign bb)) 0 1)
+                  ($mag-mul (%bignum-limbs ba) (%bignum-limbs bb))))))
+(define ($quot2 a b)
+  (cond
+   ((or (flonum? a) (flonum? b))
+    (fltruncate (fl/ ($->fl a) ($->fl b))))
+   ((and (%bignum? a) (fixnum? b) (< 0 b) (< b 16385))
+    (let ((qr ($mag-divmod-small (%bignum-limbs a) b)))
+      ($bn-norm (%bignum-sign a) (car qr))))
+   (else (errorf 'quotient "unsupported operand combination"))))
+(define ($rem2 a b)
+  (cond
+   ((or (flonum? a) (flonum? b))
+    (let ((q (fltruncate (fl/ ($->fl a) ($->fl b)))))
+      (fl- ($->fl a) (fl* q ($->fl b)))))
+   ((and (%bignum? a) (fixnum? b) (< 0 b) (< b 16385))
+    (let ((r (cdr ($mag-divmod-small (%bignum-limbs a) b))))
+      (if ($bn-neg? a) (- 0 r) r)))
+   (else (errorf 'remainder "unsupported operand combination"))))
+(define ($lt2 a b)
+  (if (or (flonum? a) (flonum? b))
+      (fl<? ($->fl a) ($->fl b))
+      (let* ((ba ($->bn a)) (bb ($->bn b))
+             (sa (%bignum-sign ba)) (sb (%bignum-sign bb)))
+        (cond
+         ((< sa sb) #f)
+         ((< sb sa) #t)
+         ((= sa 1) (< 0 ($mag-cmp (%bignum-limbs ba) (%bignum-limbs bb))))
+         (else (< ($mag-cmp (%bignum-limbs ba) (%bignum-limbs bb)) 0))))))
+(define ($eq2 a b)
+  (if (or (flonum? a) (flonum? b))
+      (fl=? ($->fl a) ($->fl b))
+      (let ((ba ($->bn a)) (bb ($->bn b)))
+        (and (= (%bignum-sign ba) (%bignum-sign bb))
+             (zero? ($mag-cmp (%bignum-limbs ba) (%bignum-limbs bb)))))))
+
+;; division and conversions
+(define (/ a . rest)
+  (if (null? rest)
+      ($div2 1 a)
+      (fold-left $div2 a rest)))
+(define ($div2 a b)
+  (if (and (fixnum? a) (fixnum? b) (not (zero? b))
+           (zero? (remainder a b)))
+      (quotient a b)
+      (fl/ ($->fl a) ($->fl b))))
+(define (exact->inexact x) ($->fl x))
+(define (inexact x) ($->fl x))
+(define (inexact->exact x) (if (flonum? x) (%fl->fx x) x))
+(define (exact x) (inexact->exact x))
+(define (floor x) (if (flonum? x) (flfloor x) x))
+(define (truncate x) (if (flonum? x) (fltruncate x) x))
+(define (sqrt x) (flsqrt ($->fl x)))

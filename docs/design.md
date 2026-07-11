@@ -21,6 +21,8 @@ which compiles to `ref.eq`).
 | Scheme value  | representation                                     |
 |---------------|----------------------------------------------------|
 | fixnum        | `i31ref`, value `n << 1` (30-bit, unboxed)         |
+| bignum        | `(struct i32-sign (ref $vector))`, 14-bit limbs; fixnum arithmetic promotes on overflow (bits 30/31 disagree after a tagged add/sub; products checked in i64) |
+| flonum        | `(struct f64)`; contagion via prelude generics, IEEE-754 bits for literals computed in pure Scheme so both hosts emit identical bytes |
 | character     | `i31ref`, value `(c << 1) | 1`                     |
 | boolean, `()`, unspecified | singleton structs held in globals     |
 | pair          | `(struct (field mut eqref) (field mut eqref))`     |
