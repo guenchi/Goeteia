@@ -35,10 +35,15 @@ onmessage = async (e) => {
         const out = [];
         let pos = 0;
         const t0 = performance.now();
+        const stubs = {
+            path_byte: () => {}, open_read: () => -1, open_write: () => -1,
+            fread: () => -1, fwrite: () => {}, fclose: () => {},
+        };
         const { instance } = await WebAssembly.instantiate(compiler, {
             io: {
                 write_byte: b => out.push(b),
                 read_byte: () => (pos < input.length ? input[pos++] : -1),
+                ...stubs,
             },
         });
         try {
@@ -52,7 +57,7 @@ onmessage = async (e) => {
 
         const runOut = [];
         const mod = await WebAssembly.instantiate(wasm, {
-            io: { write_byte: b => runOut.push(b), read_byte: () => -1 },
+            io: { write_byte: b => runOut.push(b), read_byte: () => -1, ...stubs },
         });
         let result = '', error = null;
         try {

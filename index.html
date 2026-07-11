@@ -7,14 +7,14 @@
     <meta name="description" content="Goeteia (Γοητεία) — the black art of commanding what lies beneath. A self-hosting Scheme-to-WebAssembly compiler built on Wasm GC; it compiles itself byte-for-byte and runs in your browser.">
     <style>
       :root {
-        --bg: #faf9f6;
+        --bg: #f3f5fb;
         --bg2: #ffffff;
-        --ink: #2b2733;
-        --dim: #6f6a7c;
-        --gold: #a8781f;
-        --violet: #6d4fc0;
+        --ink: #10142a;
+        --dim: #5b6480;
+        --klein: #002fa7;
+        --sky: #2f6bff;
         --green: #1e7d34;
-        --line: #e5e1d8;
+        --line: #dde2ef;
         --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
       }
       * { box-sizing: border-box; }
@@ -23,18 +23,18 @@
         font-family: -apple-system, system-ui, "Segoe UI", sans-serif;
         line-height: 1.6;
       }
-      a { color: var(--gold); text-decoration: none; }
+      a { color: var(--klein); text-decoration: none; }
       a:hover { text-decoration: underline; }
       .wrap { max-width: 60em; margin: 0 auto; padding: 0 1.2em; }
 
       header { padding: 4.5em 0 3em; text-align: center; }
       .greek {
-        font-size: 1.05em; letter-spacing: .45em; color: var(--violet);
+        font-size: 1.05em; letter-spacing: .45em; color: var(--sky);
         margin-bottom: .4em;
       }
       h1 {
         font-size: 3.2em; margin: 0; font-weight: 650; letter-spacing: .02em;
-        background: linear-gradient(120deg, var(--gold), var(--violet));
+        background: linear-gradient(120deg, var(--klein), var(--sky));
         -webkit-background-clip: text; background-clip: text; color: transparent;
       }
       .tagline { color: var(--dim); font-size: 1.15em; margin-top: .7em; }
@@ -49,25 +49,25 @@
         display: inline-block; margin: 0 .5em; padding: .5em 1.4em;
         border: 1px solid var(--line); border-radius: 6px; color: var(--ink);
       }
-      .links a.primary { background: var(--gold); color: #fffdf7; border-color: var(--gold); font-weight: 600; }
-      .links a:hover { text-decoration: none; border-color: var(--gold); }
+      .links a.primary { background: var(--klein); color: #ffffff; border-color: var(--klein); font-weight: 600; }
+      .links a:hover { text-decoration: none; border-color: var(--klein); }
 
       section { padding: 2.5em 0; border-top: 1px solid var(--line); }
       h2 { font-size: 1.5em; font-weight: 600; }
-      h2 .g { color: var(--violet); font-weight: 400; }
+      h2 .g { color: var(--sky); font-weight: 400; }
 
       /* playground */
       textarea {
         width: 100%; font-family: var(--mono); font-size: 14px;
         background: var(--bg2); color: var(--ink);
         border: 1px solid var(--line); border-radius: 8px; padding: .8em;
-        resize: vertical; box-shadow: inset 0 1px 3px rgba(43,39,51,.05);
+        resize: vertical; box-shadow: inset 0 1px 3px rgba(16,20,42,.06);
       }
-      textarea:focus { outline: none; border-color: var(--violet); }
+      textarea:focus { outline: none; border-color: var(--sky); }
       .bar { display: flex; gap: .9em; align-items: center; margin: .9em 0; flex-wrap: wrap; }
       button {
         font-size: 15px; padding: .45em 2em; border-radius: 6px;
-        background: var(--gold); color: #fffdf7; border: none; font-weight: 600;
+        background: var(--klein); color: #ffffff; border: none; font-weight: 600;
         cursor: pointer;
       }
       button:hover { filter: brightness(1.1); }
@@ -79,12 +79,12 @@
       }
       label { color: var(--dim); font-size: .9em; }
       pre {
-        background: #f4f2ec; border: 1px solid var(--line);
+        background: #eef1f9; border: 1px solid var(--line);
         padding: .9em; border-radius: 8px; min-height: 2.2em;
         white-space: pre-wrap; font-family: var(--mono); font-size: 14px;
         overflow-x: auto;
       }
-      code { font-family: var(--mono); color: var(--gold); font-size: .92em; }
+      code { font-family: var(--mono); color: var(--klein); font-size: .92em; }
       pre code { color: var(--ink); }
       .hint { color: var(--dim); font-size: .85em; }
 
@@ -96,20 +96,37 @@
       .card {
         background: var(--bg2); border: 1px solid var(--line);
         border-radius: 10px; padding: 1.1em 1.2em;
-        box-shadow: 0 1px 3px rgba(43,39,51,.05);
+        box-shadow: 0 1px 3px rgba(16,20,42,.06);
       }
-      .card h3 { margin: 0 0 .4em; font-size: 1em; color: var(--gold); font-weight: 600; }
+      .card h3 { margin: 0 0 .4em; font-size: 1em; color: var(--klein); font-weight: 600; }
       .card p { margin: 0; color: var(--dim); font-size: .92em; }
 
       footer {
         padding: 2.5em 0 3.5em; border-top: 1px solid var(--line);
         text-align: center; color: var(--dim); font-size: .9em;
       }
+
+      /* desktop hero: title + intro on the left, playground on the right */
+      @media (min-width: 62em) {
+        .wrap { max-width: 82em; }
+        .cols {
+          display: grid;
+          grid-template-columns: minmax(0, 1fr) minmax(0, 1.05fr);
+          gap: 0 3em;
+          align-items: center;
+        }
+        .cols > * { min-width: 0; }
+        .col-main { text-align: left; padding: 3em 0; }
+        .col-main h1 { font-size: 3.6em; }
+        .col-main .greek { margin-left: .15em; }
+        .col-side { border-top: none; padding-top: 0; }
+      }
     </style>
   </head>
   <body>
     <div class="wrap">
-      <header>
+      <div class="cols">
+      <header class="col-main">
         <div class="greek">Γ ο η τ ε ί α</div>
         <h1>Goeteia</h1>
         <p class="tagline">The black art of commanding what lies beneath.<br>
@@ -121,7 +138,7 @@
         </div>
       </header>
 
-      <section id="playground">
+      <section id="playground" class="col-side">
         <h2>The playground <span class="g">— the compiler is running in your browser</span></h2>
         <p class="hint">
           <code>goeteia.wasm</code> is Goeteia compiled by itself: a
@@ -140,6 +157,7 @@
         </div>
         <pre id="out"></pre>
       </section>
+      </div>
 
       <section>
         <h2>What's inside</h2>
