@@ -1772,7 +1772,93 @@
                    #x6F (gc-op #x1C))))
           #x05 slow #x0B)))
 
+;; ---- unboxed float expressions ----
+;; Inside a float expression tree the f64 stays on the wasm stack:
+;; (fl+ (fl* a b) (fl* c d)) boxes only its final result. compile-f64
+;; emits code leaving a raw f64; fl-expressions recurse directly, and
+;; anything else compiles normally and unboxes at the boundary.
+(define fl-direct-ops
+  '(fl+ fl- fl* fl/ flsqrt flfloor fltruncate fixnum->flonum
+    %mem-f64-ref %mem-f32-ref))
+(define (compile-f64 e locals cell)
+  (define (direct rop)
+    (case rop
+      ((fl+ fl- fl* fl/)
+       (let* ((a (compile-f64 (cadr e) locals cell))
+              (b (compile-f64 (caddr e) locals cell)))
+         (list a b (case rop ((fl+) #xA0) ((fl-) #xA1)
+                     ((fl*) #xA2) (else #xA3)))))
+      ((flsqrt flfloor fltruncate)
+       (list (compile-f64 (cadr e) locals cell)
+             (case rop ((flsqrt) #x9F) ((flfloor) #x9C) (else #x9D))))
+      ((fixnum->flonum)
+       (list (compile-exp (cadr e) locals cell #f) (unwrap-int) #xB7))
+      ((%mem-f64-ref)
+       (list (compile-exp (cadr e) locals cell #f) (unwrap-int)
+             #x2B (uleb 3) (uleb 0)))
+      ((%mem-f32-ref)
+       (list (compile-exp (cadr e) locals cell #f) (unwrap-int)
+             #x2A (uleb 2) (uleb 0) #xBB))))
+  (cond
+   ((and (number? e) (flonum? e)) (list #x44 (ieee-bytes e)))
+   ((pair? e)
+    (let* ((h (car e))
+           (rop (and (symbol? h) (unmark h))))
+      ;; direct only when the head really is the primitive: not
+      ;; lexically bound, not redefined at top level, arity right
+      (if (and rop (memq rop fl-direct-ops)
+               (not (assq h locals))
+               (not (assq rop *fns*))
+               (let ((a (assq rop prim-arity)))
+                 (and a (= (length (cdr e)) (cdr a)))))
+          (direct rop)
+          (list (compile-exp e locals cell #f) (unwrap-fl)))))
+   (else (list (compile-exp e locals cell #f) (unwrap-fl)))))
+
+;; float primitives bypass the generic path so their arguments compile
+;; in the f64 context (no intermediate boxing)
+(define fl-context-prims
+  '(fl+ fl- fl* fl/ fl=? fl<? flsqrt flfloor fltruncate
+    fixnum->flonum %fl->fx %mem-f64-set! %mem-f32-set!))
+(define (compile-fl-prim op args locals cell)
+  (let ((expect (assq op prim-arity)))
+    (unless (= (length args) (cdr expect))
+      (errorf 'schwasm "wrong argument count for primitive ~s" op)))
+  (case op
+    ((fl+ fl- fl* fl/)
+     (let* ((a (compile-f64 (car args) locals cell))
+            (b (compile-f64 (cadr args) locals cell)))
+       (list a b (case op ((fl+) #xA0) ((fl-) #xA1) ((fl*) #xA2) (else #xA3))
+             (struct-new TY-FLONUM))))
+    ((fl=? fl<?)
+     (let* ((a (compile-f64 (car args) locals cell))
+            (b (compile-f64 (cadr args) locals cell)))
+       (list a b (if (eq? op 'fl=?) #x61 #x63) (boolify))))
+    ((flsqrt flfloor fltruncate)
+     (list (compile-f64 (car args) locals cell)
+           (case op ((flsqrt) #x9F) ((flfloor) #x9C) (else #x9D))
+           (struct-new TY-FLONUM)))
+    ((fixnum->flonum)
+     (list (compile-exp (car args) locals cell #f) (unwrap-int) #xB7
+           (struct-new TY-FLONUM)))
+    ((%fl->fx)
+     (list (compile-f64 (car args) locals cell) #xAA (wrap-int)))
+    ((%mem-f64-set!)
+     (let* ((a (compile-exp (car args) locals cell #f))
+            (v (compile-f64 (cadr args) locals cell)))
+       (list a (unwrap-int) v #x39 (uleb 3) (uleb 0) (global-get G-VOID))))
+    ((%mem-f32-set!)
+     (let* ((a (compile-exp (car args) locals cell #f))
+            (v (compile-f64 (cadr args) locals cell)))
+       (list a (unwrap-int) v #xB6 #x38 (uleb 2) (uleb 0)
+             (global-get G-VOID))))))
+
 (define (compile-prim op args locals cell)
+  (if (memq op fl-context-prims)
+      (compile-fl-prim op args locals cell)
+      (compile-prim* op args locals cell)))
+
+(define (compile-prim* op args locals cell)
   ;; arguments compile once, in source order
   (define argc (map-in-order (lambda (a) (compile-exp a locals cell #f)) args))
   (define (arg i) (list-ref argc i))
@@ -1820,22 +1906,8 @@
              #x05 (i32const 0) #x0B
              (boolify))))
     ((flonum?) (list (arg 0) (ref-test TY-FLONUM) (boolify)))
-    ((fl+ fl- fl* fl/)
-     (list (arg 0) (unwrap-fl) (arg 1) (unwrap-fl)
-           (case op ((fl+) #xA0) ((fl-) #xA1) ((fl*) #xA2) (else #xA3))
-           (struct-new TY-FLONUM)))
-    ((fl=? fl<?)
-     (list (arg 0) (unwrap-fl) (arg 1) (unwrap-fl)
-           (if (eq? op 'fl=?) #x61 #x63)
-           (boolify)))
-    ((flsqrt flfloor fltruncate)
-     (list (arg 0) (unwrap-fl)
-           (case op ((flsqrt) #x9F) ((flfloor) #x9C) (else #x9D))
-           (struct-new TY-FLONUM)))
-    ((fixnum->flonum)
-     (list (arg 0) (unwrap-int) #xB7 (struct-new TY-FLONUM)))
-    ((%fl->fx)
-     (list (arg 0) (unwrap-fl) #xAA (wrap-int)))
+    ;; fl arithmetic, %fl->fx and %mem-f*-set! never reach here: they
+    ;; dispatch to compile-fl-prim so arguments compile unboxed
     ((%bignum?) (list (arg 0) (ref-test TY-BIGNUM) (boolify)))
     ((%make-bignum)
      ;; (sign-fixnum limbs-vector)
@@ -1962,15 +2034,9 @@
     ((%mem-f32-ref)                                  ; load f32, promote, box
      (list (arg 0) (unwrap-int) #x2A (uleb 2) (uleb 0)
            #xBB (struct-new TY-FLONUM)))
-    ((%mem-f32-set!)                                 ; unbox f64, demote, store
-     (list (arg 0) (unwrap-int) (arg 1) (unwrap-fl)
-           #xB6 #x38 (uleb 2) (uleb 0) (global-get G-VOID)))
     ((%mem-f64-ref)
      (list (arg 0) (unwrap-int) #x2B (uleb 3) (uleb 0)
            (struct-new TY-FLONUM)))
-    ((%mem-f64-set!)
-     (list (arg 0) (unwrap-int) (arg 1) (unwrap-fl)
-           #x39 (uleb 3) (uleb 0) (global-get G-VOID)))
     ((%mem-size) (list #x3F #x00 (wrap-int)))        ; pages (64 KiB each)
     ((%mem-grow) (list (arg 0) (unwrap-int) #x40 #x00 (wrap-int)))
     ((bitwise-and bitwise-ior bitwise-xor)
