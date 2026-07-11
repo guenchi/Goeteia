@@ -1,6 +1,6 @@
 # Goeteia
 
-*Γοητεία — the black art of commanding what lies beneath.*
+*Γοητεία — the black ars of commanding what lies beneath.*
 
 A self-hosting Scheme for the WebAssembly GC era.
 

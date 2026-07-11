@@ -1,6 +1,6 @@
 # Goeteia design
 
-Goeteia (Γοητεία — the black art of commanding what lies beneath;
+Goeteia (Γοητεία — the black ars of commanding what lies beneath;
 formerly schwasm — the toolchain file names keep the old prefix) is
 a Scheme-to-WebAssembly compiler built
 on the WebAssembly GC extension (Wasm 3.0).  It is an independent
