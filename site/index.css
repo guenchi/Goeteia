@@ -2,8 +2,8 @@
       #live { min-height: 15em; padding: 3.5em 0 1em; }
       .hero { text-align: center; }
       .hero h1 {
-        font-family: "Griffy", "Nosifer", "Hoefler Text", Georgia, serif;
-        font-size: 4em; margin: 0; font-weight: 400; letter-spacing: .02em;
+        font-family: "Cinzel", "Hoefler Text", "Trajan Pro", Georgia, serif;
+        font-size: 3.2em; margin: 0; font-weight: 600; letter-spacing: .04em;
         background: linear-gradient(120deg, var(--lapis), var(--azure));
         -webkit-background-clip: text; background-clip: text; color: transparent;
       }
