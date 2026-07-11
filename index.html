@@ -3,158 +3,136 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Goeteia — a self-hosting Scheme for the WebAssembly GC era</title>
-    <meta name="description" content="Goeteia (Γοητεία) — the black art of commanding what lies beneath. A self-hosting Scheme-to-WebAssembly compiler built on Wasm GC; it compiles itself byte-for-byte and runs in your browser.">
+    <title>Goeteia — a page that compiles itself</title>
+    <meta name="description" content="The Goeteia homepage renders itself: its Scheme source is compiled to WebAssembly in your browser and mounted live. Edit the source, press Run, and the page below re-renders.">
     <style>
       :root {
-        --bg: #f2f4fa;
-        --bg2: #ffffff;
-        --ink: #14203a;
-        --dim: #566080;
-        --lapis: #1550c4;
-        --azure: #4788ee;
-        --green: #1e7d34;
-        --line: #dbe2ee;
+        --bg: #f2f4fa; --bg2: #ffffff; --ink: #14203a; --dim: #566080;
+        --lapis: #1550c4; --azure: #4788ee; --green: #1e7d34; --line: #dbe2ee;
         --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
       }
       * { box-sizing: border-box; }
       body {
         margin: 0; background: var(--bg); color: var(--ink);
-        font-family: -apple-system, system-ui, "Segoe UI", sans-serif;
-        line-height: 1.6;
+        font-family: -apple-system, system-ui, "Segoe UI", sans-serif; line-height: 1.6;
       }
       a { color: var(--lapis); text-decoration: none; }
       a:hover { text-decoration: underline; }
       .wrap { max-width: 60em; margin: 0 auto; padding: 0 1.2em; }
 
-      /* top navigation bar */
-      .nav {
-        position: sticky; top: 0; z-index: 20;
-        background: rgba(255,255,255,.82);
-        backdrop-filter: saturate(1.2) blur(10px);
-        -webkit-backdrop-filter: saturate(1.2) blur(10px);
-        border-bottom: 1px solid var(--line);
-      }
-      .nav-inner {
-        display: flex; align-items: center; justify-content: space-between;
-        height: 3.4em;
-      }
-      .brand {
-        font-weight: 700; font-size: 1.15em; color: var(--lapis);
-        letter-spacing: .01em;
-      }
+      .nav { position: sticky; top: 0; z-index: 20;
+        background: rgba(255,255,255,.82); backdrop-filter: saturate(1.2) blur(10px);
+        -webkit-backdrop-filter: saturate(1.2) blur(10px); border-bottom: 1px solid var(--line); }
+      .nav-inner { display: flex; align-items: center; justify-content: space-between; height: 3.4em; }
+      .brand { font-weight: 700; font-size: 1.15em; color: var(--lapis); }
       .brand:hover { text-decoration: none; }
-      #top { padding-top: 6em; }
       .nav-links { display: flex; gap: 1.5em; align-items: center; }
       .nav-links a { color: var(--dim); font-size: .92em; }
       .nav-links a:hover { color: var(--lapis); text-decoration: none; }
-      .nav-links a.gh {
-        border: 1px solid var(--line); border-radius: 6px;
-        padding: .3em .9em; color: var(--ink);
-      }
-      .nav-links a.gh:hover { border-color: var(--lapis); }
-      @media (max-width: 42em) {
-        .nav-links a.sec { display: none; }
-      }
+      .nav-links a.gh { border: 1px solid var(--line); border-radius: 6px; padding: .3em .9em; color: var(--ink); }
+      @media (max-width: 42em) { .nav-links a.sec { display: none; } }
 
-      header { padding: 4.5em 0 3em; text-align: center; }
-      .gname { color: var(--azure); font-weight: 600; }
-      h1 {
-        font-size: 3.2em; margin: 0; font-weight: 650; letter-spacing: .02em;
+      /* the live-rendered hero (built by Goeteia, mounted into #live) */
+      #live { min-height: 15em; padding: 3.5em 0 1em; }
+      .hero { text-align: center; }
+      .hero h1 {
+        font-size: 3.4em; margin: 0; font-weight: 650; letter-spacing: .02em;
         background: linear-gradient(120deg, var(--lapis), var(--azure));
         -webkit-background-clip: text; background-clip: text; color: transparent;
       }
-      .tagline { color: var(--dim); font-size: 1.15em; margin-top: .7em; }
-      .fixpoint {
-        display: inline-block; margin-top: 1.4em; padding: .45em 1.1em;
-        border: 1px solid var(--line); border-radius: 2em;
-        font-family: var(--mono); font-size: .85em; color: var(--green);
-        background: var(--bg2);
+      .hero .tagline { color: var(--dim); font-size: 1.2em; margin-top: .7em; }
+      .hero .gname { color: var(--azure); font-weight: 600; }
+      .hero .sub { color: var(--dim); margin-top: .2em; }
+      .hero .cmd {
+        display: inline-block; margin: 1.4em auto 0; padding: .7em 1.2em;
+        background: #eef1f9; border: 1px solid var(--line); border-radius: 8px;
+        font-family: var(--mono); font-size: 14px; color: var(--ink);
       }
-      .links { margin-top: 1.6em; }
-      .links a {
-        display: inline-block; margin: 0 .5em; padding: .5em 1.4em;
-        border: 1px solid var(--line); border-radius: 6px; color: var(--ink);
+      .hero .links { margin-top: 1.6em; }
+      .hero .btn {
+        display: inline-block; margin: 0 .4em; padding: .55em 1.5em;
+        border: 1px solid var(--line); border-radius: 6px; color: var(--ink); font-weight: 600;
       }
-      .links a.primary { background: var(--lapis); color: #ffffff; border-color: var(--lapis); font-weight: 600; }
-      .links a:hover { text-decoration: none; border-color: var(--lapis); }
+      .hero .btn.primary { background: var(--lapis); color: #fff; border-color: var(--lapis); }
+      .hero .btn:hover { text-decoration: none; border-color: var(--lapis); }
 
-      section { padding: 2.5em 0; border-top: 1px solid var(--line); scroll-margin-top: 4em; }
-      h2 { font-size: 1.5em; font-weight: 600; }
-      h2 .g { color: var(--azure); font-weight: 400; }
-
-      /* playground */
-      textarea {
-        width: 100%; font-family: var(--mono); font-size: 14px;
-        background: var(--bg2); color: var(--ink);
-        border: 1px solid var(--line); border-radius: 8px; padding: .8em;
-        resize: vertical; box-shadow: inset 0 1px 3px rgba(16,20,42,.06);
+      /* the editor: the page's own source */
+      #editor { padding: 2em 0 4em; border-top: 1px solid var(--line); scroll-margin-top: 4em; }
+      .lead { color: var(--dim); font-size: .95em; margin: 0 0 1em; }
+      .lead b { color: var(--ink); }
+      /* highlighted editor: a colored <pre> sits under a transparent
+         <textarea>; identical box metrics keep the glyphs aligned */
+      .code { position: relative; }
+      .code textarea, .code .hl {
+        margin: 0; padding: 1em; border: 1px solid transparent; border-radius: 8px;
+        font-family: var(--mono); font-size: 13px; line-height: 1.5; tab-size: 2;
+        white-space: pre-wrap; overflow-wrap: break-word; word-break: break-word;
       }
-      textarea:focus { outline: none; border-color: var(--azure); }
-      .bar { display: flex; gap: .9em; align-items: center; margin: .9em 0; flex-wrap: wrap; }
+      .code .hl {
+        position: absolute; inset: 0; z-index: 0; overflow: hidden;
+        border-color: var(--line); background: var(--bg2); color: var(--ink);
+        pointer-events: none; box-shadow: inset 0 1px 3px rgba(16,20,42,.06);
+      }
+      .code textarea {
+        position: relative; z-index: 1; width: 100%; display: block;
+        background: transparent; color: transparent; caret-color: var(--ink);
+        resize: vertical;
+      }
+      .code textarea:focus { outline: none; }
+      .code:focus-within .hl { border-color: var(--azure); }
+      .hl .tok-c { color: #7a869f; font-style: italic; }  /* comment */
+      .hl .tok-s { color: #1e7d34; }                       /* string  */
+      .hl .tok-k { color: var(--lapis); font-weight: 600; }/* keyword */
+      .hl .tok-h { color: var(--azure); }                  /* form head: (div ...) (a ...) */
+      .hl .tok-n { color: #b0483f; }                       /* number  */
+      .hl .tok-l { color: #8a5cf5; }                       /* #t #f #\ */
+      .hl .tok-p { color: var(--dim); }                    /* parens  */
+      .bar { display: flex; gap: .9em; align-items: center; margin: .9em 0 0; flex-wrap: wrap; }
       button {
         font-size: 15px; padding: .45em 2em; border-radius: 6px;
-        background: var(--lapis); color: #ffffff; border: none; font-weight: 600;
-        cursor: pointer; min-width: 7em;
+        background: var(--lapis); color: #fff; border: none; font-weight: 600; cursor: pointer; min-width: 7em;
       }
       button:hover { filter: brightness(1.1); }
-      button:disabled { opacity: .5; }
-      button.stop { background: #b0483f; }
-      select {
-        font-size: 14px; padding: .35em .6em; border-radius: 6px;
-        background: var(--bg2); color: var(--ink); border: 1px solid var(--line);
-      }
-      label { color: var(--dim); font-size: .9em; }
-      pre {
-        background: #eef1f9; border: 1px solid var(--line);
-        padding: .9em; border-radius: 8px; min-height: 2.2em;
-        white-space: pre-wrap; font-family: var(--mono); font-size: 14px;
-        overflow-x: auto;
-      }
-      code { font-family: var(--mono); color: var(--lapis); font-size: .92em; }
-      pre code { color: var(--ink); }
-      .hint { color: var(--dim); font-size: .85em; }
-      /* fixed height so output never resizes the box: scroll inside instead */
-      #out { height: 10em; overflow: auto; }
+      button:disabled { opacity: .5; cursor: default; }
+      .status { font-family: var(--mono); font-size: .82em; color: var(--dim); }
+      .status.err { color: #b0483f; }
+      .hint { color: var(--dim); font-size: .85em; margin-top: .5em; }
+      .hint code { background: #eef1f9; padding: .1em .4em; border-radius: 5px; font-family: var(--mono); }
 
-      /* features */
-      .grid {
-        display: grid; grid-template-columns: repeat(auto-fit, minmax(16em, 1fr));
-        gap: 1em; margin-top: 1.4em;
-      }
-      .card {
-        background: var(--bg2); border: 1px solid var(--line);
-        border-radius: 10px; padding: 1.1em 1.2em;
-        box-shadow: 0 1px 3px rgba(16,20,42,.06);
-      }
+      /* informational sections below the hero */
+      #features, #quickstart { padding: 2.5em 0; border-top: 1px solid var(--line); scroll-margin-top: 4em; }
+      h2 { font-size: 1.5em; font-weight: 600; }
+      .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(16em, 1fr)); gap: 1em; margin-top: 1.4em; }
+      .card { background: var(--bg2); border: 1px solid var(--line); border-radius: 10px; padding: 1.1em 1.2em; box-shadow: 0 1px 3px rgba(16,20,42,.06); }
       .card h3 { margin: 0 0 .4em; font-size: 1em; color: var(--lapis); font-weight: 600; }
       .card p { margin: 0; color: var(--dim); font-size: .92em; }
-
-      footer {
-        padding: 2.5em 0 3.5em; border-top: 1px solid var(--line);
-        text-align: center; color: var(--dim); font-size: .9em;
+      .card code, #quickstart p code { font-family: var(--mono); color: var(--lapis); font-size: .9em; }
+      #quickstart pre {
+        background: #eef1f9; border: 1px solid var(--line); padding: .9em;
+        border-radius: 8px; white-space: pre-wrap; font-family: var(--mono);
+        font-size: 13px; overflow-x: auto; color: var(--ink);
       }
+      footer { padding: 2.5em 0 3.5em; border-top: 1px solid var(--line); text-align: center; color: var(--dim); font-size: .9em; }
 
-      /* desktop hero: title + intro on the left, playground on the right */
-      @media (min-width: 62em) {
-        .wrap { max-width: 82em; }
+      /* wide screens: hero on the left, the live editor on the right */
+      @media (min-width: 64em) {
+        .wrap { max-width: 84em; }
         .cols {
-          display: grid;
-          grid-template-columns: minmax(0, 1fr) minmax(0, 1.05fr);
-          gap: 0 3em;
-          align-items: start;
+          display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr);
+          gap: 0 3em; align-items: start;
         }
         .cols > * { min-width: 0; }
-        .col-main { text-align: left; padding: 3em 0; }
-        .col-main h1 { font-size: 3.6em; }
-        .col-side { border-top: none; padding-top: 0; }
+        #live { text-align: left; padding-top: 4.5em; }
+        .hero { text-align: left; }
+        .hero .cmd { margin-left: 0; }
+        #editor { border-top: none; padding-top: 3.4em; }
       }
     </style>
   </head>
   <body>
     <nav class="nav">
       <div class="wrap nav-inner">
-        <a class="brand" href="#top">Goeteia</a>
+        <a class="brand" href="index.html">Goeteia</a>
         <div class="nav-links">
           <a class="sec" href="why.html">Why Scheme?</a>
           <a class="sec" href="manual.html">Manual</a>
@@ -163,33 +141,28 @@
         </div>
       </div>
     </nav>
-    <div class="wrap" id="top">
-      <div class="cols">
-      <header class="col-main">
-        <h1>Goeteia</h1>
-        <p class="tagline"><span class="gname">Γοητεία:</span> The black art of commanding what lies beneath.<br>
-        A self-hosting Scheme for the WebAssembly GC era.</p>
-        <div class="fixpoint">$ git clone https://github.com/guenchi/Goeteia</div>
-        <div class="links">
-          <a class="primary" href="#playground">Try it now</a>
-          <a href="https://github.com/guenchi/Goeteia">GitHub</a>
-        </div>
-      </header>
 
-      <section id="playground" class="col-side">
-        <p class="hint">
-          <code>goeteia.wasm</code> is Goeteia compiled by itself: it reads
-          Scheme and writes WebAssembly, right here — no server, no JS
-          compiler. The value is the last expression; Ctrl/⌘-Enter runs.
-        </p>
-        <textarea id="src" rows="16" spellcheck="false"></textarea>
-        <div class="bar">
-          <button id="run">Run</button>
-          <label>examples:
-            <select id="examples"></select>
-          </label>
+    <div class="wrap">
+      <div class="cols">
+      <!-- Goeteia mounts the hero here, from the source in the editor beside it -->
+      <div id="live"></div>
+
+      <section id="editor">
+        <p class="lead"><b>Everything beside this is rendered by Goeteia.</b> The
+        Scheme below is compiled to WebAssembly <em>in your browser</em> and mounted
+        live. Edit it and press Run — the hero re-renders.</p>
+        <div class="code">
+          <pre class="hl" id="hl" aria-hidden="true"></pre>
+          <textarea id="src" rows="22" spellcheck="false" autocapitalize="off"
+                    autocorrect="off">loading…</textarea>
         </div>
-        <pre id="out"></pre>
+        <div class="bar">
+          <button id="run" disabled>Run</button>
+          <span id="status" class="status">booting the compiler…</span>
+        </div>
+        <p class="hint">Try changing a string, or drive the <code>spell</code> signal.
+        This page carries the whole compiler (<code>goeteia.wasm</code>, ~70 KB gzipped,
+        cached after first load); each recompile takes ~15 ms.</p>
       </section>
       </div>
 
@@ -228,9 +201,9 @@
           <div class="card">
             <h3>The numeric tower</h3>
             <p>Fixnums promote to bignums on overflow (checked inline, two
-            bit-compares), flonums have contagion, and float literals are
-            encoded to IEEE-754 by pure Scheme — so both hosts of the
-            compiler emit identical bytes.</p>
+            bit-compares), flonums have contagion, rationals and complex
+            are exact, and float literals are encoded to IEEE-754 by pure
+            Scheme — so both hosts emit identical bytes.</p>
           </div>
           <div class="card">
             <h3>call/cc &amp; dynamic-wind</h3>
@@ -239,11 +212,11 @@
             block, and winders unwind inner-to-outer on the way out.</p>
           </div>
           <div class="card">
-            <h3>Records, hashtables, vectors</h3>
-            <p><code>define-record-type</code> compiles to GC structs with
-            an identity slot — a record predicate is one type test plus one
-            <code>ref.eq</code>.  Hashtables are pure Scheme over vectors,
-            and dead code elimination keeps programs lean.</p>
+            <h3>A reactive web stack</h3>
+            <p><code>(web sx)</code> templates over fine-grained
+            <code>(web reactive)</code> signals, an <code>(web html)</code>
+            renderer, and a <code>(web js)</code> FFI that reaches straight
+            into the host — this page is built with it.</p>
           </div>
           <div class="card">
             <h3>Libraries</h3>
@@ -278,6 +251,94 @@ $ node rt/run.mjs fact.wasm
         <a href="https://github.com/guenchi/Goeteia">GitHub</a>
       </footer>
     </div>
-    <script type="module" src="playground.js?v=2"></script>
+
+    <script type="module">
+      import { boot, render } from './live.js';
+
+      const srcBox = document.getElementById('src');
+      const runBtn = document.getElementById('run');
+      const statusEl = document.getElementById('status');
+      const liveEl = document.getElementById('live');
+      const hlEl = document.getElementById('hl');
+
+      // ---- syntax highlighting: colored <pre> mirrors the textarea ----
+      const KEYWORDS = new Set([
+        'define', 'define-syntax', 'define-record-type', 'define-values',
+        'lambda', 'let', 'let*', 'letrec', 'letrec*', 'let-values', 'named-let',
+        'if', 'cond', 'case', 'when', 'unless', 'and', 'or', 'not', 'begin',
+        'quote', 'quasiquote', 'unquote', 'set!', 'do', 'else', '=>',
+        'import', 'library', 'export', 'syntax-rules', 'syntax-case', 'with-syntax',
+        'call/cc', 'call-with-current-continuation', 'dynamic-wind', 'guard', 'raise',
+        'values', 'sx', 'sx-mount', 'sx-list', 'signal', 'signal-ref', 'signal-set!',
+        'signal-update!', 'effect', 'batch', 'untracked', 'root',
+      ]);
+      const esc = s => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      const TOK = /(;[^\n]*)|("(?:\\.|[^"\\])*"?)|(#[tf](?![-\w])|#\\.)|([()])|([^\s()";]+)|(\s+)/g;
+      function highlight(code) {
+        let out = '', m, head = false;   // head = next atom is a form head
+        TOK.lastIndex = 0;
+        while ((m = TOK.exec(code))) {
+          if (m[1]) out += `<span class="tok-c">${esc(m[1])}</span>`;
+          else if (m[2]) { out += `<span class="tok-s">${esc(m[2])}</span>`; head = false; }
+          else if (m[3]) { out += `<span class="tok-l">${esc(m[3])}</span>`; head = false; }
+          else if (m[4]) { out += `<span class="tok-p">${esc(m[4])}</span>`; head = (m[4] === '('); }
+          else if (m[5]) {
+            const w = m[5];
+            out += KEYWORDS.has(w) ? `<span class="tok-k">${esc(w)}</span>`
+                 : /^[+-]?[0-9]/.test(w) ? `<span class="tok-n">${esc(w)}</span>`
+                 : head ? `<span class="tok-h">${esc(w)}</span>`   // (div ...), (a ...), calls
+                 : esc(w);
+            head = false;
+          }
+          else out += esc(m[6]);          // whitespace preserves the head flag
+        }
+        return out;
+      }
+      function syncHL() { hlEl.innerHTML = highlight(srcBox.value) + '\n'; }
+      srcBox.addEventListener('input', syncHL);
+      srcBox.addEventListener('scroll', () => {
+        hlEl.scrollTop = srcBox.scrollTop;
+        hlEl.scrollLeft = srcBox.scrollLeft;
+      });
+
+      function setStatus(msg, err = false) {
+        statusEl.textContent = msg;
+        statusEl.classList.toggle('err', err);
+      }
+
+      async function go() {
+        runBtn.disabled = true;
+        setStatus('compiling…');
+        try {
+          const { compileMs, bytes } = await render(srcBox.value, liveEl);
+          setStatus(`compiled ${bytes} bytes in ${compileMs.toFixed(1)} ms — rendered live`);
+        } catch (e) {
+          setStatus(`error: ${e.message}`, true);
+        } finally {
+          runBtn.disabled = false;
+        }
+      }
+
+      (async () => {
+        try {
+          // load the compiler + libraries and the page's own source in parallel
+          const [, heroSrc] = await Promise.all([
+            boot(),
+            fetch('hero.ss').then(r => r.text()),
+          ]);
+          srcBox.value = heroSrc;
+          syncHL();                         // paint the highlighting
+          runBtn.disabled = false;
+          await go();                       // first render, from the seeded source
+        } catch (e) {
+          setStatus(`boot failed: ${e.message}`, true);
+        }
+      })();
+
+      runBtn.addEventListener('click', go);
+      srcBox.addEventListener('keydown', e => {
+        if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); go(); }
+      });
+    </script>
   </body>
 </html>
