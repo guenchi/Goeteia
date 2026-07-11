@@ -77,24 +77,28 @@
 
   ;; ---- assemble a full document ----
   ;; body is a list of SXML nodes placed inside <div class="wrap">,
-  ;; before the footer.
-  (define (render-page title desc css active source-file body)
-    (html->document
-     `(html (@ (lang "en"))
-        (head
-         (meta (@ (charset "utf-8")))
-         (meta (@ (name "viewport") (content "width=device-width, initial-scale=1")))
-         (title ,title)
-         (meta (@ (name "description") (content ,desc)))
-         ;; <style> is a raw-text element -- its content is emitted
-         ;; unescaped, so no (raw ...) wrapper (and a raw node here traps)
-         (style ,(string-append css "\n" badge-css)))
-        (body
-         ,(nav active)
-         ,(source-badge source-file)
-         (div (@ (class "wrap"))
-           ,@body
-           (footer "Goeteia · MIT license · "
-             (a (@ (href "https://github.com/guenchi/Goeteia")) "GitHub")))
-         ,(overlay)
-         (script (@ (src "viewsrc.js") (defer #t))))))))
+  ;; before the footer. An optional trailing argument is a list of extra
+  ;; <script> nodes (e.g. a page renderer), emitted at the end of <body>
+  ;; before the view-source script.
+  (define (render-page title desc css active source-file body . opts)
+    (let ((scripts (if (pair? opts) (car opts) '())))
+      (html->document
+       `(html (@ (lang "en"))
+          (head
+           (meta (@ (charset "utf-8")))
+           (meta (@ (name "viewport") (content "width=device-width, initial-scale=1")))
+           (title ,title)
+           (meta (@ (name "description") (content ,desc)))
+           ;; <style> is a raw-text element -- its content is emitted
+           ;; unescaped, so no (raw ...) wrapper (and a raw node here traps)
+           (style ,(string-append css "\n" badge-css)))
+          (body
+           ,(nav active)
+           ,(source-badge source-file)
+           (div (@ (class "wrap"))
+             ,@body
+             (footer "Goeteia · MIT license · "
+               (a (@ (href "https://github.com/guenchi/Goeteia")) "GitHub")))
+           ,(overlay)
+           ,@scripts
+           (script (@ (src "viewsrc.js") (defer #t)))))))))
