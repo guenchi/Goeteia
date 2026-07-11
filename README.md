@@ -57,7 +57,7 @@ A small UI stack over the JS bridge, in `lib/web/`:
   ```scheme
   (define n (signal 0))
   (sx (div (span ,(signal-ref n))
-           (button (@ (on-click ,(lambda _ (signal-update! n 1+))))
+           (button (@ (on-click ,(lambda _ (signal-update! n (lambda (v) (+ v 1))))))
              "+")))
   ```
 - `(web react)` — embed Goeteia components into an existing React
