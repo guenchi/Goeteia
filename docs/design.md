@@ -27,6 +27,9 @@ which compiles to `ref.eq`).
 | string        | `(array mut i8)`, literals interned as globals     |
 | symbol        | `(struct (ref $string))`, interned as globals      |
 | closure       | per-arity `(struct (ref $fnN) eqref)`, subtype of an open `$closure` base (which is what `procedure?` tests) |
+| vector        | `(array mut eqref)`                                |
+| bytevector    | `(struct (mut (ref $string)))` — the mutable field makes it structurally distinct from `$symbol` |
+| record        | per-field-count `(struct rtd (mut eqref)*n)` <: an open `$record` base; the rtd slot holds a unique pair, so `point?` is one `ref.test` plus one `ref.eq` |
 
 The fixnum/character tag bit keeps both unboxed and `eq?`-comparable;
 `+`, `-`, `remainder` and the comparisons operate directly on the

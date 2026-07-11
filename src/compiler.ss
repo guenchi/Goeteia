@@ -128,7 +128,10 @@
 (define TY-IOFN 7)          ; (func (param i32))
 (define TY-IOIN 8)          ; (func (result i32))
 (define TY-KTAG 9)          ; (func (param eqref)) -- the escape tag
-(define TY-FIRST-FREE 10)
+(define TY-VECTOR 10)       ; (array (mut eqref))
+(define TY-BV 11)           ; bytevector: (struct (mut (ref $string)))
+(define TY-RECBASE 12)      ; open (struct (field eqref)) -- the rtd slot
+(define TY-FIRST-FREE 13)
 
 ;; imported functions come first in the function index space
 (define FN-WRITE-BYTE 0)
@@ -292,6 +295,7 @@
                                                (car b)))
                                          bs))))))))
         ((quasiquote) (xpand-qq (cadr e) 0))
+        ((define-record-type) (xpand-record e))
         ((case)
          ;; (case E ((d ...) body ...) ... (else body ...))
          (let ((t (gensym "t")))
@@ -299,6 +303,74 @@
             (list 'let (list (list t (cadr e)))
                   (build-case t (cddr e))))))
         (else (xpand* e))))
+;; (define-record-type <spec> (fields <field> ...)) with
+;; <spec> = name | (name constructor predicate) and
+;; <field> = name | (immutable name [acc]) | (mutable name [acc [mut]]).
+;; Records are structs with an identity slot: the rtd is a fresh
+;; pair, the predicate is a subtype test plus rtd comparison.
+(define (sym-cat parts)
+  (string->symbol
+   (fold-left string-append ""
+              (map (lambda (x)
+                     (if (symbol? x) (symbol->string (unmark x)) x))
+                   parts))))
+(define (xpand-record e)
+  (let* ((spec (cadr e))
+         (name (if (pair? spec) (car spec) spec))
+         (ctor (if (pair? spec) (cadr spec) (sym-cat (list "make-" name))))
+         (pred (if (pair? spec) (caddr spec) (sym-cat (list name "?"))))
+         (fspecs (let find ((cs (cddr e)))
+                   (cond
+                    ((null? cs) '())
+                    ((eq? (resolve-tag (car (car cs))) 'fields) (cdr (car cs)))
+                    (else (find (cdr cs))))))
+         ;; each field -> (name mutable? accessor mutator)
+         (fields (map (lambda (fs) (parse-field fs name)) fspecs))
+         (nf (length fields))
+         (rtd (gensym "rtd"))
+         (fnames (map car fields)))
+    (cons 'begin
+          (map xpand
+               (cons `(define ,rtd (cons ',(unmark name) '()))
+                     (cons `(define (,ctor . ,fnames)
+                              (%record ,rtd . ,fnames))
+                           (cons `(define (,pred x) (%record? x ,rtd))
+                                 (let accs ((fs fields) (i 0))
+                                   (if (null? fs)
+                                       '()
+                                       (let ((f (car fs)))
+                                         (cons
+                                          `(define (,(caddr f) r)
+                                             (%record-ref r ,nf ,i))
+                                          (append
+                                           (if (cadr f)
+                                               (list
+                                                `(define (,(cadddr f) r v)
+                                                   (%record-set! r ,nf ,i v)))
+                                               '())
+                                           (accs (cdr fs) (+ i 1))))))))))))))
+(define (parse-field fs rec-name)
+  (cond
+   ((symbol? fs)
+    (list fs #f (sym-cat (list rec-name "-" fs)) #f))
+   ((eq? (resolve-tag (car fs)) 'immutable)
+    (let ((f (cadr fs)))
+      (list f #f
+            (if (pair? (cddr fs))
+                (caddr fs)
+                (sym-cat (list rec-name "-" f)))
+            #f)))
+   ((eq? (resolve-tag (car fs)) 'mutable)
+    (let ((f (cadr fs)))
+      (list f #t
+            (if (pair? (cddr fs))
+                (caddr fs)
+                (sym-cat (list rec-name "-" f)))
+            (if (and (pair? (cddr fs)) (pair? (cdddr fs)))
+                (cadddr fs)
+                (sym-cat (list rec-name "-" f "-set!"))))))
+   (else (errorf 'schwasm "bad field spec ~s" fs))))
+
 ;; case compiles to eq? chains; fixnums, characters, symbols and
 ;; booleans are all eq-comparable in schwasm
 (define (build-case t clauses)
@@ -907,6 +979,7 @@
 (define *vars* '())       ; name -> global index
 (define *plain-ty* '())   ; arity -> type index (top-level functions)
 (define *clos-ty* '())    ; arity -> (fn-type . struct-type)
+(define *rec-ty* '())     ; record field count -> struct type index
 (define *lifted* '())     ; fn index -> (type-idx n-params extra code)
 (define *next-fn* 0)
 (define *wrappers* '())   ; top-level fn name -> wrapper fn index
@@ -932,6 +1005,10 @@
 (define (clos-ty arity)
   (let ((e (assv arity *clos-ty*)))
     (unless e (errorf 'schwasm "missing closure type for arity ~s" arity))
+    (cdr e)))
+(define (rec-ty nfields)
+  (let ((e (assv nfields *rec-ty*)))
+    (unless e (errorf 'schwasm "missing record type for ~s fields" nfields))
     (cdr e)))
 
 (define (intern! kind datum)
@@ -991,6 +1068,10 @@
     (bitwise-and . 2) (bitwise-ior . 2) (bitwise-xor . 2)
     (bitwise-arithmetic-shift-left . 2)
     (bitwise-arithmetic-shift-right . 2)
+    (vector? . 1) (vector-length . 1) (vector-ref . 2) (vector-set! . 3)
+    (bytevector? . 1) (bytevector-length . 1)
+    (bytevector-u8-ref . 2) (bytevector-u8-set! . 3)
+    (%make-vector . 2) (%make-bytevector . 2)
     (%write-byte . 1)))
 
 (define primitives
@@ -1000,6 +1081,10 @@
     string-set! eof-object eof-object?
     bitwise-and bitwise-ior bitwise-xor
     bitwise-arithmetic-shift-left bitwise-arithmetic-shift-right
+    vector? vector-length vector-ref vector-set!
+    bytevector? bytevector-length bytevector-u8-ref bytevector-u8-set!
+    %make-vector %make-bytevector
+    %record %record? %record-ref %record-set!
     %write-byte %read-byte %make-string %make-symbol %interned-symbols
     %unreachable %throw-k))
 
@@ -1125,6 +1210,9 @@
    ((string? d) (global-get (intern! 'str d)))
    ((symbol? d) (global-get (intern! 'sym d)))
    ((null? d) (global-get G-NULL))
+   ((vector? d)
+    (let ((els (map-in-order compile-datum (vector->list d))))
+      (list els (gc-op #x08 (uleb TY-VECTOR) (uleb (length els))))))
    ((pair? d)
     (let* ((head (compile-datum (car d)))
            (tail (compile-datum (cdr d))))
@@ -1533,6 +1621,58 @@
      ;; ((n<<1) >> k) & -2 = (n>>k) << 1
      (list (arg 0) (untag) (arg 1) (unwrap-int) #x75
            (i32const -2) #x71 (gc-op #x1C)))
+    ((vector?) (list (arg 0) (ref-test TY-VECTOR) (boolify)))
+    ((%make-vector)
+     ;; (fill n) on the stack; array.new
+     (list (arg 1) (arg 0) (unwrap-int) (gc-op #x06 (uleb TY-VECTOR))))
+    ((vector-length)
+     (list (arg 0) (ref-cast TY-VECTOR) (gc-op #x0F) (wrap-int)))
+    ((vector-ref)
+     (list (arg 0) (ref-cast TY-VECTOR) (arg 1) (unwrap-int)
+           (gc-op #x0B (uleb TY-VECTOR))))
+    ((vector-set!)
+     (list (arg 0) (ref-cast TY-VECTOR) (arg 1) (unwrap-int) (arg 2)
+           (gc-op #x0E (uleb TY-VECTOR)) (global-get G-VOID)))
+    ((bytevector?) (list (arg 0) (ref-test TY-BV) (boolify)))
+    ((%make-bytevector)
+     ;; (fill-byte n) -> fresh byte array wrapped in the bv struct
+     (list (arg 1) (unwrap-int) (arg 0) (unwrap-int)
+           (gc-op #x06 (uleb TY-STRING))
+           (struct-new TY-BV)))
+    ((bytevector-length)
+     (list (arg 0) (ref-cast TY-BV) (struct-get TY-BV 0)
+           (gc-op #x0F) (wrap-int)))
+    ((bytevector-u8-ref)
+     (list (arg 0) (ref-cast TY-BV) (struct-get TY-BV 0)
+           (arg 1) (unwrap-int)
+           (gc-op #x0D (uleb TY-STRING)) (wrap-int)))
+    ((bytevector-u8-set!)
+     (list (arg 0) (ref-cast TY-BV) (struct-get TY-BV 0)
+           (arg 1) (unwrap-int) (arg 2) (unwrap-int)
+           (gc-op #x0E (uleb TY-STRING)) (global-get G-VOID)))
+    ((%record)
+     ;; (%record rtd v ...): field count decides the struct type
+     (list argc (struct-new (rec-ty (- (length args) 1)))))
+    ((%record?)
+     ;; (%record? x rtd)
+     (let ((tmp (fresh-local! cell)))
+       (list (arg 0) (local-set tmp)
+             (local-get tmp) (ref-test TY-RECBASE)
+             #x04 T-I32
+             (local-get tmp) (ref-cast TY-RECBASE) (struct-get TY-RECBASE 0)
+             (arg 1) OP-REF-EQ
+             #x05 (i32const 0) #x0B
+             (boolify))))
+    ((%record-ref)
+     ;; (%record-ref x nfields index) with literal nfields/index
+     (list (arg 0) (ref-cast (rec-ty (cadr args)))
+           (struct-get (rec-ty (cadr args)) (+ (caddr args) 1))))
+    ((%record-set!)
+     ;; (%record-set! x nfields index v)
+     (list (arg 0) (ref-cast (rec-ty (cadr args)))
+           (arg 3)
+           (struct-set (rec-ty (cadr args)) (+ (caddr args) 1))
+           (global-get G-VOID)))
     ((%unreachable) (list #x00))
     ((%throw-k)
      ;; (token . value) is the exception payload; the instruction
@@ -1583,6 +1723,24 @@
            (scan-arities (car e) (scan-arities (cdr e) acc)))))
       acc))
 
+(define (scan-recs e acc)
+  (if (pair? e)
+      (if (eq? (resolve-tag (car e)) 'quote)
+          acc
+          (let ((acc (cond
+                      ((and (eq? (resolve-tag (car e)) '%record) (list? e))
+                       (let ((n (- (length (cdr e)) 1)))
+                         (if (memv n acc) acc (cons n acc))))
+                      ((and (memq (resolve-tag (car e))
+                                  '(%record-ref %record-set!))
+                            (list? e)
+                            (integer? (caddr e)))
+                       (let ((n (caddr e)))
+                         (if (memv n acc) acc (cons n acc))))
+                      (else acc))))
+            (scan-recs (car e) (scan-recs (cdr e) acc))))
+      acc))
+
 (define (compile-toplevel-fn form)
   ;; a variadic definition's rest parameter is its final wasm
   ;; parameter and receives a list
@@ -1608,10 +1766,21 @@
 (define (expand-forms fs)
   (if (null? fs)
       '()
-      (let ((x (xpand (car fs))))
-        (if (macro-def? x)
-            (begin (add-macro! x) (expand-forms (cdr fs)))
-            (cons (normalize-define x) (expand-forms (cdr fs)))))))
+      (expand-spliced (xpand (car fs)) (cdr fs))))
+(define (expand-spliced x rest)
+  (cond
+   ((and (pair? x) (symbol? (car x)) (eq? (unmark (car x)) 'begin))
+    ;; top-level begin splices (its subforms are already expanded),
+    ;; so macros and define-record-type can produce several defines
+    (let splice ((subs (cdr x)))
+      (if (null? subs)
+          (expand-forms rest)
+          (let ((sub (car subs)))
+            (if (macro-def? sub)
+                (begin (add-macro! sub) (splice (cdr subs)))
+                (cons (normalize-define sub) (splice (cdr subs))))))))
+   ((macro-def? x) (add-macro! x) (expand-forms rest))
+   (else (cons (normalize-define x) (expand-forms rest)))))
 (define (normalize-define f)
   ;; top-level forms built by macros have marked heads
   (if (and (pair? f) (symbol? (car f)) (eq? (unmark (car f)) 'define))
@@ -1701,6 +1870,7 @@
     (set! *vars* '())
     (set! *plain-ty* '())
     (set! *clos-ty* '())
+    (set! *rec-ty* '())
     (set! *lifted* '())
     (set! *wrappers* '())
     (set! *adapters* '())
@@ -1730,6 +1900,7 @@
                                    '(0)
                                    fn-defs)))
            (clos-arities (sort-by self-id (scan-arities forms '())))
+           (rec-fields (sort-by self-id (scan-recs forms '())))
            (next (let number ((as plain-arities) (i TY-FIRST-FREE))
                    (if (null? as)
                        i
@@ -1740,6 +1911,11 @@
         (unless (null? as)
           (set! *clos-ty* (cons (cons (car as) (cons i (+ i 1))) *clos-ty*))
           (number (cdr as) (+ i 2))))
+      (let number ((ns rec-fields)
+                   (i (+ next (* 2 (length clos-arities)))))
+        (unless (null? ns)
+          (set! *rec-ty* (cons (cons (car ns) i) *rec-ty*))
+          (number (cdr ns) (+ i 1))))
       (let* ((fn-entries (map-in-order compile-toplevel-fn fn-defs))
              (main-entry
               (let ((cell (list 0)))
@@ -1772,10 +1948,11 @@
                                    (cdr (caddr main-entry))))
                        (map cdr lifted)))
              (declared (map car lifted)))
-        (emit-module plain-arities clos-arities (length var-defs)
+        (emit-module plain-arities clos-arities rec-fields
+                     (length var-defs)
                      entries declared (+ N-IMPORTS (length fn-defs)))))))
 
-(define (emit-module plain-arities clos-arities n-vars entries declared main-idx)
+(define (emit-module plain-arities clos-arities rec-fields n-vars entries declared main-idx)
   (flatten
    (list
     #x00 #x61 #x73 #x6D  #x01 #x00 #x00 #x00
@@ -1814,7 +1991,15 @@
                   ;; $ioin
                   (list #x60 (counted '()) (counted (list T-I32)))
                   ;; $ktag: the escape-continuation exception tag
-                  (list #x60 (counted (list T-EQREF)) (counted '())))
+                  (list #x60 (counted (list T-EQREF)) (counted '()))
+                  ;; $vector
+                  (list #x5E T-EQREF #x01)
+                  ;; $bytevector: a mutable-field wrapper, structurally
+                  ;; distinct from $symbol (whose field is immutable)
+                  (list #x5F (counted (list (list #x64 (sleb TY-STRING) #x01))))
+                  ;; $recbase: open supertype of all record types
+                  (list #x50 #x00
+                        #x5F (counted (list (list T-EQREF #x00)))))
                  ;; plain function types
                  (map (lambda (a)
                         (list #x60
@@ -1836,7 +2021,15 @@
                                        (list (list #x64 (sleb (car tys)) #x00)
                                              (list #x64 (sleb TY-FNG) #x00)
                                              (list T-EQREF #x00)))))))
-                      clos-arities))))
+                      clos-arities)
+                 ;; per-field-count record types: rtd slot + n fields
+                 (map (lambda (n)
+                        (list #x4F (counted (list (uleb TY-RECBASE)))
+                              #x5F
+                              (counted
+                               (cons (list T-EQREF #x00)
+                                     (repeat-n n (list T-EQREF #x01))))))
+                      rec-fields))))
     ;; import section
     (section 2 (counted
                 (list (list (name-bytes "io") (name-bytes "write_byte")
