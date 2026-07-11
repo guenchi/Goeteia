@@ -57,6 +57,9 @@ export async function runModule(bytes, input = []) {
     if (instance.exports.memory) globalThis.__goeteia_mem = instance.exports.memory;
     const ex = instance.exports;
     const result = decode(ex.main(), ex);
+    // drain microtasks so promise callbacks into wasm (fetch .then
+    // chains from (web rpc)) run before we report the output
+    await new Promise(r => setImmediate(r));
     return { text: Buffer.from(out).toString('latin1'), result };
 }
 
