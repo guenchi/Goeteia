@@ -20,13 +20,22 @@ which compiles to `ref.eq`).
 
 | Scheme value  | representation                                     |
 |---------------|----------------------------------------------------|
-| fixnum        | `i31ref` (31-bit, unboxed)                         |
-| boolean, `()`, eof, unspecified | singleton structs held in globals |
+| fixnum        | `i31ref`, value `n << 1` (30-bit, unboxed)         |
+| character     | `i31ref`, value `(c << 1) | 1`                     |
+| boolean, `()`, unspecified | singleton structs held in globals     |
 | pair          | `(struct (field mut eqref) (field mut eqref))`     |
-| character     | planned: `i31ref` with a tag bit, or a struct      |
-| string        | planned: `(array mut i8)` (UTF-8)                  |
-| symbol        | planned: struct wrapping a string, interned        |
-| closure       | planned: struct of code ref + captured environment |
+| string        | `(array mut i8)`, literals interned as globals     |
+| symbol        | `(struct (ref $string))`, interned as globals      |
+| closure       | per-arity `(struct (ref $fnN) eqref)`, subtype of an open `$closure` base (which is what `procedure?` tests) |
+
+The fixnum/character tag bit keeps both unboxed and `eq?`-comparable;
+`+`, `-`, `remainder` and the comparisons operate directly on the
+tagged values.
+
+The only host import is `io.write_byte`; the runtime library
+(`display`, `string=?`, ...) is written in schwasm's own Scheme
+(`src/prelude.ss`) and compiled into every module, with user
+definitions overriding same-named prelude definitions.
 
 Type checks are `ref.test`; field access casts with `ref.cast`.
 Booleans are identity-compared against the `$false` singleton, so
@@ -74,8 +83,11 @@ argument-list convention so that arity is a runtime property, making
   `when`/`unless`/`cond`/`let*`/`letrec`/`letrec*`/named `let`/`do`),
   top-level functions as first-class values (auto-wrapped), tail
   calls through closures via `return_call_ref`.
-- **M3**: strings, symbols (interning), characters, `write`/`display`
-  via a tiny host I/O interface.
+- **M3 (done)**: strings as GC byte arrays, interned symbols,
+  characters (tagged i31), the full set of type predicates,
+  `quotient`/`remainder`, and `display`/`newline` through the
+  `io.write_byte` import, with the runtime library written in
+  schwasm's own Scheme.
 - **M4**: a reader in Scheme, variadic procedures and `apply`,
   `values`.
 - **M5**: hygienic macros (`syntax-rules`, `syntax-case` with a
