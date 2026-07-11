@@ -137,7 +137,21 @@
 (define TY-COMPLEX 16)      ; (struct (field eqref re) (field eqref im))
 (define TY-IOIN1 17)        ; (func (param i32) (result i32))
 (define TY-IOOUT2 18)       ; (func (param i32 i32))
-(define TY-FIRST-FREE 19)
+;; the JS bridge: host references wrapped in a struct so they live in
+;; the eqref world
+(define TY-JSREF 19)        ; (struct (field externref))
+(define TY-JEXT0 20)        ; (func (result externref))
+(define TY-JEXT1 21)        ; (func (param externref) (result externref))
+(define TY-JEXT2 22)        ; (func (param externref externref) (result externref))
+(define TY-JSET2 23)        ; (func (param externref externref))
+(define TY-JPUSH 24)        ; (func (param externref))
+(define TY-JNUM 25)         ; (func (param f64) (result externref))
+(define TY-JTONUM 26)       ; (func (param externref) (result f64))
+(define TY-JI32 27)         ; (func (param externref) (result i32))
+(define TY-JEQ 28)          ; (func (param externref externref) (result i32))
+(define TY-JFN 29)          ; (func (param eqref) (result externref))
+(define TY-JARG 30)         ; (func (param i32) (result externref))
+(define TY-FIRST-FREE 31)
 
 ;; imported functions come first in the function index space
 (define FN-WRITE-BYTE 0)
@@ -148,7 +162,27 @@
 (define FN-FREAD 5)         ; (fd) -> byte or -1
 (define FN-FWRITE 6)        ; (fd byte)
 (define FN-FCLOSE 7)
-(define N-IMPORTS 8)
+;; the js.* bridge
+(define FN-JS-ARG-BYTE 8)   ; push a name/string byte
+(define FN-JS-GLOBAL 9)
+(define FN-JS-GET 10)       ; property name from pushed bytes
+(define FN-JS-SET 11)
+(define FN-JS-PUSH 12)      ; push a call argument
+(define FN-JS-CALL 13)      ; (fn this) with pushed args
+(define FN-JS-NEW 14)       ; constructor call with pushed args
+(define FN-JS-STRING 15)    ; JS string from pushed bytes
+(define FN-JS-STR-LEN 16)   ; stage a JS string, get its length
+(define FN-JS-STR-BYTE 17)  ; read a byte of the staged string
+(define FN-JS-NUMBER 18)
+(define FN-JS-TO-NUMBER 19)
+(define FN-JS-EQ 20)
+(define FN-JS-BOOL 21)
+(define FN-JS-UNDEFINED 22)
+(define FN-JS-FN 23)        ; wrap a Scheme closure as a JS function
+(define FN-JS-CB-ARGC 24)   ; callback arguments, host side
+(define FN-JS-CB-ARG 25)
+(define FN-JS-CB-RET 26)    ; callback return value, Scheme -> host
+(define N-IMPORTS 27)
 
 ;; singleton globals, in index order
 (define G-FALSE 0)
@@ -195,6 +229,8 @@
 (define (ref-cast ty) (gc-op #x16 (sleb ty)))
 (define (unwrap-fl)
   (list (gc-op #x16 (sleb TY-FLONUM)) (gc-op #x02 (uleb TY-FLONUM) (uleb 0))))
+(define (unwrap-js)
+  (list (gc-op #x16 (sleb TY-JSREF)) (gc-op #x02 (uleb TY-JSREF) (uleb 0))))
 (define (ref-test ty) (gc-op #x14 (sleb ty)))
 (define (struct-get ty i) (gc-op #x02 (uleb ty) (uleb i)))
 (define (struct-set ty i) (gc-op #x05 (uleb ty) (uleb i)))
@@ -322,15 +358,12 @@
         ((export) e)                   ; top-level export declaration
         ((library)
          ;; (library (name ...) (export ...) (import ...) body ...)
-         ;; libraries splice their definitions; exports are advisory
-         ;; (dead code elimination prunes what goes unused) and the
-         ;; driver has already inlined the imports
-         (cons 'begin
-               (xpand* (filter (lambda (f)
-                                 (not (and (pair? f)
-                                           (memq (resolve-tag (car f))
-                                                 '(export import)))))
-                               (cddr e)))))
+         ;; libraries splice their definitions positionally: the
+         ;; header export list is advisory (dead code elimination
+         ;; prunes what goes unused), the driver has already inlined
+         ;; the imports, and a mid-body (export ...) survives as a
+         ;; top-level export declaration
+         (cons 'begin (xpand* (cdr (cdddr e)))))
         ((case)
          ;; (case E ((d ...) body ...) ... (else body ...))
          (let ((t (gensym "t")))
@@ -1122,6 +1155,10 @@
     %ratio? %make-ratio %ratio-num %ratio-den
     %complex? %make-complex %cx-re %cx-im
     %path-byte %open-read %open-write %fread %fwrite %fclose
+    %js-ref? %js-arg-byte %js-global %js-get %js-set! %js-push
+    %js-call %js-new %js-string %js-str-len %js-str-byte
+    %js-number %js-to-number %js-eq %js-bool %js-undefined
+    %js-fn %js-cb-argc %js-cb-arg %js-cb-ret
     char->integer integer->char string-length string-ref symbol->string
     string-set! eof-object eof-object?
     bitwise-and bitwise-ior bitwise-xor
@@ -1816,6 +1853,54 @@
            #x10 (uleb FN-FWRITE) (global-get G-VOID)))
     ((%fclose)
      (list (arg 0) (unwrap-int) #x10 (uleb FN-FCLOSE) (global-get G-VOID)))
+    ((%js-ref?) (list (arg 0) (ref-test TY-JSREF) (boolify)))
+    ((%js-arg-byte)
+     (list (arg 0) (unwrap-int) #x10 (uleb FN-JS-ARG-BYTE)
+           (global-get G-VOID)))
+    ((%js-global)
+     (list #x10 (uleb FN-JS-GLOBAL) (struct-new TY-JSREF)))
+    ((%js-get)
+     (list (arg 0) (unwrap-js) #x10 (uleb FN-JS-GET) (struct-new TY-JSREF)))
+    ((%js-set!)
+     (list (arg 0) (unwrap-js) (arg 1) (unwrap-js)
+           #x10 (uleb FN-JS-SET) (global-get G-VOID)))
+    ((%js-push)
+     (list (arg 0) (unwrap-js) #x10 (uleb FN-JS-PUSH) (global-get G-VOID)))
+    ((%js-call)
+     (list (arg 0) (unwrap-js) (arg 1) (unwrap-js)
+           #x10 (uleb FN-JS-CALL) (struct-new TY-JSREF)))
+    ((%js-new)
+     (list (arg 0) (unwrap-js) #x10 (uleb FN-JS-NEW) (struct-new TY-JSREF)))
+    ((%js-string)
+     (list #x10 (uleb FN-JS-STRING) (struct-new TY-JSREF)))
+    ((%js-str-len)
+     (list (arg 0) (unwrap-js) #x10 (uleb FN-JS-STR-LEN) (wrap-int)))
+    ((%js-str-byte)
+     (list (arg 0) (unwrap-int) #x10 (uleb FN-JS-STR-BYTE) (wrap-int)))
+    ((%js-number)
+     (list (arg 0) (unwrap-fl) #x10 (uleb FN-JS-NUMBER)
+           (struct-new TY-JSREF)))
+    ((%js-to-number)
+     (list (arg 0) (unwrap-js) #x10 (uleb FN-JS-TO-NUMBER)
+           (struct-new TY-FLONUM)))
+    ((%js-eq)
+     (list (arg 0) (unwrap-js) (arg 1) (unwrap-js)
+           #x10 (uleb FN-JS-EQ) (boolify)))
+    ((%js-bool)
+     (list (arg 0) (unwrap-js) #x10 (uleb FN-JS-BOOL) (boolify)))
+    ((%js-undefined)
+     (list #x10 (uleb FN-JS-UNDEFINED) (struct-new TY-JSREF)))
+    ((%js-fn)
+     ;; the closure crosses as an opaque eqref; the host hands it
+     ;; back through $jscb when the JS function is invoked
+     (list (arg 0) #x10 (uleb FN-JS-FN) (struct-new TY-JSREF)))
+    ((%js-cb-argc) (list #x10 (uleb FN-JS-CB-ARGC) (wrap-int)))
+    ((%js-cb-arg)
+     (list (arg 0) (unwrap-int) #x10 (uleb FN-JS-CB-ARG)
+           (struct-new TY-JSREF)))
+    ((%js-cb-ret)
+     (list (arg 0) (unwrap-js) #x10 (uleb FN-JS-CB-RET)
+           (global-get G-VOID)))
     ((string? symbol? procedure?) (list (pred-i32 op argc cell) (boolify)))
     ((boolean?)
      (let ((tmp (fresh-local! cell)))
@@ -2300,7 +2385,20 @@
                                             (list T-EQREF #x01))))
                   ;; io types for file ports
                   (list #x60 (counted (list T-I32)) (counted (list T-I32)))
-                  (list #x60 (counted (list T-I32 T-I32)) (counted '())))
+                  (list #x60 (counted (list T-I32 T-I32)) (counted '()))
+                  ;; the JS bridge
+                  (list #x5F (counted (list (list #x6F #x00)))) ; $jsref
+                  (list #x60 (counted '()) (counted '(#x6F)))
+                  (list #x60 (counted '(#x6F)) (counted '(#x6F)))
+                  (list #x60 (counted '(#x6F #x6F)) (counted '(#x6F)))
+                  (list #x60 (counted '(#x6F #x6F)) (counted '()))
+                  (list #x60 (counted '(#x6F)) (counted '()))
+                  (list #x60 (counted '(#x7C)) (counted '(#x6F)))
+                  (list #x60 (counted '(#x6F)) (counted '(#x7C)))
+                  (list #x60 (counted '(#x6F)) (counted (list T-I32)))
+                  (list #x60 (counted '(#x6F #x6F)) (counted (list T-I32)))
+                  (list #x60 (counted (list T-EQREF)) (counted '(#x6F)))
+                  (list #x60 (counted (list T-I32)) (counted '(#x6F))))
                  ;; plain function types
                  (map (lambda (a)
                         (list #x60
@@ -2348,7 +2446,45 @@
                       (list (name-bytes "io") (name-bytes "fwrite")
                             #x00 (uleb TY-IOOUT2))
                       (list (name-bytes "io") (name-bytes "fclose")
-                            #x00 (uleb TY-IOFN)))))
+                            #x00 (uleb TY-IOFN))
+                      (list (name-bytes "js") (name-bytes "arg_byte")
+                            #x00 (uleb TY-IOFN))
+                      (list (name-bytes "js") (name-bytes "global")
+                            #x00 (uleb TY-JEXT0))
+                      (list (name-bytes "js") (name-bytes "get")
+                            #x00 (uleb TY-JEXT1))
+                      (list (name-bytes "js") (name-bytes "set")
+                            #x00 (uleb TY-JSET2))
+                      (list (name-bytes "js") (name-bytes "push")
+                            #x00 (uleb TY-JPUSH))
+                      (list (name-bytes "js") (name-bytes "call")
+                            #x00 (uleb TY-JEXT2))
+                      (list (name-bytes "js") (name-bytes "new")
+                            #x00 (uleb TY-JEXT1))
+                      (list (name-bytes "js") (name-bytes "string")
+                            #x00 (uleb TY-JEXT0))
+                      (list (name-bytes "js") (name-bytes "str_len")
+                            #x00 (uleb TY-JI32))
+                      (list (name-bytes "js") (name-bytes "str_byte")
+                            #x00 (uleb TY-IOIN1))
+                      (list (name-bytes "js") (name-bytes "number")
+                            #x00 (uleb TY-JNUM))
+                      (list (name-bytes "js") (name-bytes "to_number")
+                            #x00 (uleb TY-JTONUM))
+                      (list (name-bytes "js") (name-bytes "eq")
+                            #x00 (uleb TY-JEQ))
+                      (list (name-bytes "js") (name-bytes "bool")
+                            #x00 (uleb TY-JI32))
+                      (list (name-bytes "js") (name-bytes "undefined")
+                            #x00 (uleb TY-JEXT0))
+                      (list (name-bytes "js") (name-bytes "fn")
+                            #x00 (uleb TY-JFN))
+                      (list (name-bytes "js") (name-bytes "cb_argc")
+                            #x00 (uleb TY-IOIN))
+                      (list (name-bytes "js") (name-bytes "cb_arg")
+                            #x00 (uleb TY-JARG))
+                      (list (name-bytes "js") (name-bytes "cb_ret")
+                            #x00 (uleb TY-JPUSH)))))
     ;; function section
     (section 3 (counted (map (lambda (e) (uleb (car e))) entries)))
     ;; tag section: the escape-continuation tag

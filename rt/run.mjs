@@ -3,6 +3,7 @@
 // Copyright (c) 2026 guenchi. MIT license; see LICENSE.
 
 import fs from 'fs';
+import { makeJsBridge } from './jsbridge.mjs';
 
 export async function runModule(bytes, input = []) {
     const out = [];
@@ -41,13 +42,16 @@ export async function runModule(bytes, input = []) {
         },
     };
 
+    let exportsRef = null;
     const { instance } = await WebAssembly.instantiate(bytes, {
         io: {
             write_byte: b => out.push(b),
             read_byte: () => (pos < input.length ? input[pos++] : -1),
             ...fileIO,
         },
+        js: makeJsBridge(() => exportsRef),
     });
+    exportsRef = instance.exports;
     const ex = instance.exports;
     const result = decode(ex.main(), ex);
     return { text: Buffer.from(out).toString('latin1'), result };

@@ -4,6 +4,7 @@
 // Copyright (c) 2026 guenchi. MIT license; see LICENSE.
 
 import fs from 'fs';
+import { jsBridgeStubs } from './jsbridge.mjs';
 import path from 'path';
 import url from 'url';
 
@@ -148,6 +149,7 @@ async function main() {
                 path_byte: () => {}, open_read: () => -1, open_write: () => -1,
                 fread: () => -1, fwrite: () => {}, fclose: () => {},
             },
+            js: jsBridgeStubs,
         });
     try {
         instance.exports.main();

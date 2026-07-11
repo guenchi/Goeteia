@@ -87,6 +87,10 @@
         ($display-mag (car qr))
         ($wb (+ 48 (cdr qr))))))
 (define ($display-flonum x)
+  (if (not (fl=? x x))
+      (%display-string "+nan.0" 0)
+      ($display-flonum* x)))
+(define ($display-flonum* x)
   (let* ((zero (fixnum->flonum 0))
          (neg (fl<? x zero))
          (mag (if neg (fl- zero x) x)))
@@ -978,9 +982,14 @@
                        (fill (quotient m 16384) (+ i 1))))))
         (count (quotient m 16384) (+ k 1)))))
 (define ($fx->bn n)
-  (if (< n 0)
-      (%make-bignum 1 ($bn-limbs-of (- 0 n)))
-      (%make-bignum 0 ($bn-limbs-of n))))
+  (cond
+   ((< n 0)
+    ;; negating -2^29 overflows back into the slow path; its limbs
+    ;; are known
+    (if (= n (* -2 268435456))
+        (%make-bignum 1 (vector 0 0 2))
+        (%make-bignum 1 ($bn-limbs-of (- 0 n)))))
+   (else (%make-bignum 0 ($bn-limbs-of n)))))
 (define ($->bn x) (if (fixnum? x) ($fx->bn x) x))
 (define ($bn-neg? b) (= (%bignum-sign b) 1))
 
@@ -990,6 +999,13 @@
   (let strip ((n (vector-length limbs)))
     (cond
      ((and (< 1 n) (zero? (vector-ref limbs (- n 1)))) (strip (- n 1)))
+     ;; the asymmetric fixnum boundary: -2^29 fits, +2^29 does not
+     ;; (the product below stays on the inline fast path)
+     ((and (= n 3) (= sign 1)
+           (= (vector-ref limbs 2) 2)
+           (zero? (vector-ref limbs 1))
+           (zero? (vector-ref limbs 0)))
+      (* -2 268435456))
      ((or (< n 3) (and (= n 3) (< (vector-ref limbs 2) 2)))
       (let ((v (+ (vector-ref limbs 0)
                   (if (< 1 n) (* (vector-ref limbs 1) 16384) 0)

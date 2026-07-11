@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <title>Goeteia DOM counter</title>
+    <style>
+      body { font-family: system-ui; text-align: center; margin-top: 4em; }
+      #count { font-size: 4em; font-weight: 700; margin: .3em; }
+      button { font-size: 1.4em; padding: .2em 1em; margin: 0 .3em; }
+    </style>
+  </head>
+  <body>
+    <h1>Goeteia counter</h1>
+    <p>This page is scripted in Scheme — see <code>counter.ss</code>.</p>
+    <div id="count">?</div>
+    <button id="dec">−</button>
+    <button id="reset">0</button>
+    <button id="inc">+</button>
+    <script type="module">
+      import { loadGoeteia } from '../rt/web.mjs';
+      loadGoeteia('counter.wasm');
+    </script>
+  </body>
+</html>

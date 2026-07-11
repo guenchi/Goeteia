@@ -83,6 +83,20 @@ raise a condition record (`error?`, `condition-who/-message/
 -irritants`); an unhandled exception prints and traps, so compiler
 errors read exactly as before but user code can guard them.
 
+## The JS bridge
+
+Host references live in `$jsref = (struct externref)`, making JS
+objects first-class Scheme values.  Seventeen `js.*` imports carry
+property access, calls, constructors, and string/number conversion
+(names and strings cross byte by byte, call arguments through a push
+protocol).  Scheme closures convert to callable JS functions: the
+host holds the closure as an opaque eqref and invokes the exported
+`$jscb` when JS calls it, with arguments and the return value moving
+through dedicated imports -- so `addEventListener` takes a lambda.
+`(web js)` wraps the primitives; `(web dom)` adds DOM sugar; a page
+needs one `<script type="module">` loading `rt/web.mjs`.  See
+`examples/counter.html` -- a page scripted entirely in Goeteia.
+
 ## Libraries
 
 A library is one `(library (name parts) (export ...) (import ...)
