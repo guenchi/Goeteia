@@ -39,12 +39,24 @@ onmessage = async (e) => {
             path_byte: () => {}, open_read: () => -1, open_write: () => -1,
             fread: () => -1, fwrite: () => {}, fclose: () => {},
         };
+        // The compiler and these examples never touch the JS FFI, but Wasm
+        // still requires every declared import to be present to instantiate.
+        const noop = () => {};
+        const jsBridge = {
+            arg_byte: () => -1, global: () => 0, get: () => 0, set: noop,
+            push: noop, call: () => 0, new: () => 0, string: () => 0,
+            str_len: () => 0, str_byte: () => -1, number: () => 0,
+            to_number: () => 0, eq: () => 0, bool: () => 0,
+            undefined: () => 0, fn: () => 0, cb_argc: () => 0,
+            cb_arg: () => 0, cb_ret: noop,
+        };
         const { instance } = await WebAssembly.instantiate(compiler, {
             io: {
                 write_byte: b => out.push(b),
                 read_byte: () => (pos < input.length ? input[pos++] : -1),
                 ...stubs,
             },
+            js: jsBridge,
         });
         try {
             instance.exports.main();
@@ -58,6 +70,7 @@ onmessage = async (e) => {
         const runOut = [];
         const mod = await WebAssembly.instantiate(wasm, {
             io: { write_byte: b => runOut.push(b), read_byte: () => -1, ...stubs },
+            js: jsBridge,
         });
         let result = '', error = null;
         try {
@@ -169,7 +182,6 @@ const examples = {
 const srcBox = document.getElementById('src');
 const outBox = document.getElementById('out');
 const runBtn = document.getElementById('run');
-const stopBtn = document.getElementById('stop');
 const exSelect = document.getElementById('examples');
 
 for (const name of Object.keys(examples)) {
@@ -185,11 +197,14 @@ srcBox.value = examples['fibonacci (naive)'];
 
 let worker = null;
 let ticker = null;
+let running = false;
 
-function setRunning(running) {
-    runBtn.disabled = running;
-    stopBtn.style.display = running ? '' : 'none';
-    if (!running && ticker) { clearInterval(ticker); ticker = null; }
+function setRunning(r) {
+    running = r;
+    // one button, toggled in place — no width/visibility change, no flash
+    runBtn.textContent = r ? 'Stop' : 'Run';
+    runBtn.classList.toggle('stop', r);
+    if (!r && ticker) { clearInterval(ticker); ticker = null; }
 }
 
 async function go() {
@@ -232,9 +247,8 @@ function stop() {
     outBox.textContent = 'stopped.';
 }
 
-runBtn.addEventListener('click', go);
-stopBtn.addEventListener('click', stop);
+runBtn.addEventListener('click', () => (running ? stop() : go()));
 srcBox.addEventListener('keydown', e => {
-    if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') go();
+    if ((e.ctrlKey || e.metaKey) && e.key === 'Enter' && !running) go();
 });
 setRunning(false);

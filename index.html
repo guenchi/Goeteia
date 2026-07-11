@@ -95,7 +95,7 @@
       button {
         font-size: 15px; padding: .45em 2em; border-radius: 6px;
         background: var(--lapis); color: #ffffff; border: none; font-weight: 600;
-        cursor: pointer;
+        cursor: pointer; min-width: 7em;
       }
       button:hover { filter: brightness(1.1); }
       button:disabled { opacity: .5; }
@@ -185,7 +185,6 @@
         <textarea id="src" rows="16" spellcheck="false"></textarea>
         <div class="bar">
           <button id="run">Run</button>
-          <button id="stop" class="stop" style="display:none">Stop</button>
           <label>examples:
             <select id="examples"></select>
           </label>
