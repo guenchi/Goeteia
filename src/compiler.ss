@@ -1051,7 +1051,10 @@
 (define *plain-ty* '())   ; arity -> type index (top-level functions)
 (define *clos-ty* '())    ; arity -> (fn-type . struct-type)
 (define *rec-ty* '())     ; record field count -> struct type index
-(define *lifted* '())     ; fn index -> (type-idx n-params extra code)
+(define *lifted* '())     ; fn index -> (type-idx n-params extra f64-slots code)
+;; local slots holding a raw f64 in the function being compiled;
+;; reset at every function-body boundary, collected into its entry
+(define *f64-slots* '())
 (define *next-fn* 0)
 (define *wrappers* '())   ; top-level fn name -> wrapper fn index
 (define *adapters* '())   ; arity -> generic-entry adapter fn index
@@ -1208,7 +1211,10 @@
   ;; identifiers resolve like the identifier they renamed
   (let ((slot (assq e locals)))
     (if slot
-        (local-get (cdr slot))
+        (if (memv (cdr slot) *f64-slots*)
+            ;; an f64 slot referenced generically: box it here
+            (list (local-get (cdr slot)) (struct-new TY-FLONUM))
+            (local-get (cdr slot)))
         (let* ((r (unmark e))
                (v (assq r *vars*)))
           (if v
@@ -1245,7 +1251,7 @@
           (set! *adapters* (cons (cons arity idx) *adapters*))
           (record-fn!
            idx
-           (list TY-FNG 2 1
+           (list TY-FNG 2 1 '()
                  (let ((t 2))
                    (list (local-get 0) (ref-cast (cdr tys))
                          (local-get 1) (local-set t)
@@ -1270,7 +1276,7 @@
               (let ((t 2))
                 (record-fn!
                  widx
-                 (list TY-FNG 2 1
+                 (list TY-FNG 2 1 '()
                        (list (local-get 1) (local-set t)
                              (unpack-args t nfixed)
                              (local-get t)
@@ -1281,7 +1287,7 @@
               (let ((tys (clos-ty nfixed)))
                 (record-fn!
                  widx
-                 (list (car tys) (+ nfixed 1) 0
+                 (list (car tys) (+ nfixed 1) 0 '()
                        (list (map (lambda (i) (local-get (+ i 1)))
                                   (nums-below nfixed))
                              #x12 (uleb idx))))
@@ -1409,18 +1415,60 @@
                 cell)
       (list (compile-exp e locals cell #f) (truthy))))
 
+;; does a form contain a lambda? (quote subtrees don't count) -- a
+;; binding captured by an inner lambda cannot live in an f64 slot,
+;; since closure environments carry eqref
+(define (contains-lambda? e)
+  (and (pair? e)
+       (let ((tag (resolve-tag (car e))))
+         (cond
+          ((eq? tag 'quote) #f)
+          ((eq? tag 'lambda) #t)
+          (else (or (contains-lambda? (car e))
+                    (contains-lambda? (cdr e))))))))
+
+;; is e statically a flonum expression? (an unshadowed fl form, a
+;; flonum literal, or a reference to an f64-slotted local)
+(define (fl-expr? e locals)
+  (cond
+   ((and (number? e) (flonum? e)) #t)
+   ((symbol? e)
+    (let ((slot (assq e locals)))
+      (and slot (memv (cdr slot) *f64-slots*) #t)))
+   ((pair? e)
+    (let* ((h (car e))
+           (rop (and (symbol? h) (unmark h))))
+      (and rop (memq rop fl-direct-ops)
+           (not (assq h locals))
+           (not (assq rop *fns*))
+           (let ((a (assq rop prim-arity)))
+             (and a (= (length (cdr e)) (cdr a)))))))
+   (else #f)))
+
 (define (compile-let e locals cell tail?)
-  (let loop ((bs (cadr e)) (code '()) (scope locals))
-    (if (null? bs)
-        (list (reverse code)
-              (compile-body (cddr e) scope cell tail?))
-        (let* ((b (car bs))
-               (slot (fresh-local! cell)))
-          (loop (cdr bs)
-                (cons (list (compile-exp (cadr b) locals cell #f)
-                            (local-set slot))
-                      code)
-                (cons (cons (car b) slot) scope))))))
+  ;; a binding whose value is statically a flonum gets a raw f64 slot
+  ;; when no lambda in the body could capture it; reads inside float
+  ;; expressions then use the slot directly, others box on reference
+  (let ((f64-ok (not (contains-lambda? (cddr e)))))
+    (let loop ((bs (cadr e)) (code '()) (scope locals))
+      (if (null? bs)
+          (list (reverse code)
+                (compile-body (cddr e) scope cell tail?))
+          (let* ((b (car bs))
+                 (slot (fresh-local! cell)))
+            (if (and f64-ok (fl-expr? (cadr b) locals))
+                (begin
+                  (set! *f64-slots* (cons slot *f64-slots*))
+                  (loop (cdr bs)
+                        (cons (list (compile-f64 (cadr b) locals cell)
+                                    (local-set slot))
+                              code)
+                        (cons (cons (car b) slot) scope)))
+                (loop (cdr bs)
+                      (cons (list (compile-exp (cadr b) locals cell #f)
+                                  (local-set slot))
+                            code)
+                      (cons (cons (car b) slot) scope))))))))
 
 (define (compile-body es locals cell tail?)
   (cond
@@ -1504,9 +1552,14 @@
          (cell (list (+ arity 1)))
          (locals (slot-locals! free cell (number-locals formals 1)))
          (prologue (env-prologue free locals cell (cdr tys)))
-         (code (list prologue (compile-body body locals cell #t))))
-    (record-fn! idx (list (car tys) (+ arity 1)
-                          (- (car cell) (+ arity 1)) code))))
+         (saved *f64-slots*))
+    (set! *f64-slots* '())
+    (let* ((body-code (compile-body body locals cell #t))
+           (f64s *f64-slots*))
+      (set! *f64-slots* saved)
+      (record-fn! idx (list (car tys) (+ arity 1)
+                            (- (car cell) (+ arity 1)) f64s
+                            (list prologue body-code))))))
 
 (define (lift-variadic! idx fixed rest body free)
   ;; the body is its own generic entry: (closure args-list) -> value
@@ -1526,8 +1579,13 @@
                      fixed)
                 (local-get t) (local-set (cdr (assq rest locals)))
                 (env-prologue free locals cell TY-CLOSV)))
-         (code (list prologue (compile-body body locals cell #t))))
-    (record-fn! idx (list TY-FNG 2 (- (car cell) 2) code))))
+         (saved *f64-slots*))
+    (set! *f64-slots* '())
+    (let* ((body-code (compile-body body locals cell #t))
+           (f64s *f64-slots*))
+      (set! *f64-slots* saved)
+      (record-fn! idx (list TY-FNG 2 (- (car cell) 2) f64s
+                            (list prologue body-code))))))
 
 ;;; applications
 
@@ -1801,6 +1859,11 @@
              #x2A (uleb 2) (uleb 0) #xBB))))
   (cond
    ((and (number? e) (flonum? e)) (list #x44 (ieee-bytes e)))
+   ((symbol? e)
+    (let ((slot (assq e locals)))
+      (if (and slot (memv (cdr slot) *f64-slots*))
+          (local-get (cdr slot))               ; raw f64 slot, no unbox
+          (list (compile-exp e locals cell #f) (unwrap-fl)))))
    ((pair? e)
     (let* ((h (car e))
            (rop (and (symbol? h) (unmark h))))
@@ -2184,16 +2247,34 @@
          (names (formals-names formals))
          (arity (length names))
          (cell (list arity))
-         (locals (number-locals names 0)))
-    (list (cdr (assv arity *plain-ty*))
-          arity
-          (let ((code (compile-body (cddr form) locals cell #t)))
-            (cons (- (car cell) arity) code)))))
+         (locals (number-locals names 0))
+         (saved *f64-slots*))
+    (set! *f64-slots* '())
+    (let* ((code (compile-body (cddr form) locals cell #t))
+           (f64s *f64-slots*))
+      (set! *f64-slots* saved)
+      (list (cdr (assv arity *plain-ty*))
+            arity
+            (cons (- (car cell) arity) (cons f64s code))))))
 
-(define (fn-code-entry n-params extra code)
-  (sized (list (if (zero? extra)
-                   (counted '())
-                   (counted (list (list (uleb extra) T-EQREF))))
+(define T-F64 #x7C)
+(define (locals-decl n-params extra f64s)
+  ;; run-length local groups from index n-params up, eqref except the
+  ;; f64 slots (scanned by index, so order of collection is irrelevant)
+  (if (zero? extra)
+      (counted '())
+      (let loop ((i n-params) (groups '()) (cur #f) (n 0))
+        (define (flush)
+          (if (> n 0) (cons (list (uleb n) cur) groups) groups))
+        (if (= i (+ n-params extra))
+            (counted (reverse (flush)))
+            (let ((ty (if (memv i f64s) T-F64 T-EQREF)))
+              (if (eqv? ty cur)
+                  (loop (+ i 1) groups cur (+ n 1))
+                  (loop (+ i 1) (flush) ty 1)))))))
+
+(define (fn-code-entry n-params extra f64s code)
+  (sized (list (locals-decl n-params extra f64s)
                code
                #x0B)))
 
@@ -2392,17 +2473,20 @@
       (let* ((fn-entries (map-in-order compile-toplevel-fn fn-defs))
              (main-entry
               (let ((cell (list 0)))
-                (list (cdr (assv 0 *plain-ty*))
-                      0
-                      (let ((code (compile-body
-                                   (if (null? main-steps) '((begin)) main-steps)
-                                   '() cell #t)))
-                        (cons (car cell) code)))))
+                (set! *f64-slots* '())
+                (let* ((code (compile-body
+                              (if (null? main-steps) '((begin)) main-steps)
+                              '() cell #t))
+                       (f64s *f64-slots*))
+                  (set! *f64-slots* '())
+                  (list (cdr (assv 0 *plain-ty*))
+                        0
+                        (cons (car cell) (cons f64s code))))))
              (reg-entry
               ;; the interned-symbol list, now that interning is done
               (record-fn!
                *reg-fn*
-               (list (cdr (assv 0 *plain-ty*)) 0 0
+               (list (cdr (assv 0 *plain-ty*)) 0 0 '()
                      (fold-left (lambda (acc e)
                                   (if (eq? (caar e) 'sym)
                                       (list (global-get (cdr e)) acc
@@ -2414,11 +2498,14 @@
              (entries (append
                        (map (lambda (e)
                               (list (car e) (cadr e)
-                                    (car (caddr e)) (cdr (caddr e))))
+                                    (car (caddr e))       ; extra
+                                    (cadr (caddr e))      ; f64 slots
+                                    (cddr (caddr e))))    ; code
                             fn-entries)
                        (list (list (car main-entry) (cadr main-entry)
                                    (car (caddr main-entry))
-                                   (cdr (caddr main-entry))))
+                                   (cadr (caddr main-entry))
+                                   (cddr (caddr main-entry))))
                        (map cdr lifted)))
              (declared (map car lifted)))
         (emit-module plain-arities clos-arities rec-fields
@@ -2636,7 +2723,8 @@
     ;; code section
     (section 10 (counted
                  (map (lambda (e)
-                        (fn-code-entry (cadr e) (caddr e) (cadddr e)))
+                        (fn-code-entry (cadr e) (caddr e) (cadddr e)
+                                       (list-ref e 4)))
                       entries))))))
 
 (define (emit-interned entry)
