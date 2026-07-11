@@ -61,6 +61,16 @@ Chez Scheme hosts it for bootstrapping; the self-hosted build
 (`build-self.sh`) compiles the compiler with itself and checks that
 the result is a byte-identical fixpoint.
 
+## Libraries
+
+A library is one `(library (name parts) (export ...) (import ...)
+defs...)` form in `name/parts.ss`, found relative to the importing
+file, its `lib/`, or the repo `lib/`.  The drivers inline imports
+(dependencies first, each library once); the expander splices library
+bodies -- exports are advisory, and dead code elimination prunes
+whatever a program doesn't use.  `(rnrs ...)` names are satisfied by
+the prelude.  `only`/`rename` import specs are not yet supported.
+
 ## Program shape
 
 A schwasm program is a sequence of top-level definitions and

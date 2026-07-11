@@ -1,0 +1,5 @@
+(library (math utils)
+  (export double triple)
+  (import (rnrs) (math base))
+  (define (double x) (* x (base-two)))
+  (define (triple x) (+ x (double x))))

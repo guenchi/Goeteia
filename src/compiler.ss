@@ -308,6 +308,18 @@
                                          bs))))))))
         ((quasiquote) (xpand-qq (cadr e) 0))
         ((define-record-type) (xpand-record e))
+        ((import) '(begin))            ; resolved by the driver
+        ((library)
+         ;; (library (name ...) (export ...) (import ...) body ...)
+         ;; libraries splice their definitions; exports are advisory
+         ;; (dead code elimination prunes what goes unused) and the
+         ;; driver has already inlined the imports
+         (cons 'begin
+               (xpand* (filter (lambda (f)
+                                 (not (and (pair? f)
+                                           (memq (resolve-tag (car f))
+                                                 '(export import)))))
+                               (cddr e)))))
         ((case)
          ;; (case E ((d ...) body ...) ... (else body ...))
          (let ((t (gensym "t")))
