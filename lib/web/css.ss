@@ -8,8 +8,9 @@
 ;; exact integers (or strings). em/rem/ex/ch take their argument scaled
 ;; by 100, so fractional lengths stay integers:
 ;;   (em 92)  -> "0.92em"   (em 10) -> "0.1em"   (em 100) -> "1em"
-;; Other units take a natural integer; a rare fraction is a string:
-;;   (px 13)  -> "13px"     (px "13.5") -> "13.5px"   (pct 50) -> "50%"
+;;   (px 1300)-> "13px"     (px 1350) -> "13.5px"     (px 100) -> "1px"
+;; Whole-number units take a natural integer:
+;;   (pct 50) -> "50%"      (vh 100) -> "100vh"       (deg 45) -> "45deg"
 ;; Values:
 ;;   integer           -> itself ("0", "650")
 ;;   string            -> literal ("#fff", "solid", "1.6")
@@ -72,10 +73,11 @@
     '((px . "px") (em . "em") (rem . "rem") (pct . "%") (vh . "vh")
       (vw . "vw") (vmin . "vmin") (vmax . "vmax") (fr . "fr") (deg . "deg")
       (s . "s") (ms . "ms") (ch . "ch") (ex . "ex")))
-  ;; these take an argument scaled by 100 -- (em 92) -> 0.92em, (em 10)
-  ;; -> 0.1em, (em 100) -> 1em -- so fractional lengths stay integers.
-  ;; The rest take a natural integer (a rare fraction is a string).
-  (define hundredths-units '(em rem ex ch))
+  ;; fraction-prone length units take their argument scaled by 100 --
+  ;; (em 92) -> 0.92em, (px 1300) -> 13px, (px 1350) -> 13.5px, (em 100)
+  ;; -> 1em -- so fractional lengths stay integers. Whole-number units
+  ;; (% vh vw deg fr s ms) take a natural integer, so 50% is (pct 50).
+  (define hundredths-units '(em rem px ex ch))
   (define (val->css v)
     (cond
      ((string? v) v)
