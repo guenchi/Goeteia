@@ -127,7 +127,8 @@
 (define TY-CLOSV 6)         ; variadic closures: base + env field
 (define TY-IOFN 7)          ; (func (param i32))
 (define TY-IOIN 8)          ; (func (result i32))
-(define TY-FIRST-FREE 9)
+(define TY-KTAG 9)          ; (func (param eqref)) -- the escape tag
+(define TY-FIRST-FREE 10)
 
 ;; imported functions come first in the function index space
 (define FN-WRITE-BYTE 0)
@@ -1000,7 +1001,7 @@
     bitwise-and bitwise-ior bitwise-xor
     bitwise-arithmetic-shift-left bitwise-arithmetic-shift-right
     %write-byte %read-byte %make-string %make-symbol %interned-symbols
-    %unreachable))
+    %unreachable %throw-k))
 
 (define (compile-exp e locals cell tail?)
   (cond
@@ -1018,6 +1019,8 @@
       ((lambda) (compile-lambda (cadr e) (cddr e) locals cell))
       ((set!) (compile-global-set e locals cell))
       ((apply) (compile-apply e locals cell tail?))
+      ((call/cc call-with-current-continuation)
+       (compile-callcc e locals cell))
       (else (compile-app e locals cell tail?))))
    (else (errorf 'schwasm "cannot compile ~s" e))))
 
@@ -1307,15 +1310,19 @@
         (list head rest (struct-new TY-PAIR)))))
 
 (define (compile-indirect fcode args locals cell tail?)
+  (indirect-call-code
+   fcode
+   (map-in-order (lambda (a) (compile-exp a locals cell #f)) args)
+   cell tail?))
+(define (indirect-call-code fcode argc cell tail?)
   ;; dual dispatch: the fast arity-typed entry when the callee's
   ;; closure type matches this call's arity, the generic list-taking
   ;; entry otherwise (variadic callee or arity mismatch).  The
   ;; arguments compile once; both branches spill them to locals.
-  (let* ((arity (length args))
+  (let* ((arity (length argc))
          (tys (clos-ty arity))
          (tmp (fresh-local! cell))
-         (argc (map-in-order (lambda (a) (compile-exp a locals cell #f)) args))
-         (slots (map-in-order (lambda (a) (fresh-local! cell)) args)))
+         (slots (map-in-order (lambda (a) (fresh-local! cell)) argc)))
     (list fcode (local-set tmp)
           (map2* (lambda (code slot) (list code (local-set slot))) argc slots)
           (local-get tmp) (ref-test (cdr tys))
@@ -1359,6 +1366,39 @@
             (local-get tmp) (ref-cast TY-CLOSBASE) (struct-get TY-CLOSBASE 1)
             (if tail? #x15 #x14)
             (uleb TY-FNG)))))
+
+;; Escape continuations over wasm exception handling.  call/cc makes
+;; a unique token; the continuation is a closure that throws the tag
+;; with (token . value) as payload; call/cc catches, keeps a matching
+;; token's value, and rethrows anyone else's.  The continuation is
+;; one-shot and upward-only: invoking it after call/cc has returned
+;; does not resume, it traps as an uncaught exception.
+(define (compile-callcc e locals cell)
+  (let* ((tok (fresh-local! cell))
+         (tokname (gensym "ktok"))
+         (vname (gensym "v"))
+         (fcode (compile-exp (cadr e) locals cell #f))
+         (kcode (compile-lambda (list vname)
+                                (list (list '%throw-k tokname vname))
+                                (cons (cons tokname tok) locals)
+                                cell))
+         (tmp (fresh-local! cell)))
+    (list
+     ;; the token: a fresh pair, compared by identity
+     (global-get G-NULL) (global-get G-NULL) (struct-new TY-PAIR)
+     (local-set tok)
+     #x06 T-EQREF                       ; try (result eqref)
+     (indirect-call-code fcode (list kcode) cell #f)
+     #x07 (uleb 0)                      ; catch $escape -> payload
+     (local-set tmp)
+     (local-get tmp) (ref-cast TY-PAIR) (struct-get TY-PAIR 0)
+     (local-get tok) OP-REF-EQ
+     #x04 T-EQREF                       ; ours?
+     (local-get tmp) (ref-cast TY-PAIR) (struct-get TY-PAIR 1)
+     #x05
+     (local-get tmp) #x08 (uleb 0)      ; someone else's: rethrow
+     #x0B                               ; end if
+     #x0B)))                            ; end try
 
 (define (compile-prim op args locals cell)
   ;; arguments compile once, in source order
@@ -1466,6 +1506,10 @@
      (list (arg 0) (untag) (arg 1) (unwrap-int) #x75
            (i32const -2) #x71 (gc-op #x1C)))
     ((%unreachable) (list #x00))
+    ((%throw-k)
+     ;; (token . value) is the exception payload; the instruction
+     ;; never returns, so any result type is fine
+     (list (arg 0) (arg 1) (struct-new TY-PAIR) #x08 (uleb 0)))
     ((%write-byte)
      (list (arg 0) (unwrap-int) #x10 (uleb FN-WRITE-BYTE)
            (global-get G-VOID)))
@@ -1677,7 +1721,9 @@
                   ;; $iofn
                   (list #x60 (counted (list T-I32)) (counted '()))
                   ;; $ioin
-                  (list #x60 (counted '()) (counted (list T-I32))))
+                  (list #x60 (counted '()) (counted (list T-I32)))
+                  ;; $ktag: the escape-continuation exception tag
+                  (list #x60 (counted (list T-EQREF)) (counted '())))
                  ;; plain function types
                  (map (lambda (a)
                         (list #x60
@@ -1708,6 +1754,8 @@
                             #x00 (uleb TY-IOIN)))))
     ;; function section
     (section 3 (counted (map (lambda (e) (uleb (car e))) entries)))
+    ;; tag section: the escape-continuation tag
+    (section 13 (counted (list (list #x00 (uleb TY-KTAG)))))
     ;; global section: singletons, variables, interned literals
     (section 6 (counted
                 (append
