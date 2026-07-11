@@ -8,7 +8,12 @@ for t in test/*.ss; do
     if ! ./bin/schwasmc "$t" /tmp/schwasm-test.wasm; then
         echo "FAIL $t (compile error)"; fail=1; continue
     fi
-    got=$(${NODE-node} rt/run.mjs /tmp/schwasm-test.wasm)
+    input="${t%.ss}.input"
+    if [ -f "$input" ]; then
+        got=$(${NODE-node} rt/run.mjs /tmp/schwasm-test.wasm "$input")
+    else
+        got=$(${NODE-node} rt/run.mjs /tmp/schwasm-test.wasm)
+    fi
     if [ "$got" = "$want" ]; then
         echo "ok   $t"
     else

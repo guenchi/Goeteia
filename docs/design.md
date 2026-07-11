@@ -106,8 +106,13 @@ Tail calls use `return_call_ref` on either path.
   formals) via the dual-entry closure convention, `apply`, `values` /
   `call-with-values`, and the list library (`list`, `length`,
   `append`, `reverse`, `map`, `for-each`, `memq`, `assq`, `equal?`).
-- **M5**: a reader in Scheme (`io.read_byte`), `string->symbol`
-  with runtime interning, `write`.
+- **M5 (done)**: `read` written in prelude Scheme over a second host
+  import `io.read_byte` (with one byte of pushback for peeking),
+  `write`, `list->string`/`string->list`/`string-set!`, and runtime
+  symbol interning: `string->symbol` seeds its table lazily from a
+  compiler-generated function that lists the module's interned symbol
+  globals, so symbols built at runtime are `eq?` to compile-time
+  literals.
 - **M6**: hygienic macros (`syntax-rules`, `syntax-case` with a
   compile-time meta-interpreter, hygiene by renaming).
 - **M7**: self-hosting.

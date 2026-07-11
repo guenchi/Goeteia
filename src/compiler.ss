@@ -80,18 +80,21 @@
 (define TY-CLOSBASE 5)      ; open (struct funcref (ref $fnG))
 (define TY-CLOSV 6)         ; variadic closures: base + env field
 (define TY-IOFN 7)          ; (func (param i32))
-(define TY-FIRST-FREE 8)
+(define TY-IOIN 8)          ; (func (result i32))
+(define TY-FIRST-FREE 9)
 
 ;; imported functions come first in the function index space
 (define FN-WRITE-BYTE 0)
-(define N-IMPORTS 1)
+(define FN-READ-BYTE 1)
+(define N-IMPORTS 2)
 
 ;; singleton globals, in index order
 (define G-FALSE 0)
 (define G-TRUE 1)
 (define G-NULL 2)
 (define G-VOID 3)
-(define G-FIRST-VAR 4)
+(define G-EOF 4)
+(define G-FIRST-VAR 5)
 
 ;;;; ------------------------------------------------------------------
 ;;;; instruction emitters
@@ -323,6 +326,12 @@
 (define *adapters* '())   ; arity -> generic-entry adapter fn index
 (define *interned* '())   ; (kind . datum) -> global index
 (define *next-global* 0)
+;; The list-of-interned-symbols function: its index is reserved up
+;; front, its body is recorded after everything else has compiled and
+;; the interned set is complete.  The prelude's string->symbol pulls
+;; the list lazily, which keeps runtime interning eq-consistent with
+;; compile-time symbol literals.
+(define *reg-fn* 0)
 
 (define (alloc-fn!)
   (let ((i *next-fn*))
@@ -384,7 +393,8 @@
   '(+ - * quotient remainder = < eq? cons car cdr pair? null? zero?
     set-car! set-cdr! number? char? string? symbol? boolean? procedure?
     char->integer integer->char string-length string-ref symbol->string
-    %write-byte))
+    string-set! eof-object eof-object?
+    %write-byte %read-byte %make-string %make-symbol %interned-symbols))
 
 (define (compile-exp e locals cell tail?)
   (cond
@@ -779,9 +789,26 @@
            (i32const 1) #x74 (i32const 1) #x72 (gc-op #x1C)))
     ((symbol->string)
      (list (arg 0) (ref-cast TY-SYMBOL) (struct-get TY-SYMBOL 0)))
+    ((string-set!)
+     ;; (string-set! s i char)
+     (list (arg 0) (ref-cast TY-STRING)
+           (arg 1) (unwrap-int)
+           (arg 2) (untag) (i32const 1) #x75          ; char code
+           (gc-op #x0E (uleb TY-STRING))              ; array.set
+           (global-get G-VOID)))
+    ((eof-object) (global-get G-EOF))
+    ((eof-object?) (list (arg 0) (global-get G-EOF) OP-REF-EQ (boolify)))
     ((%write-byte)
      (list (arg 0) (unwrap-int) #x10 (uleb FN-WRITE-BYTE)
            (global-get G-VOID)))
+    ((%read-byte)
+     (list #x10 (uleb FN-READ-BYTE) (wrap-int)))
+    ((%make-string)
+     (list (arg 0) (unwrap-int) (gc-op #x07 (uleb TY-STRING)))) ; array.new_default
+    ((%make-symbol)
+     (list (arg 0) (ref-cast TY-STRING) (struct-new TY-SYMBOL)))
+    ((%interned-symbols)
+     (list #x10 (uleb *reg-fn*)))
     (else (errorf 'schwasm "unhandled primitive ~s" op))))
 
 ;;;; ------------------------------------------------------------------
@@ -855,6 +882,7 @@
     (set! *interned* '())
     ;; function index space: imports, top-level functions, main, lifted
     (set! *next-fn* (+ N-IMPORTS (length fn-defs) 1))
+    (set! *reg-fn* (alloc-fn!))
     (let number ((ds fn-defs) (i N-IMPORTS))
       (unless (null? ds)
         (let ((formals (cdadr (car ds))))
@@ -896,6 +924,18 @@
                                    (if (null? main-steps) '((begin)) main-steps)
                                    '() cell #t)))
                         (cons (car cell) code)))))
+             (reg-entry
+              ;; the interned-symbol list, now that interning is done
+              (record-fn!
+               *reg-fn*
+               (list (cdr (assv 0 *plain-ty*)) 0 0
+                     (fold-left (lambda (acc e)
+                                  (if (eq? (caar e) 'sym)
+                                      (list (global-get (cdr e)) acc
+                                            (struct-new TY-PAIR))
+                                      acc))
+                                (global-get G-NULL)
+                                *interned*))))
              (lifted (sort (lambda (a b) (< (car a) (car b))) *lifted*))
              (entries (append
                        (map (lambda (e)
@@ -945,7 +985,9 @@
                                     (list #x64 (sleb TY-FNG) #x00)
                                     (list T-EQREF #x00))))
                   ;; $iofn
-                  (list #x60 (counted (list T-I32)) (counted '())))
+                  (list #x60 (counted (list T-I32)) (counted '()))
+                  ;; $ioin
+                  (list #x60 (counted '()) (counted (list T-I32))))
                  ;; plain function types
                  (map (lambda (a)
                         (list #x60
@@ -968,10 +1010,12 @@
                                              (list #x64 (sleb TY-FNG) #x00)
                                              (list T-EQREF #x00)))))))
                       clos-arities))))
-    ;; import section: io.write_byte
+    ;; import section
     (section 2 (counted
                 (list (list (name-bytes "io") (name-bytes "write_byte")
-                            #x00 (uleb TY-IOFN)))))
+                            #x00 (uleb TY-IOFN))
+                      (list (name-bytes "io") (name-bytes "read_byte")
+                            #x00 (uleb TY-IOIN)))))
     ;; function section
     (section 3 (counted (map (lambda (e) (uleb (car e))) entries)))
     ;; global section: singletons, variables, interned literals
@@ -982,7 +1026,7 @@
                               (i32const tag)
                               (struct-new TY-SINGLETON)
                               #x0B))
-                      '(0 1 2 3))
+                      '(0 1 2 3 4))
                  (map (lambda (_)
                         (list T-EQREF #x01
                               #xD0 T-EQREF ; ref.null eq

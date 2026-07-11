@@ -4,10 +4,14 @@
 
 import fs from 'fs';
 
-export async function runModule(bytes) {
+export async function runModule(bytes, input = []) {
     const out = [];
+    let pos = 0;
     const { instance } = await WebAssembly.instantiate(bytes, {
-        io: { write_byte: b => out.push(b) },
+        io: {
+            write_byte: b => out.push(b),
+            read_byte: () => (pos < input.length ? input[pos++] : -1),
+        },
     });
     const ex = instance.exports;
     const result = decode(ex.main(), ex);
@@ -30,10 +34,11 @@ export function decode(v, ex) {
 if (import.meta.url === `file://${process.argv[1]}`) {
     const file = process.argv[2];
     if (!file) {
-        console.error('usage: node run.mjs <module.wasm>');
+        console.error('usage: node run.mjs <module.wasm> [input-file]');
         process.exit(1);
     }
-    runModule(fs.readFileSync(file))
+    const input = process.argv[3] ? fs.readFileSync(process.argv[3]) : [];
+    runModule(fs.readFileSync(file), input)
         .then(({ text, result }) => {
             if (text) process.stdout.write(text);
             if (text && !text.endsWith('\n') && result) process.stdout.write('\n');

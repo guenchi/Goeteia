@@ -1,0 +1,3 @@
+;; a comment before the datum
+(1 (2 3) abc "str" #\a -45 #t (7 . 8))
+42
