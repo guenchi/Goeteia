@@ -16,14 +16,20 @@
 ;;
 ;; Copyright (c) 2026 guenchi. MIT license; see LICENSE.
 (library (web rpc)
-  (export rpc! rpc-serialize rpc-parse)
-  (import (rnrs) (web js))
+  (export rpc rpc! rpc-serialize rpc-parse)
+  (import (rnrs) (web js) (web fetch))
 
   (define (rpc-serialize datum)
     (with-output-to-string (lambda () (write datum))))
 
   (define (rpc-parse text)
     (read (open-input-string text)))
+
+  ;; direct style over JSPI: the call reads like a blocking one --
+  ;;   (let ((reply (rpc "/rpc" '(get-user 42)))) ...)
+  ;; needs (fetch-direct?); otherwise use the callback rpc! below
+  (define (rpc url datum)
+    (rpc-parse (http-post url (rpc-serialize datum) "application/sexpr")))
 
   (define (rpc! url datum on-reply . more)
     (let ((on-error (if (pair? more) (car more) (lambda (e) (js-undefined))))

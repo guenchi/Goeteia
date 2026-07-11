@@ -48,7 +48,7 @@ onmessage = async (e) => {
             str_len: () => 0, str_byte: () => -1, number: () => 0,
             to_number: () => 0, eq: () => 0, bool: () => 0,
             undefined: () => 0, fn: () => 0, cb_argc: () => 0,
-            cb_arg: () => 0, cb_ret: noop,
+            cb_arg: () => 0, cb_ret: noop, await: p => p,
         };
         const { instance } = await WebAssembly.instantiate(compiler, {
             io: {

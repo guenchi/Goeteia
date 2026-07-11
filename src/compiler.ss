@@ -182,7 +182,8 @@
 (define FN-JS-CB-ARGC 24)   ; callback arguments, host side
 (define FN-JS-CB-ARG 25)
 (define FN-JS-CB-RET 26)    ; callback return value, Scheme -> host
-(define N-IMPORTS 27)
+(define FN-JS-AWAIT 27)     ; suspend on a promise (JSPI); identity without it
+(define N-IMPORTS 28)
 
 ;; singleton globals, in index order
 (define G-FALSE 0)
@@ -1155,7 +1156,8 @@
     (%mem-i32-ref . 1) (%mem-i32-set! . 2)
     (%mem-f32-ref . 1) (%mem-f32-set! . 2)
     (%mem-f64-ref . 1) (%mem-f64-set! . 2)
-    (%mem-size . 0) (%mem-grow . 1)))
+    (%mem-size . 0) (%mem-grow . 1)
+    (%js-await . 1)))
 
 (define primitives
   '(+ - * quotient remainder = < eq? cons car cdr pair? null? zero?
@@ -1169,7 +1171,7 @@
     %js-ref? %js-arg-byte %js-global %js-get %js-set! %js-push
     %js-call %js-new %js-string %js-str-len %js-str-byte
     %js-number %js-to-number %js-eq %js-bool %js-undefined
-    %js-fn %js-cb-argc %js-cb-arg %js-cb-ret
+    %js-fn %js-cb-argc %js-cb-arg %js-cb-ret %js-await
     char->integer integer->char string-length string-ref symbol->string
     string-set! eof-object eof-object?
     bitwise-and bitwise-ior bitwise-xor
@@ -2007,6 +2009,8 @@
      (list #x10 (uleb FN-JS-GLOBAL) (struct-new TY-JSREF)))
     ((%js-get)
      (list (arg 0) (unwrap-js) #x10 (uleb FN-JS-GET) (struct-new TY-JSREF)))
+    ((%js-await)
+     (list (arg 0) (unwrap-js) #x10 (uleb FN-JS-AWAIT) (struct-new TY-JSREF)))
     ((%js-set!)
      (list (arg 0) (unwrap-js) (arg 1) (unwrap-js)
            #x10 (uleb FN-JS-SET) (global-get G-VOID)))
@@ -2675,7 +2679,9 @@
                       (list (name-bytes "js") (name-bytes "cb_arg")
                             #x00 (uleb TY-JARG))
                       (list (name-bytes "js") (name-bytes "cb_ret")
-                            #x00 (uleb TY-JPUSH)))))
+                            #x00 (uleb TY-JPUSH))
+                      (list (name-bytes "js") (name-bytes "await")
+                            #x00 (uleb TY-JEXT1)))))
     ;; function section
     (section 3 (counted (map (lambda (e) (uleb (car e))) entries)))
     ;; memory section: one unbounded memory, the staging buffer for

@@ -49,7 +49,20 @@ export function makeJsBridge(getExports) {
         cb_argc: () => cbStack[cbStack.length - 1].args.length,
         cb_arg: i => cbStack[cbStack.length - 1].args[i],
         cb_ret: v => { cbStack[cbStack.length - 1].ret = v; },
+        // suspend the whole wasm stack on a promise (JSPI); without
+        // engine support this is the identity and js-await is a no-op
+        await: (typeof WebAssembly.Suspending === 'function')
+            ? new WebAssembly.Suspending(p => Promise.resolve(p))
+            : p => p,
     };
+}
+
+// call an exported main through JSPI when available, so js-await can
+// suspend; falls back to a plain call (and a plain value) without it
+export function callMain(ex) {
+    return (typeof WebAssembly.promising === 'function')
+        ? WebAssembly.promising(ex.main)()
+        : ex.main();
 }
 
 export const jsBridgeStubs = {
@@ -59,5 +72,5 @@ export const jsBridgeStubs = {
     str_byte: () => 0, number: () => 0, to_number: () => 0,
     eq: () => 0, bool: () => 0, undefined: () => undefined,
     fn: () => undefined, cb_argc: () => 0, cb_arg: () => undefined,
-    cb_ret: () => {},
+    cb_ret: () => {}, await: p => p,
 };

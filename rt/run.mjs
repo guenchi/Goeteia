@@ -3,7 +3,7 @@
 // Copyright (c) 2026 guenchi. MIT license; see LICENSE.
 
 import fs from 'fs';
-import { makeJsBridge } from './jsbridge.mjs';
+import { makeJsBridge, callMain } from './jsbridge.mjs';
 
 export async function runModule(bytes, input = []) {
     const out = [];
@@ -56,7 +56,7 @@ export async function runModule(bytes, input = []) {
     // over it through the FFI ((js-get (js-global) "__goeteia_mem"))
     if (instance.exports.memory) globalThis.__goeteia_mem = instance.exports.memory;
     const ex = instance.exports;
-    const result = decode(ex.main(), ex);
+    const result = decode(await callMain(ex), ex);
     // drain microtasks so promise callbacks into wasm (fetch .then
     // chains from (web rpc)) run before we report the output
     await new Promise(r => setImmediate(r));
