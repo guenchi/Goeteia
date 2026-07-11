@@ -1,18 +1,15 @@
-;; A DOM counter -- a web page scripted in Goeteia.
-(import (web dom) (web js))
+;; A DOM counter -- a web page scripted in Goeteia, sx edition.
+;; The whole UI is one template: unquotes are reactive holes.
+(import (web reactive) (web sx) (web dom))
 
-(define n 0)
-(define label (get-element-by-id "count"))
+(define n (signal 0))
+(define (bump d) (lambda _ (signal-update! n (lambda (v) (+ v d)))))
 
-(define (update!)
-  (set-text! label (number->string n)))
+(sx-mount (get-element-by-id "app")
+  (sx (div
+        (div (@ (id "count")) ,(signal-ref n))
+        (button (@ (on-click ,(bump -1))) "-")
+        (button (@ (on-click ,(lambda _ (signal-set! n 0)))) "0")
+        (button (@ (on-click ,(bump 1))) "+"))))
 
-(add-event-listener! (get-element-by-id "inc") "click"
-  (lambda _ (set! n (+ n 1)) (update!)))
-(add-event-listener! (get-element-by-id "dec") "click"
-  (lambda _ (set! n (- n 1)) (update!)))
-(add-event-listener! (get-element-by-id "reset") "click"
-  (lambda _ (set! n 0) (update!)))
-
-(console-log "counter wired from Goeteia")
-(update!)
+(console-log "counter mounted from Goeteia")

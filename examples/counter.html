@@ -11,11 +11,10 @@
   </head>
   <body>
     <h1>Goeteia counter</h1>
-    <p>This page is scripted in Scheme — see <code>counter.ss</code>.</p>
-    <div id="count">?</div>
-    <button id="dec">−</button>
-    <button id="reset">0</button>
-    <button id="inc">+</button>
+    <p>This page is scripted in Scheme — see <code>counter.ss</code>.
+    The DOM below is built by the <code>(web sx)</code> template macro;
+    signals update just the holes.</p>
+    <div id="app"></div>
     <script type="module">
       import { loadGoeteia } from '../rt/web.mjs';
       loadGoeteia('counter.wasm');
