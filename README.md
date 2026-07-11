@@ -39,29 +39,12 @@ wasmtime).  Proper tail calls compile to `return_call`.
 See `docs/design.md` for the object representation, the calling
 convention, and the milestone-by-milestone build log.
 
-## Self-hosting
-
-```
-$ ./build-self.sh
-stage1: Chez-hosted compiler compiling the compiler...
-stage2: self-hosted compiler compiling the compiler...
-fixpoint: stage1 == stage2
-```
-
-`schwasm-self.wasm` is the compiler as a Wasm GC module: it reads
-Scheme source on its input byte stream and writes a Wasm module to
-its output.  Stage 1 (built by the Chez-hosted compiler) compiling
-the compiler reproduces itself exactly; the test suite runs every
-test through both stages.
-
 ## Usage
 
-Compiling requires [Chez Scheme](https://cisco.github.io/ChezScheme/)
-or the checked-in `schwasm-self.wasm`; running requires Node 22+ or
-any Wasm GC engine.
+Node 22+ (or any Wasm GC engine) is all you need: the compiler ships
+as `schwasm-self.wasm`, itself a Wasm GC module.
 
 ```
-$ ./bin/schwasmc program.ss program.wasm        # Chez-hosted
 $ node rt/compile.mjs schwasm-self.wasm program.ss program.wasm
 $ node rt/run.mjs program.wasm
 ```
@@ -74,6 +57,24 @@ value of the last expression is printed.
   (if (zero? n) 1 (* n (fact (- n 1)))))
 (fact 20)          ; prints 2432902008176640000
 ```
+
+## Self-hosting
+
+`schwasm-self.wasm` is Goeteia compiled by Goeteia.  After editing
+the compiler:
+
+```
+$ ./rebuild.sh      # snapshot compiles the source; the result
+                    # recompiles it; byte-equal -> snapshot replaced
+```
+
+With [Chez Scheme](https://cisco.github.io/ChezScheme/) installed,
+`./build-self.sh` runs the stronger cross-host check: the Chez-hosted
+compiler and the self-hosted compiler must produce byte-identical
+output from the same source — two independent hosts agreeing on every
+byte.  Chez is optional: it's the from-source bootstrap path and the
+independent verifier, not a dependency (`./bin/schwasmc` uses it as a
+host if you have it).
 
 ## Playground
 
