@@ -1,5 +1,5 @@
 ;; why.html — authored in Scheme, rendered to HTML by Goeteia.
-(import (web html) (chrome))
+(import (web html) (web css) (chrome))
 
 (define body
   (list
@@ -117,11 +117,18 @@
         "away, seamlessly. You verify the code you write; you borrow, unchanged, the "
         "libraries the world already wrote."))))
 
+;; shared base (palette + nav) from chrome, then this page's own rules,
+;; then the shared footer
+(define page-css
+  (string-append (css->string (base-styles 52))
+                 (read-file "site/why.css")
+                 (css->string (footer-styles))))
+
 (write-file "why.html"
   (render-page "Why Scheme? — Goeteia"
                (string-append "Why Scheme is the optimal substrate for AI-generated code: "
                               "homoiconicity makes generation and verification cheap, protocols "
                               "become verifiable data, and a generate–verify loop forces correctness "
                               "instead of assuming it.")
-               (read-file "site/why.css")
+               page-css
                'why "site/why.ss" body))

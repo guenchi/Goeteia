@@ -3,8 +3,58 @@
 ;; footer, the "Built in pure Scheme" badge and the view-source overlay
 ;; are the same on every page. Rendered to a string by Goeteia.
 (library (chrome)
-  (export render-page read-file write-file)
-  (import (rnrs) (web html))
+  (export render-page read-file write-file base-styles footer-styles palette)
+  (import (rnrs) (web html) (web css))
+
+  ;; ---- the shared stylesheet, as data ----
+  ;; the palette is Scheme data: change a colour here and every page
+  ;; that renders base-styles follows.
+  (define palette
+    '((bg "#f2f4fa") (bg2 "#ffffff") (ink "#14203a") (dim "#566080")
+      (lapis "#1550c4") (azure "#4788ee") (green "#1e7d34") (line "#dbe2ee")
+      (mono "ui-monospace, \"SF Mono\", Menlo, Consolas, monospace")))
+  (define (root-rule)
+    (cons ':root
+          (map (lambda (p)
+                 (list (string->symbol (string-append "--" (symbol->string (car p))))
+                       (cadr p)))
+               palette)))
+  ;; reset + body + links + wrap + the sticky nav, shared by every page.
+  ;; wrap-width is the page's content max-width in em.
+  (define (base-styles wrap-width)
+    (list
+     (root-rule)
+     '("*" (box-sizing border-box))
+     `(body (margin 0) (background (var bg)) (color (var ink))
+            (font-family "-apple-system, system-ui, \"Segoe UI\", sans-serif")
+            (line-height (dec 1 65)))
+     '(a (color (var lapis)) (text-decoration none))
+     '("a:hover" (text-decoration underline))
+     `(.wrap (max-width (em ,wrap-width)) (margin 0 auto) (padding 0 (em 1 20)))
+     `(.nav (position sticky) (top 0) (z-index 20)
+            (background (rgba 255 255 255 (dec 0 82)))
+            (backdrop-filter "saturate(1.2) blur(10px)")
+            (-webkit-backdrop-filter "saturate(1.2) blur(10px)")
+            (border-bottom (px 1) solid (var line)))
+     '(.nav-inner (display flex) (align-items center) (justify-content space-between)
+                  (height (em 3 40)) (max-width (em 60)))
+     '(.brand (font-weight 700) (font-size (em 1 15)) (color (var lapis))
+              (letter-spacing (em 0 1)))
+     '(".brand:hover" (text-decoration none))
+     '(.nav-links (display flex) (gap (em 1 50)) (align-items center))
+     '(".nav-links a" (color (var dim)) (font-size (em 0 92)))
+     '(".nav-links a:hover, .nav-links a.active"
+       (color (var lapis)) (text-decoration none))
+     '(".nav-links a.gh" (border (px 1) solid (var line)) (border-radius (px 6))
+       (padding (em 0 30) (em 0 90)) (color (var ink)))
+     '(".nav-links a.gh:hover" (border-color (var lapis)))
+     '(@media "(max-width: 42em)"
+        (.nav-inner (height auto) (min-height (em 3 40)) (flex-wrap wrap)
+                    (row-gap (em 0 10)) (padding (em 0 35) 0))
+        (.nav-links (gap (em 1)) (font-size (em 0 88))))))
+  (define (footer-styles)
+    '((footer (padding (em 2 50) 0 (em 3 50)) (border-top (px 1) solid (var line))
+              (text-align center) (color (var dim)) (font-size (em 0 90)))))
 
   ;; ---- build-time file I/O ----
   (define (read-file path)
@@ -89,9 +139,10 @@
            (meta (@ (name "viewport") (content "width=device-width, initial-scale=1")))
            (title ,title)
            (meta (@ (name "description") (content ,desc)))
-           ;; <style> is a raw-text element -- its content is emitted
-           ;; unescaped, so no (raw ...) wrapper (and a raw node here traps)
-           (style ,(string-append css "\n" badge-css)))
+           ;; css is either a raw CSS string or a (web css) rule list;
+           ;; <style> is raw-text, emitted unescaped
+           (style ,(string-append (if (string? css) css (css->string css))
+                                  "\n" badge-css)))
           (body
            ,(nav active)
            ,(source-badge source-file)

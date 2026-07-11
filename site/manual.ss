@@ -1,6 +1,6 @@
 ;; manual.html — authored in Scheme, rendered to HTML by Goeteia.
 ;; The body is a container; manual.js fills it from docs/manual.md.
-(import (web html) (chrome))
+(import (web html) (web css) (chrome))
 
 (define body
   (list
@@ -18,6 +18,8 @@
                               "self-hosting fixpoint, the library system, the numeric "
                               "tower, call/cc, and the reactive web stack -- rendered "
                               "in your browser from Markdown.")
-               (read-file "site/manual.css")
+               (string-append (css->string (base-styles 52))
+                              (read-file "site/manual.css")
+                              (css->string (footer-styles)))
                'manual "site/manual.ss" body
                scripts))

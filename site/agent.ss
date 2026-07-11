@@ -1,5 +1,5 @@
 ;; agent.html — authored in Scheme, rendered to HTML by Goeteia.
-(import (web html) (chrome))
+(import (web html) (web css) (chrome))
 
 (define body
   (list
@@ -61,5 +61,7 @@
                               "JavaScript/TypeScript web file into Goeteia Scheme with "
                               "behavioral equivalence proved by differential testing — "
                               "download the agent definition.")
-               (read-file "site/agent.css")
+               (string-append (css->string (base-styles 60))
+                              (read-file "site/agent.css")
+                              (css->string (footer-styles)))
                'agent "site/agent.ss" body))
