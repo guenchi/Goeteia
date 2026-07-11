@@ -73,6 +73,10 @@ A small UI stack over the JS bridge, in `lib/web/`:
   bridge call replays them; vertex data uploads zero-copy from the
   same memory (`examples/gl-particles.html`: 10,000 particles,
   one call per frame)
+- `(web rpc)` — s-expression RPC to a Scheme backend (Igropyr's
+  `(igropyr sexpr)` is the server half): `write` on one side, a safe
+  whitelisted parser on the other, so exact integers and ratios cross
+  the wire intact and there is no codec at all
 
 `examples/counter.html` is a page scripted entirely in Goeteia;
 `examples/react-embed.html` is a React app with Goeteia widgets
