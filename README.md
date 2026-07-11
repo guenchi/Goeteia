@@ -1,6 +1,9 @@
 # Goeteia
 
-*Γοητεία — sorcery.  A self-hosting Scheme for the WebAssembly GC era.*
+*Γοητεία — 操纵底层存在的黑魔法。
+The black art of commanding what lies beneath.*
+
+A self-hosting Scheme for the WebAssembly GC era.
 
 Goeteia is a Scheme-to-WebAssembly compiler built on the WebAssembly
 GC extension (Wasm 3.0).  It is an independent implementation written
