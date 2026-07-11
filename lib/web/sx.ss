@@ -138,8 +138,17 @@
 
   ;; a dynamic list of nodes: (thunk) yields the items, (render item)
   ;; yields a node per item; the host's children track the list.
-  ;; Rebuild is naive (clear + re-render); keyed reconciliation later.
-  (define (sx-list thunk render)
+  ;; Without a key the rebuild is naive (clear + re-render); with
+  ;; (sx-list thunk render key) nodes are keyed: an item whose key
+  ;; survives keeps its node, its effects and its DOM state, and only
+  ;; moves.  The child order is mirrored on the Scheme side, so the
+  ;; DOM stays write-only.
+  (define (sx-list thunk render . key)
+    (if (null? key)
+        ($sx-list-naive thunk render)
+        ($sx-list-keyed thunk render (car key))))
+
+  (define ($sx-list-naive thunk render)
     (let ((host (create-element "div")))
       (effect
        (lambda ()
@@ -147,4 +156,51 @@
            (remove-all-children! host)
            (for-each (lambda (it) (append-child! host (render it)))
                      items))))
+      host))
+
+  ;; state entries: (key node dispose), in DOM order
+  (define ($sx-list-keyed thunk render key)
+    (let ((host (create-element "div"))
+          (state '()))
+      (effect
+       (lambda ()
+         (let* ((items (thunk))
+                (desired
+                 (map (lambda (it)
+                        (let* ((k (key it))
+                               (old (assoc k state)))
+                          (or old
+                              ;; item effects live under their own
+                              ;; root: they survive list reruns and
+                              ;; die when the key vanishes
+                              (let ((rd (root (lambda () (render it)))))
+                                (list k (car rd) (cdr rd))))))
+                      items)))
+           ;; drop vanished keys
+           (for-each (lambda (ent)
+                       (unless (assoc (car ent) desired)
+                         ((caddr ent))
+                         (remove-child! host (cadr ent))))
+                     state)
+           ;; insert new nodes / move survivors into place, walking
+           ;; the mirror of the surviving old order
+           (let loop ((mirror (filter (lambda (ent)
+                                        (assoc (car ent) desired))
+                                      state))
+                      (ds desired))
+             (unless (null? ds)
+               (let ((d (car ds)))
+                 (if (and (pair? mirror)
+                          (equal? (car (car mirror)) (car d)))
+                     (loop (cdr mirror) (cdr ds))
+                     (begin
+                       (if (pair? mirror)
+                           (insert-before! host (cadr d)
+                                           (cadr (car mirror)))
+                           (append-child! host (cadr d)))
+                       (loop (filter (lambda (ent)
+                                       (not (equal? (car ent) (car d))))
+                                     mirror)
+                             (cdr ds)))))))
+           (set! state desired))))
       host)))

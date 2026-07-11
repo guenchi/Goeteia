@@ -2,7 +2,7 @@
 ;; Copyright (c) 2026 guenchi. MIT license; see LICENSE.
 (library (web reactive)
   (export signal signal-ref signal-set! signal-update!
-          effect dispose-effect! batch untracked)
+          effect dispose-effect! root batch untracked)
   (import (rnrs))
 
   ;; a signal holds a value and the effects that read it;
@@ -25,7 +25,9 @@
   (define (signal init) ($make-sig init '()))
 
   (define (signal-ref s)
-    (when $current
+    ;; an owner made by `root` has no thunk: it collects kids for
+    ;; disposal but never subscribes
+    (when (and $current ($eff-thunk $current))
       (unless (memq $current ($sig-subs s))
         ($sig-subs! s (cons $current ($sig-subs s)))
         ($eff-deps! $current (cons s ($eff-deps $current)))))
@@ -71,6 +73,18 @@
     ($detach! e)
     (for-each dispose-effect! ($eff-kids e))
     ($eff-kids! e '()))
+
+  ;; run thunk under a fresh detached owner: effects created inside
+  ;; survive reruns of the enclosing effect and die only through the
+  ;; returned disposer.  Yields (result . dispose).
+  (define (root thunk)
+    (let ((owner ($make-eff #f '() #t '()))
+          (prev $current))
+      (dynamic-wind
+        (lambda () (set! $current owner))
+        (lambda () (cons (thunk)
+                         (lambda () (dispose-effect! owner))))
+        (lambda () (set! $current prev)))))
 
   (define (batch thunk)
     (set! $batch-depth (+ $batch-depth 1))

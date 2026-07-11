@@ -3,7 +3,8 @@
 (library (web dom)
   (export window document body
           get-element-by-id query-selector create-element make-text
-          append-child! replace-child! remove-all-children!
+          append-child! replace-child! insert-before! remove-child!
+          remove-all-children!
           set-inner-html! inner-text set-text!
           set-attribute! set-style!
           add-event-listener! console-log alert)
@@ -24,6 +25,10 @@
     (js-method parent "appendChild" child))
   (define (replace-child! parent new old)
     (js-method parent "replaceChild" new old))
+  (define (insert-before! parent new ref)
+    (js-method parent "insertBefore" new ref))
+  (define (remove-child! parent child)
+    (js-method parent "removeChild" child))
   (define (remove-all-children! el)
     (js-set! el "textContent" ""))
   (define (set-inner-html! el s) (js-set! el "innerHTML" s))
