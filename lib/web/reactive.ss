@@ -13,7 +13,10 @@
   (define-record-type ($eff $make-eff $eff?)
     (fields (mutable thunk $eff-thunk $eff-thunk!)
             (mutable deps $eff-deps $eff-deps!)
-            (mutable live $eff-live $eff-live!)))
+            (mutable live $eff-live $eff-live!)
+            ;; effects created during this effect's run: they die with
+            ;; it and are re-created fresh on every rerun
+            (mutable kids $eff-kids $eff-kids!)))
 
   (define $current #f)                  ; the effect being (re)run
   (define $batch-depth 0)
@@ -49,6 +52,8 @@
   (define ($run-effect e)
     (when ($eff-live e)
       ($detach! e)
+      (for-each dispose-effect! ($eff-kids e))
+      ($eff-kids! e '())
       (let ((prev $current))
         (dynamic-wind
           (lambda () (set! $current e))
@@ -56,12 +61,16 @@
           (lambda () (set! $current prev))))))
 
   (define (effect thunk)
-    (let ((e ($make-eff thunk '() #t)))
+    (let ((e ($make-eff thunk '() #t '())))
+      (when $current
+        ($eff-kids! $current (cons e ($eff-kids $current))))
       ($run-effect e)
       e))
   (define (dispose-effect! e)
     ($eff-live! e #f)
-    ($detach! e))
+    ($detach! e)
+    (for-each dispose-effect! ($eff-kids e))
+    ($eff-kids! e '()))
 
   (define (batch thunk)
     (set! $batch-depth (+ $batch-depth 1))

@@ -64,8 +64,11 @@
     ($send-name name)
     (%js-get obj))
   (define (js-set! obj name v)
-    ($send-name name)
-    (%js-set! obj (->js v)))
+    ;; convert first: a string value passes through the same name
+    ;; buffer and would swallow a name already staged
+    (let ((jv (->js v)))
+      ($send-name name)
+      (%js-set! obj jv)))
   (define (js-call f thisv . args)
     (for-each (lambda (a) (%js-push (->js a))) args)
     (%js-call f thisv))
