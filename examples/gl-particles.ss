@@ -2,7 +2,7 @@
 ;; Per frame Scheme updates every particle in the staging memory
 ;; (unboxed float trees, zero allocation) and encodes the whole frame
 ;; as a command buffer -- ONE bridge call replays it.
-(import (rnrs) (web js) (web gl))
+(import (rnrs) (web js) (web gl) (web glsl))
 
 (define N 10000)
 (define POS 4096)                        ; xy pairs, 8 bytes each
@@ -42,9 +42,17 @@
 (define canvas (js-method (js-get (js-global) "document")
                           "getElementById" "c"))
 (gl-attach! canvas)
+;; shaders authored as s-expressions, rendered by (web glsl)
 (gl-program! 0
-  "attribute vec2 p; void main(){ gl_Position = vec4(p, 0.0, 1.0); gl_PointSize = 2.0; }"
-  "precision mediump float; void main(){ gl_FragColor = vec4(0.28, 0.53, 0.93, 1.0); }")
+  (glsl->string
+   '((attribute vec2 p)
+     (define (main) void
+       (set! gl_Position (vec4 p (fl 0) (fl 1)))
+       (set! gl_PointSize (fl 2)))))
+  (glsl->string
+   '((precision mediump float)
+     (define (main) void
+       (set! gl_FragColor (vec4 (fl 0 28) (fl 0 53) (fl 0 93) (fl 1)))))))
 (gl-buffer! 1)
 (cmd-region! 0)
 
