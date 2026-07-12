@@ -41,7 +41,7 @@
     "r6rs",
     "lisp"
   ],
-  "homepage": "https://github.com/guenchi/Goeteia#readme",
+  "homepage": "https://goeteia.dev",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/guenchi/Goeteia.git"
