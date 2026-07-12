@@ -61,6 +61,21 @@
            '(code "(web reactive)") " signals, an " '(code "(web html)")
            " renderer, and a " '(code "(web js)") " FFI that reaches straight "
            "into the host — this page is built with it.")
+        ,(card "3D and WebGL"
+           '(code "(web three)") " builds reactive Three.js scenes the way "
+           '(code "sx") " builds DOM; " '(code "(web gl)") " drives raw WebGL "
+           "through a command buffer — one bridge call per frame — with "
+           "shaders written as s-expressions in " '(code "(web glsl)") ". "
+           "The title above is exactly this: dot-matrix glyphs, a vertex "
+           "shader, one draw call.")
+        ,(card "Scheme-to-Scheme, no codec"
+           "When the backend is also Scheme (" '(code "Igropyr")
+           "), requests and replies are s-expressions — "
+           '(code "(rpc \"/rpc\" '(add 1 2 1/2))") " comes back "
+           '(code "(ok 7/2)") ", the exact ratio intact. "
+           '(code "(web fetch)") " makes it direct-style over Wasm JSPI; "
+           '(code "(web ws)") " / " '(code "(web sse)") " push datum streams; "
+           '(code "(web json)") " handles everyone else.")
         ,(card "Libraries"
            "R6RS-style " '(code "(library ...)") " files with "
            '(code "(import (math utils))") " resolution, dependencies "
