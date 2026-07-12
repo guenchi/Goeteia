@@ -1,4 +1,4 @@
-;; schwasm prelude: the runtime library, written in schwasm's own
+;; goeteia prelude: the runtime library, written in goeteia's own
 ;; Scheme and compiled into every module.
 ;; Copyright (c) 2026 guenchi. MIT license; see LICENSE.
 

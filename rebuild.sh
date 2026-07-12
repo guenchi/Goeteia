@@ -8,16 +8,16 @@
 set -e
 cd "$(dirname "$0")"
 
-cat src/compiler.ss src/wasm-driver.ss > /tmp/schwasm-self-src.ss
+cat src/compiler.ss src/wasm-driver.ss > /tmp/goeteia-self-src.ss
 
 echo "candidate: current snapshot compiling the source..."
-${NODE-node} rt/compile.mjs goeteia.wasm /tmp/schwasm-self-src.ss /tmp/schwasm-candidate.wasm
+${NODE-node} rt/compile.mjs goeteia.wasm /tmp/goeteia-self-src.ss /tmp/goeteia-candidate.wasm
 
 echo "verify: candidate compiling the source..."
-${NODE-node} rt/compile.mjs /tmp/schwasm-candidate.wasm /tmp/schwasm-self-src.ss /tmp/schwasm-verify.wasm
+${NODE-node} rt/compile.mjs /tmp/goeteia-candidate.wasm /tmp/goeteia-self-src.ss /tmp/goeteia-verify.wasm
 
-if cmp -s /tmp/schwasm-candidate.wasm /tmp/schwasm-verify.wasm; then
-    mv /tmp/schwasm-candidate.wasm goeteia.wasm
+if cmp -s /tmp/goeteia-candidate.wasm /tmp/goeteia-verify.wasm; then
+    mv /tmp/goeteia-candidate.wasm goeteia.wasm
     echo "fixpoint: candidate == verify; snapshot updated ($(wc -c < goeteia.wasm) bytes)"
 else
     echo "FIXPOINT FAILED: candidate and verify differ; snapshot unchanged"

@@ -20,20 +20,20 @@ run_one() { # wasmfile testfile
 }
 for t in test/*.ss; do
     want=$(head -1 "$t" | sed 's/^;; expect: //')
-    if ! ./bin/schwasmc "$t" /tmp/schwasm-test.wasm; then
+    if ! ./bin/goeteiac "$t" /tmp/goeteia-test.wasm; then
         echo "FAIL $t (stage0 compile error)"; fail=1; continue
     fi
-    got=$(run_one /tmp/schwasm-test.wasm "$t")
+    got=$(run_one /tmp/goeteia-test.wasm "$t")
     if [ "$got" = "$want" ]; then
         echo "ok   $t"
     else
         echo "FAIL $t (stage0: want '$want', got '$got')"; fail=1
     fi
     if [ -f goeteia.wasm ]; then
-        if ! ${NODE-node} rt/compile.mjs goeteia.wasm "$t" /tmp/schwasm-test1.wasm 2>/dev/null; then
+        if ! ${NODE-node} rt/compile.mjs goeteia.wasm "$t" /tmp/goeteia-test1.wasm 2>/dev/null; then
             echo "FAIL $t (stage1 compile error)"; fail=1; continue
         fi
-        got=$(run_one /tmp/schwasm-test1.wasm "$t")
+        got=$(run_one /tmp/goeteia-test1.wasm "$t")
         if [ "$got" = "$want" ]; then
             echo "ok   $t (stage1)"
         else

@@ -1,4 +1,4 @@
-// schwasm host runner: instantiate a compiled module, call main,
+// goeteia host runner: instantiate a compiled module, call main,
 // print whatever the program wrote followed by its decoded result.
 // Copyright (c) 2026 guenchi. MIT license; see LICENSE.
 

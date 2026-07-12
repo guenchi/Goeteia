@@ -1,4 +1,4 @@
-// Run the self-hosted schwasm compiler (a wasm module): feed it the
+// Run the self-hosted goeteia compiler (a wasm module): feed it the
 // prelude plus a source file (with imports resolved), collect the
 // wasm bytes it emits.
 // Copyright (c) 2026 guenchi. MIT license; see LICENSE.
@@ -107,8 +107,8 @@ function resolveImports(text, dirs, visited = new Set()) {
 }
 
 function loadLibrary(spec, dirs, visited) {
-    // (rnrs ...) and (schwasm ...) come from the prelude
-    if (spec[0] === 'rnrs' || spec[0] === 'schwasm') return '';
+    // (rnrs ...) and (goeteia ...) come from the prelude
+    if (spec[0] === 'rnrs' || spec[0] === 'goeteia') return '';
     const key = spec.join('/');
     if (visited.has(key)) return '';
     visited.add(key);

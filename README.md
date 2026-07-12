@@ -151,7 +151,7 @@ With [Chez Scheme](https://cisco.github.io/ChezScheme/) installed,
 compiler and the self-hosted compiler must produce byte-identical
 output from the same source — two independent hosts agreeing on every
 byte.  Chez is optional: it's the from-source bootstrap path and the
-independent verifier, not a dependency (`./bin/schwasmc` uses it as a
+independent verifier, not a dependency (`./bin/goeteiac` uses it as a
 host if you have it).
 
 ## Playground
@@ -178,8 +178,7 @@ and runs through both the Chez-hosted and the self-hosted compiler.
 
 ## Design
 
-Goeteia (formerly schwasm — the toolchain file names keep the old
-prefix) is an independent implementation written from the R6RS and
+Goeteia is an independent implementation written from the R6RS and
 WebAssembly specifications.
 
 ### Why Wasm GC
@@ -221,7 +220,7 @@ Console I/O uses `io.write_byte`/`io.read_byte`; file ports add six
 more imports (a byte-pushed path, open/read/write/close on fds) with
 real implementations in the Node runners and stubs in the browser.
 Beyond that, the runtime library
-(`display`, `string=?`, ...) is written in schwasm's own Scheme
+(`display`, `string=?`, ...) is written in goeteia's own Scheme
 (`src/prelude.ss`) and compiled into every module, with user
 definitions overriding same-named prelude definitions.
 
@@ -287,7 +286,7 @@ unused anyway).
 
 ### Program shape
 
-A schwasm program is a sequence of top-level definitions and
+A goeteia program is a sequence of top-level definitions and
 expressions.  Expressions run in order; the value of the last one is
 the program's result, exported as `main`.
 
@@ -331,7 +330,7 @@ Tail calls use `return_call_ref` on either path.
   characters (tagged i31), the full set of type predicates,
   `quotient`/`remainder`, and `display`/`newline` through the
   `io.write_byte` import, with the runtime library written in
-  schwasm's own Scheme.
+  goeteia's own Scheme.
 - **M4 (done)**: variadic procedures (`(lambda args ...)`, dotted
   formals) via the dual-entry closure convention, `apply`, `values` /
   `call-with-values`, and the list library (`list`, `length`,
@@ -356,7 +355,7 @@ Tail calls use `return_call_ref` on either path.
   table while `quote`/`syntax->datum` strip it.  Macros may expand
   into `define-syntax`.
 - **M7 (done)**: self-hosting.  The compiler is written in the
-  subset schwasm compiles.  `src/chez-driver.ss` hosts it under Chez
+  subset goeteia compiles.  `src/chez-driver.ss` hosts it under Chez
   (stage0); `src/wasm-driver.ss` appended to `src/compiler.ss` and
   compiled by stage0 yields `goeteia.wasm` (stage1), a wasm
   module that reads Scheme source on its input and emits a wasm
