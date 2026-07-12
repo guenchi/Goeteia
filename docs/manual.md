@@ -273,25 +273,150 @@ The `(web js)` library provides the bridge to JavaScript. Scheme closures automa
 
 ### Exports and Usage
 
-| Function | Effect |
-|----------|--------|
-| `(js-ref? v)` | Test if `v` is a JS reference (externref) |
-| `(js-global)` | Return `globalThis` |
-| `(js-undefined)` | Return `undefined` |
-| `(js-eq? a b)` | Test JS identity: `a === b` |
-| `(js-truthy? v)` | Test JS truthiness |
-| `(js-get obj name)` | Read property: `obj[name]` |
-| `(js-set! obj name value)` | Write property: `obj[name] = value` |
-| `(js-call f thisval arg1 ...)` | Call: `f.apply(thisval, [arg1, ...])` |
-| `(js-method obj name arg1 ...)` | Call method: `obj[name](arg1, ...)` |
-| `(js-new ctor arg1 ...)` | Construct: `new ctor(arg1, ...)` |
-| `(js-index obj i)` | Array index: `obj[toString(i)]` |
-| `(string->js s)` | Convert Scheme string to JS string |
-| `(js->string r)` | Convert JS string to Scheme string |
-| `(number->js x)` | Convert Scheme number to JS number |
-| `(js->number r)` | Convert JS number to Scheme (fixnum if in range, flonum otherwise) |
-| `(->js v)` | Convert any Scheme value to JS (closures become functions, true/false/nil map to JS equivalents) |
-| `(js-eval code)` | Eval a string: `eval(code)` in the global scope |
+**Notation.** Each entry gives the call form, then a type line read left
+to right — arguments joined by `->`, the last being the result; `...`
+marks a variadic tail. A `*`-prefixed name is a *pointer to a host
+object*: here `*jsObject` (a Wasm `externref` holding a JS value); later
+sections also use `*domElement` and `*signal`. `func` on the left of the
+first arrow is a call that takes **no arguments**. A `void` result means
+the procedure is called only for its **side effect**, which the
+description then states explicitly. Other types: `any`, `string`,
+`number`, `int`, `boolean`, `symbol`, `list`.
+
+```
+procedure: (js-ref? v)
+
+any -> boolean
+```
+Test whether `v` is a JS reference (externref).
+
+```
+procedure: (js-global)
+
+func -> *jsObject
+```
+Return `globalThis`.
+
+```
+procedure: (js-undefined)
+
+func -> *jsObject
+```
+Return `undefined`.
+
+```
+procedure: (js-eq? a b)
+
+*jsObject -> *jsObject -> boolean
+```
+JS identity: `a === b`.
+
+```
+procedure: (js-truthy? v)
+
+*jsObject -> boolean
+```
+JS truthiness of `v`.
+
+```
+procedure: (js-get obj name)
+
+*jsObject -> string -> *jsObject
+```
+Read a property: `obj[name]`.
+
+```scheme
+(js->number (js-get (js-eval "[10,20,30]") "length"))
+=> 3
+```
+
+```
+procedure: (js-set! obj name value)
+
+*jsObject -> string -> any -> void
+```
+Write a property: `obj[name] = value`.
+
+```
+procedure: (js-call f thisval args ...)
+
+*jsObject -> *jsObject -> any -> ... -> *jsObject
+```
+Apply a function: `f.apply(thisval, [args ...])`.
+
+```
+procedure: (js-method obj name args ...)
+
+*jsObject -> string -> any -> ... -> *jsObject
+```
+Call a method: `obj[name](args ...)`.
+
+```
+procedure: (js-new ctor args ...)
+
+*jsObject -> any -> ... -> *jsObject
+```
+Construct: `new ctor(args ...)`.
+
+```
+procedure: (js-index obj i)
+
+*jsObject -> int -> *jsObject
+```
+Index: `obj[String(i)]`.
+
+```
+procedure: (string->js s)
+
+string -> *jsObject
+```
+Convert a Scheme string to a JS string.
+
+```
+procedure: (js->string r)
+
+*jsObject -> string
+```
+Convert a JS string to a Scheme string.
+
+```scheme
+(js->string (js-eval "'ab'+'c'"))
+=> "abc"
+```
+
+```
+procedure: (number->js x)
+
+number -> *jsObject
+```
+Convert a Scheme number to a JS number.
+
+```
+procedure: (js->number r)
+
+*jsObject -> number
+```
+Convert a JS number to a Scheme number — fixnum if in range, flonum otherwise.
+
+```
+procedure: (->js v)
+
+any -> *jsObject
+```
+Convert any Scheme value to JS: closures become functions; `#t` / `#f` / `()`
+map to their JS equivalents.
+
+```
+procedure: (js-eval code)
+
+string -> *jsObject
+```
+Evaluate JavaScript in the global scope: `eval(code)`.
+
+```scheme
+(js->number (js-eval "40+2"))
+=> 42
+```
 
 ### Closures as Functions
 
@@ -628,7 +753,145 @@ For full control with no Three.js, `(web gl)` speaks WebGL through a *command bu
   (cmd-flush!))                                   ; ONE bridge call per frame
 ```
 
-Commands: `cmd-clear!`, `cmd-use-program!`, `cmd-bind-buffer!`, `cmd-buffer-data!`, `cmd-vertex-attrib!`, `cmd-uniform1f!`, `cmd-uniform4f!`, `cmd-draw-arrays!`, `cmd-viewport!`; primitive constants `GL-POINTS`, `GL-LINES`, `GL-TRIANGLES`, `GL-TRIANGLE-STRIP`. The JS replayer is embedded in the library as a string (injected once with `js-eval`), so there is no host-side file to ship. See `examples/gl-particles.html`—10,000 particles, one bridge call per frame.
+The JS replayer is embedded in the library as a string (injected once
+with `js-eval`), so there is no host-side file to ship. See
+`examples/gl-particles.html`—10,000 particles, one bridge call per frame.
+
+#### Setup (once)
+
+Resources are real JS objects held in a slot table; you create them
+once and refer to them later by slot number.
+
+```
+procedure: (gl-attach! canvas)
+
+*domElement -> *jsObject
+```
+Inject the replayer (via `js-eval`), create a `webgl` context on
+`canvas`, and return the replayer handle. Side effect: installs
+`globalThis.__goeteia_gl` and binds the module's staging memory.
+
+```
+procedure: (gl-program! slot vs fs)
+
+int -> string -> string -> void
+```
+Compile the vertex-shader source `vs` and fragment-shader source `fs`,
+link them into a program, and store it in `slot`. Side effect: throws
+(from JS) if a shader fails to compile or the program fails to link.
+
+```
+procedure: (gl-buffer! slot)
+
+int -> void
+```
+Create an `ARRAY_BUFFER` and store it in `slot`.
+
+```
+procedure: (gl-uniform! slot pslot name)
+
+int -> int -> string -> void
+```
+Look up uniform `name` in the program at slot `pslot` and store its
+location in `slot`.
+
+#### Per-frame commands
+
+Each `cmd-*` encodes one word-aligned command into the staging memory at
+the current write pointer; nothing touches WebGL until `cmd-flush!`.
+
+```
+procedure: (cmd-region! base)
+
+int -> void
+```
+Set the staging-memory byte offset where the command stream is written.
+
+```
+procedure: (cmd-begin!)
+
+func -> void
+```
+Reset the write pointer to the region base — start a new frame.
+
+```
+procedure: (cmd-clear! r g b a)
+
+number -> number -> number -> number -> void
+```
+Encode `clearColor(r,g,b,a)` followed by a color+depth `clear`.
+
+```
+procedure: (cmd-use-program! slot)
+
+int -> void
+```
+Encode `useProgram` of the program in `slot`.
+
+```
+procedure: (cmd-bind-buffer! slot)
+
+int -> void
+```
+Encode `bindBuffer(ARRAY_BUFFER, …)` of the buffer in `slot`.
+
+```
+procedure: (cmd-buffer-data! offset bytes)
+
+int -> int -> void
+```
+Encode `bufferData` uploading `bytes` bytes from staging memory at byte
+`offset` — zero-copy, since the data already lives in that memory.
+
+```
+procedure: (cmd-vertex-attrib! loc size stride offset)
+
+int -> int -> int -> int -> void
+```
+Encode `enableVertexAttribArray(loc)` + `vertexAttribPointer(loc, size,
+FLOAT, false, stride, offset)`.
+
+```
+procedure: (cmd-uniform1f! slot x)
+
+int -> number -> void
+```
+Encode `uniform1f` writing `x` to the uniform location in `slot`.
+
+```
+procedure: (cmd-uniform4f! slot x y z w)
+
+int -> number -> number -> number -> number -> void
+```
+Encode `uniform4f` writing `(x,y,z,w)` to the uniform location in `slot`.
+
+```
+procedure: (cmd-draw-arrays! mode first count)
+
+int -> int -> int -> void
+```
+Encode `drawArrays(mode, first, count)`; `mode` is a `GL-*` constant.
+
+```
+procedure: (cmd-viewport! x y w h)
+
+int -> int -> int -> int -> void
+```
+Encode `viewport(x, y, w, h)`.
+
+```
+procedure: (cmd-flush!)
+
+func -> void
+```
+The single bridge call: replay every command encoded since `cmd-begin!`,
+issuing the real `gl.*` calls for the whole frame at once.
+
+#### Draw-mode constants
+
+Integer enums for the `mode` argument of `cmd-draw-arrays!`:
+`GL-POINTS` (0), `GL-LINES` (1), `GL-TRIANGLES` (4),
+`GL-TRIANGLE-STRIP` (5).
 
 ### `(web glsl)`: Shaders as S-Expressions
 
