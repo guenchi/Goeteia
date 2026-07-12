@@ -1,10 +1,10 @@
-;; schwasm compiler driver for the Chez Scheme host.
+;; goeteia compiler driver for the Chez Scheme host.
 ;; Copyright (c) 2026 guenchi. MIT license; see LICENSE.
 
 (import (chezscheme))
 
 ;; the core calls (%abort) through errorf-compatible error reporting
-(define (%abort) (error 'schwasm "compilation failed"))
+(define (%abort) (error 'goeteia "compilation failed"))
 
 (define here (path-parent (car (command-line))))
 (load (string-append here "/compiler.ss"))
@@ -38,7 +38,7 @@
                         "" spec)))
     (let scan ((ds dirs))
       (if (null? ds)
-          (errorf 'schwasm "library not found: ~s" spec)
+          (errorf 'goeteia "library not found: ~s" spec)
           (let ((path (string-append (car ds) "/" rel ".ss")))
             (if (file-exists? path) path (scan (cdr ds))))))))
 (define (library-imports lib)
@@ -49,7 +49,7 @@
      (else (scan (cdr cs))))))
 (define (builtin-library? spec)
   ;; provided by the prelude, compiled into every module
-  (and (pair? spec) (memq (car spec) '(rnrs schwasm))))
+  (and (pair? spec) (memq (car spec) '(rnrs goeteia))))
 (define (load-library spec dirs)
   (if (or (builtin-library? spec) (member spec visited))
       '()
@@ -100,6 +100,6 @@
 
 (let ((args (cdr (command-line))))
   (if (or (null? args) (null? (cdr args)))
-      (begin (display "usage: schwasmc <input.ss> <output.wasm>\n")
+      (begin (display "usage: goeteiac <input.ss> <output.wasm>\n")
              (exit 1))
       (compile-file (car args) (cadr args))))

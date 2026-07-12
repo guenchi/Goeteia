@@ -1,5 +1,5 @@
 #!/bin/sh
-# schwasm compiler driver: schwasmc <input.ss> <output.wasm>
-# Requires Chez Scheme as the host until schwasm is self-hosting.
+# goeteia compiler driver: goeteiac <input.ss> <output.wasm>
+# Requires Chez Scheme as the host until goeteia is self-hosting.
 DIR="$(cd "$(dirname "$0")/.." && pwd)"
 exec "${CHEZ-chez}" --script "$DIR/src/chez-driver.ss" "$@"

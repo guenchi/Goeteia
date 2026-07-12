@@ -1,4 +1,4 @@
-;; schwasm compiler entry point for the self-hosted build: this file
+;; goeteia compiler entry point for the self-hosted build: this file
 ;; is appended to compiler.ss and the result is compiled to wasm.
 ;; The input stream carries the forms of prelude+program; the wasm
 ;; bytes of the compiled module go to the output.
