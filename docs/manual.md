@@ -278,51 +278,53 @@ The `(web js)` library provides the bridge to JavaScript. Scheme closures automa
 to right — arguments joined by `->`, the last being the result; `...`
 marks a variadic tail. A `*`-prefixed name is a *pointer to a host
 object*: here `*jsObject` (a Wasm `externref` holding a JS value); later
-sections also use `*domElement` and `*signal`. `func` on the left of the
-first arrow is a call that takes **no arguments**. A `void` result means
+sections also use `*domElement` and `*signal`. Every type line begins
+with `func`, standing for the procedure itself; the arrows then run
+through its arguments to the result — so a nullary procedure is simply
+`func -> result`. A `void` result means
 the procedure is called only for its **side effect**, which the
-description then states explicitly. Other types: `any`, `string`,
+description then states explicitly. A concrete value written after the
+result type names exactly what comes back — `*jsObject globalThis` means
+"a `*jsObject`, specifically `globalThis`". Other types: `any`, `string`,
 `number`, `int`, `boolean`, `symbol`, `list`.
 
 ```
 procedure: (js-ref? v)
 
-any -> boolean
+func -> any -> boolean
 ```
 Test whether `v` is a JS reference (externref).
 
 ```
 procedure: (js-global)
 
-func -> *jsObject
+func -> *jsObject globalThis
 ```
-Return `globalThis`.
 
 ```
 procedure: (js-undefined)
 
-func -> *jsObject
+func -> *jsObject undefined
 ```
-Return `undefined`.
 
 ```
 procedure: (js-eq? a b)
 
-*jsObject -> *jsObject -> boolean
+func -> *jsObject -> *jsObject -> boolean
 ```
 JS identity: `a === b`.
 
 ```
 procedure: (js-truthy? v)
 
-*jsObject -> boolean
+func -> *jsObject -> boolean
 ```
 JS truthiness of `v`.
 
 ```
 procedure: (js-get obj name)
 
-*jsObject -> string -> *jsObject
+func -> *jsObject -> string -> *jsObject
 ```
 Read a property: `obj[name]`.
 
@@ -334,49 +336,49 @@ Read a property: `obj[name]`.
 ```
 procedure: (js-set! obj name value)
 
-*jsObject -> string -> any -> void
+func -> *jsObject -> string -> any -> void
 ```
 Write a property: `obj[name] = value`.
 
 ```
 procedure: (js-call f thisval args ...)
 
-*jsObject -> *jsObject -> any -> ... -> *jsObject
+func -> *jsObject -> *jsObject -> any -> ... -> *jsObject
 ```
 Apply a function: `f.apply(thisval, [args ...])`.
 
 ```
 procedure: (js-method obj name args ...)
 
-*jsObject -> string -> any -> ... -> *jsObject
+func -> *jsObject -> string -> any -> ... -> *jsObject
 ```
 Call a method: `obj[name](args ...)`.
 
 ```
 procedure: (js-new ctor args ...)
 
-*jsObject -> any -> ... -> *jsObject
+func -> *jsObject -> any -> ... -> *jsObject
 ```
 Construct: `new ctor(args ...)`.
 
 ```
 procedure: (js-index obj i)
 
-*jsObject -> int -> *jsObject
+func -> *jsObject -> int -> *jsObject
 ```
 Index: `obj[String(i)]`.
 
 ```
 procedure: (string->js s)
 
-string -> *jsObject
+func -> string -> *jsObject
 ```
 Convert a Scheme string to a JS string.
 
 ```
 procedure: (js->string r)
 
-*jsObject -> string
+func -> *jsObject -> string
 ```
 Convert a JS string to a Scheme string.
 
@@ -388,21 +390,21 @@ Convert a JS string to a Scheme string.
 ```
 procedure: (number->js x)
 
-number -> *jsObject
+func -> number -> *jsObject
 ```
 Convert a Scheme number to a JS number.
 
 ```
 procedure: (js->number r)
 
-*jsObject -> number
+func -> *jsObject -> number
 ```
 Convert a JS number to a Scheme number — fixnum if in range, flonum otherwise.
 
 ```
 procedure: (->js v)
 
-any -> *jsObject
+func -> any -> *jsObject
 ```
 Convert any Scheme value to JS: closures become functions; `#t` / `#f` / `()`
 map to their JS equivalents.
@@ -410,7 +412,7 @@ map to their JS equivalents.
 ```
 procedure: (js-eval code)
 
-string -> *jsObject
+func -> string -> *jsObject
 ```
 Evaluate JavaScript in the global scope: `eval(code)`.
 
@@ -473,105 +475,105 @@ Return `document.body`.
 ```
 procedure: (get-element-by-id id)
 
-string -> *domElement
+func -> string -> *domElement
 ```
 `document.getElementById(id)`.
 
 ```
 procedure: (query-selector sel)
 
-string -> *domElement
+func -> string -> *domElement
 ```
 `document.querySelector(sel)` — the first match for the CSS selector.
 
 ```
 procedure: (create-element tag)
 
-string -> *domElement
+func -> string -> *domElement
 ```
 `document.createElement(tag)` — a new, unattached element.
 
 ```
 procedure: (make-text s)
 
-string -> *domElement
+func -> string -> *domElement
 ```
 `document.createTextNode(s)` — a new text node.
 
 ```
 procedure: (append-child! parent child)
 
-*domElement -> *domElement -> void
+func -> *domElement -> *domElement -> void
 ```
 Append `child` as the last child of `parent`.
 
 ```
 procedure: (replace-child! parent new old)
 
-*domElement -> *domElement -> *domElement -> void
+func -> *domElement -> *domElement -> *domElement -> void
 ```
 Replace `old` with `new` among `parent`'s children.
 
 ```
 procedure: (insert-before! parent new ref)
 
-*domElement -> *domElement -> *domElement -> void
+func -> *domElement -> *domElement -> *domElement -> void
 ```
 Insert `new` into `parent` just before the existing child `ref`.
 
 ```
 procedure: (remove-child! parent child)
 
-*domElement -> *domElement -> void
+func -> *domElement -> *domElement -> void
 ```
 Remove `child` from `parent`.
 
 ```
 procedure: (remove-all-children! el)
 
-*domElement -> void
+func -> *domElement -> void
 ```
 Remove every child of `el`, leaving it empty.
 
 ```
 procedure: (set-inner-html! el s)
 
-*domElement -> string -> void
+func -> *domElement -> string -> void
 ```
 Set `el.innerHTML = s`.
 
 ```
 procedure: (inner-text el)
 
-*domElement -> string
+func -> *domElement -> string
 ```
 Read `el.innerText` as a Scheme string.
 
 ```
 procedure: (set-text! el s)
 
-*domElement -> string -> void
+func -> *domElement -> string -> void
 ```
 Set `el.textContent = s`.
 
 ```
 procedure: (set-attribute! el name v)
 
-*domElement -> string -> string -> void
+func -> *domElement -> string -> string -> void
 ```
 Set the attribute `name` to `v` on `el`.
 
 ```
 procedure: (set-style! el prop v)
 
-*domElement -> string -> string -> void
+func -> *domElement -> string -> string -> void
 ```
 Set the CSS property `prop` to `v` on `el.style`.
 
 ```
 procedure: (add-event-listener! el event handler)
 
-*domElement -> string -> procedure -> void
+func -> *domElement -> string -> procedure -> void
 ```
 Attach `handler` for `event` (e.g. `"click"`). `handler` is a Scheme
 procedure called with the event as a `*jsObject`.
@@ -579,14 +581,14 @@ procedure called with the event as a `*jsObject`.
 ```
 procedure: (console-log x)
 
-any -> void
+func -> any -> void
 ```
 `console.log(x)`; non-string values are rendered with `write` first.
 
 ```
 procedure: (alert s)
 
-string -> void
+func -> string -> void
 ```
 Show a browser alert dialog with message `s`.
 
@@ -599,14 +601,14 @@ The `(web reactive)` library implements fine-grained reactive updates: signals h
 ```
 procedure: (signal init)
 
-any -> *signal
+func -> any -> *signal
 ```
 Create a signal holding `init`.
 
 ```
 procedure: (signal-ref s)
 
-*signal -> any
+func -> *signal -> any
 ```
 Read the current value. Called inside an `effect`, it subscribes that
 effect to `s`.
@@ -614,7 +616,7 @@ effect to `s`.
 ```
 procedure: (signal-set! s v)
 
-*signal -> any -> void
+func -> *signal -> any -> void
 ```
 Set the value to `v` and rerun observing effects. A write `eqv?` to the
 current value is a no-op.
@@ -622,14 +624,14 @@ current value is a no-op.
 ```
 procedure: (signal-update! s f)
 
-*signal -> procedure -> void
+func -> *signal -> procedure -> void
 ```
 Set the value to `(f current-value)`.
 
 ```
 procedure: (effect thunk)
 
-procedure -> *effect
+func -> procedure -> *effect
 ```
 Run `thunk` now, tracking every signal it reads, and rerun it whenever
 one of those signals changes. Returns the effect handle.
@@ -637,14 +639,14 @@ one of those signals changes. Returns the effect handle.
 ```
 procedure: (dispose-effect! e)
 
-*effect -> void
+func -> *effect -> void
 ```
 Stop effect `e` and dispose the effects it owns; it will not rerun again.
 
 ```
 procedure: (root thunk)
 
-procedure -> pair
+func -> procedure -> pair
 ```
 Run `thunk` under a fresh detached owner, so effects created inside
 survive reruns of any enclosing effect. Returns `(result . dispose)` —
@@ -653,7 +655,7 @@ survive reruns of any enclosing effect. Returns `(result . dispose)` —
 ```
 procedure: (batch thunk)
 
-procedure -> any
+func -> procedure -> any
 ```
 Run `thunk`, coalescing all its signal writes into a single effect
 rerun at the end. Returns `thunk`'s value.
@@ -661,7 +663,7 @@ rerun at the end. Returns `thunk`'s value.
 ```
 procedure: (untracked thunk)
 
-procedure -> any
+func -> procedure -> any
 ```
 Run `thunk` without subscribing the current effect to any signal it
 reads. Returns `thunk`'s value.
@@ -779,7 +781,7 @@ the root element.
 ```
 procedure: (sx-mount container node)
 
-*domElement -> *domElement -> *domElement
+func -> *domElement -> *domElement -> *domElement
 ```
 Append `node` (typically an `sx` fragment) as a child of `container` and
 return `node`.
@@ -787,7 +789,7 @@ return `node`.
 ```
 procedure: (sx-list thunk render [key])
 
-procedure -> procedure -> procedure -> *domElement
+func -> procedure -> procedure -> procedure -> *domElement
 ```
 Build a host element whose children track a dynamic list. `(thunk)`
 yields the current items; `(render item)` yields a node per item.
@@ -883,7 +885,7 @@ An SXML node is `(tag (@ (attr value) ...) child ...)`, where a child is a strin
 ```
 procedure: (sxml->html node)
 
-sxml -> string
+func -> sxml -> string
 ```
 Render one SXML node to an HTML string; text content is escaped.
 
@@ -895,14 +897,14 @@ Render one SXML node to an HTML string; text content is escaped.
 ```
 procedure: (html->document node)
 
-sxml -> string
+func -> sxml -> string
 ```
 Like `sxml->html`, but prefixed with `<!DOCTYPE html>` — a full page.
 
 ```
 procedure: (html-escape s)
 
-string -> string
+func -> string -> string
 ```
 Escape `&`, `<`, `>` for use as text content.
 
@@ -914,7 +916,7 @@ Escape `&`, `<`, `>` for use as text content.
 ```
 procedure: (raw s)
 
-string -> raw
+func -> string -> raw
 ```
 Wrap `s` so `sxml->html` emits it **unescaped** — for pre-rendered HTML
 or entities like `&nbsp;`.
@@ -922,7 +924,7 @@ or entities like `&nbsp;`.
 ```
 procedure: (raw? x)
 
-any -> boolean
+func -> any -> boolean
 ```
 Test whether `x` is a `raw` marker.
 
@@ -933,7 +935,7 @@ A stylesheet is a list of rules; a rule is `(selector (prop value ...) ...)`. Se
 ```
 procedure: (css->string rules)
 
-list -> string
+func -> list -> string
 ```
 Render a rule list to a CSS string.
 
@@ -946,7 +948,7 @@ Render a rule list to a CSS string.
 ```
 procedure: (num->css n)
 
-number -> string
+func -> number -> string
 ```
 Render one numeric CSS scalar — an exact integer, or a string passed
 through. Used internally by the unit forms.
@@ -958,7 +960,7 @@ The `(web react)` library embeds Goeteia components into a React app.
 ```
 procedure: (react-component name mount)
 
-string -> procedure -> void
+func -> string -> procedure -> void
 ```
 Register a component factory under `name`. `mount` is called
 `(mount container props)` — `container` is a DOM element React created,
@@ -967,7 +969,7 @@ Register a component factory under `name`. `mount` is called
 ```
 procedure: (props-ref props name)
 
-*jsObject -> string -> any
+func -> *jsObject -> string -> any
 ```
 Read prop `name` from the `props` object, or `#f` if absent.
 
@@ -1073,28 +1075,28 @@ updated in place.
 ```
 procedure: (three-ref name)
 
-string -> *jsObject
+func -> string -> *jsObject
 ```
 Look up `globalThis.THREE[name]` — a raw constructor or value.
 
 ```
 procedure: (three-renderer parent width height)
 
-*domElement -> int -> int -> *three
+func -> *domElement -> int -> int -> *three
 ```
 Create a WebGL renderer of the given size, mounted under `parent`.
 
 ```
 procedure: (three-render! renderer scene camera)
 
-*three -> *three -> *three -> void
+func -> *three -> *three -> *three -> void
 ```
 Render one frame of `scene` through `camera`.
 
 ```
 procedure: (three-loop! thunk)
 
-procedure -> void
+func -> procedure -> void
 ```
 Call `thunk` once per animation frame (drives the render loop).
 
@@ -1136,7 +1138,7 @@ once and refer to them later by slot number.
 ```
 procedure: (gl-attach! canvas)
 
-*domElement -> *jsObject
+func -> *domElement -> *jsObject
 ```
 Inject the replayer (via `js-eval`), create a `webgl` context on
 `canvas`, and return the replayer handle. Side effect: installs
@@ -1145,7 +1147,7 @@ Inject the replayer (via `js-eval`), create a `webgl` context on
 ```
 procedure: (gl-program! slot vs fs)
 
-int -> string -> string -> void
+func -> int -> string -> string -> void
 ```
 Compile the vertex-shader source `vs` and fragment-shader source `fs`,
 link them into a program, and store it in `slot`. Side effect: throws
@@ -1154,14 +1156,14 @@ link them into a program, and store it in `slot`. Side effect: throws
 ```
 procedure: (gl-buffer! slot)
 
-int -> void
+func -> int -> void
 ```
 Create an `ARRAY_BUFFER` and store it in `slot`.
 
 ```
 procedure: (gl-uniform! slot pslot name)
 
-int -> int -> string -> void
+func -> int -> int -> string -> void
 ```
 Look up uniform `name` in the program at slot `pslot` and store its
 location in `slot`.
@@ -1174,7 +1176,7 @@ the current write pointer; nothing touches WebGL until `cmd-flush!`.
 ```
 procedure: (cmd-region! base)
 
-int -> void
+func -> int -> void
 ```
 Set the staging-memory byte offset where the command stream is written.
 
@@ -1188,28 +1190,28 @@ Reset the write pointer to the region base — start a new frame.
 ```
 procedure: (cmd-clear! r g b a)
 
-number -> number -> number -> number -> void
+func -> number -> number -> number -> number -> void
 ```
 Encode `clearColor(r,g,b,a)` followed by a color+depth `clear`.
 
 ```
 procedure: (cmd-use-program! slot)
 
-int -> void
+func -> int -> void
 ```
 Encode `useProgram` of the program in `slot`.
 
 ```
 procedure: (cmd-bind-buffer! slot)
 
-int -> void
+func -> int -> void
 ```
 Encode `bindBuffer(ARRAY_BUFFER, …)` of the buffer in `slot`.
 
 ```
 procedure: (cmd-buffer-data! offset bytes)
 
-int -> int -> void
+func -> int -> int -> void
 ```
 Encode `bufferData` uploading `bytes` bytes from staging memory at byte
 `offset` — zero-copy, since the data already lives in that memory.
@@ -1217,7 +1219,7 @@ Encode `bufferData` uploading `bytes` bytes from staging memory at byte
 ```
 procedure: (cmd-vertex-attrib! loc size stride offset)
 
-int -> int -> int -> int -> void
+func -> int -> int -> int -> int -> void
 ```
 Encode `enableVertexAttribArray(loc)` + `vertexAttribPointer(loc, size,
 FLOAT, false, stride, offset)`.
@@ -1225,28 +1227,28 @@ FLOAT, false, stride, offset)`.
 ```
 procedure: (cmd-uniform1f! slot x)
 
-int -> number -> void
+func -> int -> number -> void
 ```
 Encode `uniform1f` writing `x` to the uniform location in `slot`.
 
 ```
 procedure: (cmd-uniform4f! slot x y z w)
 
-int -> number -> number -> number -> number -> void
+func -> int -> number -> number -> number -> number -> void
 ```
 Encode `uniform4f` writing `(x,y,z,w)` to the uniform location in `slot`.
 
 ```
 procedure: (cmd-draw-arrays! mode first count)
 
-int -> int -> int -> void
+func -> int -> int -> int -> void
 ```
 Encode `drawArrays(mode, first, count)`; `mode` is a `GL-*` constant.
 
 ```
 procedure: (cmd-viewport! x y w h)
 
-int -> int -> int -> int -> void
+func -> int -> int -> int -> int -> void
 ```
 Encode `viewport(x, y, w, h)`.
 
@@ -1271,7 +1273,7 @@ Integer enums for the `mode` argument of `cmd-draw-arrays!`:
 ```
 procedure: (glsl->string forms)
 
-list -> string
+func -> list -> string
 ```
 Render a list of GLSL forms to a GLSL source string.
 
@@ -1309,7 +1311,7 @@ A `*response` is the JS `Response` object; `opts` is an alist like
 ```
 procedure: (fetch url [opts])
 
-string -> alist -> *response
+func -> string -> alist -> *response
 ```
 Perform an HTTP request and return the response. Suspends the wasm stack
 (JSPI) until the response head arrives.
@@ -1317,14 +1319,14 @@ Perform an HTTP request and return the response. Suspends the wasm stack
 ```
 procedure: (http-get url)
 
-string -> string
+func -> string -> string
 ```
 GET `url` and return the response body as a string.
 
 ```
 procedure: (http-post url body [content-type])
 
-string -> string -> string -> string
+func -> string -> string -> string -> string
 ```
 POST `body` to `url` (default content type `text/plain`) and return the
 response body as a string.
@@ -1332,28 +1334,28 @@ response body as a string.
 ```
 procedure: (response-status r)
 
-*response -> int
+func -> *response -> int
 ```
 The HTTP status code, e.g. `200`.
 
 ```
 procedure: (response-ok? r)
 
-*response -> boolean
+func -> *response -> boolean
 ```
 Whether the status is in the 200–299 range.
 
 ```
 procedure: (response-text r)
 
-*response -> string
+func -> *response -> string
 ```
 Read the full response body as a string. Suspends until the body arrives.
 
 ```
 procedure: (response-header r name)
 
-*response -> string -> string
+func -> *response -> string -> string
 ```
 Read one response header by name.
 
@@ -1373,7 +1375,7 @@ The peer is [Igropyr](https://github.com/guenchi/Igropyr), a Scheme application 
 ```
 procedure: (rpc url datum)
 
-string -> datum -> datum
+func -> string -> datum -> datum
 ```
 Send `datum` to `url` and return the reply datum. Direct style — suspends
 via JSPI until the reply arrives.
@@ -1381,14 +1383,14 @@ via JSPI until the reply arrives.
 ```
 procedure: (rpc-get url)
 
-string -> datum
+func -> string -> datum
 ```
 Fetch a resource served as `application/sexpr` and return it as a datum.
 
 ```
 procedure: (rpc! url datum on-reply [on-error])
 
-string -> datum -> procedure -> procedure -> void
+func -> string -> datum -> procedure -> procedure -> void
 ```
 Callback-style RPC that works without JSPI: send `datum`, then call
 `(on-reply reply)`, or `(on-error e)` on failure.
@@ -1396,7 +1398,7 @@ Callback-style RPC that works without JSPI: send `datum`, then call
 ```
 procedure: (rpc-serialize datum)
 
-datum -> string
+func -> datum -> string
 ```
 Serialize a datum to the wire text (`write`, restricted to the safe
 whitelist Igropyr accepts).
@@ -1404,7 +1406,7 @@ whitelist Igropyr accepts).
 ```
 procedure: (rpc-parse text)
 
-string -> datum
+func -> string -> datum
 ```
 Parse wire text back to a datum (`read`, same safe whitelist).
 
@@ -1446,7 +1448,7 @@ For pushed streams there are two thin companions, matching Igropyr's `ws-send-se
 ```
 procedure: (ws-connect! url on-datum [...])
 
-string -> procedure -> *ws
+func -> string -> procedure -> *ws
 ```
 Open a WebSocket to `url`; `(on-datum d)` fires once per message with the
 decoded datum. Returns the socket handle.
@@ -1454,28 +1456,28 @@ decoded datum. Returns the socket handle.
 ```
 procedure: (ws-send! w datum)
 
-*ws -> datum -> void
+func -> *ws -> datum -> void
 ```
 Send one datum over socket `w`.
 
 ```
 procedure: (ws-close! w)
 
-*ws -> void
+func -> *ws -> void
 ```
 Close the socket.
 
 ```
 procedure: (ws-open? w)
 
-*ws -> boolean
+func -> *ws -> boolean
 ```
 Whether the socket is open.
 
 ```
 procedure: (sse-connect! url on-datum [...])
 
-string -> procedure -> *sse
+func -> string -> procedure -> *sse
 ```
 Open a Server-Sent-Events stream; `(on-datum d)` fires once per event.
 Returns the stream handle.
@@ -1483,7 +1485,7 @@ Returns the stream handle.
 ```
 procedure: (sse-close! es)
 
-*sse -> void
+func -> *sse -> void
 ```
 Close the SSE stream.
 
@@ -1506,7 +1508,7 @@ When the peer is not Scheme, `(web json)` is a safe recursive-descent codec (not
 ```
 procedure: (string->json s)
 
-string -> any
+func -> string -> any
 ```
 Parse a JSON string: object → alist (string keys), array → vector,
 string → string, number → number, `true`/`false` → `#t`/`#f`, `null` → `'null`.
@@ -1519,7 +1521,7 @@ string → string, number → number, `true`/`false` → `#t`/`#f`, `null` → `
 ```
 procedure: (json->string x)
 
-any -> string
+func -> any -> string
 ```
 Serialize a Scheme value (same data model) to a JSON string.
 
@@ -1531,7 +1533,7 @@ Serialize a Scheme value (same data model) to a JSON string.
 ```
 procedure: (json-ref x key ...)
 
-any -> any -> ... -> any
+func -> any -> any -> ... -> any
 ```
 Walk a path by string/symbol key (objects) or integer index (arrays),
 returning `#f` when any step is absent.
