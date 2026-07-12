@@ -1,5 +1,6 @@
 ;; The Goeteia homepage — rendered by Goeteia, compiled in your browser.
-;; The title is a WebGL particle cloud. Edit a pattern below and press Run.
+;; The title is a WebGL particle cloud. Add a button, change the text,
+;; edit a pattern — anything — then press Run.
 (import (web sx) (web dom) (web reactive) (web js) (web gl) (web glsl))
 
 ;; ---- the page ----
