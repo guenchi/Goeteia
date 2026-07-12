@@ -2,7 +2,28 @@
 
 ## Introduction
 
-Goeteia is a self-hosting Scheme-to-WebAssembly-GC compiler that compiles itself and runs on any engine with Wasm GC support (Node 22+, current browsers, wasmtime). This manual documents what you need to know to build applications *on top of* Goeteia, assuming you already understand R6RS Scheme. We cover only Goeteia-specific toolchain, libraries, and behavior; standard primitives like `car`, `cdr`, `let`, and `lambda` are not documented here.
+Goeteia is a self-hosting Scheme-to-WebAssembly-GC compiler that compiles itself and runs on any engine with Wasm GC support (Node 22+, current browsers, wasmtime). This manual documents what you need to know to build applications *on top of* Goeteia, assuming you already understand R6RS Scheme. We cover only Goeteia-specific toolchain, libraries, and behavior; standard R6RS primitives are not documented here.
+
+### Reading the Signatures
+
+Each documented procedure gives the call form, a type line, a one-line
+description, and — where a result is worth showing — an example with `=>`.
+
+The type line reads left to right: it begins with `func` (the procedure
+itself), the arrows run through its arguments, and the last item is the
+result; `...` marks a variadic tail. A nullary procedure is just
+`func -> result`. A `void` result means the call is made for its **side
+effect** (named in the description); a `never` result means it does not
+return normally (it raises). A concrete value written after the result
+type names exactly what comes back — `func -> *jsObject globalThis`
+returns the `globalThis` object. Macros are shown the same way but headed
+`syntax:`.
+
+A `*`-prefixed name is a *pointer to a host object*: `*jsObject` (a Wasm
+`externref` holding a JS value), and likewise `*domElement`, `*signal`,
+`*response`, `*ws`, `*sse`, `*three`. Other types: `any`, `string`,
+`number`, `int`, `boolean`, `symbol`, `list`, `pair`, `vector`, `alist`,
+`procedure`, `port`, `hashtable`, `condition`, `datum`, `sxml`.
 
 ## Contents
 
@@ -213,6 +234,43 @@ Names prefixed with `%` (e.g., `%js-ref?`, `%make-string`) are low-level Wasm pr
 
 **Console**: `display`, `write`, `newline` default to stdout (the `io.write_byte` import).
 
+```
+procedure: (open-output-string)
+
+func -> port
+```
+A fresh in-memory output port that accumulates written bytes.
+
+```
+procedure: (get-output-string port)
+
+func -> port -> string
+```
+The text accumulated in a string output port.
+
+```
+procedure: (open-input-string s)
+
+func -> string -> port
+```
+An input port that reads from the string `s`.
+
+```
+procedure: (call-with-input-file path proc)
+
+func -> string -> procedure -> any
+```
+(Node only.) Open `path`, call `(proc port)`, close, and return its
+value. Browser stubs raise.
+
+```
+procedure: (call-with-output-file path proc)
+
+func -> string -> procedure -> any
+```
+(Node only.) Open `path` for writing, call `(proc port)`, close, and
+return its value.
+
 ### Hashtables
 
 Hash tables with `eq?` or `equal?` keys. `make-hashtable` takes a
@@ -225,6 +283,71 @@ hash procedure and an equivalence, or use the `eq`/`equal` shorthands;
 (hashtable-ref ht 'name #f)                   ; => "Alice"  (#f if absent)
 ```
 
+```
+procedure: (make-eq-hashtable)
+
+func -> hashtable
+```
+A new hashtable with `eq?` keys (`make-eqv-hashtable` for `eqv?`).
+
+```
+procedure: (make-hashtable hash equiv)
+
+func -> procedure -> procedure -> hashtable
+```
+A new hashtable with a custom hash procedure and equivalence, e.g.
+`(make-hashtable equal-hash equal?)`.
+
+```
+procedure: (hashtable-set! ht key value)
+
+func -> hashtable -> any -> any -> void
+```
+Associate `key` with `value`.
+
+```
+procedure: (hashtable-ref ht key default)
+
+func -> hashtable -> any -> any -> any
+```
+The value for `key`, or `default` if absent. The default is required.
+
+```
+procedure: (hashtable-contains? ht key)
+
+func -> hashtable -> any -> boolean
+```
+Whether `key` is present.
+
+```
+procedure: (hashtable-delete! ht key)
+
+func -> hashtable -> any -> void
+```
+Remove `key` if present.
+
+```
+procedure: (hashtable-update! ht key proc default)
+
+func -> hashtable -> any -> procedure -> any -> void
+```
+Set `key` to `(proc current)`, using `default` as the current value when
+`key` is absent.
+
+```
+procedure: (hashtable-size ht)
+
+func -> hashtable -> int
+```
+The number of entries.
+
+```
+procedure: (hashtable-keys ht)
+
+func -> hashtable -> vector
+```
+A vector of all keys.
+
 ### Symbols and Gensym
 
 Symbols are interned at compile time and at runtime via `string->symbol`. They are `eq?`-comparable. `gensym` takes a required prefix and appends a fresh counter:
@@ -232,6 +355,27 @@ Symbols are interned at compile time and at runtime via `string->symbol`. They a
 ```scheme
 (gensym "var")  ; => a symbol named var0, var1, ... (prefix + counter)
 ```
+
+```
+procedure: (gensym prefix)
+
+func -> string -> symbol
+```
+A fresh, uninterned-looking symbol: `prefix` plus a per-call counter.
+
+```
+procedure: (string->symbol s)
+
+func -> string -> symbol
+```
+Intern `s` as a symbol (`eq?` to any other symbol of the same name).
+
+```
+procedure: (symbol->string sym)
+
+func -> symbol -> string
+```
+The name of `sym` as a string.
 
 ### Error Handling
 
@@ -252,6 +396,52 @@ Symbols are interned at compile time and at runtime via `string->symbol`. They a
   (lambda () (display "exit")))
 ```
 
+```
+procedure: (error who message irritant ...)
+
+func -> symbol -> string -> any -> ... -> never
+```
+Build a condition from `who`/`message`/`irritants` and raise it. Never
+returns normally — catch it with `guard`.
+
+```
+procedure: (raise obj)
+
+func -> any -> never
+```
+Raise `obj` as a condition to the nearest enclosing `guard`.
+
+```
+procedure: (error? c)
+
+func -> any -> boolean
+```
+Whether `c` is an error condition.
+
+```
+procedure: (condition-message c)
+
+func -> condition -> string
+```
+The message carried by a condition.
+
+```
+syntax: (guard (var clause ...) body ...)
+
+any
+```
+Evaluate `body`; if it raises, bind the condition to `var` and dispatch
+through the `cond`-style `clause`s (as in the example above). Evaluates
+to the body's value, or the chosen clause's value on a raise.
+
+```
+procedure: (dynamic-wind before thunk after)
+
+func -> procedure -> procedure -> procedure -> any
+```
+Run `(before)`, then `(thunk)`, then `(after)` — `after` runs even if
+`thunk` escapes via a continuation. Returns `thunk`'s value.
+
 ### Continuations
 
 `call/cc` captures **escape continuations only**—you can jump out of the current context but cannot re-enter a captured continuation. This is because Wasm exception handling (which implements continuations) supports upward jumps, not re-entrancy:
@@ -268,25 +458,20 @@ Symbols are interned at compile time and at runtime via `string->symbol`. They a
 
 Do not attempt to call a captured continuation multiple times; the second call will trap.
 
+```
+procedure: (call/cc proc)
+
+func -> procedure -> any
+```
+Call `(proc k)` where `k` is an **escape** continuation: invoking `(k v)`
+returns `v` from the `call/cc` form. `call-with-current-continuation` is
+the same procedure under its full name. `k` is one-shot and upward-only.
+
 ## JavaScript FFI
 
 The `(web js)` library provides the bridge to JavaScript. Scheme closures automatically become callable JS functions via the `->js` procedure and the internal `$jscb` callback protocol.
 
 ### Exports and Usage
-
-**Notation.** Each entry gives the call form, then a type line read left
-to right — arguments joined by `->`, the last being the result; `...`
-marks a variadic tail. A `*`-prefixed name is a *pointer to a host
-object*: here `*jsObject` (a Wasm `externref` holding a JS value); later
-sections also use `*domElement` and `*signal`. Every type line begins
-with `func`, standing for the procedure itself; the arrows then run
-through its arguments to the result — so a nullary procedure is simply
-`func -> result`. A `void` result means
-the procedure is called only for its **side effect**, which the
-description then states explicitly. A concrete value written after the
-result type names exactly what comes back — `*jsObject globalThis` means
-"a `*jsObject`, specifically `globalThis`". Other types: `any`, `string`,
-`number`, `int`, `boolean`, `symbol`, `list`.
 
 ```
 procedure: (js-ref? v)
