@@ -1,4 +1,4 @@
-;; The Goeteia homepage — rendered by Goeteia, compiled in your browser.
+;; The Goeteia homepage — live rendered by Goeteia, compiled in your browser.
 ;; The title is a WebGL particle cloud. Edit a pattern below and press Run.
 (import (web sx) (web dom) (web reactive) (web js) (web gl) (web glsl))
 
