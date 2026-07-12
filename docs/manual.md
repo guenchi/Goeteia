@@ -21,9 +21,10 @@ returns the `globalThis` object. Macros are shown the same way but headed
 
 A `*`-prefixed name is a *pointer to a host object*: `*jsObject` (a Wasm
 `externref` holding a JS value), and likewise `*domElement`, `*signal`,
-`*response`, `*ws`, `*sse`, `*three`. Other types: `any`, `string`,
-`number`, `int`, `boolean`, `symbol`, `list`, `pair`, `vector`, `alist`,
-`procedure`, `port`, `hashtable`, `condition`, `datum`, `sxml`.
+`*effect`, `*response`, `*ws`, `*sse`, `*three`. Other types: `any`,
+`string`, `number`, `int`, `boolean`, `symbol`, `list`, `pair`, `vector`,
+`alist`, `procedure`, `port`, `hashtable`, `condition`, `datum`, `sxml`,
+`raw` (a raw-HTML marker), and `template` (a literal `sx`/`s3d` form).
 
 ## Contents
 
