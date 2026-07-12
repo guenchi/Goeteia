@@ -20,7 +20,9 @@
           (button (@ (id "run") (disabled #t)) "Run")
           (span (@ (id "status") (class "status")) "booting the compiler…"))
         (p (@ (class "hint"))
-           "Try changing a string, or drive the " (code "spell") " signal. "
+           "The 3D title is a WebGL particle cloud — its glyphs, wave and "
+           "colors are all in this source. Edit the dot-matrix " (code "rows")
+           ", tweak the shader, press Run. "
            "This page carries the whole compiler (" (code "goeteia.wasm")
            ", ~70 KB gzipped, cached after first load); each recompile takes ~15 ms.")))
 

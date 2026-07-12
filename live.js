@@ -15,6 +15,8 @@ const LIB_FILES = [
     'lib/web/reactive.ss',
     'lib/web/sx.ss',
     'lib/web/html.ss',
+    'lib/web/glsl.ss',
+    'lib/web/gl.ss',
 ];
 
 const enc = new TextEncoder();
@@ -79,6 +81,8 @@ export async function render(userSource, liveEl) {
         ({ instance } = await WebAssembly.instantiate(wasm, { io, js }));
     }
     ex = instance.exports;
+    // expose the staging memory so (web gl) can build typed-array views
+    if (instance.exports.memory) globalThis.__goeteia_mem = instance.exports.memory;
     ex.main();                                  // mounts into #live
     return { compileMs: ms, bytes: wasm.length };
 }
