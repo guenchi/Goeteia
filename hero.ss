@@ -189,7 +189,9 @@
 
 ;; re-running this source bumps the generation; the old loop sees it
 ;; and lets go
-(js-eval "globalThis.__hero_gen = (globalThis.__hero_gen || 0) + 1")
+(let ((v (js-get (js-global) "__hero_gen")))
+  (js-set! (js-global) "__hero_gen"
+           (+ 1 (if (js-truthy? v) (js->number v) 0))))
 (define gen (js->number (js-get (js-global) "__hero_gen")))
 (letrec ((tick (lambda _
                  (when (= gen (js->number (js-get (js-global) "__hero_gen")))
