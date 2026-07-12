@@ -9,21 +9,13 @@
 ;; ---- the page ----
 (define spell (signal "commanding what lies beneath"))
 
-(define (black-ars)                    ; dynamic-wind, live
-  (with-output-to-string
-    (lambda ()
-      (dynamic-wind
-        (lambda () (display "The "))
-        (lambda () (display "black "))
-        (lambda () (display "ars"))))))
-
 (sx-mount (get-element-by-id "live")
   (sx (div (@ (class "hero"))
         (canvas (@ (id "gl-title") (width "720") (height "180")
                    (style "display:block;width:100%;max-width:40em")))
         (p (@ (class "tagline"))
            (span (@ (class "gname")) "Γοητεία")
-           " " ,(black-ars) " of " ,(signal-ref spell) ".")
+           " The black ars of " ,(signal-ref spell) ".")
         (p (@ (class "sub")) "A self-hosting Scheme for the WebAssembly GC era.")
         (pre (@ (class "cmd")) "$ npm install goeteia")
         (div (@ (class "links"))

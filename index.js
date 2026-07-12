@@ -86,11 +86,28 @@ import { boot, render } from './live.js';
       });
 
       // "Try it now" lives in the live-mounted hero, so bind by delegation:
-      // smooth-scroll to the #editor section and drop the cursor into it.
+      // scroll to the #editor, then select the two dot-matrix words — the
+      // bit you're meant to edit — so the textarea scrolls to them and the
+      // highlight lands right where you should start typing.
       document.addEventListener('click', e => {
         if (!e.target.closest('a[href="#editor"]')) return;
         e.preventDefault();
         document.getElementById('editor')
           .scrollIntoView({ behavior: 'smooth', block: 'start' });
         srcBox.focus({ preventScroll: true });
+        const v = srcBox.value;
+        const s = v.indexOf('(define pattern-a');
+        const b = v.indexOf('(define pattern-b');
+        const end = b >= 0 ? v.indexOf('))', b) : -1;
+        if (s >= 0 && end >= 0) {
+          srcBox.setSelectionRange(s, end + 2);
+          // setSelectionRange doesn't reliably scroll the textarea, so put
+          // the selected block near the top ourselves (the highlight layer
+          // follows via the existing scroll listener)
+          const lh = parseFloat(getComputedStyle(srcBox).lineHeight) || 20;
+          const line = v.slice(0, s).split('\n').length - 1;
+          srcBox.scrollTop = Math.max(0, (line - 1) * lh);
+        } else {
+          srcBox.select();
+        }
       });
