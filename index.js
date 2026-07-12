@@ -84,3 +84,13 @@ import { boot, render } from './live.js';
       srcBox.addEventListener('keydown', e => {
         if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); go(); }
       });
+
+      // "Try it now" lives in the live-mounted hero, so bind by delegation:
+      // scroll the editor into view and drop the cursor into the code box.
+      document.addEventListener('click', e => {
+        if (!e.target.closest('a[href="#editor"]')) return;
+        e.preventDefault();
+        document.getElementById('editor')
+          .scrollIntoView({ behavior: 'smooth', block: 'start' });
+        srcBox.focus({ preventScroll: true });
+      });
