@@ -65,10 +65,19 @@ export async function render(userSource, liveEl) {
     const { wasm, ms } = await compile(userSource);
     liveEl.textContent = '';                    // unmount the previous render
     let ex;
-    const { instance } = await WebAssembly.instantiate(wasm, {
-        io: { write_byte: () => {}, read_byte: () => -1, ...stubs },
-        js: makeJsBridge(() => ex),
-    });
+    const io = { write_byte: () => {}, read_byte: () => -1, ...stubs };
+    let instance;
+    try {
+        ({ instance } = await WebAssembly.instantiate(wasm, {
+            io, js: makeJsBridge(() => ex),
+        }));
+    } catch (e) {
+        // engine advertised WebAssembly.Suspending but rejected it as an
+        // import ("js:await must be callable"); retry with a plain no-op await
+        const js = makeJsBridge(() => ex);
+        js.await = p => p;
+        ({ instance } = await WebAssembly.instantiate(wasm, { io, js }));
+    }
     ex = instance.exports;
     ex.main();                                  // mounts into #live
     return { compileMs: ms, bytes: wasm.length };
