@@ -33,7 +33,7 @@
           cmd-region! cmd-begin! cmd-flush!
           cmd-clear! cmd-use-program! cmd-bind-buffer! cmd-buffer-data!
           cmd-vertex-attrib! cmd-uniform1f! cmd-uniform4f!
-          cmd-draw-arrays! cmd-viewport!
+          cmd-draw-arrays! cmd-viewport! cmd-blend!
           GL-POINTS GL-LINES GL-TRIANGLES GL-TRIANGLE-STRIP)
   (import (rnrs) (web js))
 
@@ -87,6 +87,10 @@
      "                : u[p] === 5 ? gl.TRIANGLE_STRIP : gl.TRIANGLES;"
      "               gl.drawArrays(m, u[p+1], u[p+2]); p += 3; break; }"
      "     case 9: gl.viewport(u[p], u[p+1], u[p+2], u[p+3]); p += 4; break;"
+     "     case 10: if (u[p] === 1) { gl.enable(gl.BLEND);"
+     "                gl.blendFunc(gl.SRC_ALPHA, u[p+1] === 1 ? gl.ONE"
+     "                             : gl.ONE_MINUS_SRC_ALPHA); }"
+     "              else gl.disable(gl.BLEND); p += 2; break;"
      "     default: throw new Error('bad gl opcode');"
      "    } } }; };"))
 
@@ -124,6 +128,14 @@
   (define (cmd-draw-arrays! mode first count)
     (u! 8) (u! mode) (u! first) (u! count))
   (define (cmd-viewport! x y w h) (u! 9) (u! x) (u! y) (u! w) (u! h))
+  ;; blending for translucent draws: (cmd-blend! 'alpha) src-over,
+  ;; (cmd-blend! 'add) additive glow, (cmd-blend! 'off) opaque
+  (define (cmd-blend! mode)
+    (u! 10)
+    (case mode
+      ((add)   (u! 1) (u! 1))
+      ((alpha) (u! 1) (u! 0))
+      (else    (u! 0) (u! 0))))
 
   ;; one bridge call replays the whole frame
   (define (cmd-flush!)
