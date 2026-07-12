@@ -205,6 +205,56 @@ complex ⊃ flonum ⊃ ratio ⊃ integer: `(+ 1/2 0.5)` → `1.0`,
 `(* 2 1/3)` → `2/3`, `(sqrt -1)` → `0+1.0i`,
 `(make-rectangular 1 2)` → `1+2i`.
 
+### Float Arithmetic
+
+The `fl` operations are the raw f64 float primitives. Built into an
+expression tree they stay **unboxed**: the f64 lives on the wasm stack,
+so `(fl+ (fl* a b) (fl* c d))` allocates only for its final result — zero
+allocation inside the tree. This is the compute-then-store idiom the
+staging memory and `(web gl)` command buffers rely on.
+
+```
+procedure: (fixnum->flonum n)
+
+func -> int -> number
+```
+An exact fixnum as a flonum.
+
+```
+procedure: (fl+ a b)
+
+func -> number -> number -> number
+```
+Flonum addition; `fl-`, `fl*`, `fl/` are subtraction, multiplication and
+division, same shape.
+
+```
+procedure: (flsqrt x)
+
+func -> number -> number
+```
+Flonum square root; `flfloor` and `fltruncate` round toward −∞ and toward
+zero, same shape.
+
+```
+procedure: (fl<? a b)
+
+func -> number -> number -> boolean
+```
+Flonum ordering; `fl=?` is equality.
+
+```
+procedure: (flonum? x)
+
+func -> any -> boolean
+```
+Whether `x` is a flonum.
+
+```scheme
+(fl+ (fixnum->flonum 3) (fl* (fixnum->flonum 2) (fixnum->flonum 5)))
+=> 13.0
+```
+
 ### Records
 
 `define-record-type` compiles to GC structs with an identity slot (a unique pair), so `point?` is one `ref.test` plus one `ref.eq`. Records are mutable via field accessors if the field is declared `(mutable ...)`.
@@ -1287,6 +1337,17 @@ func -> procedure -> void
 Call `thunk` once per animation frame (drives the render loop).
 
 Constructor attributes (`geometry` / `material`, a camera's `fov`, a light's `intensity`) are static; put reactive holes in the others. Uses `globalThis.THREE`, so the page loads Three.js separately. Rendering stays on the GPU; only the changed attributes cross the bridge.
+
+### Linear Staging Memory
+
+Every compiled module exports one growable linear wasm memory named
+`memory`, which the host also sees as `globalThis.__goeteia_mem`. Scheme
+writes a frame's worth of numeric data (vertices, particles) into it, and
+the host reads the *same bytes* zero-copy as a typed array (a
+`Float32Array` over `exports.memory.buffer`) — collapsing tens of
+thousands of bridge calls into one. It is an export, not an import, so
+older hosts still instantiate newer modules. `(web gl)` below is built on
+it; the byte-level accessors are internal primitives.
 
 ### `(web gl)`: Raw WebGL via a Command Buffer
 
