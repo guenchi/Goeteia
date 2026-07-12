@@ -20,7 +20,7 @@
           (button (@ (id "run") (disabled #t)) "Run")
           (span (@ (id "status") (class "status")) "booting the compiler…"))
         (p (@ (class "hint"))
-           "The 3D title is a WebGL particle cloud — its glyphs, wave and "
+           "The 3D title is a WebGL particle cloud — its glyphs, flight and "
            "colors are all in this source. Edit the dot-matrix " (code "rows")
            ", tweak the shader, press Run. "
            "This page carries the whole compiler (" (code "goeteia.wasm")

@@ -18,7 +18,7 @@
 (sx-mount (get-element-by-id "live")
   (sx (div (@ (class "hero"))
         (canvas (@ (id "gl-title") (width "720") (height "180")
-                   (style "display:block;margin:0 auto;width:100%;max-width:40em")))
+                   (style "display:block;width:100%;max-width:40em")))
         (p (@ (class "tagline"))
            (span (@ (class "gname")) "Γοητεία")
            " " ,(black-ars) " of " ,(signal-ref spell) ".")
@@ -63,18 +63,29 @@
      (varying float v_hue)
      (varying float v_glow)
      (define (main) void
-       ;; a wave rolls across the letters...
-       (local float z (* (fl 0 12) (sin (+ (* u_time (fl 1 60))
-                                           (* p.x (fl 4)) (* p.y (fl 2))))))
-       ;; ...while the whole word sways in 3D
-       (local float a (* (fl 0 45) (sin (* u_time (fl 0 70)))))
-       (local float rx (- (* p.x (cos a)) (* z (sin a))))
-       (local float rz (+ (* p.x (sin a)) (* z (cos a))))
-       (local float s (/ (fl 1 35) (+ (fl 1 90) rz)))
-       (set! gl_Position (vec4 (* rx s) (* (+ p.y (* z (fl 0 30))) s) (fl 0) (fl 1)))
-       (set! gl_PointSize (* s (+ (fl 13) (* (fl 5) (sin (+ (* u_time (fl 2)) (* p.x (fl 8))))))))
-       (set! v_hue (+ (* p.x (fl 0 60)) (* z (fl 3))))
-       (set! v_glow s)))))
+       ;; every dot hashes its own fate from its home position
+       (local float seed (fract (* (sin (dot p (vec2 (fl 12 98) (fl 78 23))))
+                                   (fl 43758 50))))
+       (local float s2 (fract (* seed (fl 7 13))))
+       ;; a 6-second cycle: hold, burst apart, spiral home --
+       ;; each dot staggered a little by its seed
+       (local float ph (- (fract (/ u_time (fl 6))) (* seed (fl 0 8))))
+       (local float e (* (smoothstep (fl 0 52) (fl 0 70) ph)
+                         (- (fl 1) (smoothstep (fl 0 78) (fl 0 97) ph))))
+       ;; flight: a personal direction that keeps turning, so dots
+       ;; leave and return along spirals
+       (local float ang (+ (* seed (fl 6 28)) (* u_time (fl 0 40))))
+       (local vec2 pos (+ p (* (vec2 (cos ang) (sin ang))
+                               (+ (fl 0 50) (* s2 (fl 0 90))) e)))
+       ;; depth: scattered dots spread in z; held dots breathe gently
+       (local float z (+ (* (- seed (fl 0 50)) (fl 1 40) e)
+                         (* (fl 0 5) (- (fl 1) e)
+                            (sin (+ (* u_time (fl 2)) (* p.x (fl 5)))))))
+       (local float s (/ (fl 1 35) (+ (fl 1 90) z)))
+       (set! gl_Position (vec4 (* pos.x s) (* pos.y s) (fl 0) (fl 1)))
+       (set! gl_PointSize (* s (- (fl 12) (* (fl 4) e))))
+       (set! v_hue (+ (* p.x (fl 0 60)) (* e (fl 0 80)) z))
+       (set! v_glow (* s (- (fl 1) (* (fl 0 30) e))))))))
 
 (define fs
   (glsl->string
