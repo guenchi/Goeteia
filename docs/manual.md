@@ -4,6 +4,25 @@
 
 Goeteia is a self-hosting Scheme-to-WebAssembly-GC compiler that compiles itself and runs on any engine with Wasm GC support (Node 22+, current browsers, wasmtime). This manual documents what you need to know to build applications *on top of* Goeteia, assuming you already understand R6RS Scheme. We cover only Goeteia-specific toolchain, libraries, and behavior; standard primitives like `car`, `cdr`, `let`, and `lambda` are not documented here.
 
+## Contents
+
+1. [Toolchain and Workflow](#toolchain-and-workflow)
+2. [Program Structure](#program-structure)
+3. [The Library System](#the-library-system)
+4. [Values and Goeteia-Specific Representation](#values-and-goeteia-specific-representation)
+5. [Runtime Facilities Beyond Common R6RS](#runtime-facilities-beyond-common-r6rs)
+6. [JavaScript FFI](#javascript-ffi)
+7. [DOM](#dom)
+8. [Reactivity](#reactivity)
+9. [Templates](#templates)
+10. [React Interop](#react-interop)
+11. [3D and WebGL](#3d-and-webgl)
+12. [Networking](#networking)
+13. [Running in the Browser](#running-in-the-browser)
+14. [Testing](#testing)
+15. [Porting from JavaScript/TypeScript](#porting-from-javascripttypescript)
+16. [Current Limits and Planned Work](#current-limits-and-planned-work)
+
 ## Toolchain and Workflow
 
 ### Compiling and Running
