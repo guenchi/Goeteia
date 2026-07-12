@@ -15,13 +15,14 @@ Goeteia is a self-hosting Scheme-to-WebAssembly-GC compiler that compiles itself
 7. [DOM](#dom)
 8. [Reactivity](#reactivity)
 9. [Templates](#templates)
-10. [React Interop](#react-interop)
-11. [3D and WebGL](#3d-and-webgl)
-12. [Networking](#networking)
-13. [Running in the Browser](#running-in-the-browser)
-14. [Testing](#testing)
-15. [Porting from JavaScript/TypeScript](#porting-from-javascripttypescript)
-16. [Current Limits and Planned Work](#current-limits-and-planned-work)
+10. [HTML and CSS as Data](#html-and-css-as-data)
+11. [React Interop](#react-interop)
+12. [3D and WebGL](#3d-and-webgl)
+13. [Networking](#networking)
+14. [Running in the Browser](#running-in-the-browser)
+15. [Testing](#testing)
+16. [Porting from JavaScript/TypeScript](#porting-from-javascripttypescript)
+17. [Current Limits and Planned Work](#current-limits-and-planned-work)
 
 ## Toolchain and Workflow
 
@@ -444,34 +445,239 @@ The host-side bridge (`rt/jsbridge.mjs`, used by `rt/run.mjs` and `rt/web.mjs`) 
 
 ## DOM
 
-The `(web dom)` library provides convenient wrappers for DOM operations:
+The `(web dom)` library wraps the DOM. A DOM node is a `*domElement`
+(a `*jsObject` under the hood); most mutators return `void` and are
+called for their effect on the tree.
 
-| Function | Effect |
-|----------|--------|
-| `(window)` | Return `globalThis` |
-| `(document)` | Return `globalThis.document` |
-| `(body)` | Return `document.body` |
-| `(get-element-by-id id)` | `document.getElementById(id)` |
-| `(query-selector sel)` | `document.querySelector(sel)` |
-| `(create-element tag)` | `document.createElement(tag)` |
-| `(make-text s)` | `document.createTextNode(s)` |
-| `(append-child! parent child)` | Add child to parent |
-| `(replace-child! parent new old)` | Replace child |
-| `(insert-before! parent new ref)` | Insert before reference |
-| `(remove-child! parent child)` | Remove child |
-| `(remove-all-children! el)` | Clear children |
-| `(set-inner-html! el s)` | `el.innerHTML = s` |
-| `(inner-text el)` | Read `el.innerText` |
-| `(set-text! el s)` | `el.textContent = s` |
-| `(set-attribute! el name v)` | Set attribute |
-| `(set-style! el prop v)` | Set CSS property on `el.style` |
-| `(add-event-listener! el event handler)` | Attach event listener |
-| `(console-log x)` | Log to console (converts non-strings via `write`) |
-| `(alert s)` | Show alert dialog |
+```
+procedure: (window)
+
+func -> *jsObject
+```
+Return `globalThis`.
+
+```
+procedure: (document)
+
+func -> *jsObject
+```
+Return `globalThis.document`.
+
+```
+procedure: (body)
+
+func -> *domElement
+```
+Return `document.body`.
+
+```
+procedure: (get-element-by-id id)
+
+string -> *domElement
+```
+`document.getElementById(id)`.
+
+```
+procedure: (query-selector sel)
+
+string -> *domElement
+```
+`document.querySelector(sel)` — the first match for the CSS selector.
+
+```
+procedure: (create-element tag)
+
+string -> *domElement
+```
+`document.createElement(tag)` — a new, unattached element.
+
+```
+procedure: (make-text s)
+
+string -> *domElement
+```
+`document.createTextNode(s)` — a new text node.
+
+```
+procedure: (append-child! parent child)
+
+*domElement -> *domElement -> void
+```
+Append `child` as the last child of `parent`.
+
+```
+procedure: (replace-child! parent new old)
+
+*domElement -> *domElement -> *domElement -> void
+```
+Replace `old` with `new` among `parent`'s children.
+
+```
+procedure: (insert-before! parent new ref)
+
+*domElement -> *domElement -> *domElement -> void
+```
+Insert `new` into `parent` just before the existing child `ref`.
+
+```
+procedure: (remove-child! parent child)
+
+*domElement -> *domElement -> void
+```
+Remove `child` from `parent`.
+
+```
+procedure: (remove-all-children! el)
+
+*domElement -> void
+```
+Remove every child of `el`, leaving it empty.
+
+```
+procedure: (set-inner-html! el s)
+
+*domElement -> string -> void
+```
+Set `el.innerHTML = s`.
+
+```
+procedure: (inner-text el)
+
+*domElement -> string
+```
+Read `el.innerText` as a Scheme string.
+
+```
+procedure: (set-text! el s)
+
+*domElement -> string -> void
+```
+Set `el.textContent = s`.
+
+```
+procedure: (set-attribute! el name v)
+
+*domElement -> string -> string -> void
+```
+Set the attribute `name` to `v` on `el`.
+
+```
+procedure: (set-style! el prop v)
+
+*domElement -> string -> string -> void
+```
+Set the CSS property `prop` to `v` on `el.style`.
+
+```
+procedure: (add-event-listener! el event handler)
+
+*domElement -> string -> procedure -> void
+```
+Attach `handler` for `event` (e.g. `"click"`). `handler` is a Scheme
+procedure called with the event as a `*jsObject`.
+
+```
+procedure: (console-log x)
+
+any -> void
+```
+`console.log(x)`; non-string values are rendered with `write` first.
+
+```
+procedure: (alert s)
+
+string -> void
+```
+Show a browser alert dialog with message `s`.
 
 ## Reactivity
 
-The `(web reactive)` library implements fine-grained reactive updates: signals hold values, effects observe them, and dependency tracking is automatic.
+The `(web reactive)` library implements fine-grained reactive updates: signals hold values, effects observe them, and dependency tracking is automatic. A `*signal` is a reactive cell; a `*effect` is a live observer.
+
+### Procedures
+
+```
+procedure: (signal init)
+
+any -> *signal
+```
+Create a signal holding `init`.
+
+```
+procedure: (signal-ref s)
+
+*signal -> any
+```
+Read the current value. Called inside an `effect`, it subscribes that
+effect to `s`.
+
+```
+procedure: (signal-set! s v)
+
+*signal -> any -> void
+```
+Set the value to `v` and rerun observing effects. A write `eqv?` to the
+current value is a no-op.
+
+```
+procedure: (signal-update! s f)
+
+*signal -> procedure -> void
+```
+Set the value to `(f current-value)`.
+
+```
+procedure: (effect thunk)
+
+procedure -> *effect
+```
+Run `thunk` now, tracking every signal it reads, and rerun it whenever
+one of those signals changes. Returns the effect handle.
+
+```
+procedure: (dispose-effect! e)
+
+*effect -> void
+```
+Stop effect `e` and dispose the effects it owns; it will not rerun again.
+
+```
+procedure: (root thunk)
+
+procedure -> pair
+```
+Run `thunk` under a fresh detached owner, so effects created inside
+survive reruns of any enclosing effect. Returns `(result . dispose)` —
+`car` is `thunk`'s value, `cdr` a thunk that disposes the whole tree.
+
+```
+procedure: (batch thunk)
+
+procedure -> any
+```
+Run `thunk`, coalescing all its signal writes into a single effect
+rerun at the end. Returns `thunk`'s value.
+
+```
+procedure: (untracked thunk)
+
+procedure -> any
+```
+Run `thunk` without subscribing the current effect to any signal it
+reads. Returns `thunk`'s value.
+
+Behavior, end to end:
+
+```scheme
+(define c (signal 0))
+(define d (signal 0))
+(effect (lambda () (signal-set! d (* 2 (signal-ref c)))))
+(signal-ref d)                      ; => 0   (ran once at creation)
+(signal-set! c 5)
+(signal-ref d)                      ; => 10  (effect reran)
+(batch (lambda () (signal-set! c 100) 'done))  ; => done
+(untracked (lambda () (signal-ref c)))          ; => 100
+```
 
 ### Signals
 
@@ -556,6 +762,39 @@ This is useful for components that outlive a single effect.
 
 The `(web sx)` macro builds reactive DOM templates. Static structure is built once at expansion time; dynamic holes become effects that update in place.
 
+### Procedures
+
+`sx` is a macro; `sx-mount` and `sx-list` are procedures.
+
+```
+syntax: (sx template)
+
+template -> *domElement
+```
+Expand a quasiquoted markup template into a live DOM fragment: static
+structure is built once; each `,`-unquote becomes an effect (or, under
+an `on-*` attribute, an event listener) that updates in place. Returns
+the root element.
+
+```
+procedure: (sx-mount container node)
+
+*domElement -> *domElement -> *domElement
+```
+Append `node` (typically an `sx` fragment) as a child of `container` and
+return `node`.
+
+```
+procedure: (sx-list thunk render [key])
+
+procedure -> procedure -> procedure -> *domElement
+```
+Build a host element whose children track a dynamic list. `(thunk)`
+yields the current items; `(render item)` yields a node per item.
+Without `key` the rebuild is naive (clear + re-render); with a `key`
+procedure, a surviving key keeps its node, effects and DOM state and only
+moves. Returns the host element.
+
 ### The `sx` Macro
 
 ```scheme
@@ -633,9 +872,104 @@ The DOM is treated as a write-only surface—never read from it to get state. Us
   ...)
 ```
 
+## HTML and CSS as Data
+
+Two build-time libraries render s-expressions to markup and styles — the pure-function duals used to generate this very site (see `site/*.ss`). Neither touches the DOM; both just return strings.
+
+### `(web html)`: SXML → HTML
+
+An SXML node is `(tag (@ (attr value) ...) child ...)`, where a child is a string (escaped on emit) or another node; `(raw s)` inserts a string verbatim.
+
+```
+procedure: (sxml->html node)
+
+sxml -> string
+```
+Render one SXML node to an HTML string; text content is escaped.
+
+```scheme
+(sxml->html '(div (@ (class "a")) "hi " (b "x") " <>&"))
+=> "<div class=\"a\">hi <b>x</b> &lt;&gt;&amp;</div>"
+```
+
+```
+procedure: (html->document node)
+
+sxml -> string
+```
+Like `sxml->html`, but prefixed with `<!DOCTYPE html>` — a full page.
+
+```
+procedure: (html-escape s)
+
+string -> string
+```
+Escape `&`, `<`, `>` for use as text content.
+
+```scheme
+(html-escape "a <b> & \"c\"")
+=> "a &lt;b&gt; &amp; \"c\""
+```
+
+```
+procedure: (raw s)
+
+string -> raw
+```
+Wrap `s` so `sxml->html` emits it **unescaped** — for pre-rendered HTML
+or entities like `&nbsp;`.
+
+```
+procedure: (raw? x)
+
+any -> boolean
+```
+Test whether `x` is a `raw` marker.
+
+### `(web css)`: Rule List → CSS
+
+A stylesheet is a list of rules; a rule is `(selector (prop value ...) ...)`. Selectors are symbols (element names) or strings (anything with `.`/`#`/`:`/space). Values: exact integers pass through, strings are literal, unit forms like `(em 0 92)` → `0.92em` and `(var ink)` → `var(--ink)`; `@media` / `@keyframes` / `@supports` nest rules.
+
+```
+procedure: (css->string rules)
+
+list -> string
+```
+Render a rule list to a CSS string.
+
+```scheme
+(css->string '((body (margin 0) (color (var ink)))
+               (".nav a" (font-size (em 0 92)))))
+=> "body{margin:0;color:var(--ink);}.nav a{font-size:0.92em;}"
+```
+
+```
+procedure: (num->css n)
+
+number -> string
+```
+Render one numeric CSS scalar — an exact integer, or a string passed
+through. Used internally by the unit forms.
+
 ## React Interop
 
 The `(web react)` library embeds Goeteia components into a React app.
+
+```
+procedure: (react-component name mount)
+
+string -> procedure -> void
+```
+Register a component factory under `name`. `mount` is called
+`(mount container props)` — `container` is a DOM element React created,
+`props` a JS object — and may return a dispose thunk.
+
+```
+procedure: (props-ref props name)
+
+*jsObject -> string -> any
+```
+Read prop `name` from the `props` object, or `#f` if absent.
 
 ### Scheme Side: `react-component`
 
@@ -725,7 +1059,44 @@ The `s3d` template builds a Three.js scene graph the way `sx` builds DOM. Static
 - Geometry specs (the `geometry` attribute): `(box w h d)`, `(sphere r ...)`, `(plane w h)`, `(cylinder ...)`, `(torus ...)`, `(cone ...)`, or a raw `js-ref`
 - Material specs (the `material` attribute): `(basic|standard|phong|lambert|normal (@ (k v) ...))`
 - Transform attributes: `(position x y z)`, `(rotation x y z)`, `(scale x y z)`, single-axis `position-y` / `rotation-x` / …, plus any plain JS property (`intensity`, `fov`, `visible`, …)
-- `(three-renderer parent width height)` → a renderer; `(three-render! renderer scene camera)` renders one frame; `(three-loop! thunk)` calls the thunk every frame
+Procedures (a `*three` is a Three.js object — scene, camera, mesh or renderer — held as a `*jsObject`):
+
+```
+syntax: (s3d template)
+
+template -> *three
+```
+Expand a scene template into a Three.js object graph: static structure
+built once, `,`-unquoted attribute values become signal-driven holes
+updated in place.
+
+```
+procedure: (three-ref name)
+
+string -> *jsObject
+```
+Look up `globalThis.THREE[name]` — a raw constructor or value.
+
+```
+procedure: (three-renderer parent width height)
+
+*domElement -> int -> int -> *three
+```
+Create a WebGL renderer of the given size, mounted under `parent`.
+
+```
+procedure: (three-render! renderer scene camera)
+
+*three -> *three -> *three -> void
+```
+Render one frame of `scene` through `camera`.
+
+```
+procedure: (three-loop! thunk)
+
+procedure -> void
+```
+Call `thunk` once per animation frame (drives the render loop).
 
 Constructor attributes (`geometry` / `material`, a camera's `fov`, a light's `intensity`) are static; put reactive holes in the others. Uses `globalThis.THREE`, so the page loads Three.js separately. Rendering stays on the GPU; only the changed attributes cross the bridge.
 
@@ -897,13 +1268,20 @@ Integer enums for the `mode` argument of `cmd-draw-arrays!`:
 
 `glsl->string` renders a form list to GLSL source—the `(web css)` of shaders. Shaders are lists, so they compose with `append` and abstract with functions.
 
+```
+procedure: (glsl->string forms)
+
+list -> string
+```
+Render a list of GLSL forms to a GLSL source string.
+
 ```scheme
 (glsl->string
  '((attribute vec2 p)
    (define (main) void
      (set! gl_Position (vec4 p (fl 0) (fl 1)))
      (set! gl_PointSize (fl 2)))))
-;; => "attribute vec2 p; void main() { gl_Position = vec4(p, 0.0, 1.0); gl_PointSize = 2.0; } "
+=> "attribute vec2 p; void main() { gl_Position = vec4(p, 0.0, 1.0); gl_PointSize = 2.0; } "
 ```
 
 Top-level forms: `attribute`/`uniform`/`varying`, `precision`, and `define` for functions. Statements: `local`, `set!`, `return`, `if`/`if-else`, `discard`. Expressions: `+ - * /` are infix, comparisons `< > <= >= ==`, anything else is a call; symbols pass through verbatim, so swizzles like `p.x` just work. Float literals use the whole-plus-hundredths convention—`(fl 2)` → `2.0`, `(fl 0 50)` → `0.5`, `(fl 1 25)` → `1.25`—so no Scheme flonum (and no printer noise) ever reaches the source.
@@ -925,16 +1303,110 @@ When both ends of the wire speak Scheme, there is no codec: `write` on one side,
   (list (response-status resp) body))
 ```
 
-- `(fetch url [opts])` → response; `opts` is an alist: `((method . "POST") (body . "...") (headers . (("Content-Type" . "text/plain"))))`
-- `(http-get url)` / `(http-post url body [content-type])` → the response body text
-- `(response-status r)`, `(response-ok? r)`, `(response-text r)`, `(response-header r name)`
-- `(fetch-direct?)` → feature-detect JSPI
+A `*response` is the JS `Response` object; `opts` is an alist like
+`((method . "POST") (body . "...") (headers . (("Content-Type" . "text/plain"))))`.
+
+```
+procedure: (fetch url [opts])
+
+string -> alist -> *response
+```
+Perform an HTTP request and return the response. Suspends the wasm stack
+(JSPI) until the response head arrives.
+
+```
+procedure: (http-get url)
+
+string -> string
+```
+GET `url` and return the response body as a string.
+
+```
+procedure: (http-post url body [content-type])
+
+string -> string -> string -> string
+```
+POST `body` to `url` (default content type `text/plain`) and return the
+response body as a string.
+
+```
+procedure: (response-status r)
+
+*response -> int
+```
+The HTTP status code, e.g. `200`.
+
+```
+procedure: (response-ok? r)
+
+*response -> boolean
+```
+Whether the status is in the 200–299 range.
+
+```
+procedure: (response-text r)
+
+*response -> string
+```
+Read the full response body as a string. Suspends until the body arrives.
+
+```
+procedure: (response-header r name)
+
+*response -> string -> string
+```
+Read one response header by name.
+
+```
+procedure: (fetch-direct?)
+
+func -> boolean
+```
+Feature-detect JSPI: `#t` when direct-style suspension is available.
 
 JSPI needs an engine that supports it (Chrome stable; Node with `--experimental-wasm-jspi`). Without it the underlying await import is the identity—feature-detect with `(fetch-direct?)` and fall back to the callback `rpc!` below. `js-await` is only legal on the main stack, not inside a `$jscb` callback re-entered from JS.
 
 ### `(web rpc)`: S-Expression RPC to a Scheme Backend
 
-The peer is [Igropyr](https://github.com/guenchi/Igropyr), a Scheme application server. Both ends speak Scheme, so requests and replies are s-expressions—exact integers and ratios cross the wire intact, and there is no JSON in between.
+The peer is [Igropyr](https://github.com/guenchi/Igropyr), a Scheme application server. Both ends speak Scheme, so requests and replies are s-expressions—exact integers and ratios cross the wire intact, and there is no JSON in between. A `datum` below is any wire-safe s-expression (lists, symbols, strings, exact integers and ratios, booleans).
+
+```
+procedure: (rpc url datum)
+
+string -> datum -> datum
+```
+Send `datum` to `url` and return the reply datum. Direct style — suspends
+via JSPI until the reply arrives.
+
+```
+procedure: (rpc-get url)
+
+string -> datum
+```
+Fetch a resource served as `application/sexpr` and return it as a datum.
+
+```
+procedure: (rpc! url datum on-reply [on-error])
+
+string -> datum -> procedure -> procedure -> void
+```
+Callback-style RPC that works without JSPI: send `datum`, then call
+`(on-reply reply)`, or `(on-error e)` on failure.
+
+```
+procedure: (rpc-serialize datum)
+
+datum -> string
+```
+Serialize a datum to the wire text (`write`, restricted to the safe
+whitelist Igropyr accepts).
+
+```
+procedure: (rpc-parse text)
+
+string -> datum
+```
+Parse wire text back to a datum (`read`, same safe whitelist).
 
 ```scheme
 (import (web rpc))
@@ -969,7 +1441,51 @@ The Igropyr side is symmetric—a tagged-dispatch endpoint whose handlers return
 
 `rpc-serialize` / `rpc-parse` expose the wire codec directly (they are `write` / `read` restricted to the safe whitelist Igropyr's parser accepts: lists, symbols, strings, exact integers and ratios, booleans).
 
-For pushed streams there are two thin companions, matching Igropyr's `ws-send-sexpr!` / `sse-send-sexpr!` on the server—each message is one datum:
+For pushed streams there are two thin companions, matching Igropyr's `ws-send-sexpr!` / `sse-send-sexpr!` on the server—each message is one datum. A `*ws` is a WebSocket handle, a `*sse` an EventSource handle.
+
+```
+procedure: (ws-connect! url on-datum [...])
+
+string -> procedure -> *ws
+```
+Open a WebSocket to `url`; `(on-datum d)` fires once per message with the
+decoded datum. Returns the socket handle.
+
+```
+procedure: (ws-send! w datum)
+
+*ws -> datum -> void
+```
+Send one datum over socket `w`.
+
+```
+procedure: (ws-close! w)
+
+*ws -> void
+```
+Close the socket.
+
+```
+procedure: (ws-open? w)
+
+*ws -> boolean
+```
+Whether the socket is open.
+
+```
+procedure: (sse-connect! url on-datum [...])
+
+string -> procedure -> *sse
+```
+Open a Server-Sent-Events stream; `(on-datum d)` fires once per event.
+Returns the stream handle.
+
+```
+procedure: (sse-close! es)
+
+*sse -> void
+```
+Close the SSE stream.
 
 ```scheme
 (import (web ws) (web sse))
@@ -987,14 +1503,42 @@ For pushed streams there are two thin companions, matching Igropyr's `ws-send-se
 
 When the peer is not Scheme, `(web json)` is a safe recursive-descent codec (not the reader—no `#`-syntax, no eval), the same one Igropyr uses on the server, ported from its `json.sc`.
 
+```
+procedure: (string->json s)
+
+string -> any
+```
+Parse a JSON string: object → alist (string keys), array → vector,
+string → string, number → number, `true`/`false` → `#t`/`#f`, `null` → `'null`.
+
 ```scheme
-(import (web json))
-
 (string->json "{\"user\":{\"id\":42,\"tags\":[\"a\",\"b\"]}}")
-;; => (("user" ("id" . 42) ("tags" . #("a" "b"))))
+=> (("user" ("id" . 42) ("tags" . #("a" "b"))))
+```
 
-(json->string '(("ok" . #t) ("n" . 42)))         ; => "{\"ok\":true,\"n\":42}"
-(json-ref (string->json body) "user" "id")        ; => 42
+```
+procedure: (json->string x)
+
+any -> string
+```
+Serialize a Scheme value (same data model) to a JSON string.
+
+```scheme
+(json->string '(("ok" . #t) ("n" . 42)))
+=> "{\"ok\":true,\"n\":42}"
+```
+
+```
+procedure: (json-ref x key ...)
+
+any -> any -> ... -> any
+```
+Walk a path by string/symbol key (objects) or integer index (arrays),
+returning `#f` when any step is absent.
+
+```scheme
+(json-ref (string->json "{\"user\":{\"id\":42}}") "user" "id")
+=> 42
 ```
 
 Data model: object → alist with string keys, array → vector, string → string, number → number, `true`/`false` → `#t`/`#f`, `null` → `'null`. `\uXXXX` and surrogate pairs decode to UTF-8 bytes (Goeteia strings are UTF-8 byte strings); huge integers stay exact bignums. `(json-ref x k ...)` walks a path by string/symbol key (objects) or integer index (arrays), returning `#f` when absent. Combine with `(web fetch)`:
