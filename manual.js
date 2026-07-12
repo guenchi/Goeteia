@@ -5,7 +5,7 @@ const lang = new URLSearchParams(location.search).get('lang') === 'zh-cn'
   ? 'zh-cn' : 'en';
 const SRC = lang === 'zh-cn' ? 'docs/manual.zh-cn.md' : 'docs/manual.md';
 // highlight the active language in the switcher
-document.querySelectorAll('.lang a').forEach(a => {
+document.querySelectorAll('.langtoggle a').forEach(a => {
   if ((a.dataset.lang || 'en') === lang) a.classList.add('active');
 });
 
