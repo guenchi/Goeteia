@@ -25,7 +25,7 @@
            (span (@ (class "gname")) "Γοητεία")
            " " ,(black-ars) " of " ,(signal-ref spell) ".")
         (p (@ (class "sub")) "A self-hosting Scheme for the WebAssembly GC era.")
-        (pre (@ (class "cmd")) "$ git clone https://github.com/guenchi/Goeteia")
+        (pre (@ (class "cmd")) "$ npm install -g goeteia")
         (div (@ (class "links"))
           (a (@ (class "btn primary") (href "#editor")) "Try it now")
           (a (@ (class "btn") (href "https://github.com/guenchi/Goeteia")) "GitHub")))))

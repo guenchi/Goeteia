@@ -79,26 +79,21 @@
 
    `(section (@ (id "quickstart"))
       (h2 "Quick start")
-      (pre (code "$ npm install -g goeteia
-
-$ echo '(define (fact n) (if (zero? n) 1 (* n (fact (- n 1)))))
-(fact 20)' > fact.ss
-$ goeteia fact.ss               # compile and run in one step
-2432902008176640000"))
-      (p (@ (class "hint"))
-         "The npm package carries the whole compiler ("
-         (code "goeteia.wasm") "); "
-         (code "goeteia compile") " / " (code "run") " / " (code "dev")
-         " are the other commands. Node 22+ is the only requirement, and "
-         "compiled modules run on any engine with Wasm GC and tail calls: "
-         "current Chrome / Firefox / Safari, wasmtime.")
       (pre (code "$ git clone https://github.com/guenchi/Goeteia
 $ cd Goeteia
 $ ./run-tests.sh                # every test, both compiler stages
-$ ./build-self.sh               # rebuild the compiler with itself"))
+$ ./build-self.sh               # rebuild the compiler with itself
+
+$ echo '(define (fact n) (if (zero? n) 1 (* n (fact (- n 1)))))
+(fact 20)' > fact.ss
+$ node rt/compile.mjs goeteia.wasm fact.ss fact.wasm
+$ node rt/run.mjs fact.wasm
+2432902008176640000"))
       (p (@ (class "hint"))
-         "From source instead of npm: bootstrapping needs Chez Scheme; "
-         "the checked-in compiler wasm works without it."))))
+         "Compiled modules run on any engine with Wasm GC and "
+         "tail calls: Node 22+, current Chrome / Firefox / Safari, wasmtime. "
+         "Bootstrapping from source needs Chez Scheme; the checked-in "
+         "compiler wasm works without it."))))
 
 (write-file "index.html"
   (render-page "Goeteia — a page that compiles itself"
