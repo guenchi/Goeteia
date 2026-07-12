@@ -546,6 +546,182 @@ export default function App() {
 
 `goeteiaComponent(React, name, opts?)` wraps a Goeteia factory in a React component. Props flow in; the component remounts when any prop changes (via `Object.values(props)` in the `useEffect` dependency array). The dispose thunk runs on unmount.
 
+## 3D and WebGL
+
+Three graphics libraries, layered from high to low. All share the same principle as `sx`: the scene is described as data, built once, and the rendering surface is write-only—bridge traffic is O(changes), never O(frames).
+
+### `(web three)`: Reactive Scenes
+
+The `s3d` template builds a Three.js scene graph the way `sx` builds DOM. Static structure is built once; unquoted attribute values become signal-driven holes updated in place. `three-loop!` pumps frames into a Scheme thunk, which drives the signals and renders.
+
+```scheme
+(import (web three) (web reactive) (web dom))
+
+(define angle (signal 0.0))
+
+(define world
+  (s3d (scene
+    (mesh (@ (geometry (box 1 1 1))
+             (material (standard (@ (color "#1550c4") (metalness 0.3))))
+             (rotation-y ,(signal-ref angle))
+             (rotation-x ,(* 0.4 (signal-ref angle)))))
+    (ambient-light (@ (intensity 0.6)))
+    (directional-light (@ (intensity 1.6) (position 5 10 7))))))
+
+(define camera (s3d (perspective-camera (@ (fov 60) (position 0 0.8 3)))))
+(define renderer (three-renderer (get-element-by-id "app") 640 480))
+
+(three-loop!
+ (lambda ()
+   (signal-update! angle (lambda (a) (+ a 0.02)))
+   (three-render! renderer world camera)))
+```
+
+- Tags: `scene`, `group`, `mesh`, `perspective-camera`, `ambient-light`, `directional-light`, `point-light`
+- Geometry specs (the `geometry` attribute): `(box w h d)`, `(sphere r ...)`, `(plane w h)`, `(cylinder ...)`, `(torus ...)`, `(cone ...)`, or a raw `js-ref`
+- Material specs (the `material` attribute): `(basic|standard|phong|lambert|normal (@ (k v) ...))`
+- Transform attributes: `(position x y z)`, `(rotation x y z)`, `(scale x y z)`, single-axis `position-y` / `rotation-x` / …, plus any plain JS property (`intensity`, `fov`, `visible`, …)
+- `(three-renderer parent width height)` → a renderer; `(three-render! renderer scene camera)` renders one frame; `(three-loop! thunk)` calls the thunk every frame
+
+Constructor attributes (`geometry` / `material`, a camera's `fov`, a light's `intensity`) are static; put reactive holes in the others. Uses `globalThis.THREE`, so the page loads Three.js separately. Rendering stays on the GPU; only the changed attributes cross the bridge.
+
+### `(web gl)`: Raw WebGL via a Command Buffer
+
+For full control with no Three.js, `(web gl)` speaks WebGL through a *command buffer*: Scheme encodes a frame's GL commands as words in the shared linear memory (the staging-memory primitives, `%mem-*`) and one bridge call replays them all. Vertex data uploads zero-copy from the same memory. Resources—programs, buffers, uniform locations—are JS objects, so they live in a slot table set up once at init; commands refer to slot numbers.
+
+```scheme
+(import (web gl) (web glsl))
+
+(gl-attach! (get-element-by-id "c"))
+(gl-program! 0 vertex-shader fragment-shader)   ; slot 0
+(gl-buffer! 1)                                   ; slot 1
+(cmd-region! 0)
+
+(define (frame!)
+  (cmd-begin!)
+  (cmd-viewport! 0 0 800 600)
+  (cmd-clear! 0.07 0.08 0.12 1.0)
+  (cmd-use-program! 0)
+  (cmd-bind-buffer! 1)
+  (cmd-buffer-data! POS (* 8 N))                 ; zero-copy from staging memory
+  (cmd-vertex-attrib! 0 2 0 0)
+  (cmd-draw-arrays! GL-POINTS 0 N)
+  (cmd-flush!))                                   ; ONE bridge call per frame
+```
+
+Commands: `cmd-clear!`, `cmd-use-program!`, `cmd-bind-buffer!`, `cmd-buffer-data!`, `cmd-vertex-attrib!`, `cmd-uniform1f!`, `cmd-uniform4f!`, `cmd-draw-arrays!`, `cmd-viewport!`; primitive constants `GL-POINTS`, `GL-LINES`, `GL-TRIANGLES`, `GL-TRIANGLE-STRIP`. The JS replayer is embedded in the library as a string (injected once with `js-eval`), so there is no host-side file to ship. See `examples/gl-particles.html`—10,000 particles, one bridge call per frame.
+
+### `(web glsl)`: Shaders as S-Expressions
+
+`glsl->string` renders a form list to GLSL source—the `(web css)` of shaders. Shaders are lists, so they compose with `append` and abstract with functions.
+
+```scheme
+(glsl->string
+ '((attribute vec2 p)
+   (define (main) void
+     (set! gl_Position (vec4 p (fl 0) (fl 1)))
+     (set! gl_PointSize (fl 2)))))
+;; => "attribute vec2 p; void main() { gl_Position = vec4(p, 0.0, 1.0); gl_PointSize = 2.0; } "
+```
+
+Top-level forms: `attribute`/`uniform`/`varying`, `precision`, and `define` for functions. Statements: `local`, `set!`, `return`, `if`/`if-else`, `discard`. Expressions: `+ - * /` are infix, comparisons `< > <= >= ==`, anything else is a call; symbols pass through verbatim, so swizzles like `p.x` just work. Float literals use the whole-plus-hundredths convention—`(fl 2)` → `2.0`, `(fl 0 50)` → `0.5`, `(fl 1 25)` → `1.25`—so no Scheme flonum (and no printer noise) ever reaches the source.
+
+## Networking
+
+When both ends of the wire speak Scheme, there is no codec: `write` on one side, `read` on the other. For a heterogeneous backend there is a safe JSON codec. Both run over `(web fetch)`, which turns HTTP into direct-style calls.
+
+### `(web fetch)`: Direct-Style HTTP over JSPI
+
+`(web fetch)` uses Wasm JSPI (JavaScript Promise Integration) to make HTTP read like a blocking call: `js-await` suspends the whole wasm stack on a promise and resumes with the value. No callbacks, no async coloring; the page stays responsive while suspended.
+
+```scheme
+(import (web fetch))
+
+(let* ((page  (http-get "/manual.md"))
+       (resp  (fetch "/api" '((method . "POST") (body . "hello"))))
+       (body  (response-text resp)))
+  (list (response-status resp) body))
+```
+
+- `(fetch url [opts])` → response; `opts` is an alist: `((method . "POST") (body . "...") (headers . (("Content-Type" . "text/plain"))))`
+- `(http-get url)` / `(http-post url body [content-type])` → the response body text
+- `(response-status r)`, `(response-ok? r)`, `(response-text r)`, `(response-header r name)`
+- `(fetch-direct?)` → feature-detect JSPI
+
+JSPI needs an engine that supports it (Chrome stable; Node with `--experimental-wasm-jspi`). Without it the underlying await import is the identity—feature-detect with `(fetch-direct?)` and fall back to the callback `rpc!` below. `js-await` is only legal on the main stack, not inside a `$jscb` callback re-entered from JS.
+
+### `(web rpc)`: S-Expression RPC to a Scheme Backend
+
+The peer is [Igropyr](https://github.com/guenchi/Igropyr), a Scheme application server. Both ends speak Scheme, so requests and replies are s-expressions—exact integers and ratios cross the wire intact, and there is no JSON in between.
+
+```scheme
+(import (web rpc))
+
+;; direct style (needs JSPI):
+(rpc "/rpc" '(add 1 2 1/2))          ; => (ok 7/2)   -- the ratio survives
+(rpc "/rpc" '(get-user 42))          ; => (ok (user (id . 42) (name . "ada")))
+
+;; REST-style resource served as application/sexpr:
+(rpc-get "/users/42")                ; => (user (id . 42) (name . "ada"))
+
+;; callback style (works without JSPI):
+(rpc! "/rpc" '(get-user 42)
+  (lambda (reply) (render! reply))
+  (lambda (e) (show-error! e)))       ; optional error thunk
+```
+
+The Igropyr side is symmetric—a tagged-dispatch endpoint whose handlers return the reply datum, wrapped `(ok ...)` / `(error ...)`:
+
+```scheme
+;; server (Igropyr): (igropyr express) + (igropyr sexpr)
+(define users '((42 . "ada") (7 . "alan")))
+
+(app-rpc app "/rpc"
+  `((add      . ,(lambda (args) (apply + args)))
+    (get-user . ,(lambda (args)
+                   (let ((u (assv (car args) users)))
+                     (if u
+                         (list 'user (cons 'id (car u)) (cons 'name (cdr u)))
+                         'not-found))))))
+```
+
+`rpc-serialize` / `rpc-parse` expose the wire codec directly (they are `write` / `read` restricted to the safe whitelist Igropyr's parser accepts: lists, symbols, strings, exact integers and ratios, booleans).
+
+For pushed streams there are two thin companions, matching Igropyr's `ws-send-sexpr!` / `sse-send-sexpr!` on the server—each message is one datum:
+
+```scheme
+(import (web ws) (web sse))
+
+(define w (ws-connect! "wss://host/chat/lobby"
+            (lambda (datum) (render! datum))))   ; one datum per message
+(ws-send! w '(say "hello everyone"))
+
+(sse-connect! "/progress"
+  (lambda (datum)                                ; (progress (percent . 42))
+    (update-bar! (cdr (assq 'percent (cdr datum))))))
+```
+
+### `(web json)`: Safe JSON for Heterogeneous Backends
+
+When the peer is not Scheme, `(web json)` is a safe recursive-descent codec (not the reader—no `#`-syntax, no eval), the same one Igropyr uses on the server, ported from its `json.sc`.
+
+```scheme
+(import (web json))
+
+(string->json "{\"user\":{\"id\":42,\"tags\":[\"a\",\"b\"]}}")
+;; => (("user" ("id" . 42) ("tags" . #("a" "b"))))
+
+(json->string '(("ok" . #t) ("n" . 42)))         ; => "{\"ok\":true,\"n\":42}"
+(json-ref (string->json body) "user" "id")        ; => 42
+```
+
+Data model: object → alist with string keys, array → vector, string → string, number → number, `true`/`false` → `#t`/`#f`, `null` → `'null`. `\uXXXX` and surrogate pairs decode to UTF-8 bytes (Goeteia strings are UTF-8 byte strings); huge integers stay exact bignums. `(json-ref x k ...)` walks a path by string/symbol key (objects) or integer index (arrays), returning `#f` when absent. Combine with `(web fetch)`:
+
+```scheme
+(let ((data (string->json (http-get "/api/user/42"))))
+  (json-ref data "name"))
+```
+
 ## Running in the Browser
 
 The `rt/web.mjs` loader instantiates a compiled module and runs it:
@@ -648,9 +824,9 @@ Scheme. It:
 3. **Reports** anything it cannot make equivalent as marked TODOs
 
 Scope is the UI subset plus well-behaved logic; it flags pathological
-JS-semantics corners (deep `this`/prototype dispatch, `==` coercion,
-async with no `(web fetch)` yet) rather than emulating them. It is a
-same-result porter, not a general JS-in-Scheme runtime.
+JS-semantics corners (deep `this`/prototype dispatch, `==` coercion)
+rather than emulating them. It is a same-result porter, not a general
+JS-in-Scheme runtime.
 
 It runs like any Claude Code subagent — inside a session, by asking
 Claude to use the `web-porter` agent on a file — not as a standalone
@@ -659,8 +835,7 @@ shell command.
 ## Current Limits and Planned Work
 
 - **`call/cc` escape-only**: continuations can jump out but not re-enter. This is a Wasm limitation; re-entrancy would require a different implementation.
-- **No async/await yet**: Wasm JSPI (JavaScript Promise Integration) will enable `(web fetch)` and other async I/O as a future library.
+- **Async needs JSPI**: `(web fetch)` and the direct-style `(web rpc)` suspend over Wasm JSPI, so they need an engine that has it (Chrome stable; Node with `--experimental-wasm-jspi`). Elsewhere, feature-detect with `(fetch-direct?)` and use the callback `rpc!`.
 - **No datum labels**: the reader does not support `#0=` / `#0#` cyclic-structure notation.
-- **Planned**: `(web rpc)` for s-expression-based RPC; `define-json` for JSON codec generation.
 
 These are design decisions, not bugs; file issues if you have use cases that need them.
