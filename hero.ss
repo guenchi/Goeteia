@@ -103,10 +103,13 @@
        (local float ang (+ (* seed (fl 6 28)) (* u_time (fl 0 40))))
        (local vec2 pos (+ p (* (vec2 (cos ang) (sin ang))
                                (+ (fl 0 50) (* s2 (fl 0 90))) e)))
-       ;; depth: scattered dots spread in z; held dots breathe gently
+       ;; depth: scattered dots spread in z; held dots breathe gently.
+       ;; The breath is driven by fract(u_time/6), period exactly 6s, so
+       ;; it divides the 12s time wrap and the loop is perfectly seamless.
        (local float z (+ (* (- seed (fl 0 50)) (fl 1 40) e)
                          (* (fl 0 5) (- (fl 1) e)
-                            (sin (+ (* u_time (fl 2)) (* p.x (fl 5)))))))
+                            (sin (+ (* (fract (/ u_time (fl 6))) (fl 6 28))
+                                    (* p.x (fl 5)))))))
        (local float s (/ (fl 1 55) (+ (fl 1 90) z)))
        ;; project, then shift: wide screens align the glyphs with the
        ;; left-aligned hero text, narrow ones keep them centered
@@ -156,7 +159,11 @@
 (define buffered 0)                    ; which word is in the buffer (0/1)
 (define t 0.0)
 (define (frame!)
+  ;; wrap at one full A->B->A cycle: t stays small forever, so the
+  ;; f32 u_time never loses precision on a long-lived tab (and the
+  ;; wrap lands at the held phase, where it is invisible)
   (set! t (fl+ t 0.016))
+  (when (fl<? 12.0 t) (set! t (fl- t 12.0)))
   ;; past the scatter midpoint we want the NEXT word loaded, so it is
   ;; already assembling by the time the dots converge; the swap lands
   ;; while every dot is flung apart, so it is invisible
