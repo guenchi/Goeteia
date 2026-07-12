@@ -1,7 +1,9 @@
 ;; The Goeteia homepage — rendered by Goeteia, compiled in your browser.
-;; The title is a WebGL particle cloud: GOETEIA as dot-matrix glyphs,
-;; animated entirely in a vertex shader written as s-expressions.
-;; Edit anything — the glyphs, the wave, the colors — and press Run.
+;; The title is a WebGL particle cloud: dot-matrix glyphs that scatter,
+;; then reassemble into the name in Greek capitals, and back — the
+;; flight is a vertex shader written as s-expressions, the swap a
+;; single buffer re-upload hidden by the scatter.
+;; Edit either pattern, the shader, or the colors — and press Run.
 (import (web sx) (web dom) (web reactive) (web js) (web gl) (web glsl))
 
 ;; ---- the page ----
@@ -28,8 +30,8 @@
           (a (@ (class "btn primary") (href "#editor")) "Try it now")
           (a (@ (class "btn") (href "https://github.com/guenchi/Goeteia")) "GitHub")))))
 
-;; ---- the title: dots become vertices ----
-(define rows                           ; edit these and press Run!
+;; ---- the two dot-matrix words: edit these and press Run! ----
+(define pattern-a                      ; GOETEIA
   '(".###. .###. ##### ##### ##### ##### .###."
     "#...# #...# #.... ..#.. #.... ..#.. #...#"
     "#.... #...# #.... ..#.. #.... ..#.. #...#"
@@ -37,23 +39,45 @@
     "#...# #...# #.... ..#.. #.... ..#.. #...#"
     "#...# #...# #.... ..#.. #.... ..#.. #...#"
     ".###. .###. ##### ..#.. ##### ##### #...#"))
+(define pattern-b                      ; the name in Greek capitals
+  '(".###. .###. #...# ##### ##### ##### .###."
+    "#.... #...# #...# ..#.. .#... ..#.. #...#"
+    "#.... #...# #...# ..#.. ..#.. ..#.. #...#"
+    "#.... #...# ##### ..#.. ...#. ..#.. #####"
+    "#.... #...# #...# ..#.. ..#.. ..#.. #...#"
+    "#.... #...# #...# ..#.. .#... ..#.. #...#"
+    "#.... .###. #...# ..#.. ##### ##### #...#"))
+
+;; a pattern's lit cells become (x . y) home positions
+(define (cells rows)
+  (let walk ((rs rows) (r 0) (acc '()))
+    (if (null? rs) (reverse acc)
+        (let ((row (car rs)))
+          (let scan ((c 0) (acc acc))
+            (if (= c (string-length row))
+                (walk (cdr rs) (+ r 1) acc)
+                (if (char=? (string-ref row c) #\#)
+                    (scan (+ c 1)
+                          (cons (cons (fl* (fixnum->flonum (- c 20)) 0.0425)
+                                      (fl* (fixnum->flonum (- 3 r)) 0.21))
+                                acc))
+                    (scan (+ c 1) acc))))))))
 
 (define POS 4096)                      ; vertex (x,y) pairs, staging memory
-(define count                          ; one particle per lit cell
-  (let walk ((rs rows) (r 0) (n 0))
-    (if (null? rs) n
-        (let ((row (car rs)))
-          (let scan ((c 0) (n n))
-            (if (= c (string-length row))
-                (walk (cdr rs) (+ r 1) n)
-                (if (char=? (string-ref row c) #\#)
-                    (begin
-                      (%mem-f32-set! (+ POS (* 8 n))
-                                     (fl* (fixnum->flonum (- c 20)) 0.0425))
-                      (%mem-f32-set! (+ POS (* 8 n) 4)
-                                     (fl* (fixnum->flonum (- 3 r)) 0.21))
-                      (scan (+ c 1) (+ n 1)))
-                    (scan (+ c 1) n))))))))
+(define cells-a (cells pattern-a))
+(define cells-b (cells pattern-b))
+(define pool (max (length cells-a) (length cells-b)))
+
+;; write one pattern's homes into the staging buffer; the smaller word
+;; parks its spare dots off-screen, so they fly in / out at the edges
+(define (write-cells! cs)
+  (let loop ((cs cs) (i 0))
+    (when (< i pool)
+      (let ((x (if (pair? cs) (caar cs) 9.0))
+            (y (if (pair? cs) (cdar cs) 9.0)))
+        (%mem-f32-set! (+ POS (* 8 i)) x)
+        (%mem-f32-set! (+ POS (* 8 i) 4) y)
+        (loop (if (pair? cs) (cdr cs) '()) (+ i 1))))))
 
 ;; ---- the shaders, as s-expressions ----
 (define vs
@@ -68,11 +92,12 @@
        (local float seed (fract (* (sin (dot p (vec2 (fl 12 98) (fl 78 23))))
                                    (fl 43758 50))))
        (local float s2 (fract (* seed (fl 7 13))))
-       ;; a 6-second cycle: hold, burst apart, spiral home --
-       ;; each dot staggered a little by its seed
-       (local float ph (- (fract (/ u_time (fl 6))) (* seed (fl 0 8))))
-       (local float e (* (smoothstep (fl 0 52) (fl 0 70) ph)
-                         (- (fl 1) (smoothstep (fl 0 78) (fl 0 97) ph))))
+       ;; a 6-second cycle: hold the word, burst fully apart at the
+       ;; midpoint (where the buffer swaps to the other word), spiral
+       ;; back onto the new word. Each dot staggered a little by its seed.
+       (local float ph (- (fract (/ u_time (fl 6))) (* seed (fl 0 5))))
+       (local float e (* (smoothstep (fl 0 25) (fl 0 50) ph)
+                         (- (fl 1) (smoothstep (fl 0 50) (fl 0 75) ph))))
        ;; flight: a personal direction that keeps turning, so dots
        ;; leave and return along spirals
        (local float ang (+ (* seed (fl 6 28)) (* u_time (fl 0 40))))
@@ -121,23 +146,39 @@
 (add-event-listener! (js-global) "resize"
   (lambda (e) (set! shift (title-shift))))
 
-(cmd-begin!)                           ; upload the vertices once
+(write-cells! cells-a)                 ; start on GOETEIA
+(cmd-begin!)
 (cmd-bind-buffer! 1)
-(cmd-buffer-data! POS (* 8 count))
+(cmd-buffer-data! POS (* 8 pool))
 (cmd-vertex-attrib! 0 2 0 0)
 (cmd-flush!)
 
+(define buffered 0)                    ; which word is in the buffer (0/1)
 (define t 0.0)
 (define (frame!)
   (set! t (fl+ t 0.016))
-  (cmd-begin!)
-  (cmd-viewport! 0 0 720 180)
-  (cmd-clear! 0.0 0.0 0.0 0.0)         ; transparent: dots float on the page
-  (cmd-use-program! 0)
-  (cmd-uniform1f! 2 t)
-  (cmd-uniform1f! 3 shift)
-  (cmd-draw-arrays! GL-POINTS 0 count)
-  (cmd-flush!))
+  ;; past the scatter midpoint we want the NEXT word loaded, so it is
+  ;; already assembling by the time the dots converge; the swap lands
+  ;; while every dot is flung apart, so it is invisible
+  (let* ((r (fl/ t 6.0))
+         (cyc (%fl->fx (flfloor r)))
+         (phase (fl- r (fixnum->flonum cyc)))
+         (want (remainder (if (fl<? 0.5 phase) (+ cyc 1) cyc) 2))
+         (swap? (not (= want buffered))))
+    (when swap?
+      (write-cells! (if (= want 0) cells-a cells-b))
+      (set! buffered want))
+    (cmd-begin!)
+    (cmd-viewport! 0 0 720 180)
+    (cmd-clear! 0.0 0.0 0.0 0.0)       ; transparent: dots float on the page
+    (when swap?                        ; re-upload the freshly written homes
+      (cmd-bind-buffer! 1)
+      (cmd-buffer-data! POS (* 8 pool)))
+    (cmd-use-program! 0)
+    (cmd-uniform1f! 2 t)
+    (cmd-uniform1f! 3 shift)
+    (cmd-draw-arrays! GL-POINTS 0 pool)
+    (cmd-flush!)))
 
 ;; re-running this source bumps the generation; the old loop sees it
 ;; and lets go
