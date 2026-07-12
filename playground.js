@@ -3,7 +3,7 @@
 // Copyright (c) 2026 guenchi. MIT license; see LICENSE.
 
 const compilerBytes = fetch('goeteia.wasm').then(r => {
-    if (!r.ok) throw new Error('goeteia.wasm not found — run ./build-self.sh first');
+    if (!r.ok) throw new Error('goeteia.wasm not found — run ./rebuild.sh first');
     return r.arrayBuffer();
 });
 const preludeText = fetch('src/prelude.ss').then(r => r.text());

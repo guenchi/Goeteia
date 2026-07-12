@@ -125,12 +125,13 @@ function loadLibrary(spec, dirs, visited) {
     throw new Error(`library not found: (${spec.join(' ')})`);
 }
 
-async function main() {
-    const [compilerWasm, sourceFile, outFile] = process.argv.slice(2);
-    if (!outFile) {
-        console.error('usage: node compile.mjs <compiler.wasm> <input.ss> <output.wasm>');
-        process.exit(1);
-    }
+// the bundled self-hosted compiler, shipped at the package root
+const defaultCompiler = path.join(here, '../goeteia.wasm');
+
+// Compile a source file to wasm bytes.  Resolves (import ...) forms
+// against the source directory, its lib/, and the bundled lib/, then
+// prepends the prelude and feeds the whole stream to the compiler.
+export async function compileToBytes(sourceFile, { compilerWasm = defaultCompiler } = {}) {
     const inDir = path.dirname(path.resolve(sourceFile));
     const dirs = [inDir, path.join(inDir, 'lib'), path.join(here, '../lib')];
     const prelude = fs.readFileSync(path.join(here, '../src/prelude.ss'), 'latin1');
@@ -155,11 +156,36 @@ async function main() {
         instance.exports.main();
     } catch (e) {
         // compile errors print through the output channel before trapping
-        process.stderr.write(Buffer.from(out).toString('latin1'));
-        console.error(`\ncompile failed: ${e.message}`);
-        process.exit(1);
+        const err = new Error(`compile failed: ${e.message}`);
+        err.output = Buffer.from(out).toString('latin1');
+        throw err;
     }
-    fs.writeFileSync(outFile, Buffer.from(out));
+    return Buffer.from(out);
 }
 
-main();
+// Compile a source file straight to an output file.
+export async function compileFile(sourceFile, outFile, opts = {}) {
+    fs.writeFileSync(outFile, await compileToBytes(sourceFile, opts));
+}
+
+async function main() {
+    const args = process.argv.slice(2);
+    // legacy form: compile.mjs <compiler.wasm> <input.ss> <output.wasm>
+    // new form:    compile.mjs <input.ss> <output.wasm>  (bundled compiler)
+    let compilerWasm, sourceFile, outFile;
+    if (args.length >= 3) [compilerWasm, sourceFile, outFile] = args;
+    else [sourceFile, outFile] = args;
+    if (!sourceFile || !outFile) {
+        console.error('usage: node compile.mjs [<compiler.wasm>] <input.ss> <output.wasm>');
+        process.exit(1);
+    }
+    try {
+        await compileFile(sourceFile, outFile, compilerWasm ? { compilerWasm } : {});
+    } catch (e) {
+        if (e.output) process.stderr.write(e.output);
+        console.error(`\n${e.message}`);
+        process.exit(1);
+    }
+}
+
+if (import.meta.url === `file://${process.argv[1]}`) main();

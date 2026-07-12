@@ -14,8 +14,11 @@ import fs from 'fs';
 import path from 'path';
 import { execFileSync } from 'child_process';
 
-const ROOT = process.cwd();
-const PORT = Number(process.argv[2]) || 8100;
+// Start the live-reload dev server: serve `root`, watch its sources, and
+// run root/build.sh on every save before pushing an SSE reload.
+export function startDevServer({ port = 8100, root = process.cwd() } = {}) {
+const ROOT = root;
+const PORT = port;
 const HAS_BUILD = fs.existsSync(path.join(ROOT, 'build.sh'));
 
 const MIME = {
@@ -82,3 +85,8 @@ http.createServer((req, res) => {
   console.log(HAS_BUILD ? 'watching sources; ./build.sh runs on save.' : 'watching sources; no build.sh -- reload only.');
   build();
 });
+}
+
+if (import.meta.url === `file://${process.argv[1]}`) {
+  startDevServer({ port: Number(process.argv[2]) || 8100 });
+}

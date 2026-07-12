@@ -1,0 +1,52 @@
+{
+  "name": "goeteia",
+  "version": "1.0.0",
+  "description": "A pure-Scheme web programming toolkit, compiled to WebAssembly.",
+  "type": "module",
+  "bin": {
+    "goeteia": "bin/goeteia.mjs"
+  },
+  "scripts": {
+    "dev": "node bin/goeteia.mjs dev",
+    "build": "sh build.sh",
+    "test": "sh run-tests.sh"
+  },
+  "exports": {
+    ".": "./rt/run.mjs",
+    "./compile": "./rt/compile.mjs",
+    "./run": "./rt/run.mjs"
+  },
+  "files": [
+    "goeteia.wasm",
+    "bin/",
+    "rt/",
+    "lib/",
+    "src/",
+    "build.sh",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "keywords": [
+    "scheme",
+    "webassembly",
+    "wasm",
+    "wasm-gc",
+    "compiler",
+    "self-hosting",
+    "r6rs",
+    "lisp"
+  ],
+  "homepage": "https://github.com/guenchi/Goeteia#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/guenchi/Goeteia.git"
+  },
+  "bugs": {
+    "url": "https://github.com/guenchi/Goeteia/issues"
+  },
+  "author": "guenchi",
+  "license": "MIT"
+}
