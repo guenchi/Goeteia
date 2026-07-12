@@ -47,11 +47,6 @@
            '(code "apply") " are cheap, and every tail call is a "
            '(code "return_call") ". A 100M-iteration loop runs in "
            "constant stack, in ~150ms.")
-        ,(card "The numeric tower"
-           "Fixnums promote to bignums on overflow (checked inline, two "
-           "bit-compares), flonums have contagion, rationals and complex "
-           "are exact, and float literals are encoded to IEEE-754 by pure "
-           "Scheme — so both hosts emit identical bytes.")
         ,(card "call/cc & dynamic-wind"
            "Escape continuations ride the Wasm exception-handling "
            "proposal: capture is O(1), the normal path costs one try "

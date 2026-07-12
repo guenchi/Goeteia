@@ -71,6 +71,7 @@
       #features, #quickstart { padding: 2.5em 0; border-top: 1px solid var(--line); scroll-margin-top: 4em; }
       h2 { font-size: 1.5em; font-weight: 600; }
       .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(16em, 1fr)); gap: 1em; margin-top: 1.4em; }
+      @media (min-width: 64em) { .grid { grid-template-columns: repeat(3, 1fr); } }
       .card { background: var(--bg2); border: 1px solid var(--line); border-radius: 10px; padding: 1.1em 1.2em; box-shadow: 0 1px 3px rgba(16,20,42,.06); }
       .card h3 { margin: 0 0 .4em; font-size: 1em; color: var(--lapis); font-weight: 600; }
       .card p { margin: 0; color: var(--dim); font-size: .92em; }
