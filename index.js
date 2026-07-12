@@ -86,13 +86,11 @@ import { boot, render } from './live.js';
       });
 
       // "Try it now" lives in the live-mounted hero, so bind by delegation:
-      // scroll the editor into view, then select all of the example so a
-      // new visitor can start typing over it right away.
+      // smooth-scroll to the #editor section and drop the cursor into it.
       document.addEventListener('click', e => {
         if (!e.target.closest('a[href="#editor"]')) return;
         e.preventDefault();
         document.getElementById('editor')
           .scrollIntoView({ behavior: 'smooth', block: 'start' });
         srcBox.focus({ preventScroll: true });
-        srcBox.select();
       });
