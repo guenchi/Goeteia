@@ -1,6 +1,6 @@
 ;; The Goeteia homepage — rendered by Goeteia, compiled in your browser.
 ;; The title is a WebGL particle cloud: dot-matrix glyphs that scatter,
-;; then reassemble into the name in Greek capitals, and back — the
+;; then reassemble into the Greek Γοητεία, and back — the
 ;; flight is a vertex shader written as s-expressions, the swap a
 ;; single buffer re-upload hidden by the scatter.
 ;; Edit either pattern, the shader, or the colors — and press Run.
@@ -39,13 +39,13 @@
     "#...# #...# #.... ..#.. #.... ..#.. #...#"
     "#...# #...# #.... ..#.. #.... ..#.. #...#"
     ".###. .###. ##### ..#.. ##### ##### #...#"))
-(define pattern-b                      ; the name in Greek capitals
+(define pattern-b                      ; ΓΟΗΤΕΙΑ
   '(".###. .###. #...# ##### ##### ##### .###."
-    "#.... #...# #...# ..#.. .#... ..#.. #...#"
-    "#.... #...# #...# ..#.. ..#.. ..#.. #...#"
-    "#.... #...# ##### ..#.. ...#. ..#.. #####"
-    "#.... #...# #...# ..#.. ..#.. ..#.. #...#"
-    "#.... #...# #...# ..#.. .#... ..#.. #...#"
+    "#.... #...# #...# ..#.. #.... ..#.. #...#"
+    "#.... #...# #...# ..#.. #.... ..#.. #...#"
+    "#.... #...# ##### ..#.. ####. ..#.. #####"
+    "#.... #...# #...# ..#.. #.... ..#.. #...#"
+    "#.... #...# #...# ..#.. #.... ..#.. #...#"
     "#.... .###. #...# ..#.. ##### ##### #...#"))
 
 ;; a pattern's lit cells become (x . y) home positions
