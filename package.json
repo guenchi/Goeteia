@@ -23,6 +23,8 @@
     "lib/",
     "src/",
     "build.sh",
+    "playground.html",
+    "playground.js",
     "README.md",
     "LICENSE"
   ],
