@@ -85,10 +85,9 @@ import { boot, render } from './live.js';
         if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); go(); }
       });
 
-      // "Try it now" lives in the live-mounted hero, so bind by delegation:
-      // scroll to the #editor, then select the two dot-matrix words — the
-      // bit you're meant to edit — so the textarea scrolls to them and the
-      // highlight lands right where you should start typing.
+      // "Try it now" lives in the live-mounted hero, so bind by delegation.
+      // The wink: it selects the "#editor" inside its own (href "#editor")
+      // in the source, then scrolls the textarea so the highlight shows.
       document.addEventListener('click', e => {
         if (!e.target.closest('a[href="#editor"]')) return;
         e.preventDefault();
@@ -96,13 +95,11 @@ import { boot, render } from './live.js';
           .scrollIntoView({ behavior: 'smooth', block: 'start' });
         srcBox.focus({ preventScroll: true });
         const v = srcBox.value;
-        const s = v.indexOf('(define pattern-a');
-        const b = v.indexOf('(define pattern-b');
-        const end = b >= 0 ? v.indexOf('))', b) : -1;
-        if (s >= 0 && end >= 0) {
-          srcBox.setSelectionRange(s, end + 2);
+        const s = v.indexOf('#editor');   // the (href "#editor") in the hero
+        if (s >= 0) {
+          srcBox.setSelectionRange(s, s + '#editor'.length);
           // setSelectionRange doesn't reliably scroll the textarea, so put
-          // the selected block near the top ourselves (the highlight layer
+          // the selected line near the top ourselves (the highlight layer
           // follows via the existing scroll listener)
           const lh = parseFloat(getComputedStyle(srcBox).lineHeight) || 20;
           const line = v.slice(0, s).split('\n').length - 1;
