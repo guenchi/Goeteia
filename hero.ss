@@ -60,6 +60,7 @@
   (glsl->string
    '((attribute vec2 p)
      (uniform float u_time)
+     (uniform float u_shift)
      (varying float v_hue)
      (varying float v_glow)
      (define (main) void
@@ -81,8 +82,10 @@
        (local float z (+ (* (- seed (fl 0 50)) (fl 1 40) e)
                          (* (fl 0 5) (- (fl 1) e)
                             (sin (+ (* u_time (fl 2)) (* p.x (fl 5)))))))
-       (local float s (/ (fl 1 35) (+ (fl 1 90) z)))
-       (set! gl_Position (vec4 (* pos.x s) (* pos.y s) (fl 0) (fl 1)))
+       (local float s (/ (fl 1 55) (+ (fl 1 90) z)))
+       ;; project, then shift: wide screens align the glyphs with the
+       ;; left-aligned hero text, narrow ones keep them centered
+       (set! gl_Position (vec4 (- (* pos.x s) u_shift) (* pos.y s) (fl 0) (fl 1)))
        (set! gl_PointSize (* s (- (fl 12) (* (fl 4) e))))
        (set! v_hue (+ (* p.x (fl 0 60)) (* e (fl 0 80)) z))
        (set! v_glow (* s (- (fl 1) (* (fl 0 30) e))))))))
@@ -105,7 +108,18 @@
 (gl-program! 0 vs fs)
 (gl-buffer! 1)
 (gl-uniform! 2 0 "u_time")
+(gl-uniform! 3 0 "u_shift")
 (cmd-region! 0)
+
+;; match the page's own breakpoint: the hero text is left-aligned on
+;; wide screens, centered on narrow ones
+(define (title-shift)
+  (if (js-truthy? (js-eval "matchMedia('(min-width: 64em)').matches"))
+      0.25
+      0.0))
+(define shift (title-shift))
+(add-event-listener! (js-global) "resize"
+  (lambda (e) (set! shift (title-shift))))
 
 (cmd-begin!)                           ; upload the vertices once
 (cmd-bind-buffer! 1)
@@ -121,6 +135,7 @@
   (cmd-clear! 0.0 0.0 0.0 0.0)         ; transparent: dots float on the page
   (cmd-use-program! 0)
   (cmd-uniform1f! 2 t)
+  (cmd-uniform1f! 3 shift)
   (cmd-draw-arrays! GL-POINTS 0 count)
   (cmd-flush!))
 
