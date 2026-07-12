@@ -4,6 +4,10 @@
 
 (define body
   (list
+   `(div (@ (class "lang"))
+      (a (@ (href "manual.html") (data-lang "en")) "EN")
+      " · "
+      (a (@ (href "manual.html?lang=zh-cn") (data-lang "zh-cn")) "中文"))
    `(article (@ (id "doc") (class "doc"))
       (div (@ (class "status")) "loading the manual…"))))
 
@@ -46,7 +50,10 @@
     (".doc img" (max-width (pct 100)))
     (".doc :target" (scroll-margin-top (em 4 50)))
     (.status (padding (em 4) 0) (text-align center) (color (var dim)))
-    (".status code" (font-family (var mono)))))
+    (".status code" (font-family (var mono)))
+    (.lang (text-align right) (font-size (em 0 85)) (margin-top (em 1 20)))
+    (".lang a" (color (var dim)))
+    (".lang a.active" (color (var lapis)) (font-weight 600))))
 
 (write-file "manual.html"
   (render-page "Manual — Goeteia"

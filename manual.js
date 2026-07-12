@@ -1,7 +1,13 @@
 // Render docs/manual.md into #doc with marked; fall back to raw text.
 // Copyright (c) 2026 guenchi. MIT license; see LICENSE.
 const doc = document.getElementById('doc');
-const SRC = 'docs/manual.md';
+const lang = new URLSearchParams(location.search).get('lang') === 'zh-cn'
+  ? 'zh-cn' : 'en';
+const SRC = lang === 'zh-cn' ? 'docs/manual.zh-cn.md' : 'docs/manual.md';
+// highlight the active language in the switcher
+document.querySelectorAll('.lang a').forEach(a => {
+  if ((a.dataset.lang || 'en') === lang) a.classList.add('active');
+});
 
 function fail(msg) {
   doc.innerHTML =
@@ -29,7 +35,7 @@ fetch(SRC)
     const seen = {};
     doc.querySelectorAll('h1, h2, h3, h4').forEach(h => {
       let slug = h.textContent.toLowerCase().trim()
-        .replace(/[^\w\- ]+/g, '')   // keep letters, digits, _, -, space
+        .replace(/[^\w一-鿿\- ]+/g, '')  // keep letters, digits, _, -, space, CJK
         .replace(/\s+/g, '-');
       if (seen[slug] != null) slug += '-' + (++seen[slug]);
       else seen[slug] = 0;
