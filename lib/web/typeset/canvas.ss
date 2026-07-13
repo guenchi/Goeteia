@@ -19,4 +19,8 @@
            (ctx (js-method cv "getContext" "2d")))
       (js-set! ctx "font" font)
       (lambda (s)
-        (js->number (js-get (js-method ctx "measureText" s) "width"))))))
+        ;; measureText can hand back an exact integer; typeset's
+        ;; arithmetic is flonum, so coerce at the boundary
+        (let ((w (js->number
+                  (js-get (js-method ctx "measureText" s) "width"))))
+          (if (flonum? w) w (exact->inexact w)))))))
