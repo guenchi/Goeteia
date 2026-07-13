@@ -144,6 +144,9 @@
 (fx-loop!
  (lambda (t dt)
    (cmd-depth! #t)
+   ;; last frame's composite left our targets on these units
+   (cmd-unbind-texture! 0)
+   (cmd-unbind-texture! 1)
    (let* ((a (fl* 0.12 t))
           (eye (v3 (fl* 14.0 (flsin a)) 7.5 (fl* 14.0 (flcos a))))
           (vp (m4-mul proj (m4-look-at eye (v3 0.0 1.5 0.0)

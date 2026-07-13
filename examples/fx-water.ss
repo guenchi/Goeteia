@@ -132,6 +132,7 @@
           (mcenter (v3 0.0 -2.0 0.0))
           (rvp (m4-mul proj (m4-look-at meye mcenter (v3 0.0 1.0 0.0)))))
      ;; pass 1: the world as the water sees it
+     (cmd-unbind-texture! 0)           ; the water sampled it last frame
      (fx-bind-target! refl)
      (cmd-clear! 0.63 0.71 0.81 1.0)
      (draw-island! rvp 1.0)

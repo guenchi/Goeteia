@@ -129,7 +129,10 @@
           (lvp0 (light-vp (v3 (fl* 0.7 (v3-x ahead))
                               0.0 (fl* 0.7 (v3-z ahead))) 18.0))
           (lvp1 (light-vp (v3 0.0 0.0 0.0) 130.0)))
-     ;; two depth passes, the pillars only
+     ;; two depth passes, the pillars only; both maps were
+     ;; sampled last frame -- unbind before rendering into them
+     (cmd-unbind-texture! 0)
+     (cmd-unbind-texture! 1)
      (fx-bind-target! csm0)
      (cmd-clear! 1.0 1.0 1.0 1.0)
      (draw-boxes! depth-p
