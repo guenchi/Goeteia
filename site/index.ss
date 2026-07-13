@@ -58,8 +58,8 @@
            " renderer, and a " '(code "(web js)") " FFI that reaches straight "
            "into the host — this page is built with it.")
         ,(card "3D and WebGL"
-           '(code "(web gl)") " drives WebGL 2 through a command buffer — "
-           "one bridge call per frame — with shaders as s-expressions in "
+           '(code "(web gl)") " drives WebGL 2 through a command buffer "
+           "with shaders as s-expressions in "
            '(code "(web glsl)") ", rendered to either GLSL dialect from "
            "the same forms. Shadow maps, PBR, HDR bloom, SSAO, "
            "instancing, skeletal animation from " '(code "(web gltf)")
