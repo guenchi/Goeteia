@@ -3,6 +3,11 @@
 ;; crates), click to shoot the drifting orbs.  Clear a wave and a
 ;; bigger one spawns.
 ;;
+;; The static world casts shadows for FREE: its depth map renders
+;; once, on the first frame, and never again -- crates, walls and
+;; floor never move, so the cached map serves every later frame
+;; (the orbs are lit but don't cast; they're made of light).
+;;
 ;; What is doing the work: (web collide)'s packaged character over
 ;; the broadphase grid steps at a fixed 120Hz (fx-loop-fixed!), the
 ;; shot is one ray-sphere per orb, the HUD is a (web sprite) batch
@@ -17,7 +22,61 @@
 (fx-init-input!)
 (pointer-lock!)
 
-(define p (fx-program! mesh-lit-vs mesh-lit-fs))
+;; the world program samples the cached shadow map: light-space
+;; reprojection, a 3x3 PCF, then the usual directional shade
+(define p
+  (fx-program!
+   '((attribute vec3 a_pos)
+     (attribute vec3 a_normal)
+     (uniform mat4 u_mvp)
+     (uniform mat4 u_model)
+     (uniform mat4 u_light_mvp)
+     (varying vec3 v_normal)
+     (varying vec4 v_shadow)
+     (define (main) void
+       (local vec4 w (vec4 a_pos (fl 1)))
+       (set! gl_Position (* u_mvp w))
+       (set! v_shadow (* u_light_mvp w))
+       (set! v_normal (vec3 (* u_model (vec4 a_normal (fl 0)))))))
+   '((precision mediump float)
+     (uniform sampler2D u_shadow)
+     (uniform vec3 u_light)
+     (uniform vec4 u_color)
+     (uniform vec2 u_texel)
+     (uniform float u_ambient)
+     (varying vec3 v_normal)
+     (varying vec4 v_shadow)
+     (define (main) void
+       (local vec3 sp (+ (* (/ v_shadow.xyz v_shadow.w) (fl 0 50))
+                         (vec3 (fl 0 50) (fl 0 50) (fl 0 50))))
+       (local float lit (fl 0))
+       (for (int x -1 (< x 2) (+ x 1))
+         (for (int y -1 (< y 2) (+ y 1))
+           (local vec4 sv (texture2D u_shadow
+                                     (+ sp.xy (* (vec2 x y) u_texel))))
+           (set! lit (+ lit (step (- sp.z "0.002") sv.r)))))
+       (set! lit (/ lit (fl 9)))
+       (local float d (max (dot (normalize v_normal) u_light) (fl 0)))
+       (set! gl_FragColor
+             (vec4 (* u_color.rgb
+                      (+ u_ambient
+                         (* (- (fl 1) u_ambient) (* d lit))))
+                   u_color.a))))))
+
+;; the depth-only pass, from the light: runs ONCE
+(define depth-p
+  (fx-program!
+   '((attribute vec3 a_pos)
+     (attribute vec3 a_normal)
+     (uniform mat4 u_mvp)
+     (define (main) void
+       (set! gl_Position (* u_mvp (vec4 a_pos (fl 1))))))
+   '((precision mediump float)
+     (define (main) void
+       (set! gl_FragColor (vec4 (fl 1) (fl 1) (fl 1) (fl 1)))))))
+
+(define shadow-t (fx-target! 1024 1024 #t))
+(define shadow-done #f)
 
 ;; ---- the room: floor, four walls, three crates ----
 (define (upload m)
@@ -146,18 +205,42 @@
 
 (define proj (m4-perspective 0.9 (/ 800.0 600.0) 0.1 100.0))
 (define light (v3-normalize (v3 0.5 0.8 0.4)))
+(define light-vp
+  (m4-mul (m4-ortho -16.0 16.0 -16.0 16.0 1.0 60.0)
+          (m4-look-at (v3-scale light 30.0) (v3 0.0 0.0 0.0)
+                      (v3 0.0 1.0 0.0))))
+
+(define (upload! obj)
+  (unless (vector-ref obj 7)
+    (cmd-buffer-data! (vector-ref obj 2) (vector-ref obj 4))
+    (cmd-index-data! (vector-ref obj 3) (vector-ref obj 5))
+    (vector-set! obj 7 #t)))
 
 (define (draw-obj! obj model r g b vp)
   (fx-use! p (vector-ref obj 0))
   (cmd-bind-index! (vector-ref obj 1))
-  (unless (vector-ref obj 7)
-    (cmd-buffer-data! (vector-ref obj 2) (vector-ref obj 4))
-    (cmd-index-data! (vector-ref obj 3) (vector-ref obj 5))
-    (vector-set! obj 7 #t))
+  (upload! obj)
   (fx-uniform! p 'u_mvp (m4-mul vp model))
   (fx-uniform! p 'u_model model)
+  (fx-uniform! p 'u_light_mvp (m4-mul light-vp model))
   (fx-uniform! p 'u_color r g b 1.0)
   (cmd-draw-elements! GL-TRIANGLES (vector-ref obj 6)))
+
+;; the once-ever shadow bake: every static solid, from the light
+(define (bake-shadows!)
+  (fx-bind-target! shadow-t)
+  (cmd-clear! 1.0 1.0 1.0 1.0)
+  (cmd-depth! #t)
+  (for-each (lambda (s)
+              (let ((obj (vector-ref s 0)))
+                (fx-use! depth-p (vector-ref obj 0))
+                (cmd-bind-index! (vector-ref obj 1))
+                (upload! obj)
+                (fx-uniform! depth-p 'u_mvp
+                             (m4-mul light-vp (vector-ref s 1)))
+                (cmd-draw-elements! GL-TRIANGLES (vector-ref obj 6))))
+            solids)
+  (fx-bind-canvas!))
 
 (fx-loop-fixed!
  0.0083333
@@ -190,9 +273,16 @@
    (let* ((eye (eye-pos))
           (vp (m4-mul proj (m4-look-at eye (v3-add eye (fwd-dir))
                                        (v3 0.0 1.0 0.0)))))
+     ;; the world never moves, so this runs exactly once
+     (unless shadow-done
+       (bake-shadows!)
+       (set! shadow-done #t))
      (cmd-clear! 0.05 0.07 0.12 1.0)
      (cmd-depth! #t)
      (cmd-use-program! (fx-program-slot p))
+     (cmd-bind-texture! 0 (fx-target-texture shadow-t))
+     (fx-uniform! p 'u_shadow 0)
+     (fx-uniform! p 'u_texel (fl/ 1.0 1024.0) (fl/ 1.0 1024.0))
      (fx-uniform! p 'u_light (v3-x light) (v3-y light) (v3-z light))
      (fx-uniform! p 'u_ambient 0.32)
      (for-each (lambda (s)
