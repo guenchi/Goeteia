@@ -406,6 +406,8 @@
         (set! gl_Position (* u_mvp (vec4 a_pos (fl 1))))
         (set! v_normal (vec3 (* u_model (vec4 a_normal (fl 0))))))))
 
+  ;; colors come in as sRGB, light in linear, encode back out --
+  ;; the pow pair all the shipped fragment shaders share
   (define mesh-lit-fs
     '((precision mediump float)
       (uniform vec3 u_light)                  ; unit vector toward the light
@@ -415,9 +417,10 @@
       (define (main) void
         (local vec3 n (normalize v_normal))
         (local float d (max (dot n u_light) (fl 0)))
+        (local vec3 base (pow u_color.rgb (vec3 "2.2" "2.2" "2.2")))
+        (local vec3 c (* base (+ u_ambient (* d (- (fl 1) u_ambient)))))
         (set! gl_FragColor
-              (vec4 (* u_color.rgb
-                       (+ u_ambient (* d (- (fl 1) u_ambient))))
+              (vec4 (pow c (vec3 "0.4545" "0.4545" "0.4545"))
                     u_color.a)))))
 
   ;; the same light over a texture: sample * u_color tint, then the
@@ -446,8 +449,10 @@
         (local vec3 n (normalize v_normal))
         (local float d (max (dot n u_light) (fl 0)))
         (local vec4 t (* (texture2D u_tex v_uv) u_color))
+        (local vec3 base (pow t.rgb (vec3 "2.2" "2.2" "2.2")))
+        (local vec3 c (* base (+ u_ambient (* d (- (fl 1) u_ambient)))))
         (set! gl_FragColor
-              (vec4 (* t.rgb (+ u_ambient (* d (- (fl 1) u_ambient))))
+              (vec4 (pow c (vec3 "0.4545" "0.4545" "0.4545"))
                     t.a)))))
 
   ;; the tangent-space normal-mapped variant of the lit program:
@@ -486,7 +491,8 @@
         (local vec3 n (normalize (+ (+ (* v_t tn.x) (* v_b tn.y))
                                     (* v_n tn.z))))
         (local float d (max (dot n u_light) (fl 0)))
+        (local vec3 base (pow u_color.rgb (vec3 "2.2" "2.2" "2.2")))
+        (local vec3 c (* base (+ u_ambient (* d (- (fl 1) u_ambient)))))
         (set! gl_FragColor
-              (vec4 (* u_color.rgb
-                       (+ u_ambient (* d (- (fl 1) u_ambient))))
+              (vec4 (pow c (vec3 "0.4545" "0.4545" "0.4545"))
                     u_color.a))))))
