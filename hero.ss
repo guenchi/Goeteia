@@ -1,8 +1,7 @@
 ;; The Goeteia homepage — rendered by Goeteia, compiled in your browser.
 ;; The title and the tagline are GPU particles: (web typeset) lays the texts
 ;; out, their pixels become home positions, and a transform-feedback
-;; shader — the physics IS the vertex shader, Scheme never touches a
-;; particle — springs each one home while your cursor scatters them.
+;; shader — the physics IS the vertex shader.
 ;; Edit anything and press Run: the words, the fonts, the forces,
 ;; the palette.
 (import (web sx) (web dom) (web reactive) (web js)
