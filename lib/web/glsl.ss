@@ -67,6 +67,10 @@
          ;; unary minus
          ((and (eq? h '-) (null? (cddr e)))
           (string-append "(-" (expr->glsl (cadr e)) ")"))
+         ;; array indexing: (at u_joints i) -> u_joints[i]
+         ((eq? h 'at)
+          (string-append (expr->glsl (cadr e)) "["
+                         (expr->glsl (caddr e)) "]"))
          ;; infix operators, left-folded, parenthesized
          ((memq h '(+ - * /))
           (string-append "(" (join (map expr->glsl (cdr e))
@@ -113,9 +117,14 @@
   (define (form->glsl f)
     (case (car f)
       ((attribute uniform varying)
-       (string-append (symbol->string (car f)) " "
-                      (symbol->string (cadr f)) " "
-                      (symbol->string (caddr f)) "; "))
+       (if (pair? (cadr f))              ; (array T N) declarations
+           (string-append (symbol->string (car f)) " "
+                          (symbol->string (cadr (cadr f))) " "
+                          (symbol->string (caddr f))
+                          "[" (number->string (caddr (cadr f))) "]; ")
+           (string-append (symbol->string (car f)) " "
+                          (symbol->string (cadr f)) " "
+                          (symbol->string (caddr f)) "; ")))
       ((precision)
        (string-append "precision " (symbol->string (cadr f)) " "
                       (symbol->string (caddr f)) "; "))

@@ -187,6 +187,125 @@
   (and (= (count-log "bufferData") 2)      ; still the first frame's two
        (= (count-log "drawElements:TRI:3:US") 2)))
 
+;; ---- a third GLB: two bones and a rotation channel ----
+(define json3
+  (string-append
+   "{\"asset\":{\"version\":\"2.0\"},\"scene\":0,"
+   "\"scenes\":[{\"nodes\":[0,1]}],"
+   "\"nodes\":[{\"mesh\":0,\"skin\":0},"
+   "{\"children\":[2]},"
+   "{\"translation\":[0,1,0]}],"
+   "\"skins\":[{\"joints\":[1,2],\"inverseBindMatrices\":5}],"
+   "\"meshes\":[{\"primitives\":[{\"attributes\":"
+   "{\"POSITION\":0,\"NORMAL\":1,\"JOINTS_0\":2,\"WEIGHTS_0\":3},"
+   "\"indices\":4}]}],"
+   "\"animations\":[{\"name\":\"spin\","
+   "\"channels\":[{\"sampler\":0,"
+   "\"target\":{\"node\":2,\"path\":\"rotation\"}}],"
+   "\"samplers\":[{\"input\":6,\"output\":7,"
+   "\"interpolation\":\"LINEAR\"}]}],"
+   "\"buffers\":[{\"byteLength\":308}],"
+   "\"bufferViews\":["
+   "{\"buffer\":0,\"byteOffset\":0,\"byteLength\":36},"
+   "{\"buffer\":0,\"byteOffset\":36,\"byteLength\":36},"
+   "{\"buffer\":0,\"byteOffset\":72,\"byteLength\":12},"
+   "{\"buffer\":0,\"byteOffset\":84,\"byteLength\":48},"
+   "{\"buffer\":0,\"byteOffset\":132,\"byteLength\":6},"
+   "{\"buffer\":0,\"byteOffset\":140,\"byteLength\":128},"
+   "{\"buffer\":0,\"byteOffset\":268,\"byteLength\":8},"
+   "{\"buffer\":0,\"byteOffset\":276,\"byteLength\":32}],"
+   "\"accessors\":["
+   "{\"bufferView\":0,\"componentType\":5126,\"count\":3,\"type\":\"VEC3\"},"
+   "{\"bufferView\":1,\"componentType\":5126,\"count\":3,\"type\":\"VEC3\"},"
+   "{\"bufferView\":2,\"componentType\":5121,\"count\":3,\"type\":\"VEC4\"},"
+   "{\"bufferView\":3,\"componentType\":5126,\"count\":3,\"type\":\"VEC4\"},"
+   "{\"bufferView\":4,\"componentType\":5123,\"count\":3,\"type\":\"SCALAR\"},"
+   "{\"bufferView\":5,\"componentType\":5126,\"count\":2,\"type\":\"MAT4\"},"
+   "{\"bufferView\":6,\"componentType\":5126,\"count\":2,\"type\":\"SCALAR\"},"
+   "{\"bufferView\":7,\"componentType\":5126,\"count\":2,\"type\":\"VEC4\"}]}"))
+(define jlen3 (string-length json3))
+(define jpad3 (remainder (- 4 (remainder jlen3 4)) 4))
+(define total3 (+ 12 8 jlen3 jpad3 8 308))
+(define (fq!) (b! 243) (b! 4) (b! 53) (b! 63))      ; 0.70710678f
+(define (ident16!)
+  (let m ((i 0))
+    (when (< i 16)
+      (if (or (= i 0) (= i 5) (= i 10) (= i 15)) (f1!) (f0!))
+      (m (+ i 1)))))
+(set! base 12288)
+(set! at 0)
+(u32! #x46546C67)
+(u32! 2)
+(u32! total3)
+(u32! (+ jlen3 jpad3))
+(u32! #x4E4F534A)
+(str! json3)
+(let pad ((i 0)) (when (< i jpad3) (b! 32) (pad (+ i 1))))
+(u32! 308)
+(u32! #x004E4942)
+(f0!) (f0!) (f0!)                        ; positions
+(f1!) (f0!) (f0!)
+(f0!) (f1!) (f0!)
+(f0!) (f0!) (f1!)                        ; normals
+(f0!) (f0!) (f1!)
+(f0!) (f0!) (f1!)
+(b! 1) (b! 0) (b! 0) (b! 0)              ; joints u8: all on joint 1
+(b! 1) (b! 0) (b! 0) (b! 0)
+(b! 1) (b! 0) (b! 0) (b! 0)
+(f1!) (f0!) (f0!) (f0!)                  ; weights: 1 0 0 0
+(f1!) (f0!) (f0!) (f0!)
+(f1!) (f0!) (f0!) (f0!)
+(u16! 0) (u16! 1) (u16! 2) (u16! 0)      ; indices + pad -> 140
+(ident16!) (ident16!)                    ; inverse binds: identity
+(f0!) (f1!)                              ; keyframe times 0, 1
+(f0!) (f0!) (f0!) (f1!)                  ; quat identity
+(f0!) (f0!) (fq!) (fq!)                  ; quat: 90 deg about z
+
+(define g3 (gltf-parse 12288 total3))
+(define p3 (car (gltf-prims g3)))
+(define (m4at ms k i) (vector-ref (vector-ref ms k) i))
+(define skin-parse-ok
+  (and (= (gprim-stride p3) 64)
+       (= (gprim-vbytes p3) 192)
+       (near? (%mem-f32-ref (+ (gprim-vbase p3) 32)) 1.0)   ; joint idx
+       (near? (%mem-f32-ref (+ (gprim-vbase p3) 48)) 1.0)   ; weight
+       (equal? (gltf-animation-names g3) '("spin"))))
+;; the rest pose: joint 1 is translated up by its node
+(gltf-animate! g3 0 0.0)
+(define jm0 (gltf-joint-matrices g3 0))
+(define pose0-ok
+  (and (= (vector-length jm0) 2)
+       (near? (m4at jm0 0 0) 1.0)        ; root: identity
+       (near? (m4at jm0 0 13) 0.0)
+       (near? (m4at jm0 1 0) 1.0)        ; child: T(0,1,0)
+       (near? (m4at jm0 1 13) 1.0)))
+;; approaching t=1 the child has turned 90 degrees about z
+;; (t = duration itself wraps to the loop start)
+(gltf-animate! g3 0 0.9999)
+(define jm1 (gltf-joint-matrices g3 0))
+(define pose1-ok
+  (and (< (abs (- (m4at jm1 1 0) 0.0)) 0.001)
+       (< (abs (- (m4at jm1 1 1) 1.0)) 0.001)
+       (near? (m4at jm1 1 13) 1.0)))
+;; halfway: 45 degrees (nlerp = slerp at the midpoint); and looping
+(gltf-animate! g3 0 0.5)
+(define jm-half (gltf-joint-matrices g3 0))
+(gltf-animate! g3 0 2.0)                 ; wraps to t=0
+(define jm-wrap (gltf-joint-matrices g3 0))
+(define pose-mid-ok
+  (and (< (abs (- (m4at jm-half 1 0) 0.7071)) 0.001)
+       (near? (m4at jm-wrap 1 0) 1.0)))
+;; draw through the skin shader: one joint-array upload per prim
+(define sprog (fx-program! gltf-skin-vs mesh-tex-fs))
+(cmd-begin!)
+(gltf-draw! g3 sprog (m4-identity))
+(cmd-flush!)
+(define skin-draw-ok
+  (and (= (count-log "uniformMat4:U:u_joints:32") 1)   ; 2 mats x 16
+       (= (count-log "attrib:3,4,F,false,64,32") 1)
+       (= (count-log "attrib:4,4,F,false,64,48") 1)
+       (= (count-log "bufferData:48") 1)))             ; 3 verts x 16 f32
+
 ;; ---- decode the image (sync-thenable mocks) and draw textured ----
 (js-eval "globalThis.__syncThen = (v) => ({ then(f) { const r = f(v); return (r && r.then) ? r : globalThis.__syncThen(r); } }); globalThis.Blob = function(parts, opts) { this.mime = opts.type; this.len = parts[0].length; }; globalThis.createImageBitmap = (b) => globalThis.__syncThen({ id: 'BMP', mime: b.mime, len: b.len })")
 (define loaded #f)
@@ -204,7 +323,7 @@
   (and (= (count-log "bufferData:24") 1)      ; 3 verts x 8 f32
        (= (count-log "attrib:2,2,F,false,32,24") 1)
        (= (count-log "uniform1i:U:u_tex:0") 1)
-       (= (count-log "drawElements:TRI:3:US") 3)))
+       (= (count-log "drawElements:TRI:3:US") 4)))
 
 ;; the guard rail: a 24-byte program cannot draw a 32-byte primitive
 (define mismatch-ok
@@ -212,5 +331,5 @@
     (gltf-draw! g2 prog (m4-identity))
     #f))
 
-(and parse-ok tex-parse-ok draw-ok reuse-ok tex-load-ok tex-draw-ok
-     mismatch-ok)
+(and parse-ok tex-parse-ok skin-parse-ok pose0-ok pose1-ok pose-mid-ok
+     skin-draw-ok draw-ok reuse-ok tex-load-ok tex-draw-ok mismatch-ok)

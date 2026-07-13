@@ -76,7 +76,11 @@ A small UI stack over the JS bridge, in `lib/web/`:
   same memory (`examples/gl-particles.html`: 10,000 particles,
   one call per frame); textures upload from a canvas or image,
   `gl-program!` binds attribute locations before linking, and indexed
-  meshes draw through an element buffer with the depth test on
+  meshes draw through an element buffer with the depth test on.
+  The context is WebGL 2 (with fallback): offscreen render targets
+  (`examples/fx-post.html`: the scene through a ripple + vignette),
+  instanced draws (`examples/fx-forest.html`: 8,000 trees, one call),
+  and mat4-array uniforms for skinning
 - `(web glsl)` — GLSL as s-expressions: `glsl->string` is a pure
   function from a shader form list to GLSL source (the `(web css)` of
   shaders), so shaders compose with `append`/`map` and helper
@@ -154,13 +158,16 @@ A small UI stack over the JS bridge, in `lib/web/`:
   with a click-free fade (no asset files needed), `load-sound!` runs
   the fetch/decode chain, `play!`/`loop-sound!` wire
   buffer→gain→destination; breakout's blips are the dogfood
-- `(web gltf)` — real 3D assets: GLB static meshes parse with the
-  binary chunk in staging memory (the wasm f32 loads are the float
-  decoder), node transforms accumulate through the scene graph, and
-  the material's base color rides along; primitives come out in
-  mesh-lit's 24-byte layout and upload on first draw
-  (`examples/fx-gltf.html`: the Khronos Box.glb sample, fetched,
-  parsed and lit)
+- `(web gltf)` — real 3D assets: GLB files parse with the binary
+  chunk in staging memory (the wasm f32 loads are the float decoder).
+  Geometry, node transforms, base colors, embedded textures
+  (`gltf-load-textures!`), skins and animations all load: 
+  `gltf-animate!` samples the channels each frame (looping, nlerp
+  rotations) and `gltf-skin-vs` blends four weighted joints per
+  vertex from one mat4-array upload
+  (`examples/fx-gltf.html`: the lit Box; `fx-gltf-tex.html`: a
+  textured asset; `fx-fox.html`: the rigged Fox — Survey / Walk /
+  Run on keys 1-3)
 - `(web rpc)` — s-expression RPC to a Scheme backend (Igropyr's
   `(igropyr sexpr)` is the server half): `write` on one side, a safe
   whitelisted parser on the other, so exact integers and ratios cross
