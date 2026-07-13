@@ -21,7 +21,7 @@
           (span (@ (id "status") (class "status")) "booting the compiler…"))
         (p (@ (class "hint"))
            "No server compiles this — the page carries the whole compiler ("
-           (code "goeteia.wasm") ", ~70 KB gzipped, cached after first load), "
+           (code "goeteia.wasm") ", ~38 KB gzipped, cached after first load), "
            "and each Run recompiles the source above in ~15 ms.")))
 
    (section* "features" "What's inside"
