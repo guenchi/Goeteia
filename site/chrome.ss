@@ -57,8 +57,10 @@
             (border-bottom (px 1) solid (var line)))
      '(.nav-inner (display flex) (align-items center) (justify-content space-between)
                   (height (em 3 40)))
-     '(.brand (font-weight 700) (font-size (em 1 15)) (color (var lapis))
-              (letter-spacing (em 0 1)))
+     ;; Metal Mania: the gothic display face, echoing "the black arts"
+     '(.brand (font-family "\"Metal Mania\", \"Hoefler Text\", Georgia, serif")
+              (font-weight 400) (font-size (em 1 45)) (color (var lapis))
+              (letter-spacing (em 0 02)))
      '(".brand:hover" (text-decoration none))
      '(.nav-links (display flex) (gap (em 1 50)) (align-items center))
      '(".nav-links a" (color (var dim)) (font-size (em 0 92)))
@@ -161,9 +163,13 @@
            (title ,title)
            (meta (@ (name "description") (content ,desc)))
            ;; css is either a raw CSS string or a (web css) rule list;
-           ;; <style> is raw-text, emitted unescaped
-           (style ,(string-append (if (string? css) css (css->string css))
-                                  "\n" badge-css)))
+           ;; <style> is raw-text, emitted unescaped.  The font @import
+           ;; leads (imports must precede every other rule): Metal Mania
+           ;; for the nav brand, on every page.
+           (style ,(string-append
+                    "@import url('https://fonts.googleapis.com/css2?family=Metal+Mania&display=swap');\n"
+                    (if (string? css) css (css->string css))
+                    "\n" badge-css)))
           (body
            ,(nav active)
            ,(source-badge source-file)
