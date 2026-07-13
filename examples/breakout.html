@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <title>Goeteia — breakout over (web sprite)</title>
+    <style>
+      body { font-family: system-ui; text-align: center; margin-top: 2em; background: #f2f4fa; color: #14203a; }
+      canvas { border-radius: 12px; box-shadow: 0 4px 20px rgba(16,20,42,.2); cursor: none; }
+      code { font-family: ui-monospace, Menlo, monospace; color: #1550c4; }
+    </style>
+  </head>
+  <body>
+    <h1>Breakout, one draw call per frame</h1>
+    <p>Bricks, paddle, ball and the score text ride one quad batch —
+    the glyphs come from a canvas-rasterized atlas whose measurer also
+    drives <code>(web typeset)</code>, so layout and pixels agree.
+    Arrows or mouse; click to restart. See <code>breakout.ss</code>.</p>
+    <canvas id="c" width="800" height="600"></canvas>
+    <script type="module">
+      import { loadGoeteia } from '../rt/web.mjs';
+      loadGoeteia('breakout.wasm');
+    </script>
+  </body>
+</html>

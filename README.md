@@ -38,7 +38,11 @@ wasmtime).  Proper tail calls compile to `return_call`.
   quasiquote, `case` `do` named-`let` `letrec` internal defines
 - A library system: `(import (math utils))` loads
   `math/utils.ss`-style `(library ...)` files, dependencies first
-- Dead code elimination: programs carry only what they use
+- Dead code elimination: programs carry only what they use, and a
+  conservative inliner erases small helper calls
+- Compile errors carry source context (`at file:line (function)`),
+  and emitted modules carry a name section, so browser stack traces
+  read Scheme
 
 See [Design](#design) for the object representation, the calling
 convention, and the milestone-by-milestone build log.
@@ -74,13 +78,68 @@ A small UI stack over the JS bridge, in `lib/web/`:
   frame of GL commands as words in the shared linear memory and one
   bridge call replays them; vertex data uploads zero-copy from the
   same memory (`examples/gl-particles.html`: 10,000 particles,
-  one call per frame)
+  one call per frame); textures upload from a canvas or image,
+  `gl-program!` binds attribute locations before linking, and indexed
+  meshes draw through an element buffer with the depth test on
 - `(web glsl)` — GLSL as s-expressions: `glsl->string` is a pure
   function from a shader form list to GLSL source (the `(web css)` of
   shaders), so shaders compose with `append`/`map` and helper
   functions and verify headlessly; infix `+ - * /`, `(fl 0 50)` float
   literals (no Scheme flonums, no printer noise), `attribute`/
   `uniform`/`varying`, and `define`d functions
+- `(web typeset)` — DOM-free text layout, after
+  [pretext](https://www.pretext.cool): `prepare` measures each
+  distinct code point once, `layout` is pure arithmetic from the
+  cached widths to line boxes — no DOM, no reflow, so heights are
+  known before anything mounts (virtual scrolls, streaming chat) and
+  text can be set in canvas/GL scenes, where there is no layout
+  engine at all.  Hard breaks, space wraps, CJK breaks, code-point
+  splits for over-wide words; `(web typeset canvas)` is the
+  measureText-backed measurer for browsers, and the engine itself
+  verifies headlessly
+- `(web fx)` — the effects harness over `(web gl)`: a shader authored
+  as `(web glsl)` forms already declares its interface, so
+  `fx-program!` reads the attribute/uniform declarations back out of
+  the same forms and does the wiring — locations, interleaved
+  offsets, typed uniform dispatch, slot numbers, staging-memory
+  allocation.  `fx-loop!` frames commands around a t/dt callback;
+  `fx-fullscreen!` makes a fragment-shader effect ~15 lines
+  (`examples/fx-plasma.html`).  `fx-ticks!` (the timing pump) and
+  `fx-init-input!` (polled keys/pointer) have no GL dependency, so a
+  Three.js scene uses them directly
+- `(web sprite)` — 2D games over `(web fx)` and `(web typeset)`: a
+  glyph atlas rasterizes each distinct code point once and its
+  measurer doubles as typeset's `measure`, so layout and rendering
+  agree glyph for glyph; sprites, solid rects and text ride one quad
+  batch — one buffer upload, one draw call per frame
+  (`examples/breakout.html`: bricks, ball, paddle and the score text
+  in a single draw); image sprite sheets load premultiplied and draw
+  source rectangles through their own batch
+- `(web scroll)` — a virtual scroller for variable-height text, the
+  use case `(web typeset)` was born for: heights are typeset before
+  anything mounts (no reflow-forcing measurement), only the visible
+  window is in the DOM, appends stick to the bottom, and one
+  offsetHeight read per newly mounted item corrects the estimates
+  (`examples/chat.html`: an endless streaming feed)
+- `(web scene)` — reactive raw-GL scenes: the `sgl` template is to
+  the GL stack what `sx` is to the DOM — geometry from `(web mesh)`
+  builds and uploads once, each unquoted attribute becomes a
+  signal-driven hole, and a frame is pure arithmetic over current
+  fields (`examples/fx-scene.html`: the lit scene, declaratively)
+- `(web mat)` — 3D math for raw-GL scenes: vec3 and column-major mat4
+  over flonum vectors, with `m4-perspective` / `m4-look-at` /
+  rotations and its own range-reduced trig, so it is pure Scheme all
+  the way down and verifies headlessly; `fx-uniform!` feeds a mat4
+  straight through the command buffer
+  (`examples/fx-cube.html`: an indexed, depth-tested cube, no
+  Three.js)
+- `(web mesh)` — parametric geometry in pure Scheme: plane, box,
+  sphere, cylinder, torus as interleaved positions + normals with u16
+  indices, generated headlessly-verifiably and laid into the staging
+  memory by `mesh-write!`; `mesh-lit-vs`/`-fs` ship the standard
+  directional-light program as composable glsl forms
+  (`examples/fx-mesh.html`: a lit scene — ground, torus, sphere —
+  raw WebGL)
 - `(web rpc)` — s-expression RPC to a Scheme backend (Igropyr's
   `(igropyr sexpr)` is the server half): `write` on one side, a safe
   whitelisted parser on the other, so exact integers and ratios cross
@@ -112,6 +171,7 @@ $ npm install goeteia
 $ npx goeteia compile program.ss program.wasm   # compile to a wasm module
 $ npx goeteia run program.wasm                   # run a compiled module
 $ npx goeteia program.ss                         # compile and run in one step
+$ npx goeteia repl                               # interactive session
 $ npx goeteia dev [port]                          # live-reload dev server (cwd)
 ```
 
@@ -177,6 +237,10 @@ $ ./run-tests.sh
 
 Each file in `test/` declares its expected output in its first line
 and runs through both the Chez-hosted and the self-hosted compiler.
+Every test also checks that the two hosts emit byte-identical
+modules, so the cross-host fixpoint is guarded per test, not just for
+the compiler itself.  `bench/` holds standalone microbenchmarks
+(`bench/perf.ss` covers the web stack's per-frame hot paths).
 
 ## Design
 
@@ -234,11 +298,19 @@ truthiness is one `ref.eq`.
 
 ```
 source forms
-  → expand      (macros: derived forms now, syntax-case later)
-  → analyze     (top-level defines vs. program expressions)
+  → expand      (macros: syntax-rules / syntax-case, derived forms)
+  → inline      (small once-used helpers β-reduce to let)
+  → analyze     (assignment conversion, top-level defines vs. exprs)
+  → prune       (dead code elimination: keep only what's reachable)
   → codegen     (per function: expression tree → instruction list)
-  → emit        (instruction list → binary module)
+  → emit        (instruction list → binary module + name section)
 ```
+
+Every top-level input form carries a `file:line` from the reader
+through expansion, so a compile error reports `at file:line
+(function)`; the locations feed error messages only, never the
+emitted bytes.  The `emit` stage writes a wasm name section, so
+browser stack traces and profilers show Scheme function names.
 
 The compiler is written in the subset of Scheme that it compiles.
 Chez Scheme hosts it for bootstrapping; the self-hosted build
@@ -263,10 +335,10 @@ errors read exactly as before but user code can guard them.
 ### The JS bridge
 
 Host references live in `$jsref = (struct externref)`, making JS
-objects first-class Scheme values.  Seventeen `js.*` imports carry
-property access, calls, constructors, and string/number conversion
-(names and strings cross byte by byte, call arguments through a push
-protocol).  Scheme closures convert to callable JS functions: the
+objects first-class Scheme values.  Twenty `js.*` imports carry
+property access, calls, constructors, string/number conversion, and
+the callback protocol (names and strings cross byte by byte, call
+arguments through a push protocol).  Scheme closures convert to callable JS functions: the
 host holds the closure as an opaque eqref and invokes the exported
 `$jscb` when JS calls it, with arguments and the return value moving
 through dedicated imports -- so `addEventListener` takes a lambda.

@@ -32,7 +32,7 @@
 ;;
 ;; Copyright (c) 2026 guenchi. MIT license; see LICENSE.
 (library (web glsl)
-  (export glsl->string)
+  (export glsl->string glsl-attributes glsl-uniforms)
   (import (rnrs))
 
   (define (join parts sep)
@@ -133,4 +133,29 @@
       (else (error 'glsl "bad top-level form" f))))
 
   (define (glsl->string forms)
-    (apply string-append (map form->glsl forms))))
+    (apply string-append (map form->glsl forms)))
+
+  ;; the interface, extracted: shader forms are data, so the
+  ;; attribute/uniform declarations that (web fx) wires up come from
+  ;; the same list that rendered the source -- one source of truth
+  (define ($glsl-components t)          ; f32 components per attribute
+    (case t
+      ((float) 1) ((vec2) 2) ((vec3) 3) ((vec4) 4)
+      (else (error 'glsl "no component count for attribute type" t))))
+
+  (define (glsl-attributes forms)       ; ((name type count) ...) in order
+    (let loop ((fs forms))
+      (cond
+       ((null? fs) '())
+       ((eq? (caar fs) 'attribute)
+        (let ((ty (cadar fs)) (name (caddr (car fs))))
+          (cons (list name ty ($glsl-components ty)) (loop (cdr fs)))))
+       (else (loop (cdr fs))))))
+
+  (define (glsl-uniforms forms)         ; ((name type) ...) in order
+    (let loop ((fs forms))
+      (cond
+       ((null? fs) '())
+       ((eq? (caar fs) 'uniform)
+        (cons (list (caddr (car fs)) (cadar fs)) (loop (cdr fs))))
+       (else (loop (cdr fs)))))))

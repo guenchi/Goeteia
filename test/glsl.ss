@@ -40,4 +40,17 @@
  (let ((decls '((attribute vec2 p)))
        (body '((define (main) void (set! gl_Position (vec4 p (fl 0) (fl 1)))))))
    (t (glsl->string (append decls body))
-      "attribute vec2 p; void main() { gl_Position = vec4(p, 0.0, 1.0); } ")))
+      "attribute vec2 p; void main() { gl_Position = vec4(p, 0.0, 1.0); } "))
+ ;; interface extraction: declarations back out as data, in order
+ (equal? (glsl-attributes
+          '((attribute vec2 a_pos) (uniform float u_t)
+            (attribute vec4 a_tint) (varying vec2 v_uv)
+            (define (main) void (set! x (fl 1)))))
+         '((a_pos vec2 2) (a_tint vec4 4)))
+ (equal? (glsl-uniforms
+          '((precision mediump float) (uniform sampler2D u_tex)
+            (attribute vec2 a_pos) (uniform vec2 u_res)
+            (define (main) void (set! x (fl 1)))))
+         '((u_tex sampler2D) (u_res vec2)))
+ (null? (glsl-attributes '((uniform float u_t) (precision mediump float))))
+ (null? (glsl-uniforms '((attribute vec2 p)))))

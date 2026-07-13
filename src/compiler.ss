@@ -31,9 +31,13 @@
 (define (all-true? f ls)
   (or (null? ls) (and (f (car ls)) (all-true? f (cdr ls)))))
 (define (map2* f l1 l2)
+  ;; explicitly sequenced left-to-right: f may carry transformer side
+  ;; effects, and the hosts disagree on argument evaluation order
   (if (null? l1)
       '()
-      (cons (f (car l1) (car l2)) (map2* f (cdr l1) (cdr l2)))))
+      (let* ((h (f (car l1) (car l2)))
+             (t (map2* f (cdr l1) (cdr l2))))
+        (cons h t))))
 ;; stable ascending insertion sort keyed by a numeric projection
 (define (sort-by key ls)
   (if (null? ls)
@@ -704,10 +708,13 @@
     ((<) (< (a) (b))) ((>) (> (a) (b)))
     ((<=) (<= (a) (b))) ((>=) (>= (a) (b))) ((=) (= (a) (b)))
     ((max) (max (a) (b)))
+    ;; map-in-order, not the host's map: transformers mutate through
+    ;; their mapped closures (hole counters, gensyms), and the hosts
+    ;; disagree on map's traversal order
     ((map) (if (pair? (cddr args))
                (map2* (lambda (x y) (meta-apply (a) (list x y)))
                       (b) (caddr args))
-               (map (lambda (x) (meta-apply (a) (list x))) (b))))
+               (map-in-order (lambda (x) (meta-apply (a) (list x))) (b))))
     ((error) (errorf 'macro-transformer "~s" args))
     ((gensym) (gensym (if (and (pair? args) (string? (a))) (a) "g")))
     ((string->symbol) (string->symbol (a)))
@@ -720,7 +727,7 @@
     ((bound-identifier=?) (eq? (a) (b)))
     ((syntax->datum) (strip-marks (a)))
     ((datum->syntax) (b))
-    ((generate-temporaries) (map (lambda (x) (gensym "t")) (a)))
+    ((generate-temporaries) (map-in-order (lambda (x) (gensym "t")) (a)))
     ((void) (void))
     (else (errorf 'goeteia "unhandled transformer primitive ~s" name))))
 
@@ -2284,12 +2291,39 @@
 
 ;; expand each top-level form; a define-syntax produced by a macro is
 ;; collected, so macros can define macros
-(define (expand-forms fs)
-  (let loop ((fs fs) (acc '()))
+;; ---- source locations for error context ----
+;; The drivers pass a loc string ("file:line") per top-level input
+;; form; expansion tags every resulting form, and the per-function
+;; compile wraps in $with-loc so an error names its source.  Locs
+;; feed error messages only -- never the emitted bytes.
+
+(define *form-locs* '())   ; expanded form (by identity) -> "file:line"
+
+(define (record-loc! f loc)
+  (when (and loc (pair? f))
+    (set! *form-locs* (cons (cons f loc) *form-locs*))))
+(define (form-loc f)
+  (let ((e (assq f *form-locs*)))
+    (and e (cdr e))))
+(define ($with-loc loc thunk)
+  (if loc
+      (guard (e (#t (display "at ") (display loc) (newline) (raise e)))
+        (thunk))
+      (thunk)))
+
+(define (expand-forms fs locs)
+  (let loop ((fs fs) (ls locs) (acc '()))
     (if (null? fs)
         (reverse acc)
-        (loop (cdr fs) (expand-spliced (xpand (car fs)) acc)))))
-(define (expand-spliced x acc)
+        (let ((loc (and (pair? ls) (car ls)))
+              (rest (if (pair? ls) (cdr ls) '())))
+          (if (macro-def? (car fs))     ; collected before this pass
+              (loop (cdr fs) rest acc)
+              (loop (cdr fs) rest
+                    (expand-spliced
+                     ($with-loc loc (lambda () (xpand (car fs))))
+                     loc acc)))))))
+(define (expand-spliced x loc acc)
   (cond
    ((and (pair? x) (symbol? (car x)) (eq? (unmark (car x)) 'begin))
     ;; top-level begin splices recursively (its subforms are already
@@ -2298,9 +2332,12 @@
     (let splice ((subs (cdr x)) (acc acc))
       (if (null? subs)
           acc
-          (splice (cdr subs) (expand-spliced (car subs) acc)))))
+          (splice (cdr subs) (expand-spliced (car subs) loc acc)))))
    ((macro-def? x) (add-macro! x) acc)
-   (else (cons (normalize-define x) acc))))
+   (else
+    (let ((nf (normalize-define x)))
+      (record-loc! nf loc)
+      (cons nf acc)))))
 (define (normalize-define f)
   ;; top-level forms built by macros have marked heads
   (if (and (pair? f) (symbol? (car f)) (eq? (unmark (car f)) 'define))
@@ -2391,15 +2428,212 @@
                     (form-refs (cdr entry) (cdr queue)))
               (grow live (cdr queue)))))))))
 
-(define (compile-program forms)
+;; ---- a conservative inliner ----
+;; A small, once-defined, fixed-arity top-level function whose body
+;; is a single binder-free expression inlines at its call sites as
+;; (let ((param arg) ...) body): the let keeps arguments evaluated
+;; once, in order, in the caller's scope, and codegen gives the
+;; parameters plain locals -- the call disappears.  A site is left
+;; alone whenever its lexical scope rebinds the callee's name or any
+;; free name of the body, so nothing can be captured.  The transform
+;; is a pure left-to-right tree walk: both hosts emit the same bytes.
+
+(define $inline-cap 16)                 ; body size ceiling, in pairs
+
+(define (fixed-formals? fs)
+  (or (null? fs) (and (pair? fs) (fixed-formals? (cdr fs)))))
+
+;; every (set! name ...) target, anywhere outside quote
+(define (collect-set-names forms)
+  (let walk ((stack (cons forms '())) (acc '()))
+    (cond
+     ((null? stack) acc)
+     ((pair? (car stack))
+      (let ((e (car stack)))
+        (if (and (symbol? (car e)) (eq? (resolve-tag (car e)) 'quote))
+            (walk (cdr stack) acc)
+            (walk (cons (car e) (cons (cdr e) (cdr stack)))
+                  (if (and (symbol? (car e))
+                           (eq? (resolve-tag (car e)) 'set!)
+                           (pair? (cdr e)) (symbol? (cadr e)))
+                      (cons (cadr e) acc)
+                      acc)))))
+     (else (walk (cdr stack) acc)))))
+
+;; symbols referenced by e, kept verbatim (marks and all): capture
+;; is about exact identifiers, unlike DCE's unmarked liveness
+(define (raw-refs e acc)
+  (let walk ((stack (cons e '())) (acc acc))
+    (cond
+     ((null? stack) acc)
+     ((symbol? (car stack))
+      (walk (cdr stack)
+            (if (memq (car stack) acc) acc (cons (car stack) acc))))
+     ((and (pair? (car stack))
+           (not (and (symbol? (car (car stack)))
+                     (eq? (resolve-tag (car (car stack))) 'quote))))
+      (walk (cons (car (car stack))
+                  (cons (cdr (car stack)) (cdr stack)))
+            acc))
+     (else (walk (cdr stack) acc)))))
+
+;; binder-free (params stay params at the new site), bounded size
+(define (inlinable-body? e)
+  (let walk ((stack (cons e '())) (n 0))
+    (cond
+     ((> n $inline-cap) #f)
+     ((null? stack) #t)
+     ((pair? (car stack))
+      (let ((h (car (car stack))))
+        (cond
+         ((and (symbol? h) (eq? (resolve-tag h) 'quote))
+          (walk (cdr stack) (+ n 1)))
+         ((and (symbol? h)
+               (memq (resolve-tag h) '(lambda define set! let letrec letrec*)))
+          #f)
+         (else (walk (cons (car (car stack))
+                           (cons (cdr (car stack)) (cdr stack)))
+                     (+ n 1))))))
+     (else (walk (cdr stack) n)))))
+
+;; name -> (name formals body frees)
+(define (inline-candidates forms)
+  (let ((set-names (collect-set-names forms))
+        (counts '()))
+    (for-each (lambda (f)
+                (when (define-form? f)
+                  (let* ((n (def-name f))
+                         (e (assq n counts)))
+                    (if e
+                        (set-cdr! e (+ (cdr e) 1))
+                        (set! counts (cons (cons n 1) counts))))))
+              forms)
+    (let scan ((fs forms) (acc '()))
+      (if (null? fs)
+          acc
+          (let ((f (car fs)))
+            (if (and (fn-define? f)
+                     (fixed-formals? (cdadr f))
+                     (pair? (cddr f)) (null? (cdddr f))
+                     (= 1 (cdr (assq (def-name f) counts)))
+                     (not (memq (def-name f) set-names))
+                     (inlinable-body? (caddr f))
+                     (not (memq (def-name f) (raw-refs (caddr f) '()))))
+                (let* ((formals (cdadr f))
+                       (frees (filter (lambda (n) (not (memq n formals)))
+                                      (raw-refs (caddr f) '()))))
+                  (scan (cdr fs)
+                        (cons (list (def-name f) formals (caddr f) frees)
+                              acc)))
+                (scan (cdr fs) acc)))))))
+
+;; map that returns the original list when nothing changed, so
+;; untouched forms keep their identity (and their recorded locs)
+(define (map-same f ls)
+  (if (null? ls)
+      ls
+      (let* ((h (f (car ls)))
+             (t (map-same f (cdr ls))))
+        (if (and (eq? h (car ls)) (eq? t (cdr ls)))
+            ls
+            (cons h t)))))
+
+(define ($inline-binding f scope cands)   ; one let binding (n v)
+  (lambda (b)
+    (let ((ni (inline-sites (cadr b) scope cands)))
+      (if (eq? ni (cadr b)) b (list (car b) ni)))))
+
+(define ($inline-app e scope cands)
+  ;; rewrite the subforms, then the site itself
+  (let* ((head (car e))
+         (args (map-same (lambda (x) (inline-sites x scope cands)) (cdr e)))
+         (nh (if (pair? head) (inline-sites head scope cands) head))
+         (e2 (if (and (eq? args (cdr e)) (eq? nh head)) e (cons nh args))))
+    (if (and (symbol? head) (not (memq head scope)))
+        (let ((c (assq head cands)))
+          (if (and c
+                   (= (length args) (length (cadr c)))
+                   (let overlap ((fs (cadddr c)))
+                     (cond ((null? fs) #t)
+                           ((memq (car fs) scope) #f)
+                           (else (overlap (cdr fs))))))
+              (if (null? (cadr c))
+                  (caddr c)
+                  (cons 'let (cons (map2* list (cadr c) (cdr e2))
+                                   (list (caddr c)))))
+              e2))
+        e2)))
+
+(define (inline-sites e scope cands)
+  (if (not (pair? e))
+      e
+      (let ((h (car e)))
+        (if (not (symbol? h))
+            ($inline-app e scope cands)
+            (case (resolve-tag h)
+              ((quote) e)
+              ((lambda)
+               (let* ((scope2 (append (formals-names (cadr e)) scope))
+                      (nb (map-same (lambda (x) (inline-sites x scope2 cands))
+                                    (cddr e))))
+                 (if (eq? nb (cddr e)) e (cons h (cons (cadr e) nb)))))
+              ((let)
+               (if (and (pair? (cdr e)) (symbol? (cadr e)))
+                   (let* ((name (cadr e))          ; named let
+                          (bs (caddr e))
+                          (inits (map-same ($inline-binding e scope cands) bs))
+                          (scope2 (cons name (append (map car bs) scope)))
+                          (nb (map-same (lambda (x)
+                                          (inline-sites x scope2 cands))
+                                        (cdddr e))))
+                     (if (and (eq? inits bs) (eq? nb (cdddr e)))
+                         e
+                         (cons h (cons name (cons inits nb)))))
+                   (let* ((bs (cadr e))
+                          (inits (map-same ($inline-binding e scope cands) bs))
+                          (scope2 (append (map car bs) scope))
+                          (nb (map-same (lambda (x)
+                                          (inline-sites x scope2 cands))
+                                        (cddr e))))
+                     (if (and (eq? inits bs) (eq? nb (cddr e)))
+                         e
+                         (cons h (cons inits nb))))))
+              ((define)
+               (if (pair? (cadr e))
+                   (let* ((scope2 (append (formals-names (cdadr e)) scope))
+                          (nb (map-same (lambda (x)
+                                          (inline-sites x scope2 cands))
+                                        (cddr e))))
+                     (if (eq? nb (cddr e)) e (cons h (cons (cadr e) nb))))
+                   (if (pair? (cddr e))
+                       (let ((ne (inline-sites (caddr e) scope cands)))
+                         (if (eq? ne (caddr e)) e (list h (cadr e) ne)))
+                       e)))
+              ((set!)
+               (let ((ne (inline-sites (caddr e) scope cands)))
+                 (if (eq? ne (caddr e)) e (list h (cadr e) ne))))
+              (else ($inline-app e scope cands)))))))
+
+(define (inline-forms forms)
+  (let ((cands (inline-candidates forms)))
+    (if (null? cands)
+        forms
+        (map-in-order
+         (lambda (f)
+           (let ((nf (inline-sites f '() cands)))
+             (unless (eq? nf f) (record-loc! nf (form-loc f)))
+             nf))
+         forms))))
+
+(define (compile-program forms locs)
   (set! *marks* '())
   (set! *renames* '())
   (set! *macros* '())
+  (set! *form-locs* '())
   ;; collect explicit macro definitions first so they can be used
   ;; before their definition
   (for-each (lambda (f) (when (macro-def? f) (add-macro! f))) forms)
-  (let* ((expanded (expand-forms
-                    (filter (lambda (f) (not (macro-def? f))) forms)))
+  (let* ((expanded (expand-forms forms locs))
          ;; top-level (export name ...): keep through DCE, expose as
          ;; wasm exports so the host can call them
          (export-names
@@ -2411,11 +2645,15 @@
                      '()
                      expanded))
          (forms (prune-dead
-                 (map-in-order convert-assignments
+                 (map-in-order (lambda (f)
+                                 (let ((nf (convert-assignments f)))
+                                   (unless (eq? nf f)
+                                     (record-loc! nf (form-loc f)))
+                                   nf))
                      (filter (lambda (f)
                                (not (and (pair? f) (symbol? (car f))
                                          (eq? (unmark (car f)) 'export))))
-                             expanded))
+                             (inline-forms expanded)))
                  export-names))
          (fn-defs (filter fn-define? forms))
          (var-defs (filter var-define? forms))
@@ -2474,7 +2712,18 @@
         (unless (null? ns)
           (set! *rec-ty* (cons (cons (car ns) i) *rec-ty*))
           (number (cdr ns) (+ i 1))))
-      (let* ((fn-entries (map-in-order compile-toplevel-fn fn-defs))
+      (let* ((fn-entries (map-in-order
+                          (lambda (d)
+                            ;; loc plus the function's name: library
+                            ;; forms splice, so their defines share
+                            ;; the library's line -- the name narrows
+                            ($with-loc
+                             (let ((l (form-loc d)))
+                               (and l (string-append
+                                       l " (" (symbol->string
+                                               (unmark (def-name d))) ")")))
+                             (lambda () (compile-toplevel-fn d))))
+                          fn-defs))
              (main-entry
               (let ((cell (list 0)))
                 (set! *f64-slots* '())
@@ -2731,7 +2980,21 @@
                  (map (lambda (e)
                         (fn-code-entry (cadr e) (caddr e) (cadddr e)
                                        (list-ref e 4)))
-                      entries))))))
+                      entries)))
+    ;; name section (custom): top-level function names + main, so
+    ;; stack traces and profilers read Scheme, not wasm-function[n]
+    (section 0
+             (list (name-bytes "name")
+                   1                    ; the function-names subsection
+                   (sized (counted
+                           (append
+                            (map (lambda (f)
+                                   (list (uleb (cadr f))
+                                         (name-bytes
+                                          (symbol->string (car f)))))
+                                 (sort-by cadr *fns*))
+                            (list (list (uleb main-idx)
+                                        (name-bytes "main")))))))))))
 
 (define (emit-interned entry)
   ;; ((kind . datum) . global-idx) -> immutable global

@@ -17,7 +17,8 @@
    (string=? (number->string (/ 1 3)) "1/3")
    (string=? (number->string (* 2 (/ 1 3))) "2/3")
    (string=? (number->string (+ (/ 1 2) 0.5)) "1.0")
-   (string=? (number->string (sqrt -1)) "0+1.0i")
+   ;; inexactness is contagious across the parts, as under Chez
+   (string=? (number->string (sqrt -1)) "0.0+1.0i")
    (string=? (number->string (make-rectangular 1 2)) "1+2i")))
 
 ;;; --- ports, write, hashtables, gensym, errors, continuations ---

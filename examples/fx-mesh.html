@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <title>Goeteia — a lit scene from parametric meshes</title>
+    <style>
+      body { font-family: system-ui; text-align: center; margin-top: 2em; background: #f2f4fa; color: #14203a; }
+      canvas { border-radius: 12px; box-shadow: 0 4px 20px rgba(16,20,42,.2); }
+      code { font-family: ui-monospace, Menlo, monospace; color: #1550c4; }
+    </style>
+  </head>
+  <body>
+    <h1>A lit scene, parametric meshes</h1>
+    <p><code>(web mesh)</code> generates the torus, sphere and ground —
+    positions, normals, indices — in pure Scheme, and ships the
+    ready-made directional-light shader as composable glsl forms.
+    Raw WebGL underneath; no Three.js. See <code>fx-mesh.ss</code>.</p>
+    <canvas id="c" width="800" height="600"></canvas>
+    <script type="module">
+      import { loadGoeteia } from '../rt/web.mjs';
+      loadGoeteia('fx-mesh.wasm');
+    </script>
+  </body>
+</html>
