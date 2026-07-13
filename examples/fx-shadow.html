@@ -10,12 +10,15 @@
     </style>
   </head>
   <body>
-    <h1>Shadow mapping</h1>
+    <h1>Soft shadow mapping (PCSS)</h1>
     <p>Two passes: the boxes render into a depth-only
     <code>fx-target!</code> from the light's orthographic view
     (<code>m4-ortho</code>); the scene then reprojects each fragment
-    into light space and compares depths.  Boxes shadow the ground
-    and each other.  Needs WebGL&nbsp;2.
+    into light space and asks the map in three steps — a blocker
+    search, a penumbra width from the receiver-blocker gap (an area
+    light's similar triangles), and a PCF exactly that wide.  Watch
+    the hovering box: its shadow melts with height while the sitting
+    boxes stay crisp at contact.  Needs WebGL&nbsp;2.
     See <code>fx-shadow.ss</code>.</p>
     <canvas id="c" width="800" height="600"></canvas>
     <script type="module">
