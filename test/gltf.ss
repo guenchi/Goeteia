@@ -29,7 +29,8 @@
    "\"meshes\":[{\"primitives\":[{\"attributes\":"
    "{\"POSITION\":0,\"NORMAL\":1},\"indices\":2,\"material\":0}]}],"
    "\"materials\":[{\"pbrMetallicRoughness\":"
-   "{\"baseColorFactor\":[1,0,0,1]}}],"
+   "{\"baseColorFactor\":[1,0,0,1],"
+   "\"metallicFactor\":0.25,\"roughnessFactor\":0.5}}],"
    "\"buffers\":[{\"byteLength\":80}],"
    "\"bufferViews\":["
    "{\"buffer\":0,\"byteOffset\":0,\"byteLength\":36},"
@@ -74,6 +75,9 @@
        (near? (vector-ref (gprim-color p1) 0) 1.0)
        (near? (vector-ref (gprim-color p1) 1) 0.0)
        (near? (vector-ref (gprim-color p1) 3) 1.0)
+       ;; the metallic-roughness factors ride along
+       (near? (gprim-metallic p1) 0.25)
+       (near? (gprim-roughness p1) 0.5)
        ;; the node's translation landed in the world matrix
        (near? (vector-ref (gprim-world p1) 12) 1.0)
        (near? (vector-ref (gprim-world p1) 13) 2.0)

@@ -161,7 +161,10 @@ A small UI stack over the JS bridge, in `lib/web/`:
   no asset files).  `mesh-tangents` derives a tangent frame from the
   uv gradients and `mesh-normal-vs`/`-fs` light through a
   tangent-space normal map (`examples/fx-normalmap.html`: the bumps
-  are procedural bytes fed to `gl-texture-data!`, and an illusion)
+  are procedural bytes fed to `gl-texture-data!`, and an illusion).
+  `mesh-pbr-vs`/`-fs` are Cook-Torrance GGX with the sky as light
+  probe (`examples/fx-pbr.html`: the metallic × roughness
+  calibration grid)
 - `(web collide)` — collision tests and raycasts for 3D games:
   sphere/AABB overlaps, ray against sphere, box, plane, triangle and
   whole meshes (Möller–Trumbore), and `sphere-aabb-push` — the
@@ -173,14 +176,16 @@ A small UI stack over the JS bridge, in `lib/web/`:
   buffer→gain→destination; breakout's blips are the dogfood
 - `(web gltf)` — real 3D assets: GLB files parse with the binary
   chunk in staging memory (the wasm f32 loads are the float decoder).
-  Geometry, node transforms, base colors, embedded textures
+  Geometry, node transforms, base colors, metallic/roughness
+  factors, embedded textures
   (`gltf-load-textures!`), skins and animations all load: 
   `gltf-animate!` samples the channels each frame (looping, nlerp
-  rotations) and `gltf-skin-vs` blends four weighted joints per
+  rotations), `gltf-animate-blend!` crossfades two clips, and
+  `gltf-skin-vs` blends four weighted joints per
   vertex from one mat4-array upload
   (`examples/fx-gltf.html`: the lit Box; `fx-gltf-tex.html`: a
   textured asset; `fx-fox.html`: the rigged Fox — Survey / Walk /
-  Run on keys 1-3)
+  Run crossfade on keys 1-3)
 - `(web rpc)` — s-expression RPC to a Scheme backend (Igropyr's
   `(igropyr sexpr)` is the server half): `write` on one side, a safe
   whitelisted parser on the other, so exact integers and ratios cross

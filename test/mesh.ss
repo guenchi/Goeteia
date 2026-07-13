@@ -203,4 +203,12 @@
            (a_tangent vec4 4)))
  (equal? (glsl-uniforms mesh-normal-fs)
          '((u_nmap sampler2D) (u_light vec3) (u_color vec4)
-           (u_ambient float))))
+           (u_ambient float)))
+ ;; the PBR pair: 24-byte layout, the factor uniforms, the sky probe
+ (equal? (glsl-attributes mesh-pbr-vs) '((a_pos vec3 3) (a_normal vec3 3)))
+ (equal? (glsl-uniforms mesh-pbr-fs)
+         '((u_light vec3) (u_eye vec3) (u_albedo vec4)
+           (u_metallic float) (u_roughness float)
+           (u_sky samplerCube)))
+ ;; and it renders to source without incident
+ (< 0 (string-length (glsl->string mesh-pbr-fs))))

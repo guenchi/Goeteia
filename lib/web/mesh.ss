@@ -33,7 +33,7 @@
           mesh-bounds
           mesh-plane mesh-box mesh-sphere mesh-cylinder mesh-torus
           mesh-lit-vs mesh-lit-fs mesh-tex-vs mesh-tex-fs
-          mesh-normal-vs mesh-normal-fs)
+          mesh-normal-vs mesh-normal-fs mesh-pbr-vs mesh-pbr-fs)
   (import (rnrs) (web mat))
 
   (define $mesh-pi 3.141592653589793)
@@ -526,4 +526,78 @@
         (local vec3 c (* base (+ u_ambient (* d (- (fl 1) u_ambient)))))
         (set! gl_FragColor
               (vec4 (pow c (vec3 "0.4545" "0.4545" "0.4545"))
-                    u_color.a))))))
+                    u_color.a)))))
+
+  ;; ---- PBR: Cook-Torrance GGX, the sky as light probe ----
+  ;; One directional light plus image-based ambient: a mipmapped
+  ;; cube map stands in for both irradiance (sampled at high bias)
+  ;; and prefiltered specular (bias scaled by roughness).  Pair with
+  ;; mesh-write! (stride 24); gltf's gprim-metallic/gprim-roughness
+  ;; feed the factor uniforms directly.  Reinhard tonemap + gamma
+  ;; on the way out.
+  (define mesh-pbr-vs
+    '((attribute vec3 a_pos)
+      (attribute vec3 a_normal)
+      (uniform mat4 u_mvp)
+      (uniform mat4 u_model)
+      (varying vec3 v_n)
+      (varying vec3 v_wp)
+      (define (main) void
+        (set! gl_Position (* u_mvp (vec4 a_pos (fl 1))))
+        (set! v_wp (vec3 (* u_model (vec4 a_pos (fl 1)))))
+        (set! v_n (vec3 (* u_model (vec4 a_normal (fl 0))))))))
+
+  (define mesh-pbr-fs
+    '((precision mediump float)
+      (uniform vec3 u_light)              ; unit vector toward the light
+      (uniform vec3 u_eye)
+      (uniform vec4 u_albedo)             ; sRGB in, like u_color
+      (uniform float u_metallic)
+      (uniform float u_roughness)
+      (uniform samplerCube u_sky)
+      (varying vec3 v_n)
+      (varying vec3 v_wp)
+      (define (main) void
+        (local vec3 n (normalize v_n))
+        (local vec3 v (normalize (- u_eye v_wp)))
+        (local vec3 h (normalize (+ v u_light)))
+        (local float ndl (max (dot n u_light) (fl 0)))
+        (local float ndv (max (dot n v) "0.001"))
+        (local float ndh (max (dot n h) (fl 0)))
+        (local float hdv (max (dot h v) (fl 0)))
+        (local vec3 albedo (pow u_albedo.rgb (vec3 "2.2" "2.2" "2.2")))
+        (local vec3 f0 (mix (vec3 "0.04" "0.04" "0.04")
+                            albedo u_metallic))
+        ;; GGX distribution
+        (local float a (* u_roughness u_roughness))
+        (local float a2 (* a a))
+        (local float dd (+ (* (* ndh ndh) (- a2 (fl 1))) (fl 1)))
+        (local float D (/ a2 (* "3.14159265" (* dd dd))))
+        ;; Smith-Schlick visibility
+        (local float k (/ (* (+ u_roughness (fl 1))
+                             (+ u_roughness (fl 1))) (fl 8)))
+        (local float G (* (/ ndl (+ (* ndl (- (fl 1) k)) k))
+                          (/ ndv (+ (* ndv (- (fl 1) k)) k))))
+        ;; Fresnel-Schlick
+        (local vec3 one (vec3 (fl 1) (fl 1) (fl 1)))
+        (local vec3 F (+ f0 (* (- one f0) (pow (- (fl 1) hdv) (fl 5)))))
+        (local vec3 spec (/ (* (* D G) F)
+                            (+ (* (fl 4) (* ndl ndv)) "0.001")))
+        (local vec3 kd (* (- one F) (- (fl 1) u_metallic)))
+        (local vec3 direct (* (+ (* kd (/ albedo "3.14159265")) spec)
+                              (* ndl (fl 3))))
+        ;; ambient from the sky: high bias ~ irradiance, roughness
+        ;; bias ~ prefiltered specular
+        (local vec4 irr4 (textureCube u_sky n (fl 6)))
+        (local vec3 irr (pow irr4.rgb (vec3 "2.2" "2.2" "2.2")))
+        (local vec3 r (reflect (- v) n))
+        (local vec4 pre4 (textureCube u_sky r (* u_roughness (fl 6))))
+        (local vec3 pre (pow pre4.rgb (vec3 "2.2" "2.2" "2.2")))
+        (local vec3 fenv (+ f0 (* (- one f0)
+                                  (pow (- (fl 1) ndv) (fl 5)))))
+        (local vec3 c (+ direct
+                         (+ (* (* kd albedo) irr) (* fenv pre))))
+        (set! c (/ c (+ c one)))          ; Reinhard
+        (set! gl_FragColor
+              (vec4 (pow c (vec3 "0.4545" "0.4545" "0.4545"))
+                    u_albedo.a))))))
