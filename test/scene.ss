@@ -149,4 +149,36 @@
 (define group2-ok
   (= (count-log "uniformMat4:U:u_model:16:-1.00:4.00") 1))
 
-(and frame1-ok frame2-ok mat-ok cull-ok group1-ok group2-ok)
+;; ---- lod: the eye's distance walks the switch list ----
+(define hi-tag (string-append "drawElements:TRI:"
+                 (number->string (mesh-index-count (mesh-sphere 1.0 10 5)))
+                 ":US"))
+(define lo-tag (string-append "drawElements:TRI:"
+                 (number->string (mesh-index-count (mesh-sphere 1.0 5 3)))
+                 ":US"))
+(define sc-near                          ; 6 away: under the switch
+  (sgl (camera (@ (fov 0.9) (position 0.0 0.0 6.0) (look-at 0.0 0.0 0.0)))
+       (light (@ (direction 0.0 1.0 0.0) (ambient 0.25)))
+       (lod (@ (switch 15.0))
+         (mesh (@ (geometry (sphere 1.0 10 5)) (color 1.0 0.0 0.0)))
+         (mesh (@ (geometry (sphere 1.0 5 3)) (color 1.0 0.0 0.0))))))
+(define hi-before (count-log hi-tag))
+(define lo-before (count-log lo-tag))
+(cmd-begin!) (sgl-draw! sc-near) (cmd-flush!)
+(define lod-near-ok
+  (and (= (- (count-log hi-tag) hi-before) 1)
+       (= (- (count-log lo-tag) lo-before) 0)))
+(define sc-far                           ; 40 away: past it
+  (sgl (camera (@ (fov 0.9) (position 0.0 0.0 40.0) (look-at 0.0 0.0 0.0)
+                  (near 0.1) (far 100.0)))
+       (light (@ (direction 0.0 1.0 0.0) (ambient 0.25)))
+       (lod (@ (switch 15.0))
+         (mesh (@ (geometry (sphere 1.0 10 5)) (color 1.0 0.0 0.0)))
+         (mesh (@ (geometry (sphere 1.0 5 3)) (color 1.0 0.0 0.0))))))
+(cmd-begin!) (sgl-draw! sc-far) (cmd-flush!)
+(define lod-far-ok
+  (and (= (- (count-log hi-tag) hi-before) 1)   ; still just the near one
+       (= (- (count-log lo-tag) lo-before) 1)))
+
+(and frame1-ok frame2-ok mat-ok cull-ok group1-ok group2-ok
+     lod-near-ok lod-far-ok)
