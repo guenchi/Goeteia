@@ -79,8 +79,9 @@ A small UI stack over the JS bridge, in `lib/web/`:
   meshes draw through an element buffer with the depth test on.
   The context is WebGL 2 (with fallback): offscreen render targets
   (`examples/fx-post.html`: the scene through a ripple + vignette;
-  `examples/fx-shadow.html`: shadow mapping through a depth-only
-  target), instanced draws (`examples/fx-forest.html`: 8,000 trees,
+  `examples/fx-shadow.html`: PCF shadow mapping through a depth-only
+  target; `examples/fx-bloom.html`: a five-pass bloom chain),
+  instanced draws (`examples/fx-forest.html`: 8,000 trees,
   one call), and mat4-array uniforms for skinning
 - `(web glsl)` — GLSL as s-expressions: `glsl->string` is a pure
   function from a shader form list to GLSL source (the `(web css)` of
