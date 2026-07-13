@@ -87,7 +87,8 @@ A small UI stack over the JS bridge, in `lib/web/`:
   shaders), so shaders compose with `append`/`map` and helper
   functions and verify headlessly; infix `+ - * /`, `(fl 0 50)` float
   literals (no Scheme flonums, no printer noise), `attribute`/
-  `uniform`/`varying`, and `define`d functions
+  `uniform`/`varying`, `for` loops (kernel sweeps: PCF, blurs), and
+  `define`d functions
 - `(web typeset)` — DOM-free text layout, after
   [pretext](https://www.pretext.cool): `prepare` measures each
   distinct code point once, `layout` is pure arithmetic from the
