@@ -74,4 +74,43 @@
                       (set! m (at u_joints (int j.x))))))
     "void main() { m = u_joints[int(j.x)]; } ")
  (equal? (glsl-uniforms '((uniform (array mat4 32) u_joints)))
-         '((u_joints (array mat4 32)))))
+         '((u_joints (array mat4 32))))
+ ;; ---- the ES 3.00 dialect: same forms, respelled ----
+ (t (glsl300-vs->string
+     '((attribute vec3 a_pos)
+       (varying vec3 v_n)
+       (uniform mat4 u_mvp)
+       (define (main) void
+         (set! v_n a_pos)
+         (set! gl_Position (* u_mvp (vec4 a_pos (fl 1)))))))
+    (string-append
+     "#version 300 es\n"
+     "in vec3 a_pos; out vec3 v_n; uniform mat4 u_mvp; "
+     "void main() { v_n = a_pos; "
+     "gl_Position = (u_mvp * vec4(a_pos, 1.0)); } "))
+ (t (glsl300-fs->string
+     '((precision mediump float)
+       (varying vec3 v_n)
+       (uniform sampler2D u_tex)
+       (define (main) void
+         (set! gl_FragColor (texture2D u_tex v_n.xy)))))
+    (string-append
+     "#version 300 es\n"
+     "out highp vec4 goe_FragColor; "
+     "precision mediump float; in vec3 v_n; uniform sampler2D u_tex; "
+     "void main() { goe_FragColor = texture(u_tex, v_n.xy); } "))
+ ;; textureCube also folds into texture()
+ (t (glsl300-fs->string
+     '((define (main) void (set! gl_FragColor (textureCube u_sky d)))))
+    (string-append
+     "#version 300 es\nout highp vec4 goe_FragColor; "
+     "void main() { goe_FragColor = texture(u_sky, d); } "))
+ ;; uniform blocks: the syntax UBOs need
+ (t (glsl300-vs->string
+     '((uniform-block Env (mat4 u_vp) (vec4 u_fog))))
+    (string-append
+     "#version 300 es\n"
+     "layout(std140) uniform Env { mat4 u_vp; vec4 u_fog; }; "))
+ ;; extraction still works on the neutral forms
+ (equal? (glsl-attributes '((attribute vec3 a_pos) (varying vec3 v_n)))
+         '((a_pos vec3 3))))

@@ -34,7 +34,8 @@
 ;;
 ;; Copyright (c) 2026 guenchi. MIT license; see LICENSE.
 (library (web glsl)
-  (export glsl->string glsl-attributes glsl-uniforms)
+  (export glsl->string glsl-attributes glsl-uniforms
+          glsl300-vs->string glsl300-fs->string)
   (import (rnrs))
 
   (define (join parts sep)
@@ -158,6 +159,59 @@
 
   (define (glsl->string forms)
     (apply string-append (map form->glsl forms)))
+
+  ;; ---- the ES 3.00 dialect: the same forms, respelled ----
+  ;; The form language is dialect-neutral; these render it as
+  ;; "#version 300 es" source: attribute -> in, varying -> out (VS)
+  ;; / in (FS), gl_FragColor -> a declared output, texture2D and
+  ;; textureCube -> the unified texture().  (uniform-block Name
+  ;; (T field) ...) becomes a std140 uniform block -- the syntax
+  ;; UBOs need, which 1.00 does not have.
+  (define ($glsl-subst x alist)
+    (cond
+     ((symbol? x) (let ((hit (assq x alist))) (if hit (cdr hit) x)))
+     ((pair? x) (cons ($glsl-subst (car x) alist)
+                      ($glsl-subst (cdr x) alist)))
+     (else x)))
+
+  (define $glsl300-renames
+    '((texture2D . texture) (textureCube . texture)
+      (gl_FragColor . goe_FragColor)))
+
+  (define ($form300->glsl f stage)
+    (case (car f)
+      ((attribute varying)
+       (let ((kw (if (eq? (car f) 'attribute)
+                     "in"
+                     (if (eq? stage 'vertex) "out" "in"))))
+         (if (pair? (cadr f))
+             (string-append kw " " (symbol->string (cadr (cadr f))) " "
+                            (symbol->string (caddr f))
+                            "[" (number->string (caddr (cadr f))) "]; ")
+             (string-append kw " " (symbol->string (cadr f)) " "
+                            (symbol->string (caddr f)) "; "))))
+      ((uniform-block)
+       (string-append
+        "layout(std140) uniform " (symbol->string (cadr f)) " { "
+        (apply string-append
+               (map (lambda (m)
+                      (string-append (symbol->string (car m)) " "
+                                     (symbol->string (cadr m)) "; "))
+                    (cddr f)))
+        "}; "))
+      (else (form->glsl f))))
+
+  (define ($glsl300 forms stage head)
+    (string-append
+     "#version 300 es\n" head
+     (apply string-append
+            (map (lambda (f) ($form300->glsl f stage))
+                 ($glsl-subst forms $glsl300-renames)))))
+
+  (define (glsl300-vs->string forms)
+    ($glsl300 forms 'vertex ""))
+  (define (glsl300-fs->string forms)
+    ($glsl300 forms 'fragment "out highp vec4 goe_FragColor; "))
 
   ;; the interface, extracted: shader forms are data, so the
   ;; attribute/uniform declarations that (web fx) wires up come from
