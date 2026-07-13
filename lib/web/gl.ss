@@ -38,6 +38,7 @@
           cmd-vertex-attrib! cmd-uniform1f! cmd-uniform4f!
           cmd-uniform1i! cmd-uniform2f! cmd-uniform3f! cmd-uniform-matrix4!
           cmd-bind-texture! cmd-bind-cubemap! cmd-depth!
+          gl-vao! cmd-bind-vao! cmd-unbind-vao!
           cmd-bind-index! cmd-index-data! cmd-draw-elements!
           cmd-attrib-divisor! cmd-draw-elements-instanced!
           cmd-uniform-matrices!
@@ -75,6 +76,7 @@
      "      throw new Error(gl.getProgramInfoLog(p));"
      "    slots[slot] = p; },"
      "  buffer(slot) { slots[slot] = gl.createBuffer(); },"
+     "  vao(slot) { slots[slot] = gl.createVertexArray(); },"
      "  uniform(slot, pslot, name) {"
      "    slots[slot] = gl.getUniformLocation(slots[pslot], name); },"
      "  texture(slot) {"
@@ -267,6 +269,8 @@
      "     case 25: gl.activeTexture(gl.TEXTURE0 + u[p]);"
      "              gl.bindTexture(gl.TEXTURE_CUBE_MAP, slots[u[p+1]]);"
      "              p += 2; break;"
+     "     case 27: gl.bindVertexArray(slots[u[p]]); p += 1; break;"
+     "     case 28: gl.bindVertexArray(null); break;"
      "     case 26: gl.bindFramebuffer(gl.READ_FRAMEBUFFER, slots[u[p]]);"
      "              gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, slots[u[p+1]]);"
      "              gl.blitFramebuffer(0, 0, u[p+2], u[p+3],"
@@ -325,6 +329,9 @@
     (if (or (null? premul) (not (car premul)))
         (js-method $gl "textureUpload" slot src)
         (js-method $gl "textureUpload" slot src 1)))
+  ;; a vertex array object (webgl2): record a whole attribute setup
+  ;; once, rebind it with one word per frame
+  (define (gl-vao! slot) (js-method $gl "vao" slot))
   ;; raw RGBA bytes out of the staging memory -- procedural textures
   (define (gl-texture-data! slot base w h)
     (js-method $gl "textureData" slot base w h))
@@ -354,6 +361,8 @@
     (u! 8) (u! mode) (u! first) (u! count))
   (define (cmd-bind-texture! unit slot) (u! 11) (u! unit) (u! slot))
   (define (cmd-bind-cubemap! unit slot) (u! 25) (u! unit) (u! slot))
+  (define (cmd-bind-vao! slot) (u! 27) (u! slot))
+  (define (cmd-unbind-vao!) (u! 28))
   (define (cmd-uniform1i! slot v) (u! 12) (u! slot) (u! v))
   (define (cmd-uniform2f! slot x y) (u! 13) (u! slot) (f! x) (f! y))
   (define (cmd-uniform3f! slot x y z)
