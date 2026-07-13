@@ -34,7 +34,7 @@
 ;;
 ;; Copyright (c) 2026 guenchi. MIT license; see LICENSE.
 (library (web glsl)
-  (export glsl->string glsl-attributes glsl-uniforms
+  (export glsl->string glsl-attributes glsl-uniforms glsl-varyings
           glsl300-vs->string glsl300-fs->string)
   (import (rnrs))
 
@@ -236,4 +236,12 @@
        ((null? fs) '())
        ((eq? (caar fs) 'uniform)
         (cons (list (caddr (car fs)) (cadar fs)) (loop (cdr fs))))
+       (else (loop (cdr fs))))))
+
+  (define (glsl-varyings forms)         ; names in order -- what a
+    (let loop ((fs forms))              ; transform feedback captures
+      (cond
+       ((null? fs) '())
+       ((eq? (caar fs) 'varying)
+        (cons (caddr (car fs)) (loop (cdr fs))))
        (else (loop (cdr fs)))))))

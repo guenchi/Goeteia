@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <title>Goeteia — 100,000 particles, zero CPU physics</title>
+    <style>
+      body { font-family: system-ui; text-align: center; margin-top: 2em; background: #f2f4fa; color: #14203a; }
+      canvas { border-radius: 12px; box-shadow: 0 4px 20px rgba(16,20,42,.2); }
+      code { font-family: ui-monospace, Menlo, monospace; color: #1550c4; }
+    </style>
+  </head>
+  <body>
+    <h1>100,000 particles, zero CPU physics</h1>
+    <p>Transform feedback: the state lives in two GPU buffers and a
+    vertex shader (<code>fx-tf-program!</code>) integrates one into
+    the other each frame — the shader IS the physics, rasterizer
+    discard keeps the update pass invisible — then a point-sprite
+    pass draws the result and the buffers swap.  Scheme's whole
+    frame is a handful of command words.  Needs WebGL&nbsp;2.
+    See <code>fx-gpu-particles.ss</code>.</p>
+    <canvas id="c" width="800" height="600"></canvas>
+    <script type="module">
+      import { loadGoeteia } from '../rt/web.mjs';
+      loadGoeteia('fx-gpu-particles.wasm');
+    </script>
+  </body>
+</html>

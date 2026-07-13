@@ -93,7 +93,13 @@ A small UI stack over the JS bridge, in `lib/web/`:
   functions and verify headlessly; infix `+ - * /`, `(fl 0 50)` float
   literals (no Scheme flonums, no printer noise), `attribute`/
   `uniform`/`varying`, `for` loops (kernel sweeps: PCF, blurs), and
-  `define`d functions
+  `define`d functions.  The forms are dialect-neutral: the same
+  shader renders as ESSL 1.00 or, via `glsl300-vs/fs->string`
+  (`fx-program3!`), as `#version 300 es` — where `uniform-block`
+  becomes a std140 block (`examples/fx-ubo.html`: one Env block,
+  three shaders) and transform feedback captures the varyings
+  (`examples/fx-gpu-particles.html`: 100,000 particles whose physics
+  is a vertex shader)
 - `(web typeset)` — DOM-free text layout, after
   [pretext](https://www.pretext.cool): `prepare` measures each
   distinct code point once, `layout` is pure arithmetic from the
