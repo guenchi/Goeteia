@@ -34,6 +34,7 @@
           fx-use! fx-uniform!
           fx-ticks! fx-loop!
           fx-init-input! key-down? pointer-x pointer-y pointer-down?
+          pointer-lock! pointer-locked? pointer-motion!
           fx-fullscreen! fx-quad-program
           fx-fullscreen-use! fx-fullscreen-draw!)
   (import (rnrs) (web js) (web gl) (web glsl))
@@ -197,6 +198,50 @@
   (define (pointer-x) $fx-px)
   (define (pointer-y) $fx-py)
   (define (pointer-down?) $fx-pdown)
+
+  ;; ---- pointer lock: relative mouse for first-person cameras ----
+  (define $fx-dx 0.0)
+  (define $fx-dy 0.0)
+  (define $fx-locked #f)
+
+  ;; call once; clicking the element captures the pointer (browsers
+  ;; require the gesture), Esc releases it.  While captured, mouse
+  ;; motion accumulates as movementX/Y deltas.
+  (define (pointer-lock! . el)
+    (let ((target (if (null? el) $fx-canvas (car el)))
+          (doc (js-get (js-global) "document")))
+      (unless target
+        (error 'pointer-lock! "no element: pass one or call fx-init! first"))
+      (js-method target "addEventListener" "click"
+                 (lambda (e)
+                   (unless $fx-locked
+                     (js-method target "requestPointerLock"))
+                   (js-undefined)))
+      (js-method doc "addEventListener" "pointerlockchange"
+                 (lambda (e)
+                   (set! $fx-locked
+                         (js-truthy? (js-get doc "pointerLockElement")))
+                   (js-undefined)))
+      (js-method doc "addEventListener" "mousemove"
+                 (lambda (e)
+                   (when $fx-locked
+                     (set! $fx-dx
+                           (fl+ $fx-dx
+                                ($fx-fl (js->number (js-get e "movementX")))))
+                     (set! $fx-dy
+                           (fl+ $fx-dy
+                                ($fx-fl (js->number (js-get e "movementY"))))))
+                   (js-undefined)))))
+
+  (define (pointer-locked?) $fx-locked)
+
+  ;; the motion since the last call, as (dx . dy); consuming resets,
+  ;; so poll it once per frame
+  (define (pointer-motion!)
+    (let ((d (cons $fx-dx $fx-dy)))
+      (set! $fx-dx 0.0)
+      (set! $fx-dy 0.0)
+      d))
 
   ;; ---- the fullscreen quad: fragment-shader effects ----
   (define-record-type (fx-quad $make-fx-quad fx-quad?)

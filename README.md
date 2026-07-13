@@ -108,7 +108,10 @@ A small UI stack over the JS bridge, in `lib/web/`:
   `fx-fullscreen!` makes a fragment-shader effect ~15 lines
   (`examples/fx-plasma.html`).  `fx-ticks!` (the timing pump) and
   `fx-init-input!` (polled keys/pointer) have no GL dependency, so a
-  Three.js scene uses them directly
+  Three.js scene uses them directly; `pointer-lock!` adds captured
+  relative mouse for first-person cameras
+  (`examples/fx-fps.html`: click to capture, WASD to walk, walls
+  slide via `(web collide)`)
 - `(web sprite)` — 2D games over `(web fx)` and `(web typeset)`: a
   glyph atlas rasterizes each distinct code point once and its
   measurer doubles as typeset's `measure`, so layout and rendering
