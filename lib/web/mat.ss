@@ -20,7 +20,8 @@
           v3-add v3-sub v3-scale v3-dot v3-cross v3-normalize
           m4-identity m4-mul m4-transform
           m4-translate m4-scale m4-rotate-x m4-rotate-y m4-rotate-z
-          m4-from-quat m4-perspective m4-ortho m4-look-at)
+          m4-from-quat m4-perspective m4-ortho m4-look-at
+          m4-inverse m4-unproject)
   (import (rnrs))
 
   (define ($mat-fl v) (if (flonum? v) v (exact->inexact v)))
@@ -171,6 +172,69 @@
               (fl/ (fl- 0.0 (fl+ r l)) (fl- r l))
               (fl/ (fl- 0.0 (fl+ t b)) (fl- t b))
               (fl/ (fl- 0.0 (fl+ f n)) (fl- f n)) 1.0)))
+
+  ;; general 4x4 inverse by cofactor expansion; #f when singular.
+  ;; the door to picking: invert the view-projection, unproject the
+  ;; cursor, raycast with (web collide)
+  (define (m4-inverse m)
+    (define (a i) (vector-ref m i))
+    (let* ((s0 (fl- (fl* (a 0) (a 5)) (fl* (a 4) (a 1))))
+           (s1 (fl- (fl* (a 0) (a 9)) (fl* (a 8) (a 1))))
+           (s2 (fl- (fl* (a 0) (a 13)) (fl* (a 12) (a 1))))
+           (s3 (fl- (fl* (a 4) (a 9)) (fl* (a 8) (a 5))))
+           (s4 (fl- (fl* (a 4) (a 13)) (fl* (a 12) (a 5))))
+           (s5 (fl- (fl* (a 8) (a 13)) (fl* (a 12) (a 9))))
+           (c5 (fl- (fl* (a 10) (a 15)) (fl* (a 14) (a 11))))
+           (c4 (fl- (fl* (a 6) (a 15)) (fl* (a 14) (a 7))))
+           (c3 (fl- (fl* (a 6) (a 11)) (fl* (a 10) (a 7))))
+           (c2 (fl- (fl* (a 2) (a 15)) (fl* (a 14) (a 3))))
+           (c1 (fl- (fl* (a 2) (a 11)) (fl* (a 10) (a 3))))
+           (c0 (fl- (fl* (a 2) (a 7)) (fl* (a 6) (a 3))))
+           (det (fl+ (fl- (fl+ (fl* s0 c5) (fl* s3 c2))
+                          (fl+ (fl* s1 c4) (fl* s4 c1)))
+                     (fl+ (fl* s2 c3) (fl* s5 c0)))))
+      (if (and (fl<? det 0.000000000001)
+               (fl<? -0.000000000001 det))
+          #f
+          (let ((r (fl/ 1.0 det)))
+            (vector
+             (fl* r (fl+ (fl- (fl* (a 5) c5) (fl* (a 9) c4))
+                         (fl* (a 13) c3)))
+             (fl* r (fl- (fl* (a 9) c2)
+                         (fl+ (fl* (a 1) c5) (fl* (a 13) c1))))
+             (fl* r (fl+ (fl- (fl* (a 1) c4) (fl* (a 5) c2))
+                         (fl* (a 13) c0)))
+             (fl* r (fl- (fl* (a 5) c1)
+                         (fl+ (fl* (a 1) c3) (fl* (a 9) c0))))
+             (fl* r (fl- (fl* (a 8) c4)
+                         (fl+ (fl* (a 4) c5) (fl* (a 12) c3))))
+             (fl* r (fl+ (fl- (fl* (a 0) c5) (fl* (a 8) c2))
+                         (fl* (a 12) c1)))
+             (fl* r (fl- (fl* (a 4) c2)
+                         (fl+ (fl* (a 0) c4) (fl* (a 12) c0))))
+             (fl* r (fl+ (fl- (fl* (a 0) c3) (fl* (a 4) c1))
+                         (fl* (a 8) c0)))
+             (fl* r (fl+ (fl- (fl* (a 7) s5) (fl* (a 11) s4))
+                         (fl* (a 15) s3)))
+             (fl* r (fl- (fl* (a 11) s2)
+                         (fl+ (fl* (a 3) s5) (fl* (a 15) s1))))
+             (fl* r (fl+ (fl- (fl* (a 3) s4) (fl* (a 7) s2))
+                         (fl* (a 15) s0)))
+             (fl* r (fl- (fl* (a 7) s1)
+                         (fl+ (fl* (a 3) s3) (fl* (a 11) s0))))
+             (fl* r (fl- (fl* (a 10) s4)
+                         (fl+ (fl* (a 6) s5) (fl* (a 14) s3))))
+             (fl* r (fl+ (fl- (fl* (a 2) s5) (fl* (a 10) s2))
+                         (fl* (a 14) s1)))
+             (fl* r (fl- (fl* (a 6) s2)
+                         (fl+ (fl* (a 2) s4) (fl* (a 14) s0))))
+             (fl* r (fl+ (fl- (fl* (a 2) s3) (fl* (a 6) s1))
+                         (fl* (a 10) s0))))))))
+
+  ;; NDC (x y in [-1,1], z in [-1,1]) back to world space through an
+  ;; inverted view-projection: m4-transform already divides by w
+  (define (m4-unproject inv-vp x y z)
+    (m4-transform inv-vp (v3 x y z)))
 
   (define (m4-look-at eye center up)
     (let* ((z (v3-normalize (v3-sub eye center)))
