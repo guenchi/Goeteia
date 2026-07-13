@@ -108,7 +108,7 @@ Node 22+ (or any Wasm GC engine) is all you need: the compiler ships
 as `goeteia.wasm`, itself a Wasm GC module.
 
 ```
-$ npm install -g goeteia
+$ npm install goeteia
 $ goeteia compile program.ss program.wasm   # compile to a wasm module
 $ goeteia run program.wasm                   # run a compiled module
 $ goeteia program.ss                         # compile and run in one step
