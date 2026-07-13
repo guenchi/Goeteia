@@ -201,6 +201,15 @@ A small UI stack over the JS bridge, in `lib/web/`:
   through `gl-cube-face-fb!`), and `ibl-brdf-lut!` bakes the
   split-sum integration into a 2D scale/bias table — both with
   Fibonacci-spiral importance sampling, so the shaders stay ESSL 1.00
+- `(web gpu)` — a WebGPU backend, proof of concept: the same
+  command-buffer architecture as `(web gl)` — resources in a slot
+  table, one bridge call per frame replaying staged words, here into
+  a render pass and one `queue.submit` — with pipelines from WGSL
+  source and buffer uploads straight out of the staging memory
+  (`examples/gpu-particles.html`: the fountain again, no WebGL).
+  The header documents the full mapping and what a complete backend
+  adds (bind groups for uniforms, textures, WGSL from the same
+  s-expression forms)
 - `(web collide)` — collision tests and raycasts for 3D games:
   sphere/AABB/capsule overlaps (capsule–capsule rides the classic
   segment–segment distance), ray against sphere, box, plane,

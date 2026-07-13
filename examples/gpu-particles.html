@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <title>Goeteia — particles on WebGPU</title>
+    <style>
+      body { font-family: system-ui; text-align: center; margin-top: 2em; background: #f2f4fa; color: #14203a; }
+      canvas { border-radius: 12px; box-shadow: 0 4px 20px rgba(16,20,42,.2); }
+      code { font-family: ui-monospace, Menlo, monospace; color: #1550c4; }
+    </style>
+  </head>
+  <body>
+    <h1>The fountain, on WebGPU</h1>
+    <p><code>(web gpu)</code> is the command-buffer architecture of
+    <code>(web gl)</code> carried to the other API: resources in a
+    slot table, one bridge call per frame replaying staged words into
+    a render pass, one <code>queue.submit</code>.  Physics runs in
+    Scheme; 1500 triangles ride a single <code>writeBuffer</code> out
+    of the staging memory.  The pipeline is one WGSL module.
+    Needs a WebGPU browser (current Chrome / Edge / Safari).
+    See <code>gpu-particles.ss</code>.</p>
+    <canvas id="c" width="800" height="600"></canvas>
+    <script type="module">
+      import { loadGoeteia } from '../rt/web.mjs';
+      loadGoeteia('gpu-particles.wasm');
+    </script>
+  </body>
+</html>
