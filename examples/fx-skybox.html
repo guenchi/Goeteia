@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <title>Goeteia — skybox and a mirror ball</title>
+    <style>
+      body { font-family: system-ui; text-align: center; margin-top: 2em; background: #f2f4fa; color: #14203a; }
+      canvas { border-radius: 12px; box-shadow: 0 4px 20px rgba(16,20,42,.2); }
+      code { font-family: ui-monospace, Menlo, monospace; color: #1550c4; }
+    </style>
+  </head>
+  <body>
+    <h1>Skybox and a mirror ball</h1>
+    <p>The cube map is procedural — six faces of gradient sky with a
+    baked sun, computed as bytes in a Scheme loop and handed to
+    <code>gl-cubemap!</code>.  The box draws with the camera's
+    translation erased (a <code>w&nbsp;=&nbsp;0</code> multiply), so
+    the sky never moves; the sphere samples the same cube map along
+    the reflected eye ray.  Needs WebGL&nbsp;2.
+    See <code>fx-skybox.ss</code>.</p>
+    <canvas id="c" width="800" height="600"></canvas>
+    <script type="module">
+      import { loadGoeteia } from '../rt/web.mjs';
+      loadGoeteia('fx-skybox.wasm');
+    </script>
+  </body>
+</html>

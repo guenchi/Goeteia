@@ -189,7 +189,7 @@
           ((vec4) (cmd-uniform4f! slot
                                   ($fx-fl (car vs)) ($fx-fl (cadr vs))
                                   ($fx-fl (caddr vs)) ($fx-fl (cadddr vs))))
-          ((sampler2D int) (cmd-uniform1i! slot (car vs)))
+          ((sampler2D samplerCube int) (cmd-uniform1i! slot (car vs)))
           ((mat4) (cmd-uniform-matrix4! slot (car vs)))  ; (web mat) m4
           (else (error 'fx-uniform! "unsupported uniform type" ty)))))))
 

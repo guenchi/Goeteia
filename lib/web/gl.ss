@@ -30,13 +30,14 @@
 ;; Copyright (c) 2026 guenchi. MIT license; see LICENSE.
 (library (web gl)
   (export gl-attach! gl-program! gl-buffer! gl-uniform!
-          gl-texture! gl-texture-upload! gl-texture-data! gl-target!
+          gl-texture! gl-texture-upload! gl-texture-data! gl-cubemap!
+          gl-target!
           cmd-bind-target! cmd-bind-canvas!
           cmd-region! cmd-begin! cmd-flush! cmd-pos
           cmd-clear! cmd-use-program! cmd-bind-buffer! cmd-buffer-data!
           cmd-vertex-attrib! cmd-uniform1f! cmd-uniform4f!
           cmd-uniform1i! cmd-uniform2f! cmd-uniform3f! cmd-uniform-matrix4!
-          cmd-bind-texture! cmd-depth!
+          cmd-bind-texture! cmd-bind-cubemap! cmd-depth!
           cmd-bind-index! cmd-index-data! cmd-draw-elements!
           cmd-attrib-divisor! cmd-draw-elements-instanced!
           cmd-uniform-matrices!
@@ -126,6 +127,20 @@
      "    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, w, h, 0, gl.RGBA,"
      "                  gl.UNSIGNED_BYTE,"
      "                  new Uint8Array(memory.buffer, base, w * h * 4)); },"
+     "  cubemap(slot, base, dim) {"
+     "    const t = gl.createTexture();"
+     "    gl.bindTexture(gl.TEXTURE_CUBE_MAP, t);"
+     "    for (let i = 0; i < 6; i++)"
+     "      gl.texImage2D(gl.TEXTURE_CUBE_MAP_POSITIVE_X + i, 0, gl.RGBA,"
+     "                    dim, dim, 0, gl.RGBA, gl.UNSIGNED_BYTE,"
+     "                    new Uint8Array(memory.buffer,"
+     "                                   base + i * dim * dim * 4,"
+     "                                   dim * dim * 4));"
+     "    gl.texParameteri(gl.TEXTURE_CUBE_MAP, gl.TEXTURE_MIN_FILTER, gl.LINEAR);"
+     "    gl.texParameteri(gl.TEXTURE_CUBE_MAP, gl.TEXTURE_MAG_FILTER, gl.LINEAR);"
+     "    gl.texParameteri(gl.TEXTURE_CUBE_MAP, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);"
+     "    gl.texParameteri(gl.TEXTURE_CUBE_MAP, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);"
+     "    slots[slot] = t; },"
      "  replay(base, end) {"
      "    const u = new Uint32Array(memory.buffer);"
      "    const f = new Float32Array(memory.buffer);"
@@ -184,6 +199,9 @@
      "     case 24: gl.uniformMatrix4fv(slots[u[p]], false,"
      "                f.subarray(p + 2, p + 2 + 16 * u[p+1]));"
      "              p += 2 + 16 * u[p+1]; break;"
+     "     case 25: gl.activeTexture(gl.TEXTURE0 + u[p]);"
+     "              gl.bindTexture(gl.TEXTURE_CUBE_MAP, slots[u[p+1]]);"
+     "              p += 2; break;"
      "     default: throw new Error('bad gl opcode');"
      "    } } }; };"))
 
@@ -226,6 +244,10 @@
   ;; raw RGBA bytes out of the staging memory -- procedural textures
   (define (gl-texture-data! slot base w h)
     (js-method $gl "textureData" slot base w h))
+  ;; a cube map from six dim*dim RGBA faces laid out consecutively at
+  ;; base, in +x -x +y -y +z -z order
+  (define (gl-cubemap! slot base dim)
+    (js-method $gl "cubemap" slot base dim))
 
   ;; ---- the encoder: words into the staging memory ----
   (define $base 0)
@@ -247,6 +269,7 @@
   (define (cmd-draw-arrays! mode first count)
     (u! 8) (u! mode) (u! first) (u! count))
   (define (cmd-bind-texture! unit slot) (u! 11) (u! unit) (u! slot))
+  (define (cmd-bind-cubemap! unit slot) (u! 25) (u! unit) (u! slot))
   (define (cmd-uniform1i! slot v) (u! 12) (u! slot) (u! v))
   (define (cmd-uniform2f! slot x y) (u! 13) (u! slot) (f! x) (f! y))
   (define (cmd-uniform3f! slot x y z)
