@@ -37,7 +37,8 @@
           cmd-clear! cmd-use-program! cmd-bind-buffer! cmd-buffer-data!
           cmd-vertex-attrib! cmd-uniform1f! cmd-uniform4f!
           cmd-uniform1i! cmd-uniform2f! cmd-uniform3f! cmd-uniform-matrix4!
-          cmd-bind-texture! cmd-bind-cubemap! cmd-depth!
+          cmd-bind-texture! cmd-bind-cubemap! cmd-unbind-cubemap!
+          cmd-depth!
           gl-vao! cmd-bind-vao! cmd-unbind-vao!
           cmd-bind-index! cmd-index-data! cmd-draw-elements!
           cmd-attrib-divisor! cmd-draw-elements-instanced!
@@ -271,6 +272,9 @@
      "              p += 2; break;"
      "     case 27: gl.bindVertexArray(slots[u[p]]); p += 1; break;"
      "     case 28: gl.bindVertexArray(null); break;"
+     "     case 29: gl.activeTexture(gl.TEXTURE0 + u[p]);"
+     "              gl.bindTexture(gl.TEXTURE_CUBE_MAP, null);"
+     "              p += 1; break;"
      "     case 26: gl.bindFramebuffer(gl.READ_FRAMEBUFFER, slots[u[p]]);"
      "              gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, slots[u[p+1]]);"
      "              gl.blitFramebuffer(0, 0, u[p+2], u[p+3],"
@@ -361,6 +365,10 @@
     (u! 8) (u! mode) (u! first) (u! count))
   (define (cmd-bind-texture! unit slot) (u! 11) (u! unit) (u! slot))
   (define (cmd-bind-cubemap! unit slot) (u! 25) (u! unit) (u! slot))
+  ;; unbind before rendering into a cube target's faces: a cube map
+  ;; both attached and bound for sampling is a feedback loop, and
+  ;; ANGLE (Chrome) rejects every draw of it
+  (define (cmd-unbind-cubemap! unit) (u! 29) (u! unit))
   (define (cmd-bind-vao! slot) (u! 27) (u! slot))
   (define (cmd-unbind-vao!) (u! 28))
   (define (cmd-uniform1i! slot v) (u! 12) (u! slot) (u! v))

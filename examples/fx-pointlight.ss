@@ -146,6 +146,9 @@
           (eye (v3 (fl* 26.0 (flsin a)) 12.0 (fl* 26.0 (flcos a))))
           (vp (m4-mul proj (m4-look-at eye (v3 0.0 2.0 0.0)
                                        (v3 0.0 1.0 0.0)))))
+     ;; unbind the cube first: rendering into faces still bound for
+     ;; sampling is a feedback loop Chrome rejects on every draw
+     (cmd-unbind-cubemap! 0)
      ;; six distance passes out of the light
      (let face ((i 0))
        (when (< i 6)
