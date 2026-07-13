@@ -17,6 +17,9 @@ const LIB_FILES = [
     'lib/web/html.ss',
     'lib/web/glsl.ss',
     'lib/web/gl.ss',
+    'lib/web/typeset.ss',
+    'lib/web/typeset/canvas.ss',
+    'lib/web/fx.ss',
 ];
 
 const enc = new TextEncoder();
