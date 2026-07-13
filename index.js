@@ -64,14 +64,43 @@ import { boot, render } from './live.js';
         }
       }
 
+      // ---- tabs: the hero, plus two demos from the main repo ----
+      const TABS = [
+        { label: 'hero.ss', file: 'hero.ss' },
+        { label: 'fx-skybox.ss', file: 'demos/fx-skybox.ss' },
+        { label: 'fx-pointlight.ss', file: 'demos/fx-pointlight.ss' },
+        { label: 'fx-ubo.ss', file: 'demos/fx-ubo.ss' },
+      ];
+      const sources = [];
+      let cur = 0;
+      const tabsEl = document.getElementById('tabs');
+      const tabBtns = TABS.map((t, i) => {
+        const b = document.createElement('button');
+        b.textContent = t.label;
+        b.className = i === 0 ? 'tab active' : 'tab';
+        b.addEventListener('click', () => switchTab(i));
+        tabsEl.appendChild(b);
+        return b;
+      });
+      async function switchTab(i) {
+        if (i === cur) return;
+        sources[cur] = srcBox.value;        // keep edits per tab
+        cur = i;
+        srcBox.value = sources[i];
+        syncHL();
+        tabBtns.forEach((b, k) => b.classList.toggle('active', k === i));
+        await go();
+      }
+
       (async () => {
         try {
-          // load the compiler + libraries and the page's own source in parallel
-          const [, heroSrc] = await Promise.all([
+          // load the compiler + libraries and every tab's source in parallel
+          const [, ...srcs] = await Promise.all([
             boot(),
-            fetch('hero.ss').then(r => r.text()),
+            ...TABS.map(t => fetch(t.file).then(r => r.text())),
           ]);
-          srcBox.value = heroSrc;
+          srcs.forEach((s, i) => { sources[i] = s; });
+          srcBox.value = sources[0];
           syncHL();                         // paint the highlighting
           runBtn.disabled = false;
           await go();                       // first render, from the seeded source

@@ -29,6 +29,16 @@
       .lead b { color: var(--ink); }
       /* highlighted editor: a colored <pre> sits under a transparent
          <textarea>; identical box metrics keep the glyphs aligned */
+      .tabs { display: flex; gap: .4em; margin: -1px 0 .6em .6em; }
+      .tabs .tab {
+        font-family: var(--mono); font-size: 12px; padding: .3em .8em;
+        border: 1px solid var(--line); border-radius: 0 0 6px 6px;
+        background: #eef1f9; color: var(--dim); cursor: pointer;
+      }
+      .tabs .tab.active {
+        background: #fff; color: var(--ink); border-top-color: #fff;
+        font-weight: 600;
+      }
       .code { position: relative; }
       .code textarea, .code .hl {
         margin: 0; padding: 1em; border: 1px solid transparent; border-radius: 8px;

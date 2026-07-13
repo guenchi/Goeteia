@@ -16,6 +16,7 @@
           (pre (@ (class "hl") (id "hl") (aria-hidden "true")))
           (textarea (@ (id "src") (rows "22") (spellcheck "false")
                        (autocapitalize "off") (autocorrect "off")) "loading…"))
+        (div (@ (class "tabs") (id "tabs")))
         (div (@ (class "bar"))
           (button (@ (id "run") (disabled #t)) "Run")
           (span (@ (id "status") (class "status")) "booting the compiler…"))
