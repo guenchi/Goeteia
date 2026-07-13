@@ -82,6 +82,17 @@
   (check-from base-c2
               '("useProgram:P1" "bindVAO:V1" "bindBuffer:B1")))
 
+;; ---- the uniform cache: a steady value costs one send, ever ----
+(define base-u (log-len))
+(cmd-begin!)
+(fx-uniform! p 'u_glow 2)               ; same value as the last send
+(fx-uniform! p 'u_res 640 480)          ; same again
+(fx-uniform! p 'u_glow 3)               ; changed: this one encodes
+(fx-uniform! p 'u_glow 3)               ; and settles again
+(cmd-flush!)
+(define ucache-ok
+  (check-from base-u '("uniform1f:U:u_glow:3.00")))
+
 ;; ---- the timing pump: t/dt in seconds, no GL ----
 (define ticks '())
 (fx-ticks! (lambda (t dt) (set! ticks (cons (cons t dt) ticks))))
@@ -255,5 +266,5 @@
        (near? (car (cdr alphas)) 0.5)
        (near? (car alphas) 1.0)))
 
-(and alloc-ok prog-ok use-ok reuse-ok ticks-ok loop-ok quad-ok mat-ok
+(and alloc-ok prog-ok use-ok reuse-ok ucache-ok ticks-ok loop-ok quad-ok mat-ok
      input-ok input2-ok inst-ok target-ok lock-ok fixed-ok)

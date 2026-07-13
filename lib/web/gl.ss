@@ -39,6 +39,7 @@
           cmd-clear! cmd-use-program! cmd-bind-buffer! cmd-buffer-data!
           cmd-vertex-attrib! cmd-uniform1f! cmd-uniform4f!
           cmd-uniform1i! cmd-uniform2f! cmd-uniform3f! cmd-uniform-matrix4!
+          cmd-uniform-matrix4s!
           cmd-bind-texture! cmd-unbind-texture!
           cmd-bind-cubemap! cmd-unbind-cubemap!
           cmd-depth!
@@ -377,6 +378,9 @@
      "              gl.bufferSubData(gl.UNIFORM_BUFFER, 0,"
      "                new Uint8Array(memory.buffer, u[p+1], u[p+2]));"
      "              p += 3; break;"
+     "     case 38: gl.uniformMatrix4fv(slots[u[p]], false,"
+     "                new Float32Array(memory.buffer, u[p+1], 16));"
+     "              p += 2; break;"
      "     case 26: gl.bindFramebuffer(gl.READ_FRAMEBUFFER, slots[u[p]]);"
      "              gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, slots[u[p+1]]);"
      "              gl.blitFramebuffer(0, 0, u[p+2], u[p+3],"
@@ -527,6 +531,11 @@
       (when (< i 16)
         (f! (vector-ref m i))
         (loop (+ i 1)))))
+  ;; the m4s twin: the matrix already lives in staging at `at`, so
+  ;; the command carries its ADDRESS and the replayer reads the
+  ;; sixteen floats in place -- three words instead of eighteen
+  (define (cmd-uniform-matrix4s! slot at)
+    (u! 38) (u! slot) (u! at))
   (define (cmd-depth! on?) (u! 15) (u! (if on? 1 0)))
   ;; indexed meshes: a buffer slot bound as the element array, u16
   ;; indices uploaded from the staging memory, one drawElements
