@@ -4,7 +4,7 @@
 ;; measurer, so layout and rendering agree glyph for glyph.
 ;; Arrows or the mouse move the paddle; click restarts.
 (import (rnrs) (web js) (web dom) (web gl) (web fx) (web sprite)
-        (web typeset))
+        (web typeset) (web audio))
 
 (define W 800.0)
 (define H 600.0)
@@ -32,6 +32,8 @@
 (define score 0)
 (define mode 'play)                      ; play | over | win
 (define last-px -1.0)
+(define snd-on #f)                       ; audio wakes on the first click
+(define (sfx! freq dur) (when snd-on (beep! freq dur)))
 
 (define (reset!)
   (let fill ((i 0))
@@ -91,7 +93,8 @@
              (fl<? (fl- paddle-x 8.0) ball-x)
              (fl<? ball-x (fl+ paddle-x 128.0)))
     (set! ball-vy (fl- 0.0 ball-vy))
-    (set! ball-vx (fl+ ball-vx (fl* 3.0 (fl- ball-x (fl+ paddle-x 60.0))))))
+    (set! ball-vx (fl+ ball-vx (fl* 3.0 (fl- ball-x (fl+ paddle-x 60.0)))))
+    (sfx! 440 0.05))
   ;; bricks
   (let scan ((i 0))
     (when (< i (vector-length bricks))
@@ -104,10 +107,15 @@
           (begin (vector-set! bricks i #f)
                  (set! score (+ score 10))
                  (set! ball-vy (fl- 0.0 ball-vy))
-                 (when (= score (* 10 COLS ROWS)) (set! mode 'win)))
+                 (sfx! 660 0.06)
+                 (when (= score (* 10 COLS ROWS))
+                   (set! mode 'win)
+                   (sfx! 880 0.3)))
           (scan (+ i 1)))))
   ;; the floor
-  (when (fl<? 608.0 ball-y) (set! mode 'over)))
+  (when (fl<? 608.0 ball-y)
+    (set! mode 'over)
+    (sfx! 110 0.4)))
 
 ;; ---- render: everything is one batch ----
 (define row-colors
@@ -137,6 +145,9 @@
 
 (fx-loop!
  (lambda (t dt)
+   (when (and (not snd-on) (pointer-down?))   ; audio needs a gesture
+     (audio-init!)
+     (set! snd-on #t))
    (if (eq? mode 'play)
        (step! (if (fl<? 0.05 dt) 0.05 dt))   ; clamp a tab-switch dt
        (when (pointer-down?) (reset!)))
