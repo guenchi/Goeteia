@@ -13,8 +13,11 @@
 ;; The subset that travels: attribute/uniform/varying declarations,
 ;; define'd helper functions, main, local/set!/if/if-else/for/
 ;; return/discard, the infix arithmetic and the common intrinsics.
-;; What does not (yet): textures and samplers, arrays, uniform
-;; blocks.  Two spelling rules WGSL forces on the forms:
+;; A sampler2D uniform becomes a sampler + texture binding pair
+;; after the struct (declaration order; gpu-texgroup! matches), and
+;; (texture2D u_tex uv) respells as textureSample.  What does not
+;; travel (yet): cube textures, arrays, uniform blocks.
+;; Two spelling rules WGSL forces on the forms:
 ;; constructors do not truncate (no (vec3 some-vec4) -- go through a
 ;; local and swizzle), and varyings are main's business only.
 ;; Mind the uniform struct's std140-like alignment: order members
@@ -104,8 +107,14 @@
           (string-append "(" ($wgsl-expr (cadr e)) " "
                          (symbol->string op) " "
                          ($wgsl-expr (caddr e)) ")"))
-         ((memq op '(texture2D textureCube))
-          (error 'wgsl "textures are not in the WGSL subset yet" e))
+         ((eq? op 'texture2D)
+          ;; (texture2D u_tex uv): the sampler2D uniform splits into
+          ;; a texture + sampler pair at declaration time
+          (let ((n (symbol->string (cadr e))))
+            (string-append "textureSample(" n "_t, " n "_s, "
+                           ($wgsl-expr (caddr e)) ")")))
+         ((eq? op 'textureCube)
+          (error 'wgsl "cube textures are not in the WGSL subset yet" e))
          (else
           (let ((hit (assq op $wgsl-calls)))
             (string-append (if hit (cdr hit) (symbol->string op)) "("
@@ -187,12 +196,25 @@
                                ((eq? (caar fs) 'varying)
                                 (loop (cdr fs) (cons (cadar fs) acc)))
                                (else (loop (cdr fs) acc)))))
-           (unis (let dedup ((us (append (glsl-uniforms vs-forms)
-                                         (glsl-uniforms fs-forms)))
-                             (acc '()))
+           (all-unis (let dedup ((us (append (glsl-uniforms vs-forms)
+                                             (glsl-uniforms fs-forms)))
+                                 (acc '()))
+                       (cond ((null? us) (reverse acc))
+                             ((assq (caar us) acc) (dedup (cdr us) acc))
+                             (else (dedup (cdr us)
+                                          (cons (car us) acc))))))
+           ;; sampler2D uniforms become texture + sampler binding
+           ;; pairs after the struct; the rest pack into it
+           (unis (let split ((us all-unis) (acc '()))
                    (cond ((null? us) (reverse acc))
-                         ((assq (caar us) acc) (dedup (cdr us) acc))
-                         (else (dedup (cdr us) (cons (car us) acc))))))
+                         ((eq? (cadr (car us)) 'sampler2D)
+                          (split (cdr us) acc))
+                         (else (split (cdr us) (cons (car us) acc))))))
+           (texs (let split ((us all-unis) (acc '()))
+                   (cond ((null? us) (reverse acc))
+                         ((eq? (cadr (car us)) 'sampler2D)
+                          (split (cdr us) (cons (caar us) acc)))
+                         (else (split (cdr us) acc)))))
            (uni-sub (map (lambda (u)
                            (cons (symbol->string (car u))
                                  (string-append
@@ -230,6 +252,21 @@
                         ", ")
             " } "
             "@group(0) @binding(0) var<uniform> u : U; "))
+       ;; each sampler2D: a sampler + texture pair, bindings in
+       ;; declaration order after the struct (gpu-texgroup! matches)
+       (apply string-append
+              (let bindings ((ts texs)
+                             (b (if (null? unis) 0 1)))
+                (if (null? ts)
+                    '()
+                    (let ((n (symbol->string (car ts))))
+                      (cons (string-append
+                             "@group(0) @binding(" (number->string b)
+                             ") var " n "_s : sampler; "
+                             "@group(0) @binding("
+                             (number->string (+ b 1))
+                             ") var " n "_t : texture_2d<f32>; ")
+                            (bindings (cdr ts) (+ b 2)))))))
        ;; the varying struct both entry points share
        "struct VOut { @builtin(position) goe_pos : vec4f"
        (apply string-append

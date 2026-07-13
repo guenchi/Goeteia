@@ -76,4 +76,32 @@
      "acc = (acc + twice(f32(i))); } "
      "if ((acc < 6.0)) { goe_out = vec4f(1.0, 0.0, 0.0, 1.0); } "
      "else { goe_out = vec4f(acc, acc, acc, 1.0); } "
+     "return goe_out; } "))
+ ;; a sampler2D splits into a sampler + texture pair after the
+ ;; struct, and texture2D respells as textureSample
+ (t (wgsl->string
+     '((attribute vec2 a_pos)
+       (uniform mat4 u_mvp)
+       (varying vec2 v_uv)
+       (define (main) void
+         (set! v_uv a_pos)
+         (set! gl_Position (* u_mvp (vec4 a_pos (fl 0) (fl 1))))))
+     '((uniform sampler2D u_tex)
+       (varying vec2 v_uv)
+       (define (main) void
+         (set! gl_FragColor (texture2D u_tex v_uv)))))
+    (string-append
+     "struct U { u_mvp : mat4x4f } "
+     "@group(0) @binding(0) var<uniform> u : U; "
+     "@group(0) @binding(1) var u_tex_s : sampler; "
+     "@group(0) @binding(2) var u_tex_t : texture_2d<f32>; "
+     "struct VOut { @builtin(position) goe_pos : vec4f, "
+     "@location(0) v_uv : vec2f } "
+     "@vertex fn vs(@location(0) a_pos : vec2f) -> VOut { "
+     "var o : VOut; "
+     "o.v_uv = a_pos; "
+     "o.goe_pos = (u.u_mvp * vec4f(a_pos, 0.0, 1.0)); return o; } "
+     "@fragment fn fs(vin : VOut) -> @location(0) vec4f { "
+     "var goe_out : vec4f; "
+     "goe_out = textureSample(u_tex_t, u_tex_s, vin.v_uv); "
      "return goe_out; } ")))
