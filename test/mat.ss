@@ -59,6 +59,10 @@
         (near? (vector-ref p 11) -1.0)
         (near? (vector-ref p 14) -2.02)
         (near? (vector-ref p 15) 0.0)))
+ ;; a quaternion for 90 degrees about y matches m4-rotate-y
+ (let ((s (flsin (fl/ pi 4.0))) (c (flcos (fl/ pi 4.0))))
+   (m4~ (m4-from-quat 0.0 s 0.0 c) (m4-rotate-y (fl/ pi 2.0))))
+ (m4~ (m4-from-quat 0.0 0.0 0.0 1.0) (m4-identity))
  ;; look-at from +z: axis-aligned view, eye distance in m14
  (let ((v (m4-look-at (v3 0 0 5) (v3 0 0 0) (v3 0 1 0))))
    (and (near? (vector-ref v 0) 1.0)
