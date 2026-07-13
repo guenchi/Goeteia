@@ -280,9 +280,13 @@ A small UI stack over the JS bridge, in `lib/web/`:
   uniforms included: they split into sampler + texture binding
   pairs (`gpu-texture!`/`gpu-sampler!`/`gpu-texgroup!` on the other
   side; `examples/gpu-tex.html`: a checkerboard box, shader from
-  forms, texture from staging bytes).  Compute passes
-  close the loop: `gpu-dispatch!` runs a `@compute` shader over a
-  storage buffer that doubles as the render pass's instance stream
+  forms, texture from staging bytes).  `gpu-bundle!` freezes
+  encoded draws into a render bundle — recorded once, the browser
+  replays a whole static scene with no decode at all, so a frame is
+  clear + uniforms + `gpu-execute!` (gpu-torus does this).  Compute
+  passes close the loop: `gpu-dispatch!` runs a `@compute` shader
+  over a storage buffer that doubles as the render pass's instance
+  stream
   (`examples/gpu-compute.html`: 100,000 particles whose physics
   never touches the CPU — 16 bytes of uniforms per frame)
 - `(web xr)` — WebXR over the same command buffer: `xr-start!`

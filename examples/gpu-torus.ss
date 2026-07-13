@@ -54,7 +54,6 @@
 (define proj (m4-perspective 0.9 (/ 800.0 600.0) 0.1 100.0))
 
 (define ready #f)
-(define uploaded #f)
 (gpu-attach! (get-element-by-id "c")
              (lambda ()
                (gpu-pipeline! 0 WGSL (car LAYOUT) (cdr LAYOUT))
@@ -62,6 +61,22 @@
                (gpu-index! 2 (mesh-index-bytes tor2))
                (gpu-uniforms! 3 128)
                (gpu-bindgroup! 4 0 3)
+               ;; the whole static draw freezes into a render bundle:
+               ;; recorded once, the browser replays it with no
+               ;; decode at all -- a frame is clear + one uniform
+               ;; write + executeBundles
+               (gpu-begin!)
+               (gpu-use-pipeline! 0)
+               (gpu-set-group! 4)
+               (gpu-bind-vbuf! 1)
+               (gpu-bind-ibuf! 2)
+               (gpu-draw-indexed! (mesh-index-count tor2))
+               (gpu-bundle! 5)
+               ;; geometry ships once, outside any pass
+               (gpu-begin!)
+               (gpu-buffer-data! 1 VBASE (mesh-vertex-bytes tor2))
+               (gpu-buffer-data! 2 IBASE (mesh-index-bytes tor2))
+               (gpu-flush!)
                (set! ready #t)))
 
 (fx-ticks!
@@ -77,14 +92,6 @@
        (write-m4! (+ UBASE 64) model))
      (gpu-begin!)
      (gpu-clear! 0.05 0.06 0.10 1.0)
-     (gpu-use-pipeline! 0)
-     (gpu-set-group! 4)
-     (gpu-bind-vbuf! 1)
-     (gpu-bind-ibuf! 2)
-     (unless uploaded
-       (gpu-buffer-data! 1 VBASE (mesh-vertex-bytes tor2))
-       (gpu-buffer-data! 2 IBASE (mesh-index-bytes tor2))
-       (set! uploaded #t))
-     (gpu-buffer-data! 3 UBASE 128)
-     (gpu-draw-indexed! (mesh-index-count tor2))
+     (gpu-buffer-data! 3 UBASE 128)      ; the uniform struct
+     (gpu-execute! 5)                    ; the frozen draw
      (gpu-flush!))))
