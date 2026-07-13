@@ -68,9 +68,9 @@ import { boot, render } from './live.js';
       const TABS = [
         { label: 'hero.ss', file: 'hero.ss' },
         { label: 'skybox.ss', file: 'demos/fx-skybox.ss' },
+        { label: 'deferred.ss', file: 'demos/fx-deferred.ss' },
         { label: 'pointlight.ss', file: 'demos/fx-pointlight.ss' },
         { label: 'particles.ss', file: 'demos/gpu-compute.ss' },
-        { label: 'deferred.ss', file: 'demos/fx-deferred.ss' },
       ];
       const sources = [];
       let cur = 0;
