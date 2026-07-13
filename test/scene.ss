@@ -123,4 +123,22 @@
   (and (= (- (count-log "drawElements") draws-before) 6)
        (= (- (count-log "bufferData") uploads-before) 6)))
 
-(and frame1-ok frame2-ok mat-ok cull-ok)
+;; ---- groups: a parent transform the children inherit ----
+(define swing (signal 0.0))
+(define sc3
+  (sgl (camera (@ (fov 0.9) (position 0.0 0.0 14.0) (look-at 0.0 0.0 0.0)))
+       (light (@ (direction 0.0 1.0 0.0) (ambient 0.25)))
+       (group (@ (position 5.0 0.0 0.0) (rotation-y ,(signal-ref swing)))
+         (mesh (@ (geometry (box 1 1 1)) (position 1.0 0.0 0.0)
+                  (color 1.0 1.0 1.0))))))
+(cmd-begin!) (sgl-draw! sc3) (cmd-flush!)
+(define group1-ok
+  ;; parent at x 5, child at local x 1: the world sits at 6
+  (= (count-log "uniformMat4:U:u_model:16:1.00:6.00") 1))
+;; half a turn later the child is on the parent's other side
+(signal-set! swing 3.14159265)
+(cmd-begin!) (sgl-draw! sc3) (cmd-flush!)
+(define group2-ok
+  (= (count-log "uniformMat4:U:u_model:16:-1.00:4.00") 1))
+
+(and frame1-ok frame2-ok mat-ok cull-ok group1-ok group2-ok)
