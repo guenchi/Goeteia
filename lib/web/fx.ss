@@ -30,7 +30,7 @@
 (library (web fx)
   (export fx-init! fx-slot! fx-alloc! fx-buffer! fx-texture!
           fx-width fx-height
-          fx-target! fx-target-msaa! fx-resolve!
+          fx-target! fx-target-hdr! fx-target-msaa! fx-resolve!
           fx-target? fx-target-texture
           fx-target-width fx-target-height
           fx-bind-target! fx-bind-canvas!
@@ -90,6 +90,14 @@
       (if (and (pair? depth-only?) (car depth-only?))
           (gl-target! fb tex w h #t)
           (gl-target! fb tex w h))
+      ($make-fx-target fb tex w h #f)))
+
+  ;; a half-float target: values past 1.0 survive for bloom and
+  ;; tonemapping (WebGL 2 + EXT_color_buffer_float)
+  (define (fx-target-hdr! w h)
+    (let* ((fb (fx-slot!))
+           (tex (fx-slot!)))
+      (gl-target-hdr! fb tex w h)
       ($make-fx-target fb tex w h #f)))
 
   ;; a multisampled target: render as usual, call (fx-resolve! t)

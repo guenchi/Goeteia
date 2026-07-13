@@ -10,7 +10,7 @@
 (fx-init! (get-element-by-id "c"))
 
 (define scene-prog (fx-program! mesh-lit-vs mesh-lit-fs))
-(define scene (fx-target! 800 600))
+(define scene (fx-target-hdr! 800 600))  ; half-float: >1 survives
 (define bright (fx-target! 400 300))
 (define blur-a (fx-target! 400 300))
 (define blur-b (fx-target! 400 300))
@@ -26,8 +26,9 @@
        (local vec2 uv (* gl_FragCoord.xy u_texel))
        (local vec4 c (texture2D u_scene uv))
        (local float l (dot c.rgb (vec3 "0.2126" "0.7152" "0.0722")))
+       ;; a true HDR threshold: only what shines past white blooms
        (set! gl_FragColor
-             (vec4 (* c.rgb (smoothstep "0.55" "0.85" l)) (fl 1)))))))
+             (vec4 (* c.rgb (smoothstep "1.02" "1.9" l)) (fl 1)))))))
 
 ;; passes 3+4 (twice): one gaussian shader, the axis in u_dir
 (define blur-q
@@ -63,7 +64,11 @@
        (local vec2 uv (* gl_FragCoord.xy u_texel))
        (local vec4 c (texture2D u_scene uv))
        (local vec4 b (texture2D u_bloom uv))
-       (set! gl_FragColor (vec4 (+ c.rgb (* b.rgb "1.15")) (fl 1)))))))
+       (local vec3 one (vec3 (fl 1) (fl 1) (fl 1)))
+       (local vec3 sum (+ c.rgb (* b.rgb "1.1")))
+       ;; extended Reinhard: lows pass, highs roll off toward white
+       (set! sum (* sum (/ (+ one (/ sum "9.0")) (+ one sum))))
+       (set! gl_FragColor (vec4 sum (fl 1)))))))
 
 ;; a dim scene around one hot object
 (define (upload m)
@@ -119,11 +124,12 @@
    (draw! box (m4-mul (m4-translate -3.2 -0.9 -1.0)
                       (m4-rotate-y (fl* 0.4 t)))
           0.30 0.34 0.45 vp)
-   ;; the hot one: bright enough that only it crosses the threshold
+   ;; the hot one: an emissive color far past white -- the HDR
+   ;; target keeps it, and only it crosses the threshold
    (draw! torus
           (m4-mul (m4-translate 0.0 0.6 0.0)
                   (m4-mul (m4-rotate-y t) (m4-rotate-x (fl* 0.6 t))))
-          1.0 0.82 0.45 vp)
+          3.2 2.2 1.1 vp)
    (cmd-depth! #f)
    ;; pass 2: threshold, at half resolution
    (fx-bind-target! bright)
