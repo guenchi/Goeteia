@@ -1,29 +1,32 @@
 ;; s-expression RPC over HTTP: the browser half.
 ;;
-;; Both ends speak Scheme, so there is no codec: write on this side,
-;; read on the other. The server half is Igropyr's (igropyr sexpr) +
-;; app-rpc -- requests are (tag arg ...), replies are (ok ...) or
-;; (error ...), everything stays data.
+;; Both ends speak Scheme; the wire is Igropyr's (igropyr sexpr)
+;; EXTENDED format, mirrored byte-for-byte here by (web sexpr) -- so
+;; bytevectors cross as #vu8"<base64>". The server half is (igropyr
+;; sexpr) + app-rpc -- requests are (tag arg ...), replies are (ok ...)
+;; or (error ...), everything stays data.
 ;;
 ;;   (rpc! "/rpc" '(get-user 42)
 ;;     (lambda (reply) ...)          ; (ok (user (id . 42) ...))
 ;;     (lambda (e) ...))             ; optional: network/parse failure
 ;;
 ;; Callback style until JSPI lands (then a direct-style rpc can wrap
-;; this). Exact integers and ratios cross the wire intact; stick to
-;; the wire whitelist -- lists, symbols, strings, exact integers and
-;; ratios, booleans -- and dispatch on tags, never evaluate payloads.
+;; this). Exact integers and ratios cross intact -- no float
+;; approximation. The wire whitelist is lists, symbols, strings, exact
+;; integers and ratios, booleans, vectors and bytevectors; dispatch on
+;; tags, never evaluate payloads.
 ;;
 ;; Copyright (c) 2026 guenchi. MIT license; see LICENSE.
 (library (web rpc)
   (export rpc rpc! rpc-get rpc-serialize rpc-parse)
-  (import (rnrs) (web js) (web fetch))
+  (import (rnrs) (web js) (web fetch) (web sexpr))
 
-  (define (rpc-serialize datum)
-    (with-output-to-string (lambda () (write datum))))
+  ;; (web sexpr) is the restricted, depth-limited codec -- Igropyr's
+  ;; extended wire format, not the host read/write (no #-syntax
+  ;; surprises, no flonums, bytevectors as #vu8"<base64>").
+  (define (rpc-serialize datum) (sexpr->string datum))
 
-  (define (rpc-parse text)
-    (read (open-input-string text)))
+  (define (rpc-parse text) (string->sexpr text))
 
   ;; direct style over JSPI: the call reads like a blocking one --
   ;;   (let ((reply (rpc "/rpc" '(get-user 42)))) ...)
