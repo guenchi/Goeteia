@@ -3,9 +3,8 @@
 ;; out, their pixels become home positions, and a transform-feedback
 ;; shader — the physics IS the vertex shader, Scheme never touches a
 ;; particle — springs each one home while your cursor scatters them.
-;; The title's homes glide between GOETEIA and ΓΟΗΤΕΙΑ on a slow
-;; cycle, and the swarm follows.  Edit anything and press Run: the
-;; words, the fonts, the forces, the palette.
+;; Edit anything and press Run: the words, the fonts, the forces,
+;; the palette.
 (import (web sx) (web dom) (web reactive) (web js)
         (web gl) (web glsl) (web fx)
         (web typeset) (web typeset canvas))
