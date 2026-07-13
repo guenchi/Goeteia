@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <title>Goeteia — cascaded shadow maps</title>
+    <style>
+      body { font-family: system-ui; text-align: center; margin-top: 2em; background: #f2f4fa; color: #14203a; }
+      canvas { border-radius: 12px; box-shadow: 0 4px 20px rgba(16,20,42,.2); }
+      code { font-family: ui-monospace, Menlo, monospace; color: #1550c4; }
+    </style>
+  </head>
+  <body>
+    <h1>Cascaded shadow maps</h1>
+    <p>One depth map spread over a long view goes to mush up close,
+    so two share the work: a tight cascade tracking the camera
+    (crisp near shadows) and a wide one over the whole field.  Each
+    fragment projects into the near cascade first and falls back to
+    the far one outside its map.  Needs WebGL&nbsp;2.
+    See <code>fx-csm.ss</code>.</p>
+    <canvas id="c" width="800" height="600"></canvas>
+    <script type="module">
+      import { loadGoeteia } from '../rt/web.mjs';
+      loadGoeteia('fx-csm.wasm');
+    </script>
+  </body>
+</html>
