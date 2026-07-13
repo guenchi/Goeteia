@@ -31,7 +31,7 @@
 (library (web gl)
   (export gl-attach! gl-program! gl-buffer! gl-uniform!
           gl-texture! gl-texture-upload! gl-texture-data! gl-cubemap!
-          gl-target! gl-target-msaa!
+          gl-target! gl-target-hdr! gl-target-msaa!
           cmd-bind-target! cmd-bind-canvas! cmd-resolve!
           cmd-region! cmd-begin! cmd-flush! cmd-pos
           cmd-clear! cmd-use-program! cmd-bind-buffer! cmd-buffer-data!
@@ -56,6 +56,7 @@
     (string-append
      "globalThis.__goeteia_gl = (canvas, memory) => {"
      " const gl = canvas.getContext('webgl2') || canvas.getContext('webgl');"
+     " if (gl.getExtension) gl.getExtension('EXT_color_buffer_float');"
      " const slots = [];"
      " const compile = (kind, src) => {"
      "   const s = gl.createShader(kind); gl.shaderSource(s, src); gl.compileShader(s);"
@@ -85,12 +86,16 @@
      "    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);"
      "    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);"
      "    slots[slot] = t; },"
-     "  target(slot, tslot, w, h, depthOnly) {"
+     "  target(slot, tslot, w, h, mode) {"        ; 0 rgba8, 1 depth, 2 rgba16f
+     "    const depthOnly = mode === 1;"
      "    const t = gl.createTexture();"
      "    gl.bindTexture(gl.TEXTURE_2D, t);"
      "    if (depthOnly)"
      "      gl.texImage2D(gl.TEXTURE_2D, 0, gl.DEPTH_COMPONENT24, w, h, 0,"
      "                    gl.DEPTH_COMPONENT, gl.UNSIGNED_INT, null);"
+     "    else if (mode === 2)"
+     "      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA16F, w, h, 0,"
+     "                    gl.RGBA, gl.HALF_FLOAT, null);"
      "    else"
      "      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, w, h, 0,"
      "                    gl.RGBA, gl.UNSIGNED_BYTE, null);"
@@ -278,6 +283,9 @@
   (define (gl-target! slot tslot w h . depth-only?)
     (js-method $gl "target" slot tslot w h
                (if (and (pair? depth-only?) (car depth-only?)) 1 0)))
+  ;; a half-float target (RGBA16F): light in real HDR, tonemap later
+  (define (gl-target-hdr! slot tslot w h)
+    (js-method $gl "target" slot tslot w h 2))
   ;; a multisampled target: render into `slot`, then cmd-resolve!
   ;; blits it into `rslot`, whose texture `tslot` is what you sample
   (define (gl-target-msaa! slot rslot tslot w h samples)

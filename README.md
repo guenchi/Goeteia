@@ -80,7 +80,8 @@ A small UI stack over the JS bridge, in `lib/web/`:
   The context is WebGL 2 (with fallback): offscreen render targets
   (`examples/fx-post.html`: the scene through a ripple + vignette;
   `examples/fx-shadow.html`: PCF shadow mapping through a depth-only
-  target; `examples/fx-bloom.html`: a five-pass bloom chain),
+  target; `examples/fx-bloom.html`: a five-pass HDR bloom chain
+  through a half-float target, tonemapped down),
   instanced draws (`examples/fx-forest.html`: 8,000 trees, one call;
   `examples/fx-particles.html`: 4,000 sparks integrating in staging
   memory), cube maps (`examples/fx-skybox.html`: a procedural sky
