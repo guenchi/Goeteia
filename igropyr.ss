@@ -10,14 +10,12 @@
         (canvas (@ (id "hive") (width "1120") (height "760")
                    (style "display:block;width:100%;max-width:44em")))
         (p (@ (class "tagline"))
-           (span (@ (class "gname")) "Γοητεία")
-           " The black ars of commanding what lies beneath.")
-        (p (@ (class "sub")) "A self-hosting Scheme for the WebAssembly GC era.")
-        (pre (@ (class "cmd")) "$ npm install goeteia")
+           (span (@ (class "gname")) "Igropyr"))
+        (p (@ (class "sub")) "A Erlang-style actor Scheme Webserver")
+        (pre (@ (class "cmd")) "$ npm install igropyr")
         (div (@ (class "links"))
-          (a (@ (class "btn primary") (href "#editor")) "Try it now")
-          (a (@ (class "btn") (href "https://github.com/guenchi/Goeteia")) "GitHub")
-          (a (@ (class "btn") (id "get-igropyr") (style "cursor:pointer")) "get Igropyr")))))
+          (a (@ (class "btn") (href "https://github.com/guenchi/Igropyr")) "GitHub")
+          (a (@ (class "btn") (id "get-back") (style "cursor:pointer")) "get back")))))
 
 ;; ---- the graph: vertex positions, edges (a,b), and the fire's source ----
 

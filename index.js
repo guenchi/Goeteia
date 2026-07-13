@@ -108,25 +108,3 @@ import { boot, render } from './live.js';
           srcBox.select();
         }
       });
-
-      // "get Igropyr" loads a second demo (a Dijkstra fire front over a
-      // graph) into the editor and focuses it — the user presses Run to
-      // render it, so the hero stays until they choose to.
-      document.addEventListener('click', async e => {
-        if (!e.target.closest('#get-igropyr')) return;
-        e.preventDefault();
-        setStatus('loading Igropyr…');
-        try {
-          srcBox.value = await fetch('igropyr.ss').then(r => {
-            if (!r.ok) throw new Error('igropyr.ss not found');
-            return r.text();
-          });
-          syncHL();
-          document.getElementById('editor')
-            .scrollIntoView({ behavior: 'smooth', block: 'start' });
-          srcBox.focus({ preventScroll: true });
-          setStatus('loaded — press Run to render');
-        } catch (err) {
-          setStatus(`could not load Igropyr: ${err.message}`, true);
-        }
-      });
