@@ -15,7 +15,7 @@
         (div (@ (class "tabs") (id "tabs")))
         (div (@ (class "code"))
           (pre (@ (class "hl") (id "hl") (aria-hidden "true")))
-          (textarea (@ (id "src") (rows "22") (spellcheck "false")
+          (textarea (@ (id "src") (rows "18") (spellcheck "false")
                        (autocapitalize "off") (autocorrect "off")) "loading…"))
         (div (@ (class "bar"))
           (button (@ (id "run") (disabled #t)) "Run")
@@ -58,13 +58,14 @@
            " renderer, and a " '(code "(web js)") " FFI that reaches straight "
            "into the host — this page is built with it.")
         ,(card "3D and WebGL"
-           '(code "(web gl)") " drives raw WebGL through a command buffer — "
-           "one bridge call per frame — with shaders written as s-expressions "
-           "in " '(code "(web glsl)") "; " '(code "(web mat)") " and "
-           '(code "(web mesh)") " add 3D math and geometry, "
-           '(code "(web gltf)") " loads real assets, all self-contained. "
-           "The title above is exactly this: dot-matrix glyphs, a vertex "
-           "shader, one draw call.")
+           '(code "(web gl)") " drives WebGL 2 through a command buffer — "
+           "one bridge call per frame — with shaders as s-expressions in "
+           '(code "(web glsl)") ", rendered to either GLSL dialect from "
+           "the same forms. Shadow maps, PBR, HDR bloom, SSAO, "
+           "instancing, skeletal animation from " '(code "(web gltf)")
+           " assets, and transform-feedback particles whose physics "
+           '(em "is") " the vertex shader — the title above is twelve "
+           "thousand of them dodging your cursor.")
         ,(card "Scheme-to-Scheme, no codec"
            "When the backend is also Scheme (" '(code "Igropyr")
            "), requests and replies are s-expressions — "

@@ -29,8 +29,9 @@
       .lead b { color: var(--ink); }
       /* highlighted editor: a colored <pre> sits under a transparent
          <textarea>; identical box metrics keep the glyphs aligned */
-      .tabs { display: flex; gap: .4em; margin: 0 0 -1px .6em; }
+      .tabs { display: flex; gap: .4em; margin: 0 0 -1px; }
       .tabs .tab {
+        flex: 1; text-align: center;
         font-family: var(--mono); font-size: 12px; padding: .3em .8em;
         border: 1px solid var(--line); border-radius: 6px 6px 0 0;
         background: #eef1f9; color: var(--dim); cursor: pointer;

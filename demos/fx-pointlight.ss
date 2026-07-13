@@ -11,7 +11,7 @@
 ;; the demo mounts its own canvas where the hero usually lives
 (sx-mount (get-element-by-id "live")
   (sx (div (@ (class "hero"))
-        (canvas (@ (id "c") (width "720") (height "480")
+        (canvas (@ (id "c") (width "720") (height "400")
                    (style "display:block;width:100%;max-width:40em;border-radius:12px"))))))
 
 (fx-init! (get-element-by-id "c"))
@@ -133,7 +133,7 @@
     ((4) (look 0.0 0.0 1.0   0.0 -1.0 0.0))
     (else (look 0.0 0.0 -1.0 0.0 -1.0 0.0))))
 
-(define proj (m4-perspective 0.9 (/ 720.0 480.0) 0.5 200.0))
+(define proj (m4-perspective 0.9 (/ 720.0 400.0) 0.5 200.0))
 
 (define (draw-pillars! prog each)
   (bind-upload! prog pillar)
