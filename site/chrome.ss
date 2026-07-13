@@ -69,8 +69,7 @@
      '(".nav-links a.gh:hover" (border-color (var lapis)))
      '(@media "(max-width: 42em)"
         (.nav-inner (height auto) (min-height (em 3 40)) (flex-wrap wrap)
-                    (row-gap (em 0 10)) (padding (em 0 35) 0))
-        (.brand (margin-left (em 0 40)))
+                    (row-gap (em 0 10)) (padding (em 0 35) (em 1 20)))
         (.nav-links (gap (em 1)) (font-size (em 0 88))))))
   (define (footer-styles)
     '((footer (padding (em 2 50) 0 (em 3 50)) (border-top (px 1) solid (var line))
