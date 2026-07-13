@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <title>Goeteia — water</title>
+    <style>
+      body { font-family: system-ui; text-align: center; margin-top: 2em; background: #f2f4fa; color: #14203a; }
+      canvas { border-radius: 12px; box-shadow: 0 4px 20px rgba(16,20,42,.2); }
+      code { font-family: ui-monospace, Menlo, monospace; color: #1550c4; }
+    </style>
+  </head>
+  <body>
+    <h1>Water: an island and its reflection</h1>
+    <p>The island renders once from the camera mirrored about the
+    surface (fragments below it discard) into an offscreen target;
+    the water then samples that texture at its own position in the
+    reflection camera's clip space, ripples the lookup with moving
+    sines, and blends toward the reflection by a Fresnel term.
+    Needs WebGL&nbsp;2.  See <code>fx-water.ss</code>.</p>
+    <canvas id="c" width="800" height="600"></canvas>
+    <script type="module">
+      import { loadGoeteia } from '../rt/web.mjs';
+      loadGoeteia('fx-water.wasm');
+    </script>
+  </body>
+</html>
