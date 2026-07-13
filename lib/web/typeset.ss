@@ -26,11 +26,14 @@
 ;;   soft breaks fall at space runs; the spaces a soft wrap lands on
 ;;   vanish (as CSS collapses them), spaces after a hard break survive
 ;;   breaks may fall between CJK code points (ideographs, kana,
-;;   hangul, fullwidth forms) with no space needed
+;;   hangul, fullwidth forms) with no space needed -- except kinsoku:
+;;   closing punctuation never starts a line (it merges into the box
+;;   before it) and opening brackets never end one (they stick to the
+;;   box after them)
 ;;   a word wider than the line breaks inside, by code point
 ;;
 ;; The model is advance widths summed per code point -- no shaping,
-;; kerning, ligatures, bidi, or kinsoku.  Widths are estimates for
+;; kerning, ligatures, or bidi.  Widths are estimates for
 ;; DOM-rendered text (good for virtual-scroll heights) and exact for
 ;; text the caller renders glyph by glyph (canvas/GL).
 ;;
@@ -79,6 +82,24 @@
         (and (<= #xF900 cp) (<= cp #xFAFF))   ; compat ideographs
         (and (<= #xFF00 cp) (<= cp #xFFEF)))) ; fullwidth forms
 
+  ;; kinsoku: these may not START a line -- closing punctuation,
+  ;; small kana, the prolonged-sound mark -- so they merge into the
+  ;; box before them and wrap as one unit
+  (define $no-start-cps
+    '(#x3001 #x3002 #x30FB #x3005 #x309D #x309E #x30FD #x30FE #x30FC
+      #x300D #x300F #x3009 #x300B #x3011 #x3015 #x2019 #x201D
+      #x2025 #x2026
+      #xFF01 #xFF09 #xFF0C #xFF0E #xFF1A #xFF1B #xFF1F #xFF5D
+      #x3041 #x3043 #x3045 #x3047 #x3049 #x3063
+      #x3083 #x3085 #x3087 #x308E
+      #x30A1 #x30A3 #x30A5 #x30A7 #x30A9 #x30C3
+      #x30E3 #x30E5 #x30E7 #x30EE #x30F5 #x30F6))
+  ;; and these may not END a line -- opening brackets and quotes --
+  ;; so they stick to whatever box comes next
+  (define $no-end-cps
+    '(#x300C #x300E #x3008 #x300A #x3010 #x3014 #x2018 #x201C
+      #xFF08 #xFF5B))
+
   ;; tokens: an unbreakable box, droppable glue, or a hard break
   (define-record-type ($tok $make-tok $tok?)
     (fields (immutable kind $tok-kind)        ; box | glue | hard
@@ -107,7 +128,10 @@
        ((eq? ($tok-kind (car ts)) 'hard) (loop (cdr ts) 0 (max best cur)))
        (else (loop (cdr ts) (+ cur ($tok-w (car ts))) best)))))
 
-  ;; one pass over the bytes; measure runs once per distinct code point
+  ;; one pass over the bytes; measure runs once per distinct code
+  ;; point.  The pending run's kind is glue | word | cjk (word grows
+  ;; with word chars, cjk is closed); sticky means the pending box may
+  ;; not end a line yet -- the next box char merges into it.
   (define (prepare text measure)
     (let ((wtab (make-eq-hashtable))
           (len (string-length text)))
@@ -117,9 +141,13 @@
               (let ((w (measure (substring text i (+ i n)))))
                 (hashtable-set! wtab cp w)
                 w))))
-      (define (flush kind st i w toks)  ; end the pending box/glue run
-        (if kind (cons ($make-tok kind (substring text st i) w) toks) toks))
-      (let loop ((i 0) (kind #f) (st 0) (w 0) (toks '()))
+      (define (flush kind st i w toks)  ; end the pending run
+        (if kind
+            (cons ($make-tok (if (eq? kind 'glue) 'glue 'box)
+                             (substring text st i) w)
+                  toks)
+            toks))
+      (let loop ((i 0) (kind #f) (st 0) (w 0) (toks '()) (sticky #f))
         (if (= i len)
             (let ((ts (reverse (flush kind st i w toks))))
               ($make-prepared ts wtab ($natural-width ts)))
@@ -129,23 +157,43 @@
                ((= cp 10)               ; hard break
                 (loop (+ i n) #f (+ i n) 0
                       (cons ($make-tok 'hard "\n" 0)
-                            (flush kind st i w toks))))
+                            (flush kind st i w toks))
+                      #f))
                ((or (= cp 32) (= cp 9)) ; glue run
                 (let ((cw (cp-w cp i n)))
                   (if (eq? kind 'glue)
-                      (loop (+ i n) 'glue st (+ w cw) toks)
-                      (loop (+ i n) 'glue i cw (flush kind st i w toks)))))
+                      (loop (+ i n) 'glue st (+ w cw) toks #f)
+                      (loop (+ i n) 'glue i cw
+                            (flush kind st i w toks) #f))))
+               ((memq cp $no-start-cps) ; merge into the box before it
+                (let ((cw (cp-w cp i n)))
+                  (if (memq kind '(word cjk))
+                      (loop (+ i n) 'cjk st (+ w cw) toks sticky)
+                      ;; nothing to hold on to (line start, after glue)
+                      (loop (+ i n) 'cjk i cw
+                            (flush kind st i w toks) #f))))
+               ((memq cp $no-end-cps)   ; stick to the box after it
+                (let ((cw (cp-w cp i n)))
+                  (if (and sticky (memq kind '(word cjk)))
+                      (loop (+ i n) 'cjk st (+ w cw) toks #t)
+                      (loop (+ i n) 'cjk i cw
+                            (flush kind st i w toks) #t))))
                (($cjk? cp)              ; its own box, breakable both sides
-                (loop (+ i n) #f (+ i n) 0
-                      (cons ($make-tok 'box (substring text i (+ i n))
-                                       (cp-w cp i n))
-                            (flush kind st i w toks))))
+                (let ((cw (cp-w cp i n)))
+                  (if (and sticky (memq kind '(word cjk)))
+                      (loop (+ i n) 'cjk st (+ w cw) toks #f)
+                      (loop (+ i n) 'cjk i cw
+                            (flush kind st i w toks) #f))))
                (else                    ; word run
                 (let ((cw (cp-w cp i n)))
-                  (if (eq? kind 'box)
-                      (loop (+ i n) 'box st (+ w cw) toks)
-                      (loop (+ i n) 'box i cw
-                            (flush kind st i w toks)))))))))))
+                  (cond
+                   ((and sticky (memq kind '(word cjk)))
+                    (loop (+ i n) 'word st (+ w cw) toks #f))
+                   ((eq? kind 'word)
+                    (loop (+ i n) 'word st (+ w cw) toks #f))
+                   (else
+                    (loop (+ i n) 'word i cw
+                          (flush kind st i w toks) #f)))))))))))
 
   ;; pure arithmetic over the prepared tokens
   (define (layout p max-width line-height)
