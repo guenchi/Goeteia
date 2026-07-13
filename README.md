@@ -97,9 +97,10 @@ A small UI stack over the JS bridge, in `lib/web/`:
   shader renders as ESSL 1.00 or, via `glsl300-vs/fs->string`
   (`fx-program3!`), as `#version 300 es` — where `uniform-block`
   becomes a std140 block (`examples/fx-ubo.html`: one Env block,
-  three shaders) and transform feedback captures the varyings
-  (`examples/fx-gpu-particles.html`: 100,000 particles whose physics
-  is a vertex shader)
+  three shaders), `(out loc T name)` forms declare multiple pinned
+  fragment outputs (MRT), and transform feedback captures the
+  varyings (`examples/fx-gpu-particles.html`: 100,000 particles
+  whose physics is a vertex shader)
 - `(web typeset)` — DOM-free text layout, after
   [pretext](https://www.pretext.cool): `prepare` measures each
   distinct code point once, `layout` is pure arithmetic from the
@@ -119,7 +120,10 @@ A small UI stack over the JS bridge, in `lib/web/`:
   offsets, typed uniform dispatch, slot numbers, staging-memory
   allocation.  `fx-loop!` frames commands around a t/dt callback;
   `fx-fullscreen!` makes a fragment-shader effect ~15 lines
-  (`examples/fx-plasma.html`).  `fx-ticks!` (the timing pump) and
+  (`examples/fx-plasma.html`); `fx-target-mrt!` is a G-buffer —
+  n half-float attachments one shader fills in one pass
+  (`examples/fx-deferred.html`: deferred shading, 24 point lights
+  for one fullscreen quad).  `fx-ticks!` (the timing pump) and
   `fx-init-input!` (polled keys/pointer) have no GL dependency, so a
   Three.js scene uses them directly; `pointer-lock!` adds captured
   relative mouse for first-person cameras

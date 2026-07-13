@@ -336,4 +336,33 @@
                             "tfEnd" "gDisable:RD" "bbb:TFB:0:null")))
          (or (null? es)
              (and (check i (car es))
+                  (loop (+ i 1) (cdr es))))))
+     ;; --- multi render targets: a G-buffer in one pass ---
+     (let ((base (js->number (js-get log "length"))))
+       (gl-target-mrt! 24 25 3 128 128)  ; fb 24, textures 25 26 27
+       (cmd-begin!)
+       (cmd-bind-target! 24)
+       (cmd-bind-canvas!)
+       (cmd-flush!)
+       (let loop ((i base)
+                  (es (list "bindFB:F12"
+                            "bindTexture:T9" "texImage:null:R16F"
+                            "texParam:MIN:NEA" "texParam:MAG:NEA"
+                            "texParam:WS:CL" "texParam:WT:CL"
+                            "fbTex:CA00:T9"
+                            "bindTexture:T10" "texImage:null:R16F"
+                            "texParam:MIN:NEA" "texParam:MAG:NEA"
+                            "texParam:WS:CL" "texParam:WT:CL"
+                            "fbTex:CA01:T10"
+                            "bindTexture:T11" "texImage:null:R16F"
+                            "texParam:MIN:NEA" "texParam:MAG:NEA"
+                            "texParam:WS:CL" "texParam:WT:CL"
+                            "fbTex:CA02:T11"
+                            "bindRB:R6" "rbStore:D16:128:128"
+                            "fbRB:DA:R6"
+                            "drawBuffers:CA00,CA01,CA02"
+                            "bindFB:null"
+                            "bindFB:F12" "bindFB:null")))
+         (or (null? es)
+             (and (check i (car es))
                   (loop (+ i 1) (cdr es)))))))
