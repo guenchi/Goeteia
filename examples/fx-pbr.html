@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <title>Goeteia — PBR</title>
+    <style>
+      body { font-family: system-ui; text-align: center; margin-top: 2em; background: #f2f4fa; color: #14203a; }
+      canvas { border-radius: 12px; box-shadow: 0 4px 20px rgba(16,20,42,.2); }
+      code { font-family: ui-monospace, Menlo, monospace; color: #1550c4; }
+    </style>
+  </head>
+  <body>
+    <h1>PBR: the calibration grid</h1>
+    <p>Cook-Torrance GGX in <code>mesh-pbr-fs</code>: metallic rises
+    front to back, roughness left to right, one sun plus the
+    procedural sky as light probe — the mipmapped cube map doubles
+    as irradiance (high sampling bias) and prefiltered specular
+    (bias scaled by roughness).  Needs WebGL&nbsp;2.
+    See <code>fx-pbr.ss</code>.</p>
+    <canvas id="c" width="800" height="600"></canvas>
+    <script type="module">
+      import { loadGoeteia } from '../rt/web.mjs';
+      loadGoeteia('fx-pbr.wasm');
+    </script>
+  </body>
+</html>

@@ -33,7 +33,8 @@
           gltf-animate-blend!
           gltf-joint-matrices gltf-skin-vs
           gprim-vbase gprim-vbytes gprim-ibase gprim-ibytes
-          gprim-icount gprim-color gprim-world gprim-stride gprim-tex)
+          gprim-icount gprim-color gprim-metallic gprim-roughness
+          gprim-world gprim-stride gprim-tex)
   (import (rnrs) (web js) (web gl) (web fx) (web mat) (web json))
 
   (define ($gltf-fl v) (if (flonum? v) v (exact->inexact v)))
@@ -55,6 +56,7 @@
             (immutable ibytes gprim-ibytes)
             (immutable icount gprim-icount)
             (immutable color gprim-color)     ; r g b a flonum vector
+            (immutable mr $gprim-mr)          ; (metallic . roughness)
             (immutable world gprim-world)     ; m4
             (immutable stride gprim-stride)   ; 24, or 32 with uvs
             (immutable tex-img $gprim-tex-img); image index | #f
@@ -114,6 +116,19 @@
                         ($gltf-fl (vector-ref f 2))
                         ($gltf-fl (vector-ref f 3)))
                 fallback)))))
+
+  ;; the metallic-roughness factors, spec defaults of 1.0 when absent
+  (define ($material-mr json mi)
+    (if (not mi)
+        '(1.0 . 1.0)
+        (let* ((mat (vector-ref (json-ref json "materials") mi))
+               (m (json-ref mat "pbrMetallicRoughness" "metallicFactor"))
+               (r (json-ref mat "pbrMetallicRoughness"
+                            "roughnessFactor")))
+          (cons (if m ($gltf-fl m) 1.0)
+                (if r ($gltf-fl r) 1.0)))))
+  (define (gprim-metallic p) (car ($gprim-mr p)))
+  (define (gprim-roughness p) (cdr ($gprim-mr p)))
 
   ;; material -> baseColorTexture -> texture -> source image index
   (define ($prim-tex-image json prim)
@@ -571,6 +586,7 @@
             (pack (+ k 2) (+ at 4))))
         ($make-gprim vbase vbytes ibase ibytes icount
                      ($material-color json (json-ref prim "material"))
+                     ($material-mr json (json-ref prim "material"))
                      world stride ($prim-tex-image json prim)
                      (and jn skin)
                      #f #f #f))))
