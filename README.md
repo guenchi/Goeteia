@@ -163,7 +163,9 @@ A small UI stack over the JS bridge, in `lib/web/`:
   `make-blur`/`blur-run!` standalone, `make-grade`/`grade-run!`
   (exposure + `'aces`/`'reinhard` tonemap + gamma: point an HDR
   target at it), `make-fxaa`/`fxaa-run!` (one-pass anti-aliasing,
-  last in the chain), and `post-quad!`/`post-pass!` as the floor for
+  last in the chain), `make-dof`/`dof-run!` (depth of field: blur
+  by distance from the focal plane, over an fx-ssao-style linear
+  depth target — `examples/fx-dof.html`), and `post-quad!`/`post-pass!` as the floor for
   custom chains (`examples/fx-bloom.html` is three calls now;
   fx-deferred ends HDR → ACES → FXAA)
 - `(web mat)` — 3D math for raw-GL scenes: vec3 and column-major mat4
