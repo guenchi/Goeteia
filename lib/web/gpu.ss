@@ -59,7 +59,7 @@
           gpu-clear! gpu-use-pipeline! gpu-bind-vbuf! gpu-bind-vbuf2!
           gpu-bind-ibuf! gpu-set-group! gpu-buffer-data!
           gpu-draw! gpu-draw-indexed! gpu-draw-instanced!
-          gpu-dispatch!)
+          gpu-dispatch! gpu-bundle! gpu-execute!)
   (import (rnrs) (web js))
 
   (define $gpu #f)
@@ -160,6 +160,38 @@
      "                   resource: slots[tslot].createView() });"
      "    slots[slot] = st.dev.createBindGroup({"
      "      layout: slots[pslot].getBindGroupLayout(0), entries }); },"
+     "  bundle(slot, base, count) {"    ; draws only: no clear, no
+     "    const dv = new DataView(memory.buffer);"  ; writes, no compute
+     "    let p = base;"
+     "    const end = base + count * 4;"
+     "    const u = () => { const v = dv.getUint32(p, true); p += 4;"
+     "                      return v; };"
+     "    const be = st.dev.createRenderBundleEncoder({"
+     "      colorFormats: [st.fmt],"
+     "      depthStencilFormat: 'depth24plus' });"
+     "    let pipeline = null, vbuf = null, vbuf2 = null;"
+     "    let ibuf = null, group = null;"
+     "    const ready = () => {"
+     "      be.setPipeline(pipeline);"
+     "      if (group) be.setBindGroup(0, group);"
+     "      be.setVertexBuffer(0, vbuf);"
+     "      if (vbuf2) be.setVertexBuffer(1, vbuf2); };"
+     "    while (p < end) {"
+     "      switch (u()) {"
+     "        case 2: pipeline = slots[u()]; break;"
+     "        case 3: vbuf = slots[u()]; break;"
+     "        case 6: group = slots[u()]; break;"
+     "        case 7: ibuf = slots[u()]; break;"
+     "        case 10: vbuf2 = slots[u()]; break;"
+     "        case 5: ready(); be.draw(u()); break;"
+     "        case 8: ready(); be.setIndexBuffer(ibuf, 'uint16');"
+     "                be.drawIndexed(u()); break;"
+     "        case 11: ready(); { const v = u(); be.draw(v, u()); }"
+     "                 break;"
+     "        default: throw new Error('bundle: draw commands only');"
+     "      }"
+     "    }"
+     "    slots[slot] = be.finish(); },"
      "  compute(slot, code) {"
      "    slots[slot] = st.dev.createComputePipeline({"
      "      layout: 'auto',"
@@ -218,6 +250,8 @@
      "          cp.dispatchWorkgroups(n); cp.end(); break; }"
      "        case 10: vbuf2 = slots[u()]; break;"
      "        case 11: ready(); { const v = u(); pass.draw(v, u()); }"
+     "                 break;"
+     "        case 12: open(); pass.executeBundles([slots[u()]]);"
      "                 break;"
      "      }"
      "    }"
@@ -301,6 +335,15 @@
   (define (gpu-bind-vbuf2! slot) ($gpu-u! 10) ($gpu-u! slot))
   (define (gpu-draw-instanced! verts insts)
     ($gpu-u! 11) ($gpu-u! verts) ($gpu-u! insts))
+
+  ;; freeze the commands encoded since gpu-begin! into a render
+  ;; bundle -- draws and their state only.  Recorded once, a whole
+  ;; static scene replays from inside the browser with no decode at
+  ;; all: the frame becomes clear + uniforms + gpu-execute!
+  (define (gpu-bundle! slot)
+    (js-method $gpu "bundle" slot 0 (quotient $gpu-p 4))
+    (gpu-begin!))
+  (define (gpu-execute! slot) ($gpu-u! 12) ($gpu-u! slot))
 
   (define (gpu-flush!)
     (js-method $gpu "replay" (quotient $gpu-p 4))))

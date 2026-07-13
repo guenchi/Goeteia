@@ -58,6 +58,16 @@ globalThis.__gpulog = [];
       push('computePipeline', d.compute.entryPoint);
       return { id: 'CP' + (this._c = (this._c || 0) + 1),
                getBindGroupLayout(i){ return { id: 'CL' + i } } } },
+    createRenderBundleEncoder(d){
+      push('bundleEnc', d.colorFormats.join(','), d.depthStencilFormat);
+      return { setPipeline(p){ push('b.setPipeline', p.id) },
+               setVertexBuffer(i, b){ push('b.setVbuf', i, b.id) },
+               setBindGroup(i, g){ push('b.setGroup', i, g.id) },
+               setIndexBuffer(b, f){ push('b.setIbuf', b.id, f) },
+               draw(n, inst){ push('b.draw', inst === undefined ? n : n + ':' + inst) },
+               drawIndexed(n){ push('b.drawIndexed', n) },
+               finish(){ push('b.finish');
+                         return { id: 'BN' + (this._n = (this._n || 0) + 1) } } } },
     createCommandEncoder(){
       return {
         beginRenderPass(d){
@@ -67,6 +77,7 @@ globalThis.__gpulog = [];
                c.clearValue.b.toFixed(2), c.clearValue.a.toFixed(2),
                d.depthStencilAttachment ? d.depthStencilAttachment.depthLoadOp : 'nodepth');
           return { setPipeline(p){ push('setPipeline', p.id) },
+                   executeBundles(bs){ push('exec', bs[0].id) },
                    setVertexBuffer(i, b){ push('setVbuf', i, b.id) },
                    setBindGroup(i, g){ push('setGroup', i, g.id) },
                    setIndexBuffer(b, f){ push('setIbuf', b.id, f) },
@@ -233,5 +244,30 @@ globalThis.__gpulog = [];
        (check 52 "bindgroup:L0:0=B3|1=S1|2=T2v")
        (check 53 "bindgroup:L0:0=S1|1=T2v")))
 
+;; render bundles: draws freeze once, frames just execute them
+(gpu-begin!)
+(gpu-use-pipeline! 0)
+(gpu-set-group! 7)
+(gpu-bind-vbuf! 1)
+(gpu-bind-ibuf! 5)
+(gpu-draw-indexed! 36)
+(gpu-bundle! 16)
+(gpu-begin!)
+(gpu-clear! 0.0 0.0 0.0 1.0)
+(gpu-execute! 16)
+(gpu-flush!)
+(define bundle-ok
+  (and (check 54 "bundleEnc:bgra8unorm:depth24plus")
+       (check 55 "b.setPipeline:PL1")
+       (check 56 "b.setGroup:0:G1")
+       (check 57 "b.setVbuf:0:B1")
+       (check 58 "b.setIbuf:B2:uint16")
+       (check 59 "b.drawIndexed:36")
+       (check 60 "b.finish")
+       (check 61 "beginPass:clear:0.00:0.00:0.00:1.00:clear")
+       (check 62 "exec:BN1")
+       (check 63 "endPass")
+       (check 64 "submit:1")))
+
 (and attach-ok resource-ok frame-ok clear-ok indexed-ok compute-ok
-     tex-ok)
+     tex-ok bundle-ok)
