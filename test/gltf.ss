@@ -295,6 +295,18 @@
 (define pose-mid-ok
   (and (< (abs (- (m4at jm-half 1 0) 0.7071)) 0.001)
        (near? (m4at jm-wrap 1 0) 1.0)))
+;; crossfade: half rest pose, half the 90-degree pose is 45 degrees
+(gltf-animate-blend! g3 0 0.0 0 0.9999 0.5)
+(define jm-blend (gltf-joint-matrices g3 0))
+(gltf-animate-blend! g3 0 0.0 0 0.9999 0.0)  ; k=0: all ai
+(define jm-b0 (gltf-joint-matrices g3 0))
+(gltf-animate-blend! g3 0 0.0 0 0.9999 1.0)  ; k=1: all aj
+(define jm-b1 (gltf-joint-matrices g3 0))
+(define blend-ok
+  (and (< (abs (- (m4at jm-blend 1 0) 0.7071)) 0.002)
+       (< (abs (- (m4at jm-blend 1 1) 0.7071)) 0.002)
+       (near? (m4at jm-b0 1 0) 1.0)
+       (< (abs (- (m4at jm-b1 1 0) 0.0)) 0.001)))
 ;; draw through the skin shader: one joint-array upload per prim
 (define sprog (fx-program! gltf-skin-vs mesh-tex-fs))
 (cmd-begin!)
@@ -332,4 +344,5 @@
     #f))
 
 (and parse-ok tex-parse-ok skin-parse-ok pose0-ok pose1-ok pose-mid-ok
+     blend-ok
      skin-draw-ok draw-ok reuse-ok tex-load-ok tex-draw-ok mismatch-ok)
