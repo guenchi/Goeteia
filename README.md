@@ -112,7 +112,8 @@ A small UI stack over the JS bridge, in `lib/web/`:
   end one), code-point splits for over-wide words; `(web typeset
   canvas)` is the
   measureText-backed measurer for browsers, and the engine itself
-  verifies headlessly
+  verifies headlessly (`examples/fx-labels.html`: labels typeset
+  here, rasterized once, and drawn in 3D as camera-facing quads)
 - `(web fx)` — the effects harness over `(web gl)`: a shader authored
   as `(web glsl)` forms already declares its interface, so
   `fx-program!` reads the attribute/uniform declarations back out of

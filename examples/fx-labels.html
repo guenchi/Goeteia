@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <title>Goeteia — 3D text labels</title>
+    <style>
+      body { font-family: system-ui; text-align: center; margin-top: 2em; background: #f2f4fa; color: #14203a; }
+      canvas { border-radius: 12px; box-shadow: 0 4px 20px rgba(16,20,42,.2); }
+      code { font-family: ui-monospace, Menlo, monospace; color: #1550c4; }
+    </style>
+  </head>
+  <body>
+    <h1>3D text labels</h1>
+    <p><code>(web typeset)</code> lays each label out (canvas-measured
+    widths, CJK-aware wrapping), a hidden 2d canvas rasterizes it once,
+    and the GL side draws camera-facing quads — corners are
+    <code>u_center</code> ± the camera's right and up vectors, and the
+    fragment shader uses the texture as an alpha mask so there is no
+    premultiplication fringe.  Needs WebGL&nbsp;2.
+    See <code>fx-labels.ss</code>.</p>
+    <canvas id="c" width="800" height="600"></canvas>
+    <script type="module">
+      import { loadGoeteia } from '../rt/web.mjs';
+      loadGoeteia('fx-labels.wasm');
+    </script>
+  </body>
+</html>
