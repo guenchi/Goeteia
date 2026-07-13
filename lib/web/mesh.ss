@@ -313,16 +313,20 @@
       ($make-mesh vs ix uvs)))
 
   ;; ---- into the staging memory: f32 verts, u16 index pairs ----
+  ;; each u16 lands as two byte stores: packing a pair into one i32
+  ;; would push indices past 16383 out of fixnum (i31) range
+  (define ($mesh-u16! at v)
+    (%mem-u8-set! at (remainder v 256))
+    (%mem-u8-set! (+ at 1) (quotient v 256)))
   (define ($mesh-write-ix! m ibase)
     (let* ((ix (mesh-indices m))
            (n (vector-length ix)))
       (let loop ((i 0) (at ibase))
         (when (< i n)
-          (%mem-i32-set! at
-                         (+ (vector-ref ix i)
-                            (* 65536 (if (< (+ i 1) n)
-                                         (vector-ref ix (+ i 1))
-                                         0))))
+          ($mesh-u16! at (vector-ref ix i))
+          ($mesh-u16! (+ at 2) (if (< (+ i 1) n)
+                                   (vector-ref ix (+ i 1))
+                                   0))
           (loop (+ i 2) (+ at 4))))))
 
   (define (mesh-write! m vbase ibase)
