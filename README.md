@@ -136,7 +136,9 @@ A small UI stack over the JS bridge, in `lib/web/`:
   relative mouse for first-person cameras
   (`examples/fx-fps.html`: click to capture, WASD to walk, SPACE to
   jump — the packaged character at a fixed 120Hz over the
-  broadphase grid)
+  broadphase grid; `examples/arena.html` makes a game of it:
+  waves of drifting orbs, `ray-sphere` shots, a sprite HUD and
+  audio chirps, everything in one page)
 - `(web sprite)` — 2D games over `(web fx)` and `(web typeset)`: a
   glyph atlas rasterizes each distinct code point once and its
   measurer doubles as typeset's `measure`, so layout and rendering
