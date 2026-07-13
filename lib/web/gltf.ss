@@ -15,9 +15,11 @@
 ;; u8/u16/u32 indices (u32 values must still fit u16 -- generators
 ;; and most assets do), node TRS or matrix transforms accumulated
 ;; through the scene graph, and the material's baseColorFactor.
-;; Primitives come out as the 24-byte pos+normal layout that
-;; mesh-lit-vs expects, uploaded on first draw.  Textures, skins and
-;; animations are not loaded (yet); a missing NORMAL becomes +y.
+;; Untextured primitives come out in mesh-lit-vs's 24-byte layout;
+;; primitives with TEXCOORD_0 come out at 32 bytes for mesh-tex-vs,
+;; and (gltf-load-textures! g k) decodes the embedded images and
+;; hands each one its texture.  Skins and animations are not loaded
+;; (yet); a missing NORMAL becomes +y.
 ;;
 ;; (gltf-parse base len) works on any GLB bytes already in staging
 ;; memory, so parsing verifies headlessly; gltf-fetch! is the
@@ -25,15 +27,18 @@
 ;;
 ;; Copyright (c) 2026 guenchi. MIT license; see LICENSE.
 (library (web gltf)
-  (export gltf? gltf-prims gltf-parse gltf-fetch! gltf-draw!
+  (export gltf? gltf-prims gltf-images gltf-parse gltf-fetch!
+          gltf-load-textures! gltf-draw!
           gprim-vbase gprim-vbytes gprim-ibase gprim-ibytes
-          gprim-icount gprim-color gprim-world)
+          gprim-icount gprim-color gprim-world gprim-stride gprim-tex)
   (import (rnrs) (web js) (web gl) (web fx) (web mat) (web json))
 
   (define ($gltf-fl v) (if (flonum? v) v (exact->inexact v)))
 
   (define-record-type (gltf $make-gltf gltf?)
-    (fields (immutable prims gltf-prims)))
+    (fields (immutable prims gltf-prims)
+            ;; per image: (abs-offset byte-length mime), in staging
+            (immutable images gltf-images)))
 
   ;; primitives are open records: custom renderers can reach the
   ;; staging offsets and draw with their own shaders
@@ -45,6 +50,9 @@
             (immutable icount gprim-icount)
             (immutable color gprim-color)     ; r g b a flonum vector
             (immutable world gprim-world)     ; m4
+            (immutable stride gprim-stride)   ; 24, or 32 with uvs
+            (immutable tex-img $gprim-tex-img); image index | #f
+            (mutable tex gprim-tex $gprim-tex!)  ; texture slot | #f
             (mutable vbuf $gprim-vbuf $gprim-vbuf!)
             (mutable ibuf $gprim-ibuf $gprim-ibuf!)))
 
@@ -92,6 +100,38 @@
                         ($gltf-fl (vector-ref f 3)))
                 fallback)))))
 
+  ;; material -> baseColorTexture -> texture -> source image index
+  (define ($prim-tex-image json prim)
+    (let ((mi (json-ref prim "material")))
+      (and mi
+           (let* ((mat (vector-ref (json-ref json "materials") mi))
+                  (bct (json-ref mat "pbrMetallicRoughness"
+                                 "baseColorTexture")))
+             (and bct
+                  (let ((ti (json-ref bct "index")))
+                    (json-ref (vector-ref (json-ref json "textures") ti)
+                              "source")))))))
+
+  ;; the embedded images: absolute staging offsets for later decode
+  (define ($gltf-image-table json bin)
+    (let ((imgs (json-ref json "images")))
+      (if (not imgs)
+          (vector)
+          (let* ((n (vector-length imgs))
+                 (out (make-vector n #f)))
+            (let loop ((k 0))
+              (when (< k n)
+                (let* ((img (vector-ref imgs k))
+                       (bv (vector-ref (json-ref json "bufferViews")
+                                       (json-ref img "bufferView"))))
+                  (vector-set! out k
+                               (list (+ bin ($or0 (json-ref bv "byteOffset")))
+                                     (json-ref bv "byteLength")
+                                     (let ((m (json-ref img "mimeType")))
+                                       (if m m "image/png")))))
+                (loop (+ k 1))))
+            out))))
+
   ;; node TRS (or matrix, already column-major in gltf) -> m4
   (define ($node-matrix node)
     (let ((m (json-ref node "matrix")))
@@ -119,22 +159,25 @@
                         (m4-identity))))
             (m4-mul t (m4-mul r s))))))
 
-  ;; one primitive: interleave pos+normal (24 bytes/vertex) and pack
-  ;; u16 index pairs into fresh staging memory
+  ;; one primitive: interleave pos+normal (+uv when the asset has
+  ;; TEXCOORD_0) and pack u16 index pairs into fresh staging memory
   (define ($build-prim json bin prim world)
     (let* ((attrs (json-ref prim "attributes"))
            (pos ($acc-info json bin (json-ref attrs "POSITION") 12))
            (nrm (let ((i (json-ref attrs "NORMAL")))
                   (and i ($acc-info json bin i 12))))
+           (uv (let ((i (json-ref attrs "TEXCOORD_0")))
+                 (and i ($acc-info json bin i 8))))
            (count (caddr pos))
-           (vbytes (* 24 count))
+           (stride (if uv 32 24))
+           (vbytes (* stride count))
            (vbase (fx-alloc! vbytes)))
       (unless (= (cadddr pos) 5126)
         (error 'gltf "positions must be float32" (cadddr pos)))
       (let copy ((v 0))
         (when (< v count)
           (let ((src (+ (car pos) (* v (cadr pos))))
-                (dst (+ vbase (* v 24))))
+                (dst (+ vbase (* v stride))))
             (%mem-f32-set! dst (%mem-f32-ref src))
             (%mem-f32-set! (+ dst 4) (%mem-f32-ref (+ src 4)))
             (%mem-f32-set! (+ dst 8) (%mem-f32-ref (+ src 8)))
@@ -146,7 +189,11 @@
                 (begin
                   (%mem-f32-set! (+ dst 12) 0.0)
                   (%mem-f32-set! (+ dst 16) 1.0)
-                  (%mem-f32-set! (+ dst 20) 0.0))))
+                  (%mem-f32-set! (+ dst 20) 0.0)))
+            (when uv
+              (let ((us (+ (car uv) (* v (cadr uv)))))
+                (%mem-f32-set! (+ dst 24) (%mem-f32-ref us))
+                (%mem-f32-set! (+ dst 28) (%mem-f32-ref (+ us 4))))))
           (copy (+ v 1))))
       ;; indices: u8/u16/u32 accessor, or none (sequential vertices)
       (let* ((ii (json-ref prim "indices"))
@@ -178,7 +225,8 @@
             (pack (+ k 2) (+ at 4))))
         ($make-gprim vbase vbytes ibase ibytes icount
                      ($material-color json (json-ref prim "material"))
-                     world #f #f))))
+                     world stride ($prim-tex-image json prim)
+                     #f #f #f))))
 
   ;; ---- the GLB container, then the scene walk ----
   (define (gltf-parse base len)
@@ -225,7 +273,8 @@
                 (when (< k (vector-length roots))
                   (walk-node (vector-ref roots k) (m4-identity))
                   (root (+ k 1)))))
-            ($make-gltf (reverse prims))))))
+            ($make-gltf (reverse prims)
+                        ($gltf-image-table json bin))))))
 
   ;; browser loader: fetch, one bulk copy into staging, parse, k
   (define (gltf-fetch! url k)
@@ -243,6 +292,42 @@
          (k (gltf-parse base len))
          (js-undefined)))))
 
+  ;; decode the embedded images (browser: Blob -> createImageBitmap)
+  ;; and give each textured primitive its texture slot; k runs on the
+  ;; gltf once every image is up
+  (define (gltf-load-textures! g k)
+    (js-eval "globalThis.__goeteia_img = (base, len, mime) => createImageBitmap(new Blob([new Uint8Array(globalThis.__goeteia_mem.buffer, base, len)], {type: mime}))")
+    (let* ((imgs (gltf-images g))
+           (n (vector-length imgs))
+           (slots (make-vector (if (= n 0) 1 n) #f))
+           (pending n)
+           (resolve!
+            (lambda ()
+              (for-each (lambda (p)
+                          (let ((ii ($gprim-tex-img p)))
+                            (when ii
+                              ($gprim-tex! p (vector-ref slots ii)))))
+                        (gltf-prims g))
+              (k g))))
+      (if (= n 0)
+          (k g)
+          (let load ((i 0))
+            (when (< i n)
+              (let ((info (vector-ref imgs i)))
+                (js-method
+                 (js-call (js-get (js-global) "__goeteia_img")
+                          (js-undefined)
+                          (car info) (cadr info) (caddr info))
+                 "then"
+                 (lambda (bmp)
+                   (let ((t (fx-texture!)))
+                     (gl-texture-upload! t bmp)
+                     (vector-set! slots i t))
+                   (set! pending (- pending 1))
+                   (when (= pending 0) (resolve!))
+                   (js-undefined))))
+              (load (+ i 1)))))))
+
   ;; draw every primitive; geometry uploads on its first frame.
   ;; prog is an fx-program over mesh-lit-vs/-fs (or any shader with
   ;; the same a_pos/a_normal layout and u_mvp/u_model/u_color).
@@ -251,12 +336,20 @@
   (define (gltf-draw! g prog vp . root)
     (for-each
      (lambda (p)
+       (unless (= (fx-program-stride prog) (gprim-stride p))
+         (error 'gltf-draw!
+                "program stride does not match the primitive (textured assets need a mesh-tex program)"
+                (gprim-stride p)))
        (let ((fresh (not ($gprim-vbuf p))))
          (when fresh
            ($gprim-vbuf! p (fx-buffer!))
            ($gprim-ibuf! p (fx-buffer!)))
          (fx-use! prog ($gprim-vbuf p))
          (cmd-bind-index! ($gprim-ibuf p))
+         (let ((tx (gprim-tex p)))
+           (when tx
+             (cmd-bind-texture! 0 tx)
+             (fx-uniform! prog 'u_tex 0)))
          (when fresh
            (cmd-buffer-data! (gprim-vbase p) (gprim-vbytes p))
            (cmd-index-data! (gprim-ibase p) (gprim-ibytes p)))
