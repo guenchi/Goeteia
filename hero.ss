@@ -13,7 +13,7 @@
         (p (@ (class "tagline"))
            (span (@ (class "gname")) "Γοητεία")
            " The black ars of " ,(signal-ref spell) ".")
-        (p (@ (class "sub")) "A self-hosting Scheme for the WebAssembly GC era.")
+        (p (@ (class "sub")) "A pure-Scheme web toolkit, compiled to WebAssembly.")
         (pre (@ (class "cmd")) "$ npm install goeteia")
         (div (@ (class "links"))
           (a (@ (class "btn primary") (href "#editor")) "Try it now")
