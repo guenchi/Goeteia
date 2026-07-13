@@ -20,7 +20,7 @@
           v3-add v3-sub v3-scale v3-dot v3-cross v3-normalize
           m4-identity m4-mul m4-transform
           m4-translate m4-scale m4-rotate-x m4-rotate-y m4-rotate-z
-          m4-from-quat m4-perspective m4-look-at)
+          m4-from-quat m4-perspective m4-ortho m4-look-at)
   (import (rnrs))
 
   (define ($mat-fl v) (if (flonum? v) v (exact->inexact v)))
@@ -160,6 +160,17 @@
               0.0 f 0.0 0.0
               0.0 0.0 (fl* (fl+ far near) nf) -1.0
               0.0 0.0 (fl* 2.0 (fl* (fl* far near) nf)) 0.0)))
+
+  (define (m4-ortho left right bottom top near far)
+    (let* ((l ($mat-fl left)) (r ($mat-fl right))
+           (b ($mat-fl bottom)) (t ($mat-fl top))
+           (n ($mat-fl near)) (f ($mat-fl far)))
+      (vector (fl/ 2.0 (fl- r l)) 0.0 0.0 0.0
+              0.0 (fl/ 2.0 (fl- t b)) 0.0 0.0
+              0.0 0.0 (fl/ -2.0 (fl- f n)) 0.0
+              (fl/ (fl- 0.0 (fl+ r l)) (fl- r l))
+              (fl/ (fl- 0.0 (fl+ t b)) (fl- t b))
+              (fl/ (fl- 0.0 (fl+ f n)) (fl- f n)) 1.0)))
 
   (define (m4-look-at eye center up)
     (let* ((z (v3-normalize (v3-sub eye center)))
