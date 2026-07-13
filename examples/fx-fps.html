@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <title>Goeteia — first-person walking, raw WebGL</title>
+    <style>
+      body { font-family: system-ui; text-align: center; margin-top: 2em; background: #f2f4fa; color: #14203a; }
+      canvas { border-radius: 12px; box-shadow: 0 4px 20px rgba(16,20,42,.2); cursor: crosshair; }
+      code { font-family: ui-monospace, Menlo, monospace; color: #1550c4; }
+    </style>
+  </head>
+  <body>
+    <h1>First-person walking</h1>
+    <p><strong>Click the canvas to capture the mouse</strong> (Esc
+    releases), then WASD or arrows to move.  The look camera is
+    <code>pointer-motion!</code> deltas into <code>m4-look-at</code>;
+    the walls push back through <code>sphere-aabb-push</code>, so you
+    slide along them.  See <code>fx-fps.ss</code>.</p>
+    <canvas id="c" width="800" height="600"></canvas>
+    <script type="module">
+      import { loadGoeteia } from '../rt/web.mjs';
+      loadGoeteia('fx-fps.wasm');
+    </script>
+  </body>
+</html>

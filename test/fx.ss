@@ -158,5 +158,32 @@
   (begin (fire! "el2-pointermove" (js-eval "({offsetX:7, offsetY:9})"))
          (and (fl=? (pointer-x) 7.0) (fl=? (pointer-y) 9.0))))
 
+;; ---- pointer lock: capture on click, relative motion, release ----
+(js-eval "globalThis.document = { pointerLockElement: null, addEventListener(k,f){ globalThis.__ls['doc-'+k] = f } }; globalThis.__mockcanvas.requestPointerLock = () => { globalThis.__plreq = (globalThis.__plreq || 0) + 1 }")
+(pointer-lock!)
+(define lock-ok
+  (and (not (pointer-locked?))
+       ;; a click asks the browser for capture
+       (begin (fire! "click" (js-eval "({})"))
+              (= (js->number (js-get (js-global) "__plreq")) 1))
+       ;; the grant arrives as pointerlockchange
+       (begin (js-eval "globalThis.document.pointerLockElement = globalThis.__mockcanvas")
+              (fire! "doc-pointerlockchange" (js-eval "({})"))
+              (pointer-locked?))
+       ;; motion accumulates; consuming it resets
+       (begin (fire! "doc-mousemove" (js-eval "({movementX:4, movementY:-2})"))
+              (fire! "doc-mousemove" (js-eval "({movementX:4, movementY:-2})"))
+              (let ((d (pointer-motion!)))
+                (and (fl=? (car d) 8.0) (fl=? (cdr d) -4.0))))
+       (let ((d (pointer-motion!)))
+         (and (fl=? (car d) 0.0) (fl=? (cdr d) 0.0)))
+       ;; Esc releases: state flips, motion is ignored again
+       (begin (js-eval "globalThis.document.pointerLockElement = null")
+              (fire! "doc-pointerlockchange" (js-eval "({})"))
+              (fire! "doc-mousemove" (js-eval "({movementX:9, movementY:9})"))
+              (and (not (pointer-locked?))
+                   (let ((d (pointer-motion!)))
+                     (and (fl=? (car d) 0.0) (fl=? (cdr d) 0.0)))))))
+
 (and alloc-ok prog-ok use-ok ticks-ok loop-ok quad-ok mat-ok
-     input-ok input2-ok)
+     input-ok input2-ok lock-ok)
