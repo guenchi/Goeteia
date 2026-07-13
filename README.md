@@ -147,7 +147,10 @@ A small UI stack over the JS bridge, in `lib/web/`:
   allocation.  Attribute setup rides vertex array objects without
   being asked: the first `fx-use!` of a (program, buffer) pair
   records every pointer into a VAO, each later one is a single-word
-  rebind.  `fx-loop!` frames commands around a t/dt callback
+  rebind.  Scalar and vector uniforms remember their last value per
+  program and skip the re-send — a steady `u_light` costs one send,
+  ever (matrices change every frame and stay uncached; don't mix
+  raw `cmd-uniform*!` writes with `fx-uniform!` on the same name).  `fx-loop!` frames commands around a t/dt callback
   (`fx-loop-fixed!` splits it: physics at its own fixed cadence,
   render once per frame with a blend alpha);
   `fx-fullscreen!` makes a fragment-shader effect ~15 lines
@@ -224,7 +227,12 @@ A small UI stack over the JS bridge, in `lib/web/`:
 - `(web mat)` — 3D math for raw-GL scenes: vec3 and column-major mat4
   over flonum vectors (`m4-mul` runs 3.5× faster through the wasm
   SIMD primitives once `fx-init!` hands it 128 bytes of scratch —
-  each result column is one f32x4 scale and three axpys), with `m4-perspective` / `m4-ortho` /
+  each result column is one f32x4 scale and three axpys).  The
+  `m4s` family refunds the copy tax entirely: a matrix as a staging
+  ADDRESS, `m4s-mul!` chains in pure SIMD with no boxed reads in or
+  vector out, `m4s-trs!` composes a whole T·Ry·Rx·Rz·S in closed
+  form, and `cmd-uniform-matrix4s!` uploads by carrying the address
+  in three words (the replayer reads the floats in place).  With `m4-perspective` / `m4-ortho` /
   `m4-look-at` / rotations / `m4-inverse` and its own range-reduced
   trig, so it is pure Scheme all
   the way down and verifies headlessly; `m4-frustum-planes` +
