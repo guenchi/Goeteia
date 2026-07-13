@@ -222,7 +222,11 @@ A small UI stack over the JS bridge, in `lib/web/`:
   forms `(web glsl)` renders — merged uniform struct, VOut varyings,
   entry-point rewrites — and `wgsl-layout` derives the pipeline's
   vertex formats from the same attribute declarations, so one shader
-  source now speaks ESSL 1.00, ESSL 3.00 and WGSL
+  source now speaks ESSL 1.00, ESSL 3.00 and WGSL.  Compute passes
+  close the loop: `gpu-dispatch!` runs a `@compute` shader over a
+  storage buffer that doubles as the render pass's instance stream
+  (`examples/gpu-compute.html`: 100,000 particles whose physics
+  never touches the CPU — 16 bytes of uniforms per frame)
 - `(web collide)` — collision tests and raycasts for 3D games:
   sphere/AABB/capsule overlaps (capsule–capsule rides the classic
   segment–segment distance), ray against sphere, box, plane,

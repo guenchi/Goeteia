@@ -24,8 +24,9 @@ globalThis.__gpulog = [];
       push('texture', d.size.join('x'), d.format);
       return { createView(){ return {} } } },
     createBindGroup(d){
-      push('bindgroup', d.layout.id, d.entries[0].binding,
-           d.entries[0].resource.buffer.id);
+      push('bindgroup', d.layout.id,
+           d.entries.map(e => e.binding + '=' + e.resource.buffer.id)
+             .join('|'));
       return { id: 'G' + (this._g = (this._g || 0) + 1) } },
     createRenderPipeline(d){
       push('pipeline', d.vertex.buffers[0].arrayStride,
@@ -33,12 +34,21 @@ globalThis.__gpulog = [];
              .map(a => a.format + '@' + a.offset + '>' + a.shaderLocation)
              .join('|'),
            d.fragment.targets[0].format);
+      if (d.vertex.buffers[1])
+        push('instance', d.vertex.buffers[1].arrayStride,
+             d.vertex.buffers[1].attributes
+               .map(a => a.format + '@' + a.offset + '>' + a.shaderLocation)
+               .join('|'));
       push('depth', d.depthStencil.format, d.depthStencil.depthCompare);
       return { id: 'PL' + (this._p = (this._p || 0) + 1),
                getBindGroupLayout(i){ return { id: 'L' + i } } } },
     createBuffer(d){
-      push('buffer', d.size);
+      push('buffer', d.size, d.usage);
       return { id: 'B' + (this._b = (this._b || 0) + 1) } },
+    createComputePipeline(d){
+      push('computePipeline', d.compute.entryPoint);
+      return { id: 'CP' + (this._c = (this._c || 0) + 1),
+               getBindGroupLayout(i){ return { id: 'CL' + i } } } },
     createCommandEncoder(){
       return {
         beginRenderPass(d){
@@ -51,9 +61,14 @@ globalThis.__gpulog = [];
                    setVertexBuffer(i, b){ push('setVbuf', i, b.id) },
                    setBindGroup(i, g){ push('setGroup', i, g.id) },
                    setIndexBuffer(b, f){ push('setIbuf', b.id, f) },
-                   draw(n){ push('draw', n) },
+                   draw(n, inst){ push('draw', inst === undefined ? n : n + ':' + inst) },
                    drawIndexed(n){ push('drawIndexed', n) },
                    end(){ push('endPass') } } },
+        beginComputePass(){
+          return { setPipeline(p){ push('csPipeline', p.id) },
+                   setBindGroup(i, g){ push('csGroup', i, g.id) },
+                   dispatchWorkgroups(n){ push('dispatch', n) },
+                   end(){ push('csEnd') } } },
         finish(){ return {} } } } };
   const adapter = {
     requestDevice(){ return { then(f){ return f(device) } } } };
@@ -98,7 +113,7 @@ globalThis.__gpulog = [];
   (and (check 3 "module:39")
        (check 4 "pipeline:24:float32x2@0>0|float32x4@8>1:bgra8unorm")
        (check 5 "depth:depth24plus:less")
-       (check 6 "buffer:144")))
+       (check 6 "buffer:144:40")))
 
 ;; one frame: staged floats reach writeBuffer, the pass opens with
 ;; the frame's clear color at the draw, one submit closes it
@@ -143,9 +158,9 @@ globalThis.__gpulog = [];
 (gpu-draw-indexed! 36)
 (gpu-flush!)
 (define indexed-ok
-  (and (check 17 "buffer:72")
-       (check 18 "buffer:128")
-       (check 19 "bindgroup:L0:0:B3")
+  (and (check 17 "buffer:72:24")
+       (check 18 "buffer:128:72")
+       (check 19 "bindgroup:L0:0=B3")
        (check 20 "writeBuffer:B3:128:0.25:-1.50")
        (check 21 "beginPass:clear:0.00:0.00:0.00:1.00:clear")
        (check 22 "setPipeline:PL1")
@@ -156,4 +171,42 @@ globalThis.__gpulog = [];
        (check 27 "endPass")
        (check 28 "submit:1")))
 
-(and attach-ok resource-ok frame-ok clear-ok indexed-ok)
+;; compute: a storage buffer both passes share, one dispatch, then
+;; an instanced draw off two vertex streams
+(gpu-storage! 8 1600)
+(gpu-compute! 9 "@compute fn cs() {}")
+(gpu-compute-group! 10 9 8 6)
+(gpu-pipeline2! 11 "@vertex fn vs() {} @fragment fn fs() {}"
+                8 "float32x2" 16 "float32x2,float32x2")
+(gpu-begin!)
+(gpu-buffer-data! 8 4096 16)
+(gpu-dispatch! 9 10 25)
+(gpu-clear! 0.0 0.0 0.0 1.0)
+(gpu-use-pipeline! 11)
+(gpu-bind-vbuf! 1)
+(gpu-bind-vbuf2! 8)
+(gpu-draw-instanced! 3 100)
+(gpu-flush!)
+(define compute-ok
+  (and (check 29 "buffer:1600:168")     ; VERTEX | STORAGE | COPY_DST
+       (check 30 "module:19")
+       (check 31 "computePipeline:cs")
+       (check 32 "bindgroup:CL0:0=B4|1=B3")
+       (check 33 "module:39")
+       (check 34 "pipeline:8:float32x2@0>0:bgra8unorm")
+       (check 35 "instance:16:float32x2@0>1|float32x2@8>2")
+       (check 36 "depth:depth24plus:less")
+       (check 37 "writeBuffer:B4:16:0.25:-1.50")
+       (check 38 "csPipeline:CP1")
+       (check 39 "csGroup:0:G2")
+       (check 40 "dispatch:25")
+       (check 41 "csEnd")
+       (check 42 "beginPass:clear:0.00:0.00:0.00:1.00:clear")
+       (check 43 "setPipeline:PL2")
+       (check 44 "setVbuf:0:B1")
+       (check 45 "setVbuf:1:B4")
+       (check 46 "draw:3:100")
+       (check 47 "endPass")
+       (check 48 "submit:1")))
+
+(and attach-ok resource-ok frame-ok clear-ok indexed-ok compute-ok)

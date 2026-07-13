@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <title>Goeteia — compute particles on WebGPU</title>
+    <style>
+      body { font-family: system-ui; text-align: center; margin-top: 2em; background: #f2f4fa; color: #14203a; }
+      canvas { border-radius: 12px; box-shadow: 0 4px 20px rgba(16,20,42,.2); }
+      code { font-family: ui-monospace, Menlo, monospace; color: #1550c4; }
+    </style>
+  </head>
+  <body>
+    <h1>100,000 particles, zero CPU physics — on WebGPU</h1>
+    <p>The physics is a <code>@compute</code> shader: one dispatch per
+    frame integrates gravity over a storage buffer of (pos, vel)
+    pairs and respawns the fallen, then the <em>same</em> buffer
+    feeds the render pass as a per-instance vertex stream
+    (<code>gpu-storage!</code> carries both usages).  The CPU writes
+    16 bytes of uniforms per frame and nothing else.  This is the
+    transform-feedback trick, the WebGPU way.  Needs a WebGPU
+    browser.  See <code>gpu-compute.ss</code>.</p>
+    <canvas id="c" width="800" height="600"></canvas>
+    <script type="module">
+      import { loadGoeteia } from '../rt/web.mjs';
+      loadGoeteia('gpu-compute.wasm');
+    </script>
+  </body>
+</html>
