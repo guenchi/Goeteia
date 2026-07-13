@@ -179,7 +179,9 @@
     (let ((u (hashtable-ref ($fx-program-uniforms prog) name #f)))
       (unless u (error 'fx-uniform! "undeclared uniform" name))
       (let ((slot (car u)) (ty (cdr u)))
-        (case ty
+        (if (pair? ty)                  ; (array mat4 N): joint matrices
+            (cmd-uniform-matrices! slot (car vs))
+            (case ty
           ((float) (cmd-uniform1f! slot ($fx-fl (car vs))))
           ((vec2) (cmd-uniform2f! slot ($fx-fl (car vs)) ($fx-fl (cadr vs))))
           ((vec3) (cmd-uniform3f! slot ($fx-fl (car vs)) ($fx-fl (cadr vs))
@@ -189,7 +191,7 @@
                                   ($fx-fl (caddr vs)) ($fx-fl (cadddr vs))))
           ((sampler2D int) (cmd-uniform1i! slot (car vs)))
           ((mat4) (cmd-uniform-matrix4! slot (car vs)))  ; (web mat) m4
-          (else (error 'fx-uniform! "unsupported uniform type" ty))))))
+          (else (error 'fx-uniform! "unsupported uniform type" ty)))))))
 
   ;; ---- the timing pump and the frame loop ----
   ;; proc gets (t dt) in seconds; no GL side effects, so a Three.js

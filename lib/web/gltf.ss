@@ -29,6 +29,8 @@
 (library (web gltf)
   (export gltf? gltf-prims gltf-images gltf-parse gltf-fetch!
           gltf-load-textures! gltf-draw!
+          gltf-anims gltf-animation-names gltf-animate!
+          gltf-joint-matrices gltf-skin-vs
           gprim-vbase gprim-vbytes gprim-ibase gprim-ibytes
           gprim-icount gprim-color gprim-world gprim-stride gprim-tex)
   (import (rnrs) (web js) (web gl) (web fx) (web mat) (web json))
@@ -38,7 +40,10 @@
   (define-record-type (gltf $make-gltf gltf?)
     (fields (immutable prims gltf-prims)
             ;; per image: (abs-offset byte-length mime), in staging
-            (immutable images gltf-images)))
+            (immutable images gltf-images)
+            (immutable nodes gltf-nodes)      ; runtime TRS, animatable
+            (immutable skins gltf-skins)      ; #(joint-nodes ibms)
+            (immutable anims gltf-anims)))    ; #(name channels duration)
 
   ;; primitives are open records: custom renderers can reach the
   ;; staging offsets and draw with their own shaders
@@ -52,6 +57,7 @@
             (immutable world gprim-world)     ; m4
             (immutable stride gprim-stride)   ; 24, or 32 with uvs
             (immutable tex-img $gprim-tex-img); image index | #f
+            (immutable skin $gprim-skin)      ; skin index | #f
             (mutable tex gprim-tex $gprim-tex!)  ; texture slot | #f
             (mutable vbuf $gprim-vbuf $gprim-vbuf!)
             (mutable ibuf $gprim-ibuf $gprim-ibuf!)))
@@ -69,6 +75,14 @@
             (begin
               (string-set! s i (integer->char (%mem-u8-ref (+ at i))))
               (loop (+ i 1)))))))
+
+  (define ($glb-m4 at)                    ; 16 f32s -> an m4
+    (let ((m (make-vector 16 0.0)))
+      (let loop ((i 0))
+        (when (< i 16)
+          (vector-set! m i (%mem-f32-ref (+ at (* 4 i))))
+          (loop (+ i 1))))
+      m))
 
   ;; ---- the JSON side ----
   (define ($or0 v) (if v v 0))
@@ -159,17 +173,296 @@
                         (m4-identity))))
             (m4-mul t (m4-mul r s))))))
 
+  ;; ---- the runtime node tree (what animations drive) ----
+  ;; a node is a 12-slot vector: tx ty tz  qx qy qz qw  sx sy sz
+  ;; matrix|#f parent
+  (define ($gltf-node-table json)
+    (let* ((ns (json-ref json "nodes"))
+           (n (if ns (vector-length ns) 0))
+           (out (make-vector n #f)))
+      (let loop ((k 0))
+        (when (< k n)
+          (let* ((nd (vector-ref ns k))
+                 (tr (json-ref nd "translation"))
+                 (rq (json-ref nd "rotation"))
+                 (sc (json-ref nd "scale"))
+                 (mx (json-ref nd "matrix"))
+                 (v (make-vector 12 0.0)))
+            (when tr
+              (vector-set! v 0 ($gltf-fl (vector-ref tr 0)))
+              (vector-set! v 1 ($gltf-fl (vector-ref tr 1)))
+              (vector-set! v 2 ($gltf-fl (vector-ref tr 2))))
+            (if rq
+                (begin
+                  (vector-set! v 3 ($gltf-fl (vector-ref rq 0)))
+                  (vector-set! v 4 ($gltf-fl (vector-ref rq 1)))
+                  (vector-set! v 5 ($gltf-fl (vector-ref rq 2)))
+                  (vector-set! v 6 ($gltf-fl (vector-ref rq 3))))
+                (vector-set! v 6 1.0))
+            (if sc
+                (begin
+                  (vector-set! v 7 ($gltf-fl (vector-ref sc 0)))
+                  (vector-set! v 8 ($gltf-fl (vector-ref sc 1)))
+                  (vector-set! v 9 ($gltf-fl (vector-ref sc 2))))
+                (begin (vector-set! v 7 1.0)
+                       (vector-set! v 8 1.0)
+                       (vector-set! v 9 1.0)))
+            (vector-set! v 10
+                         (and mx
+                              (let ((m (make-vector 16 0.0)))
+                                (let cp ((i 0))
+                                  (when (< i 16)
+                                    (vector-set! m i ($gltf-fl
+                                                      (vector-ref mx i)))
+                                    (cp (+ i 1))))
+                                m)))
+            (vector-set! v 11 -1)
+            (vector-set! out k v))
+          (loop (+ k 1))))
+      ;; children point back at their parents
+      (let loop ((k 0))
+        (when (< k n)
+          (let ((kids (json-ref (vector-ref ns k) "children")))
+            (when kids
+              (let kid ((i 0))
+                (when (< i (vector-length kids))
+                  (vector-set! (vector-ref out (vector-ref kids i)) 11 k)
+                  (kid (+ i 1))))))
+          (loop (+ k 1))))
+      out))
+
+  (define ($node-local v)
+    (let ((mx (vector-ref v 10)))
+      (or mx
+          (m4-mul (m4-translate (vector-ref v 0) (vector-ref v 1)
+                                (vector-ref v 2))
+                  (m4-mul (m4-from-quat (vector-ref v 3) (vector-ref v 4)
+                                        (vector-ref v 5) (vector-ref v 6))
+                          (m4-scale (vector-ref v 7) (vector-ref v 8)
+                                    (vector-ref v 9)))))))
+
+  (define ($node-global g i)
+    (let* ((v (vector-ref (gltf-nodes g) i))
+           (local ($node-local v))
+           (p (vector-ref v 11)))
+      (if (< p 0) local (m4-mul ($node-global g p) local))))
+
+  (define ($gltf-skin-table json bin)
+    (let* ((sk (json-ref json "skins"))
+           (n (if sk (vector-length sk) 0))
+           (out (make-vector n #f)))
+      (let loop ((k 0))
+        (when (< k n)
+          (let* ((skin (vector-ref sk k))
+                 (js (json-ref skin "joints"))
+                 (nj (vector-length js))
+                 (joints (make-vector nj 0))
+                 (ibms (make-vector nj #f))
+                 (ibm-acc (json-ref skin "inverseBindMatrices"))
+                 (inf (and ibm-acc ($acc-info json bin ibm-acc 64))))
+            (when (> nj 32)
+              (error 'gltf "too many joints for the skin shader" nj))
+            (let j ((i 0))
+              (when (< i nj)
+                (vector-set! joints i (vector-ref js i))
+                (vector-set! ibms i
+                             (if inf
+                                 ($glb-m4 (+ (car inf) (* i (cadr inf))))
+                                 (m4-identity)))
+                (j (+ i 1))))
+            (vector-set! out k (vector joints ibms)))
+          (loop (+ k 1))))
+      out))
+
+  ;; a channel: #(node path times values); values are vec3s (or quat
+  ;; 4-vectors for rotation), one per keyframe
+  (define ($gltf-anim-table json bin)
+    (let* ((as (json-ref json "animations"))
+           (n (if as (vector-length as) 0))
+           (out (make-vector n #f)))
+      (let loop ((k 0))
+        (when (< k n)
+          (let* ((a (vector-ref as k))
+                 (samplers (json-ref a "samplers"))
+                 (chans (json-ref a "channels"))
+                 (nc (vector-length chans))
+                 (cout (make-vector nc #f))
+                 (dur 0.0))
+            (let ch ((c 0))
+              (when (< c nc)
+                (let* ((chan (vector-ref chans c))
+                       (smp (vector-ref samplers (json-ref chan "sampler")))
+                       (path (string->symbol
+                              (json-ref chan "target" "path")))
+                       (ncomp (if (eq? path 'rotation) 4 3))
+                       (tin ($acc-info json bin (json-ref smp "input") 4))
+                       (vin ($acc-info json bin (json-ref smp "output")
+                                       (* 4 ncomp)))
+                       (nk (caddr tin))
+                       (times (make-vector nk 0.0))
+                       (vals (make-vector nk #f)))
+                  (let kf ((i 0))
+                    (when (< i nk)
+                      (vector-set! times i
+                                   (%mem-f32-ref (+ (car tin)
+                                                    (* i (cadr tin)))))
+                      (let ((vat (+ (car vin) (* i (cadr vin))))
+                            (v (make-vector ncomp 0.0)))
+                        (let comp ((j 0))
+                          (when (< j ncomp)
+                            (vector-set! v j (%mem-f32-ref (+ vat (* 4 j))))
+                            (comp (+ j 1))))
+                        (vector-set! vals i v))
+                      (kf (+ i 1))))
+                  (when (> nk 0)
+                    (let ((last (vector-ref times (- nk 1))))
+                      (when (fl<? dur last) (set! dur last))))
+                  (vector-set! cout c
+                               (vector (json-ref chan "target" "node")
+                                       path times vals)))
+                (ch (+ c 1))))
+            (vector-set! out k
+                         (vector (let ((nm (json-ref a "name")))
+                                   (if nm nm "anim"))
+                                 cout dur)))
+          (loop (+ k 1))))
+      out))
+
+  ;; shortest-path normalized lerp: indistinguishable from slerp at
+  ;; keyframe spacing
+  (define ($q-nlerp a b t)
+    (let* ((dot (fl+ (fl+ (fl* (vector-ref a 0) (vector-ref b 0))
+                          (fl* (vector-ref a 1) (vector-ref b 1)))
+                     (fl+ (fl* (vector-ref a 2) (vector-ref b 2))
+                          (fl* (vector-ref a 3) (vector-ref b 3)))))
+           (sgn (if (fl<? dot 0.0) -1.0 1.0))
+           (u (fl- 1.0 t))
+           (x (fl+ (fl* u (vector-ref a 0)) (fl* (fl* t sgn) (vector-ref b 0))))
+           (y (fl+ (fl* u (vector-ref a 1)) (fl* (fl* t sgn) (vector-ref b 1))))
+           (z (fl+ (fl* u (vector-ref a 2)) (fl* (fl* t sgn) (vector-ref b 2))))
+           (w (fl+ (fl* u (vector-ref a 3)) (fl* (fl* t sgn) (vector-ref b 3))))
+           (n (flsqrt (fl+ (fl+ (fl* x x) (fl* y y))
+                           (fl+ (fl* z z) (fl* w w))))))
+      (vector (fl/ x n) (fl/ y n) (fl/ z n) (fl/ w n))))
+
+  (define ($chan-sample! g ch tw)
+    (let* ((times (vector-ref ch 2))
+           (vals (vector-ref ch 3))
+           (n (vector-length times))
+           (node (vector-ref (gltf-nodes g) (vector-ref ch 0)))
+           (path (vector-ref ch 1)))
+      (when (> n 0)
+        (let find ((k 0))
+          (if (and (< (+ k 1) n)
+                   (fl<? (vector-ref times (+ k 1)) tw))
+              (find (+ k 1))
+              (let* ((k1 (if (< (+ k 1) n) (+ k 1) k))
+                     (t0 (vector-ref times k))
+                     (t1 (vector-ref times k1))
+                     (span (fl- t1 t0))
+                     (a (if (fl<? span 0.000001)
+                            0.0
+                            (fl/ (fl- tw t0) span)))
+                     (a (if (fl<? a 0.0) 0.0 (if (fl<? 1.0 a) 1.0 a)))
+                     (v0 (vector-ref vals k))
+                     (v1 (vector-ref vals k1)))
+                (if (eq? path 'rotation)
+                    (let ((q ($q-nlerp v0 v1 a)))
+                      (vector-set! node 3 (vector-ref q 0))
+                      (vector-set! node 4 (vector-ref q 1))
+                      (vector-set! node 5 (vector-ref q 2))
+                      (vector-set! node 6 (vector-ref q 3)))
+                    (let* ((base (if (eq? path 'translation) 0 7))
+                           (u (fl- 1.0 a)))
+                      (let comp ((j 0))
+                        (when (< j 3)
+                          (vector-set! node (+ base j)
+                                       (fl+ (fl* u (vector-ref v0 j))
+                                            (fl* a (vector-ref v1 j))))
+                          (comp (+ j 1))))))))))))
+
+  ;; sample animation `ai` at time t (looping over its duration):
+  ;; every channel writes its node's TRS
+  (define (gltf-animate! g ai t)
+    (let* ((anim (vector-ref (gltf-anims g) ai))
+           (chans (vector-ref anim 1))
+           (dur (vector-ref anim 2))
+           (tf ($gltf-fl t))
+           (tw (if (fl<? dur 0.000001)
+                   0.0
+                   (fl- tf (fl* dur (flfloor (fl/ tf dur)))))))
+      (let loop ((c 0))
+        (when (< c (vector-length chans))
+          ($chan-sample! g (vector-ref chans c) tw)
+          (loop (+ c 1))))))
+
+  (define (gltf-animation-names g)
+    (let ((as (gltf-anims g)))
+      (let loop ((k (- (vector-length as) 1)) (acc '()))
+        (if (< k 0)
+            acc
+            (loop (- k 1) (cons (vector-ref (vector-ref as k) 0) acc))))))
+
+  ;; joint matrices for one skin: global(joint) x inverse-bind
+  (define (gltf-joint-matrices g si)
+    (let* ((skin (vector-ref (gltf-skins g) si))
+           (joints (vector-ref skin 0))
+           (ibms (vector-ref skin 1))
+           (n (vector-length joints))
+           (out (make-vector n #f)))
+      (let loop ((k 0))
+        (when (< k n)
+          (vector-set! out k
+                       (m4-mul ($node-global g (vector-ref joints k))
+                               (vector-ref ibms k)))
+          (loop (+ k 1))))
+      out))
+
+  ;; the skinning vertex shader: 4 joints x 4 weights per vertex,
+  ;; pair with mesh-tex-fs (or mesh-lit-fs won't match the varyings)
+  (define gltf-skin-vs
+    '((attribute vec3 a_pos)
+      (attribute vec3 a_normal)
+      (attribute vec2 a_uv)
+      (attribute vec4 a_joints)
+      (attribute vec4 a_weights)
+      (uniform mat4 u_mvp)
+      (uniform (array mat4 32) u_joints)
+      (varying vec3 v_normal)
+      (varying vec2 v_uv)
+      (define (main) void
+        (local mat4 skin
+               (+ (* a_weights.x (at u_joints (int a_joints.x)))
+                  (* a_weights.y (at u_joints (int a_joints.y)))
+                  (* a_weights.z (at u_joints (int a_joints.z)))
+                  (* a_weights.w (at u_joints (int a_joints.w)))))
+        (set! gl_Position (* u_mvp (* skin (vec4 a_pos (fl 1)))))
+        (set! v_normal (vec3 (* skin (vec4 a_normal (fl 0)))))
+        (set! v_uv a_uv))))
+
   ;; one primitive: interleave pos+normal (+uv when the asset has
   ;; TEXCOORD_0) and pack u16 index pairs into fresh staging memory
-  (define ($build-prim json bin prim world)
+  (define ($build-prim json bin prim world skin)
     (let* ((attrs (json-ref prim "attributes"))
            (pos ($acc-info json bin (json-ref attrs "POSITION") 12))
            (nrm (let ((i (json-ref attrs "NORMAL")))
                   (and i ($acc-info json bin i 12))))
            (uv (let ((i (json-ref attrs "TEXCOORD_0")))
                  (and i ($acc-info json bin i 8))))
+           (jn (let ((i (json-ref attrs "JOINTS_0")))
+                 (and i skin
+                      (let ((inf ($acc-info json bin i 0)))
+                        ;; tight stride depends on the component type
+                        (list (car inf)
+                              (if (= (cadr inf) 0)
+                                  (if (= (cadddr inf) 5123) 8 4)
+                                  (cadr inf))
+                              (caddr inf) (cadddr inf))))))
+           (wt (and jn
+                    (let ((i (json-ref attrs "WEIGHTS_0")))
+                      (and i ($acc-info json bin i 16)))))
            (count (caddr pos))
-           (stride (if uv 32 24))
+           (stride (cond ((and jn wt) 64) (uv 32) (else 24)))
            (vbytes (* stride count))
            (vbase (fx-alloc! vbytes)))
       (unless (= (cadddr pos) 5126)
@@ -190,10 +483,28 @@
                   (%mem-f32-set! (+ dst 12) 0.0)
                   (%mem-f32-set! (+ dst 16) 1.0)
                   (%mem-f32-set! (+ dst 20) 0.0)))
-            (when uv
-              (let ((us (+ (car uv) (* v (cadr uv)))))
-                (%mem-f32-set! (+ dst 24) (%mem-f32-ref us))
-                (%mem-f32-set! (+ dst 28) (%mem-f32-ref (+ us 4))))))
+            (if uv
+                (let ((us (+ (car uv) (* v (cadr uv)))))
+                  (%mem-f32-set! (+ dst 24) (%mem-f32-ref us))
+                  (%mem-f32-set! (+ dst 28) (%mem-f32-ref (+ us 4))))
+                (when (= stride 64)      ; skinned but uv-less: zeros
+                  (%mem-f32-set! (+ dst 24) 0.0)
+                  (%mem-f32-set! (+ dst 28) 0.0)))
+            (when (= stride 64)          ; joints as floats + weights
+              (let ((js (+ (car jn) (* v (cadr jn))))
+                (u16? (= (cadddr jn) 5123))
+                    (ws (+ (car wt) (* v (cadr wt)))))
+                (let comp ((c 0))
+                  (when (< c 4)
+                    (%mem-f32-set!
+                     (+ dst 32 (* 4 c))
+                     (fixnum->flonum
+                      (if u16?
+                          ($glb-u16 (+ js (* 2 c)))
+                          (%mem-u8-ref (+ js c)))))
+                    (%mem-f32-set! (+ dst 48 (* 4 c))
+                                   (%mem-f32-ref (+ ws (* 4 c))))
+                    (comp (+ c 1)))))))
           (copy (+ v 1))))
       ;; indices: u8/u16/u32 accessor, or none (sequential vertices)
       (let* ((ii (json-ref prim "indices"))
@@ -226,6 +537,7 @@
         ($make-gprim vbase vbytes ibase ibytes icount
                      ($material-color json (json-ref prim "material"))
                      world stride ($prim-tex-image json prim)
+                     (and jn skin)
                      #f #f #f))))
 
   ;; ---- the GLB container, then the scene walk ----
@@ -247,7 +559,8 @@
             (define (walk-node idx parent)
               (let* ((node (vector-ref (json-ref json "nodes") idx))
                      (world (m4-mul parent ($node-matrix node)))
-                     (mi (json-ref node "mesh")))
+                     (mi (json-ref node "mesh"))
+                     (skin (json-ref node "skin")))
                 (when mi
                   (let ((ps (json-ref
                              (vector-ref (json-ref json "meshes") mi)
@@ -256,7 +569,8 @@
                       (when (< k (vector-length ps))
                         (set! prims
                               (cons ($build-prim json bin
-                                                 (vector-ref ps k) world)
+                                                 (vector-ref ps k) world
+                                                 skin)
                                     prims))
                         (prim (+ k 1))))))
                 (let ((kids (json-ref node "children")))
@@ -274,7 +588,10 @@
                   (walk-node (vector-ref roots k) (m4-identity))
                   (root (+ k 1)))))
             ($make-gltf (reverse prims)
-                        ($gltf-image-table json bin))))))
+                        ($gltf-image-table json bin)
+                        ($gltf-node-table json)
+                        ($gltf-skin-table json bin)
+                        ($gltf-anim-table json bin))))))
 
   ;; browser loader: fetch, one bulk copy into staging, parse, k
   (define (gltf-fetch! url k)
@@ -353,12 +670,20 @@
          (when fresh
            (cmd-buffer-data! (gprim-vbase p) (gprim-vbytes p))
            (cmd-index-data! (gprim-ibase p) (gprim-ibytes p)))
-         (let ((world (if (null? root)
-                          (gprim-world p)
-                          (m4-mul (car root) (gprim-world p))))
-               (c (gprim-color p)))
-           (fx-uniform! prog 'u_mvp (m4-mul vp world))
-           (fx-uniform! prog 'u_model world)
+         (let ((c (gprim-color p)))
+           (if (= (gprim-stride p) 64)
+               ;; skinned: the joint matrices carry the pose; the
+               ;; optional root still frames the whole asset
+               (begin
+                 (fx-uniform! prog 'u_joints
+                              (gltf-joint-matrices g ($gprim-skin p)))
+                 (fx-uniform! prog 'u_mvp
+                              (if (null? root) vp (m4-mul vp (car root)))))
+               (let ((world (if (null? root)
+                                (gprim-world p)
+                                (m4-mul (car root) (gprim-world p)))))
+                 (fx-uniform! prog 'u_mvp (m4-mul vp world))
+                 (fx-uniform! prog 'u_model world)))
            (fx-uniform! prog 'u_color (vector-ref c 0) (vector-ref c 1)
                         (vector-ref c 2) (vector-ref c 3))
            (cmd-draw-elements! GL-TRIANGLES (gprim-icount p)))))

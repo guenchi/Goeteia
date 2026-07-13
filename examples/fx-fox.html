@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <title>Goeteia — a rigged, animated GLB character</title>
+    <style>
+      body { font-family: system-ui; text-align: center; margin-top: 2em; background: #f2f4fa; color: #14203a; }
+      canvas { border-radius: 12px; box-shadow: 0 4px 20px rgba(16,20,42,.2); }
+      code { font-family: ui-monospace, Menlo, monospace; color: #1550c4; }
+      .credit { font-size: .8em; color: #6b7690; }
+    </style>
+  </head>
+  <body>
+    <h1>Skeletal animation: the Fox</h1>
+    <p>24 joints sample through <code>gltf-animate!</code> each frame
+    and upload as one uniform array; <code>gltf-skin-vs</code> blends
+    four weighted bones per vertex.
+    <strong>Keys 1 / 2 / 3: Survey / Walk / Run.</strong>
+    See <code>fx-fox.ss</code>.</p>
+    <canvas id="c" width="800" height="600"></canvas>
+    <p class="credit">Model: Fox from the Khronos glTF Sample Assets —
+    mesh CC0 by PixelMannen; rig &amp; animations CC-BY 4.0 by
+    @tomkranis.</p>
+    <script type="module">
+      import { loadGoeteia } from '../rt/web.mjs';
+      loadGoeteia('fx-fox.wasm');
+    </script>
+  </body>
+</html>

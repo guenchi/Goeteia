@@ -39,6 +39,7 @@
           cmd-bind-texture! cmd-depth!
           cmd-bind-index! cmd-index-data! cmd-draw-elements!
           cmd-attrib-divisor! cmd-draw-elements-instanced!
+          cmd-uniform-matrices!
           cmd-draw-arrays! cmd-viewport! cmd-blend!
           GL-POINTS GL-LINES GL-TRIANGLES GL-TRIANGLE-STRIP)
   (import (rnrs) (web js))
@@ -175,6 +176,9 @@
      "                gl.drawElementsInstanced(m, u[p+1], gl.UNSIGNED_SHORT,"
      "                                         0, u[p+2]);"
      "                p += 3; break; }"
+     "     case 24: gl.uniformMatrix4fv(slots[u[p]], false,"
+     "                f.subarray(p + 2, p + 2 + 16 * u[p+1]));"
+     "              p += 2 + 16 * u[p+1]; break;"
      "     default: throw new Error('bad gl opcode');"
      "    } } }; };"))
 
@@ -260,6 +264,18 @@
   (define (cmd-attrib-divisor! loc div) (u! 22) (u! loc) (u! div))
   (define (cmd-draw-elements-instanced! mode count n)
     (u! 23) (u! mode) (u! count) (u! n))
+  ;; ms: a vector of m4s (16-element flonum vectors) -- one upload
+  ;; carries a whole skeleton's joint matrices
+  (define (cmd-uniform-matrices! slot ms)
+    (u! 24) (u! slot) (u! (vector-length ms))
+    (let each ((k 0))
+      (when (< k (vector-length ms))
+        (let ((m (vector-ref ms k)))
+          (let mat ((i 0))
+            (when (< i 16)
+              (f! (vector-ref m i))
+              (mat (+ i 1)))))
+        (each (+ k 1)))))
   (define (cmd-pos) $p)                 ; for overflow checks by callers
   (define (cmd-viewport! x y w h) (u! 9) (u! x) (u! y) (u! w) (u! h))
   ;; blending for translucent draws: (cmd-blend! 'alpha) src-over,

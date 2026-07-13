@@ -53,4 +53,12 @@
             (define (main) void (set! x (fl 1)))))
          '((u_tex sampler2D) (u_res vec2)))
  (null? (glsl-attributes '((uniform float u_t) (precision mediump float))))
- (null? (glsl-uniforms '((attribute vec2 p)))))
+ (null? (glsl-uniforms '((attribute vec2 p))))
+ ;; array uniforms and indexing, for skinning
+ (t (glsl->string '((uniform (array mat4 32) u_joints)))
+    "uniform mat4 u_joints[32]; ")
+ (t (glsl->string '((define (main) void
+                      (set! m (at u_joints (int j.x))))))
+    "void main() { m = u_joints[int(j.x)]; } ")
+ (equal? (glsl-uniforms '((uniform (array mat4 32) u_joints)))
+         '((u_joints (array mat4 32)))))
