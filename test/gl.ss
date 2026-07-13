@@ -242,4 +242,25 @@
                             "fbRB:DA:R4" "bindFB:null")))
          (or (null? es)
              (and (check i (car es))
+                  (loop (+ i 1) (cdr es))))))
+     ;; --- cube targets: six faces, one shared depth, for point lights ---
+     (let ((base (js->number (js-get log "length"))))
+       (gl-cube-target! 16 17 32)
+       (let loop ((i base)
+                  (es (list "bindTexture:T8"
+                            "texImage:null:R16F" "texImage:null:R16F"
+                            "texImage:null:R16F" "texImage:null:R16F"
+                            "texImage:null:R16F" "texImage:null:R16F"
+                            "texParam:MIN:NEA" "texParam:MAG:NEA"
+                            "texParam:WS:CL" "texParam:WT:CL"
+                            "bindRB:R5" "rbStore:D16:32:32"
+                            "bindFB:F6" "fbTex:CA0:T8" "fbRB:DA:R5"
+                            "bindFB:F7" "fbTex:CA0:T8" "fbRB:DA:R5"
+                            "bindFB:F8" "fbTex:CA0:T8" "fbRB:DA:R5"
+                            "bindFB:F9" "fbTex:CA0:T8" "fbRB:DA:R5"
+                            "bindFB:F10" "fbTex:CA0:T8" "fbRB:DA:R5"
+                            "bindFB:F11" "fbTex:CA0:T8" "fbRB:DA:R5"
+                            "bindFB:null")))
+         (or (null? es)
+             (and (check i (car es))
                   (loop (+ i 1) (cdr es)))))))

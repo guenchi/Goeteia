@@ -31,6 +31,7 @@
   (export fx-init! fx-slot! fx-alloc! fx-buffer! fx-texture!
           fx-width fx-height
           fx-target! fx-target-hdr! fx-target-msaa! fx-resolve!
+          fx-cube-target! fx-bind-cube-face!
           fx-target? fx-target-texture
           fx-target-width fx-target-height
           fx-bind-target! fx-bind-canvas!
@@ -99,6 +100,19 @@
            (tex (fx-slot!)))
       (gl-target-hdr! fb tex w h)
       ($make-fx-target fb tex w h #f)))
+
+  ;; a cube target: six faces around a point.  Bind face i, render
+  ;; the world as the light sees it, then sample the texture with a
+  ;; direction -- point-light shadows
+  (define (fx-cube-target! dim)
+    (let* ((fb (fx-slot!)))
+      (let eat ((k 1)) (when (< k 6) (fx-slot!) (eat (+ k 1))))
+      (let ((tex (fx-slot!)))
+        (gl-cube-target! fb tex dim)
+        ($make-fx-target fb tex dim dim #f))))
+  (define (fx-bind-cube-face! t i)
+    (cmd-bind-target! (+ ($fx-target-fb t) i))
+    (cmd-viewport! 0 0 (fx-target-width t) (fx-target-height t)))
 
   ;; a multisampled target: render as usual, call (fx-resolve! t)
   ;; when the passes into it are done, then sample its texture

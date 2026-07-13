@@ -31,7 +31,7 @@
 (library (web gl)
   (export gl-attach! gl-program! gl-buffer! gl-uniform!
           gl-texture! gl-texture-upload! gl-texture-data! gl-cubemap!
-          gl-target! gl-target-hdr! gl-target-msaa!
+          gl-target! gl-target-hdr! gl-target-msaa! gl-cube-target!
           cmd-bind-target! cmd-bind-canvas! cmd-resolve!
           cmd-region! cmd-begin! cmd-flush! cmd-pos
           cmd-clear! cmd-use-program! cmd-bind-buffer! cmd-buffer-data!
@@ -122,6 +122,30 @@
      "    }"
      "    gl.bindFramebuffer(gl.FRAMEBUFFER, null);"
      "    slots[slot] = fb; },"
+     "  cubeTarget(slot, tslot, dim) {"
+     "    const t = gl.createTexture();"
+     "    gl.bindTexture(gl.TEXTURE_CUBE_MAP, t);"
+     "    for (let i = 0; i < 6; i++)"
+     "      gl.texImage2D(gl.TEXTURE_CUBE_MAP_POSITIVE_X + i, 0, gl.RGBA16F,"
+     "                    dim, dim, 0, gl.RGBA, gl.HALF_FLOAT, null);"
+     "    gl.texParameteri(gl.TEXTURE_CUBE_MAP, gl.TEXTURE_MIN_FILTER, gl.NEAREST);"
+     "    gl.texParameteri(gl.TEXTURE_CUBE_MAP, gl.TEXTURE_MAG_FILTER, gl.NEAREST);"
+     "    gl.texParameteri(gl.TEXTURE_CUBE_MAP, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);"
+     "    gl.texParameteri(gl.TEXTURE_CUBE_MAP, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);"
+     "    slots[tslot] = t;"
+     "    const rb = gl.createRenderbuffer();"
+     "    gl.bindRenderbuffer(gl.RENDERBUFFER, rb);"
+     "    gl.renderbufferStorage(gl.RENDERBUFFER, gl.DEPTH_COMPONENT16, dim, dim);"
+     "    for (let i = 0; i < 6; i++) {"
+     "      const fb = gl.createFramebuffer();"
+     "      gl.bindFramebuffer(gl.FRAMEBUFFER, fb);"
+     "      gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0,"
+     "                              gl.TEXTURE_CUBE_MAP_POSITIVE_X + i, t, 0);"
+     "      gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT,"
+     "                                 gl.RENDERBUFFER, rb);"
+     "      slots[slot + i] = fb;"
+     "    }"
+     "    gl.bindFramebuffer(gl.FRAMEBUFFER, null); },"
      "  targetMsaa(slot, rslot, tslot, w, h, samples) {"
      "    const t = gl.createTexture();"
      "    gl.bindTexture(gl.TEXTURE_2D, t);"
@@ -286,6 +310,11 @@
   ;; a half-float target (RGBA16F): light in real HDR, tonemap later
   (define (gl-target-hdr! slot tslot w h)
     (js-method $gl "target" slot tslot w h 2))
+  ;; six half-float faces around a point: slots slot..slot+5 become
+  ;; framebuffers (one per face, sharing a depth renderbuffer) and
+  ;; tslot the cube map they render into -- point-light shadows
+  (define (gl-cube-target! slot tslot dim)
+    (js-method $gl "cubeTarget" slot tslot dim))
   ;; a multisampled target: render into `slot`, then cmd-resolve!
   ;; blits it into `rslot`, whose texture `tslot` is what you sample
   (define (gl-target-msaa! slot rslot tslot w h samples)
