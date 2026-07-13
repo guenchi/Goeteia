@@ -142,4 +142,55 @@
          '((a_pos vec3 3) (a_normal vec3 3) (a_uv vec2 2)))
  (equal? (glsl-uniforms mesh-tex-fs)
          '((u_light vec3) (u_color vec4) (u_ambient float)
-           (u_tex sampler2D))))
+           (u_tex sampler2D)))
+ ;; ---- tangents ----
+ ;; the plane: u runs with +x, v with +z, normal +y, so the tangent
+ ;; is +x and the handedness rebuilds the bitangent as +z
+ (let ((tans (mesh-tangents plane)))
+   (and (= (vector-length tans) 16)
+        (near? (vector-ref tans 0) 1.0)      ; tx of vertex 0
+        (near? (vector-ref tans 1) 0.0)
+        (near? (vector-ref tans 2) 0.0)
+        ;; cross(n,t) = (0,0,-1), so w = -1 makes the bitangent +z
+        (near? (vector-ref tans 3) -1.0)))
+ ;; every vertex of every mesh: unit tangent, orthogonal to the
+ ;; normal, handedness exactly one either way
+ (let mesh-ok ((ms (list plane box sphere cyl torus)))
+   (or (null? ms)
+       (let* ((m (car ms)) (tans (mesh-tangents m)) (vs (mesh-verts m)))
+         (and (let loop ((v 0))
+                (or (= v (mesh-vert-count m))
+                    (let ((tx (vector-ref tans (* v 4)))
+                          (ty (vector-ref tans (+ (* v 4) 1)))
+                          (tz (vector-ref tans (+ (* v 4) 2)))
+                          (w (vector-ref tans (+ (* v 4) 3)))
+                          (nx (vector-ref vs (+ (* v 6) 3)))
+                          (ny (vector-ref vs (+ (* v 6) 4)))
+                          (nz (vector-ref vs (+ (* v 6) 5))))
+                      (and (near? (fl+ (fl+ (fl* tx tx) (fl* ty ty))
+                                       (fl* tz tz)) 1.0)
+                           (near? (fl+ (fl+ (fl* tx nx) (fl* ty ny))
+                                       (fl* tz nz)) 0.0)
+                           (near? (fl* w w) 1.0)
+                           (loop (+ v 1))))))
+              (mesh-ok (cdr ms))))))
+ ;; the interleaved tangent writer: 48 bytes per vertex
+ (= (mesh-vertex-bytes-tan plane) 192)
+ (begin
+   (mesh-write-tan! plane 5120 5400)
+   (and (near? (%mem-f32-ref 5120) -2.0)         ; x of vertex 0
+        (near? (%mem-f32-ref 5136) 1.0)          ; ny
+        (near? (%mem-f32-ref 5144) 0.0)          ; u
+        (near? (%mem-f32-ref 5152) 1.0)          ; tx
+        (near? (%mem-f32-ref 5156) 0.0)          ; ty
+        (near? (fl* (%mem-f32-ref 5164) (%mem-f32-ref 5164)) 1.0) ; |w|
+        (near? (%mem-f32-ref (+ 5120 96)) 2.0)   ; vertex 2: x
+        (near? (%mem-f32-ref (+ 5120 96 24)) 1.0); its u
+        (= (%mem-i32-ref 5400) (+ 0 (* 65536 1)))))
+ ;; the normal-mapped pair declares the 48-byte layout
+ (equal? (glsl-attributes mesh-normal-vs)
+         '((a_pos vec3 3) (a_normal vec3 3) (a_uv vec2 2)
+           (a_tangent vec4 4)))
+ (equal? (glsl-uniforms mesh-normal-fs)
+         '((u_nmap sampler2D) (u_light vec3) (u_color vec4)
+           (u_ambient float))))

@@ -29,8 +29,10 @@
           mesh-vert-count mesh-index-count
           mesh-vertex-bytes mesh-index-bytes mesh-write!
           mesh-vertex-bytes-uv mesh-write-uv!
+          mesh-tangents mesh-vertex-bytes-tan mesh-write-tan!
           mesh-plane mesh-box mesh-sphere mesh-cylinder mesh-torus
-          mesh-lit-vs mesh-lit-fs mesh-tex-vs mesh-tex-fs)
+          mesh-lit-vs mesh-lit-fs mesh-tex-vs mesh-tex-fs
+          mesh-normal-vs mesh-normal-fs)
   (import (rnrs) (web mat))
 
   (define $mesh-pi 3.141592653589793)
@@ -290,6 +292,109 @@
           (loop (+ v 1) (+ at 32)))))
     ($mesh-write-ix! m ibase))
 
+  ;; ---- tangents, for normal mapping ----
+  ;; per-triangle tangent/bitangent from the uv gradients (Lengyel),
+  ;; accumulated per vertex, then Gram-Schmidt orthogonalized against
+  ;; the normal.  w is the handedness: the shader rebuilds the
+  ;; bitangent as cross(n, t) * w.
+  (define ($mesh-p3 vs i off)           ; vec3 at `off` within vertex i
+    (vector (vector-ref vs (+ (* i 6) off))
+            (vector-ref vs (+ (* i 6) off 1))
+            (vector-ref vs (+ (* i 6) off 2))))
+  (define ($mesh-acc! acc i v)
+    (let ((b (* i 3)))
+      (vector-set! acc b (fl+ (vector-ref acc b) (v3-x v)))
+      (vector-set! acc (+ b 1) (fl+ (vector-ref acc (+ b 1)) (v3-y v)))
+      (vector-set! acc (+ b 2) (fl+ (vector-ref acc (+ b 2)) (v3-z v)))))
+  (define ($mesh-get3 acc i)
+    (vector (vector-ref acc (* i 3))
+            (vector-ref acc (+ (* i 3) 1))
+            (vector-ref acc (+ (* i 3) 2))))
+  (define ($mesh-tiny? x) (and (fl<? x 0.00000001) (fl<? -0.00000001 x)))
+
+  (define (mesh-tangents m)             ; (tx ty tz w) per vertex
+    (let* ((vs (mesh-verts m)) (uvs (mesh-uvs m)) (ix (mesh-indices m))
+           (n (mesh-vert-count m))
+           (tan (make-vector (* n 3) 0.0))
+           (bit (make-vector (* n 3) 0.0))
+           (out (make-vector (* n 4) 0.0)))
+      (let tri ((k 0))
+        (when (< k (vector-length ix))
+          (let* ((i0 (vector-ref ix k))
+                 (i1 (vector-ref ix (+ k 1)))
+                 (i2 (vector-ref ix (+ k 2)))
+                 (e1 (v3-sub ($mesh-p3 vs i1 0) ($mesh-p3 vs i0 0)))
+                 (e2 (v3-sub ($mesh-p3 vs i2 0) ($mesh-p3 vs i0 0)))
+                 (du1 (fl- (vector-ref uvs (* i1 2))
+                           (vector-ref uvs (* i0 2))))
+                 (dv1 (fl- (vector-ref uvs (+ (* i1 2) 1))
+                           (vector-ref uvs (+ (* i0 2) 1))))
+                 (du2 (fl- (vector-ref uvs (* i2 2))
+                           (vector-ref uvs (* i0 2))))
+                 (dv2 (fl- (vector-ref uvs (+ (* i2 2) 1))
+                           (vector-ref uvs (+ (* i0 2) 1))))
+                 (d (fl- (fl* du1 dv2) (fl* du2 dv1))))
+            (unless ($mesh-tiny? d)     ; a uv-degenerate triangle
+              (let* ((r (fl/ 1.0 d))
+                     (tv (v3-scale (v3-sub (v3-scale e1 dv2)
+                                           (v3-scale e2 dv1)) r))
+                     (bv (v3-scale (v3-sub (v3-scale e2 du1)
+                                           (v3-scale e1 du2)) r)))
+                ($mesh-acc! tan i0 tv) ($mesh-acc! tan i1 tv)
+                ($mesh-acc! tan i2 tv)
+                ($mesh-acc! bit i0 bv) ($mesh-acc! bit i1 bv)
+                ($mesh-acc! bit i2 bv))))
+          (tri (+ k 3))))
+      (let each ((v 0))
+        (when (< v n)
+          (let* ((nv ($mesh-p3 vs v 3))
+                 (raw ($mesh-get3 tan v))
+                 (ortho (v3-sub raw (v3-scale nv (v3-dot nv raw))))
+                 (t (if ($mesh-tiny? (v3-dot ortho ortho))
+                        ;; no uv gradient reached this vertex: any
+                        ;; unit vector perpendicular to the normal
+                        (v3-normalize
+                         (v3-cross nv
+                                   (if (fl<? (fl* (v3-y nv) (v3-y nv))
+                                             0.81)
+                                       (v3 0.0 1.0 0.0)
+                                       (v3 1.0 0.0 0.0))))
+                        (v3-normalize ortho)))
+                 (w (if (fl<? (v3-dot (v3-cross nv t) ($mesh-get3 bit v))
+                              0.0)
+                        -1.0 1.0))
+                 (b (* v 4)))
+            (vector-set! out b (v3-x t))
+            (vector-set! out (+ b 1) (v3-y t))
+            (vector-set! out (+ b 2) (v3-z t))
+            (vector-set! out (+ b 3) w))
+          (each (+ v 1))))
+      out))
+
+  ;; interleaved x y z nx ny nz u v tx ty tz w -- 48 bytes per
+  ;; vertex, matching mesh-normal-vs's layout
+  (define (mesh-vertex-bytes-tan m) (* 48 (mesh-vert-count m)))
+  (define (mesh-write-tan! m vbase ibase)
+    (let ((vs (mesh-verts m)) (uvs (mesh-uvs m))
+          (tans (mesh-tangents m)) (n (mesh-vert-count m)))
+      (let loop ((v 0) (at vbase))
+        (when (< v n)
+          (let ((b (* v 6)) (ub (* v 2)) (tb (* v 4)))
+            (%mem-f32-set! at (vector-ref vs b))
+            (%mem-f32-set! (+ at 4) (vector-ref vs (+ b 1)))
+            (%mem-f32-set! (+ at 8) (vector-ref vs (+ b 2)))
+            (%mem-f32-set! (+ at 12) (vector-ref vs (+ b 3)))
+            (%mem-f32-set! (+ at 16) (vector-ref vs (+ b 4)))
+            (%mem-f32-set! (+ at 20) (vector-ref vs (+ b 5)))
+            (%mem-f32-set! (+ at 24) (vector-ref uvs ub))
+            (%mem-f32-set! (+ at 28) (vector-ref uvs (+ ub 1)))
+            (%mem-f32-set! (+ at 32) (vector-ref tans tb))
+            (%mem-f32-set! (+ at 36) (vector-ref tans (+ tb 1)))
+            (%mem-f32-set! (+ at 40) (vector-ref tans (+ tb 2)))
+            (%mem-f32-set! (+ at 44) (vector-ref tans (+ tb 3))))
+          (loop (+ v 1) (+ at 48)))))
+    ($mesh-write-ix! m ibase))
+
   ;; ---- the standard lit program, as composable glsl forms ----
   (define mesh-lit-vs
     '((attribute vec3 a_pos)
@@ -343,4 +448,45 @@
         (local vec4 t (* (texture2D u_tex v_uv) u_color))
         (set! gl_FragColor
               (vec4 (* t.rgb (+ u_ambient (* d (- (fl 1) u_ambient))))
-                    t.a))))))
+                    t.a)))))
+
+  ;; the tangent-space normal-mapped variant of the lit program:
+  ;; pairs with mesh-write-tan!'s 48-byte layout.  u_model must be
+  ;; rotation/translation/uniform scale, as with mesh-lit-vs.
+  (define mesh-normal-vs
+    '((attribute vec3 a_pos)
+      (attribute vec3 a_normal)
+      (attribute vec2 a_uv)
+      (attribute vec4 a_tangent)
+      (uniform mat4 u_mvp)
+      (uniform mat4 u_model)
+      (varying vec2 v_uv)
+      (varying vec3 v_t)
+      (varying vec3 v_b)
+      (varying vec3 v_n)
+      (define (main) void
+        (set! gl_Position (* u_mvp (vec4 a_pos (fl 1))))
+        (set! v_uv a_uv)
+        (set! v_n (vec3 (* u_model (vec4 a_normal (fl 0)))))
+        (set! v_t (vec3 (* u_model (vec4 a_tangent.xyz (fl 0)))))
+        (set! v_b (* (cross v_n v_t) a_tangent.w)))))
+  (define mesh-normal-fs
+    '((precision mediump float)
+      (uniform sampler2D u_nmap)        ; rgb = tangent-space normal
+      (uniform vec3 u_light)
+      (uniform vec4 u_color)
+      (uniform float u_ambient)
+      (varying vec2 v_uv)
+      (varying vec3 v_t)
+      (varying vec3 v_b)
+      (varying vec3 v_n)
+      (define (main) void
+        (local vec4 s (texture2D u_nmap v_uv))
+        (local vec3 tn (- (* s.rgb (fl 2)) (vec3 (fl 1) (fl 1) (fl 1))))
+        (local vec3 n (normalize (+ (+ (* v_t tn.x) (* v_b tn.y))
+                                    (* v_n tn.z))))
+        (local float d (max (dot n u_light) (fl 0)))
+        (set! gl_FragColor
+              (vec4 (* u_color.rgb
+                       (+ u_ambient (* d (- (fl 1) u_ambient))))
+                    u_color.a))))))

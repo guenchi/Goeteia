@@ -152,7 +152,10 @@ A small UI stack over the JS bridge, in `lib/web/`:
   coordinates: `mesh-write-uv!` interleaves them and
   `mesh-tex-vs`/`-fs` sample under the same light
   (`examples/fx-tex.html`: a checkerboard painted on a 2d canvas,
-  no asset files)
+  no asset files).  `mesh-tangents` derives a tangent frame from the
+  uv gradients and `mesh-normal-vs`/`-fs` light through a
+  tangent-space normal map (`examples/fx-normalmap.html`: the bumps
+  are procedural bytes fed to `gl-texture-data!`, and an illusion)
 - `(web collide)` — collision tests and raycasts for 3D games:
   sphere/AABB overlaps, ray against sphere, box, plane, triangle and
   whole meshes (Möller–Trumbore), and `sphere-aabb-push` — the

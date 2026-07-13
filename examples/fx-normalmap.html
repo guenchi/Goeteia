@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <title>Goeteia — normal mapping</title>
+    <style>
+      body { font-family: system-ui; text-align: center; margin-top: 2em; background: #f2f4fa; color: #14203a; }
+      canvas { border-radius: 12px; box-shadow: 0 4px 20px rgba(16,20,42,.2); }
+      code { font-family: ui-monospace, Menlo, monospace; color: #1550c4; }
+    </style>
+  </head>
+  <body>
+    <h1>Normal mapping</h1>
+    <p>The same torus twice.  The left one samples a tangent-space
+    normal map — procedural: a Scheme loop writes RGBA bytes into
+    staging memory, <code>gl-texture-data!</code> makes a texture of
+    them, and the tangent frame comes from
+    <code>mesh-write-tan!</code>.  The geometry is identical; the
+    bumps are an illusion in the lighting.
+    See <code>fx-normalmap.ss</code>.</p>
+    <canvas id="c" width="800" height="600"></canvas>
+    <script type="module">
+      import { loadGoeteia } from '../rt/web.mjs';
+      loadGoeteia('fx-normalmap.wasm');
+    </script>
+  </body>
+</html>
