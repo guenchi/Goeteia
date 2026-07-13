@@ -67,9 +67,9 @@ import { boot, render } from './live.js';
       // ---- tabs: the hero, plus two demos from the main repo ----
       const TABS = [
         { label: 'hero.ss', file: 'hero.ss' },
-        { label: 'fx-skybox.ss', file: 'demos/fx-skybox.ss' },
-        { label: 'fx-pointlight.ss', file: 'demos/fx-pointlight.ss' },
-        { label: 'fx-ubo.ss', file: 'demos/fx-ubo.ss' },
+        { label: 'skybox.ss', file: 'demos/fx-skybox.ss' },
+        { label: 'pointlight.ss', file: 'demos/fx-pointlight.ss' },
+        { label: 'ubo.ss', file: 'demos/fx-ubo.ss' },
       ];
       const sources = [];
       let cur = 0;
