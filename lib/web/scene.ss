@@ -29,6 +29,9 @@
 ;;       (group (@ (position ...) (rotation-y ,sig) (scale s))
 ;;         child ...)  -- children (meshes or groups) inherit the
 ;;         parent transform; holes animate whole assemblies
+;;       (lod (@ (switch d1 d2 ...)) mesh1 mesh2 ...)  -- detail
+;;         levels of one thing: the eye's distance to it picks which
+;;         child draws (under d1 the first, under d2 the second, ...)
 ;;       (mesh (@ (geometry SPEC) attrs...))
 ;; Geometry specs: (plane w d) (box w h d) (sphere r [segs rings])
 ;;       (cylinder r h [segs]) (torus R r [segs rings]), or a lone
@@ -85,8 +88,8 @@
                                                    (cdr (car rest))))
                                      '(@)))
                           (kids (if attrs? (cdr rest) rest)))
-                     ;; groups nest: their children walk too
-                     (if (eq? tag 'group)
+                     ;; groups and lod containers nest
+                     (if (or (eq? tag 'group) (eq? tag 'lod))
                          (cons tag (cons attrs (map walk-form kids)))
                          (if attrs? (list tag attrs) f))))))
              (let ((anno (map walk-form forms)))
@@ -111,6 +114,8 @@
             ;; lit nodes sharing a geometry, two or more: each group
             ;; is #(geo nodes inst-buf inst-base cap), one draw each
             (immutable igroups $sgl-igroups)
+            ;; lod containers: #(chosen-cell switches probe-node)
+            (immutable lgroups $sgl-lgroups)
             (immutable iscratch $sgl-iscratch)))  ; m4s work area
 
   ;; geometry, shared: nodes with the SAME literal spec point at one
@@ -136,7 +141,10 @@
             (immutable bc $sgl-nd-bc)    ; bounding sphere, local
             (immutable br $sgl-nd-br)
             ;; enclosing groups' transform fields, outermost first
-            (immutable chain $sgl-nd-chain)))
+            (immutable chain $sgl-nd-chain)
+            ;; (chosen-cell . my-level) | #f: a lod alternative draws
+            ;; only while its level is the chosen one
+            (immutable lod $sgl-nd-lod)))
 
   ;; the instanced flavor of the lit program: the model matrix rides
   ;; four vec4 instance attributes, the color a fifth -- so a whole
@@ -224,7 +232,7 @@
         want
         (error 'sgl "one material per mesh" (list cur want))))
 
-  (define ($sgl-mesh attrs ds chain cache)
+  (define ($sgl-mesh attrs ds chain cache lod)
     (let ((gspec #f) (mat 'lit) (tex #f)
           (f (vector 0.0 0.0 0.0 0.0 0.0 0.0 1.0
                      0.8 0.8 0.8 1.0 0.0 0.5)))
@@ -260,7 +268,7 @@
       (let* ((geo ($sgl-geo! gspec (eq? mat 'tex) ds cache))
              (bounds (vector-ref geo 8)))
         ($make-sgl-node geo f mat tex
-                        (car bounds) (cdr bounds) chain))))
+                        (car bounds) (cdr bounds) chain lod))))
 
   ;; build (or find) the shared geometry for a literal spec: equal
   ;; specs with the same layout come back as the SAME vector, so
@@ -329,6 +337,7 @@
           (light (vector 0.5 0.8 0.4 0.25))
           (probe #f)
           (cache (list '()))            ; spec -> shared geometry
+          (lgroups '())
           (meshes '()))
       ;; groups nest, so the walk recurses carrying the transform
       ;; chain (outermost first) every mesh inside inherits
@@ -347,8 +356,36 @@
                 (walk kids
                       (append chain (list ($sgl-group-f attrs ds)))))
                ((mesh) (set! meshes
-                             (cons ($sgl-mesh attrs ds chain cache)
+                             (cons ($sgl-mesh attrs ds chain cache #f)
                                    meshes)))
+               ((lod)
+                ;; children are detail levels of one thing: distance
+                ;; under (switch d1 d2 ...) picks which one draws
+                (let ((cell (vector 0))
+                      (sw (let find ((as attrs))
+                            (cond ((null? as)
+                                   (error 'sgl "lod needs (switch ...)"))
+                                  ((eq? (car (car as)) 'switch)
+                                   (map $sgl-fl (cdr (car as))))
+                                  (else (find (cdr as)))))))
+                  (let level ((ks kids) (i 0) (first #f))
+                    (if (pair? ks)
+                        (let* ((k (car ks))
+                               (kattrs (if (and (pair? (cdr k))
+                                                (pair? (cadr k))
+                                                (eq? (car (cadr k)) '@))
+                                           (cdr (cadr k))
+                                           '()))
+                               (nd (if (eq? (car k) 'mesh)
+                                       ($sgl-mesh kattrs ds chain cache
+                                                  (cons cell i))
+                                       (error 'sgl
+                                              "lod children are meshes"
+                                              (car k)))))
+                          (set! meshes (cons nd meshes))
+                          (level (cdr ks) (+ i 1) (or first nd)))
+                        (set! lgroups
+                              (cons (vector cell sw first) lgroups))))))
                (else (error 'sgl "unknown tag" (car f))))))
          forms))
       ;; split by material; each program exists only if a mesh asks
@@ -373,7 +410,10 @@
                  probe cam light
                  singles (reverse texs) (reverse pbrs)
                  groups
-                 (if (pair? groups) (fx-alloc! 192) 0))))))))
+                 (reverse lgroups)
+                 (if (or (pair? groups) (pair? lgroups))
+                     (fx-alloc! 256)
+                     0))))))))
 
   ;; lit nodes sharing a geometry, two or more, become an instanced
   ;; group -- one buffer of matrix+color per instance, one draw
@@ -413,7 +453,16 @@
   ;; The model matrix -- the group chain's transforms, then the
   ;; node's own -- places the bounding sphere; a node the frustum
   ;; cannot see costs exactly this arithmetic and no commands.
+  ;; a lod alternative draws only while its level is chosen
+  (define ($sgl-lod-active? nd)
+    (let ((l ($sgl-nd-lod nd)))
+      (or (not l) (= (vector-ref (car l) 0) (cdr l)))))
+
   (define ($sgl-draw-node! prog vp planes nd)
+    (when ($sgl-lod-active? nd)
+      ($sgl-draw-node*! prog vp planes nd)))
+
+  (define ($sgl-draw-node*! prog vp planes nd)
     (let* ((f ($sgl-nd-f nd))
            (geo ($sgl-nd-geo nd))
            (model (fold-left (lambda (acc gf) (m4-mul acc ($sgl-trs gf)))
@@ -491,7 +540,9 @@
           (ibase (vector-ref ig 3)))
       (let fill ((ns (vector-ref ig 1)) (n 0))
         (if (pair? ns)
-            (let* ((nd (car ns))
+            (if (not ($sgl-lod-active? (car ns)))
+                (fill (cdr ns) n)
+                (let* ((nd (car ns))
                    (f ($sgl-nd-f nd))
                    (slot (+ ibase (* n 80))))
               ($sgl-model-into! nd slot scratch)
@@ -509,7 +560,7 @@
                     (%mem-f32-set! (+ slot 72) (vector-ref f 9))
                     (%mem-f32-set! (+ slot 76) (vector-ref f 10))
                     (fill (cdr ns) (+ n 1)))
-                  (fill (cdr ns) n)))   ; culled: the slot is reused
+                  (fill (cdr ns) n))))  ; culled: the slot is reused
             (when (> n 0)
               (fx-use-instanced! prog ($sgl-geo-vbuf geo) ibuf)
               ($sgl-geo-upload! geo)
@@ -536,6 +587,25 @@
            (ld (v3-normalize (v3 (vector-ref light 0) (vector-ref light 1)
                                  (vector-ref light 2)))))
       (cmd-depth! #t)
+      ;; lod containers pick their level: the probe node's staged
+      ;; matrix places the thing, and its distance to the eye walks
+      ;; the switch list
+      (for-each
+       (lambda (lg)
+         (let* ((sscr ($sgl-iscratch sc))
+                (at (+ sscr 192)))
+           ($sgl-model-into! (vector-ref lg 2) at sscr)
+           (let* ((dx (fl- (%mem-f32-ref (+ at 48)) (v3-x eye)))
+                  (dy (fl- (%mem-f32-ref (+ at 52)) (v3-y eye)))
+                  (dz (fl- (%mem-f32-ref (+ at 56)) (v3-z eye)))
+                  (d (flsqrt (fl+ (fl* dx dx)
+                                  (fl+ (fl* dy dy) (fl* dz dz))))))
+             (vector-set! (vector-ref lg 0) 0
+                          (let walk ((sw (vector-ref lg 1)) (i 0))
+                            (cond ((null? sw) i)
+                                  ((fl<? d (car sw)) i)
+                                  (else (walk (cdr sw) (+ i 1)))))))))
+       ($sgl-lgroups sc))
       ;; instanced groups first: one draw per shared geometry
       (when ($sgl-iprog sc)
         (let ((p ($sgl-iprog sc)))
