@@ -30,7 +30,7 @@
   (export gltf? gltf-prims gltf-images gltf-parse gltf-fetch!
           gltf-load-textures! gltf-draw!
           gltf-anims gltf-animation-names gltf-animate!
-          gltf-animate-blend!
+          gltf-animate-blend! gltf-weights! gprim-morph
           gltf-joint-matrices gltf-skin-vs
           gprim-vbase gprim-vbytes gprim-ibase gprim-ibytes
           gprim-icount gprim-color gprim-metallic gprim-roughness
@@ -61,6 +61,8 @@
             (immutable stride gprim-stride)   ; 24, or 32 with uvs
             (immutable tex-img $gprim-tex-img); image index | #f
             (immutable skin $gprim-skin)      ; skin index | #f
+            ;; #(base-positions target-deltas weights dirty node) | #f
+            (mutable morph gprim-morph $gprim-morph!)
             (mutable tex gprim-tex $gprim-tex!)  ; texture slot | #f
             (mutable vbuf $gprim-vbuf $gprim-vbuf!)
             (mutable ibuf $gprim-ibuf $gprim-ibuf!)))
@@ -310,11 +312,23 @@
                        (smp (vector-ref samplers (json-ref chan "sampler")))
                        (path (string->symbol
                               (json-ref chan "target" "path")))
-                       (ncomp (if (eq? path 'rotation) 4 3))
                        (tin ($acc-info json bin (json-ref smp "input") 4))
-                       (vin ($acc-info json bin (json-ref smp "output")
-                                       (* 4 ncomp)))
                        (nk (caddr tin))
+                       (vin ($acc-info json bin (json-ref smp "output")
+                                       (case path
+                                         ((rotation) 16)
+                                         ((weights) 4)   ; scalars
+                                         (else 12))))
+                       ;; weights: the accessor holds nk * n-targets
+                       (ncomp (case path
+                                ((rotation) 4)
+                                ((weights) (if (> nk 0)
+                                               (quotient (caddr vin) nk)
+                                               0))
+                                (else 3)))
+                       (kstride (if (eq? path 'weights)
+                                    (* ncomp (cadr vin))
+                                    (cadr vin)))
                        (times (make-vector nk 0.0))
                        (vals (make-vector nk #f)))
                   (let kf ((i 0))
@@ -322,7 +336,7 @@
                       (vector-set! times i
                                    (%mem-f32-ref (+ (car tin)
                                                     (* i (cadr tin)))))
-                      (let ((vat (+ (car vin) (* i (cadr vin))))
+                      (let ((vat (+ (car vin) (* i kstride)))
                             (v (make-vector ncomp 0.0)))
                         (let comp ((j 0))
                           (when (< j ncomp)
@@ -385,33 +399,60 @@
                      (a (if (fl<? a 0.0) 0.0 (if (fl<? 1.0 a) 1.0 a)))
                      (v0 (vector-ref vals k))
                      (v1 (vector-ref vals k1)))
-                (if (eq? path 'rotation)
-                    (let* ((qs ($q-nlerp v0 v1 a))
-                           (q (if (fl<? w 1.0)
-                                  ($q-nlerp (vector (vector-ref node 3)
-                                                    (vector-ref node 4)
-                                                    (vector-ref node 5)
-                                                    (vector-ref node 6))
-                                            qs w)
-                                  qs)))
-                      (vector-set! node 3 (vector-ref q 0))
-                      (vector-set! node 4 (vector-ref q 1))
-                      (vector-set! node 5 (vector-ref q 2))
-                      (vector-set! node 6 (vector-ref q 3)))
-                    (let* ((base (if (eq? path 'translation) 0 7))
-                           (u (fl- 1.0 a)))
-                      (let comp ((j 0))
-                        (when (< j 3)
-                          (let ((s (fl+ (fl* u (vector-ref v0 j))
-                                        (fl* a (vector-ref v1 j)))))
-                            (vector-set!
-                             node (+ base j)
-                             (if (fl<? w 1.0)
-                                 (fl+ (fl* (fl- 1.0 w)
-                                           (vector-ref node (+ base j)))
-                                      (fl* w s))
-                                 s)))
-                          (comp (+ j 1))))))))))))
+                (cond
+                 ((eq? path 'weights)
+                  ;; morph weights: lerp element-wise, route to the
+                  ;; node's primitives, mark them dirty
+                  (for-each
+                   (lambda (pr)
+                     (let ((mo (gprim-morph pr)))
+                       (when (and mo (= (vector-ref mo 4)
+                                        (vector-ref ch 0)))
+                         (let ((tw2 (vector-ref mo 2)))
+                           (let wj ((j 0))
+                             (when (and (< j (vector-length tw2))
+                                        (< j (vector-length v0)))
+                               (let ((s (fl+ (fl* (fl- 1.0 a)
+                                                  (vector-ref v0 j))
+                                             (fl* a (vector-ref v1 j)))))
+                                 (vector-set!
+                                  tw2 j
+                                  (if (fl<? w 1.0)
+                                      (fl+ (fl* (fl- 1.0 w)
+                                                (vector-ref tw2 j))
+                                           (fl* w s))
+                                      s)))
+                               (wj (+ j 1)))))
+                         (vector-set! mo 3 #t))))
+                   (gltf-prims g)))
+                 ((eq? path 'rotation)
+                  (let* ((qs ($q-nlerp v0 v1 a))
+                         (q (if (fl<? w 1.0)
+                                ($q-nlerp (vector (vector-ref node 3)
+                                                  (vector-ref node 4)
+                                                  (vector-ref node 5)
+                                                  (vector-ref node 6))
+                                          qs w)
+                                qs)))
+                    (vector-set! node 3 (vector-ref q 0))
+                    (vector-set! node 4 (vector-ref q 1))
+                    (vector-set! node 5 (vector-ref q 2))
+                    (vector-set! node 6 (vector-ref q 3))))
+                 (else
+                  (let* ((base (if (eq? path 'translation) 0 7))
+                         (u (fl- 1.0 a)))
+                    (let comp ((j 0))
+                      (when (< j 3)
+                        (let ((s (fl+ (fl* u (vector-ref v0 j))
+                                      (fl* a (vector-ref v1 j)))))
+                          (vector-set!
+                           node (+ base j)
+                           (if (fl<? w 1.0)
+                               (fl+ (fl* (fl- 1.0 w)
+                                         (vector-ref node (+ base j)))
+                                    (fl* w s))
+                               s)))
+                        (comp (+ j 1)))))))))))))
 
   ;; sample animation `ai` at time t (looping over its duration):
   ;; every channel writes its node's TRS
@@ -492,7 +533,7 @@
 
   ;; one primitive: interleave pos+normal (+uv when the asset has
   ;; TEXCOORD_0) and pack u16 index pairs into fresh staging memory
-  (define ($build-prim json bin prim world skin)
+  (define ($build-prim json bin prim world skin nidx mw)
     (let* ((attrs (json-ref prim "attributes"))
            (pos ($acc-info json bin (json-ref attrs "POSITION") 12))
            (nrm (let ((i (json-ref attrs "NORMAL")))
@@ -589,6 +630,55 @@
                      ($material-mr json (json-ref prim "material"))
                      world stride ($prim-tex-image json prim)
                      (and jn skin)
+                     ;; morph targets: POSITION deltas, CPU-blended
+                     (let ((tg (json-ref prim "targets")))
+                       (and tg (> (vector-length tg) 0)
+                            (let* ((nt (vector-length tg))
+                                   (b (make-vector (* count 3) 0.0))
+                                   (ds (make-vector nt #f))
+                                   (w (make-vector nt 0.0)))
+                              (let bv ((v 0))
+                                (when (< v count)
+                                  (let ((src (+ (car pos)
+                                                (* v (cadr pos)))))
+                                    (let c2 ((j 0))
+                                      (when (< j 3)
+                                        (vector-set!
+                                         b (+ (* v 3) j)
+                                         (%mem-f32-ref (+ src (* 4 j))))
+                                        (c2 (+ j 1)))))
+                                  (bv (+ v 1))))
+                              (let tgt ((k 0))
+                                (when (< k nt)
+                                  (let* ((acc ($acc-info
+                                               json bin
+                                               (json-ref
+                                                (vector-ref tg k)
+                                                "POSITION") 12))
+                                         (d (make-vector (* count 3)
+                                                         0.0)))
+                                    (let dv ((v 0))
+                                      (when (< v count)
+                                        (let ((src (+ (car acc)
+                                                      (* v (cadr acc)))))
+                                          (let c3 ((j 0))
+                                            (when (< j 3)
+                                              (vector-set!
+                                               d (+ (* v 3) j)
+                                               (%mem-f32-ref
+                                                (+ src (* 4 j))))
+                                              (c3 (+ j 1)))))
+                                        (dv (+ v 1))))
+                                    (vector-set! ds k d))
+                                  (tgt (+ k 1))))
+                              (when mw
+                                (let iw ((k 0))
+                                  (when (and (< k nt)
+                                             (< k (vector-length mw)))
+                                    (vector-set!
+                                     w k ($gltf-fl (vector-ref mw k)))
+                                    (iw (+ k 1)))))
+                              (vector b ds w #t nidx))))
                      #f #f #f))))
 
   ;; ---- the GLB container, then the scene walk ----
@@ -613,15 +703,15 @@
                      (mi (json-ref node "mesh"))
                      (skin (json-ref node "skin")))
                 (when mi
-                  (let ((ps (json-ref
-                             (vector-ref (json-ref json "meshes") mi)
-                             "primitives")))
+                  (let* ((mesh (vector-ref (json-ref json "meshes") mi))
+                         (ps (json-ref mesh "primitives"))
+                         (mw (json-ref mesh "weights")))
                     (let prim ((k 0))
                       (when (< k (vector-length ps))
                         (set! prims
                               (cons ($build-prim json bin
                                                  (vector-ref ps k) world
-                                                 skin)
+                                                 skin idx mw)
                                     prims))
                         (prim (+ k 1))))))
                 (let ((kids (json-ref node "children")))
@@ -701,6 +791,42 @@
   ;; the same a_pos/a_normal layout and u_mvp/u_model/u_color).
   ;; An optional root matrix prefixes every node's world transform --
   ;; spin the whole asset with (m4-rotate-y t) and lighting follows.
+  ;; blend base + sum(w_k * delta_k) back into the staging stream
+  (define ($morph-apply! p mo)
+    (let* ((b (vector-ref mo 0))
+           (ds (vector-ref mo 1))
+           (w (vector-ref mo 2))
+           (nt (vector-length ds))
+           (stride (gprim-stride p))
+           (vbase (gprim-vbase p))
+           (count (quotient (vector-length b) 3)))
+      (let v ((i 0))
+        (when (< i count)
+          (let comp ((j 0))
+            (when (< j 3)
+              (let acc ((k 0) (s (vector-ref b (+ (* i 3) j))))
+                (if (= k nt)
+                    (%mem-f32-set! (+ vbase (* i stride) (* 4 j)) s)
+                    (acc (+ k 1)
+                         (fl+ s (fl* (vector-ref w k)
+                                     (vector-ref (vector-ref ds k)
+                                                 (+ (* i 3) j)))))))
+              (comp (+ j 1))))
+          (v (+ i 1))))
+      (vector-set! mo 3 #f)))
+
+  ;; set a primitive's morph weights by hand (a list of numbers)
+  (define (gltf-weights! p ws)
+    (let ((mo (gprim-morph p)))
+      (unless mo
+        (error 'gltf-weights! "primitive has no morph targets"))
+      (let ((w (vector-ref mo 2)))
+        (let loop ((k 0) (ws ws))
+          (when (and (< k (vector-length w)) (pair? ws))
+            (vector-set! w k ($gltf-fl (car ws)))
+            (loop (+ k 1) (cdr ws)))))
+      (vector-set! mo 3 #t)))
+
   (define (gltf-draw! g prog vp . root)
     (for-each
      (lambda (p)
@@ -718,6 +844,12 @@
            (when tx
              (cmd-bind-texture! 0 tx)
              (fx-uniform! prog 'u_tex 0)))
+         ;; a dirty morph rewrites the staging stream before upload
+         (let ((mo (gprim-morph p)))
+           (when (and mo (vector-ref mo 3))
+             ($morph-apply! p mo)
+             (unless fresh
+               (cmd-buffer-data! (gprim-vbase p) (gprim-vbytes p)))))
          (when fresh
            (cmd-buffer-data! (gprim-vbase p) (gprim-vbytes p))
            (cmd-index-data! (gprim-ibase p) (gprim-ibytes p)))

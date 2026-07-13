@@ -347,6 +347,81 @@
     (gltf-draw! g2 prog (m4-identity))
     #f))
 
+;; ---- fixture 4: morph targets -- a triangle that opens ----
+(define json-text4
+  (string-append
+   "{\"asset\":{\"version\":\"2.0\"},\"scene\":0,"
+   "\"scenes\":[{\"nodes\":[0]}],"
+   "\"nodes\":[{\"mesh\":0}],"
+   "\"meshes\":[{\"primitives\":[{\"attributes\":"
+   "{\"POSITION\":0,\"NORMAL\":1},\"indices\":2,"
+   "\"targets\":[{\"POSITION\":3}]}],\"weights\":[0.25]}],"
+   "\"animations\":[{\"name\":\"open\",\"channels\":"
+   "[{\"sampler\":0,\"target\":{\"node\":0,\"path\":\"weights\"}}],"
+   "\"samplers\":[{\"input\":4,\"output\":5,"
+   "\"interpolation\":\"LINEAR\"}]}],"
+   "\"buffers\":[{\"byteLength\":132}],"
+   "\"bufferViews\":["
+   "{\"buffer\":0,\"byteOffset\":0,\"byteLength\":36},"
+   "{\"buffer\":0,\"byteOffset\":36,\"byteLength\":36},"
+   "{\"buffer\":0,\"byteOffset\":72,\"byteLength\":6},"
+   "{\"buffer\":0,\"byteOffset\":80,\"byteLength\":36},"
+   "{\"buffer\":0,\"byteOffset\":116,\"byteLength\":8},"
+   "{\"buffer\":0,\"byteOffset\":124,\"byteLength\":8}],"
+   "\"accessors\":["
+   "{\"bufferView\":0,\"componentType\":5126,\"count\":3,\"type\":\"VEC3\"},"
+   "{\"bufferView\":1,\"componentType\":5126,\"count\":3,\"type\":\"VEC3\"},"
+   "{\"bufferView\":2,\"componentType\":5123,\"count\":3,\"type\":\"SCALAR\"},"
+   "{\"bufferView\":3,\"componentType\":5126,\"count\":3,\"type\":\"VEC3\"},"
+   "{\"bufferView\":4,\"componentType\":5126,\"count\":2,\"type\":\"SCALAR\"},"
+   "{\"bufferView\":5,\"componentType\":5126,\"count\":2,\"type\":\"SCALAR\"}]}"))
+(define jlen4 (string-length json-text4))
+(define jpad4 (remainder (- 4 (remainder jlen4 4)) 4))
+(define total4 (+ 12 8 jlen4 jpad4 8 132))
+(set! base 14336)
+(set! at 0)
+(u32! #x46546C67) (u32! 2) (u32! total4)
+(u32! (+ jlen4 jpad4)) (u32! #x4E4F534A)
+(str! json-text4)
+(let pad ((i 0)) (when (< i jpad4) (b! 32) (pad (+ i 1))))
+(u32! 132) (u32! #x004E4942)
+(f0!) (f0!) (f0!)                        ; positions
+(f1!) (f0!) (f0!)
+(f0!) (f1!) (f0!)
+(f0!) (f0!) (f1!)                        ; normals x3
+(f0!) (f0!) (f1!)
+(f0!) (f0!) (f1!)
+(u16! 0) (u16! 1) (u16! 2) (u16! 0)      ; indices + pad
+(f1!) (f0!) (f0!)                        ; target: v0 moves +x
+(f0!) (f0!) (f0!)
+(f0!) (f0!) (f0!)
+(f0!) (f1!)                              ; times 0 1
+(f0!) (f1!)                              ; weight values 0 1
+
+(define g4 (gltf-parse 14336 total4))
+(define p4 (car (gltf-prims g4)))
+(define morph-parse-ok
+  (and (gprim-morph p4)
+       (near? (vector-ref (vector-ref (gprim-morph p4) 2) 0) 0.25)
+       (equal? (gltf-animation-names g4) '("open"))))
+;; the first draw applies the mesh's initial weights: v0.x = 0.25
+(define mprog (fx-program! mesh-lit-vs mesh-lit-fs))
+(cmd-begin!)
+(gltf-draw! g4 mprog (m4-identity))
+(cmd-flush!)
+(define morph0-ok (near? (%mem-f32-ref (gprim-vbase p4)) 0.25))
+;; the weights animation drives it: t = 0.5 -> 0.5
+(gltf-animate! g4 0 0.5)
+(cmd-begin!) (gltf-draw! g4 mprog (m4-identity)) (cmd-flush!)
+(define morph-anim-ok (near? (%mem-f32-ref (gprim-vbase p4)) 0.5))
+;; and by hand; the other components and vertices stay put
+(gltf-weights! p4 '(1.0))
+(cmd-begin!) (gltf-draw! g4 mprog (m4-identity)) (cmd-flush!)
+(define morph-hand-ok
+  (and (near? (%mem-f32-ref (gprim-vbase p4)) 1.0)
+       (near? (%mem-f32-ref (+ (gprim-vbase p4) 4)) 0.0)
+       (near? (%mem-f32-ref (+ (gprim-vbase p4) 24)) 1.0)))
+
 (and parse-ok tex-parse-ok skin-parse-ok pose0-ok pose1-ok pose-mid-ok
-     blend-ok
+     blend-ok morph-parse-ok morph0-ok morph-anim-ok morph-hand-ok
      skin-draw-ok draw-ok reuse-ok tex-load-ok tex-draw-ok mismatch-ok)
