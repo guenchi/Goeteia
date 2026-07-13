@@ -109,10 +109,10 @@ as `goeteia.wasm`, itself a Wasm GC module.
 
 ```
 $ npm install goeteia
-$ goeteia compile program.ss program.wasm   # compile to a wasm module
-$ goeteia run program.wasm                   # run a compiled module
-$ goeteia program.ss                         # compile and run in one step
-$ goeteia dev [port]                          # live-reload dev server (cwd)
+$ npx goeteia compile program.ss program.wasm   # compile to a wasm module
+$ npx goeteia run program.wasm                   # run a compiled module
+$ npx goeteia program.ss                         # compile and run in one step
+$ npx goeteia dev [port]                          # live-reload dev server (cwd)
 ```
 
 Without installing, the same steps run straight from a checkout:
@@ -133,7 +133,7 @@ value of the last expression is printed.
 
 ### Web projects
 
-`goeteia dev` serves the current directory, watches its Scheme/JS/CSS
+`npx goeteia dev` serves the current directory, watches its Scheme/JS/CSS
 sources, and on every save runs the project's `./build.sh` (which
 recompiles any changed page module) before pushing a live reload to
 every open tab. Edit a `.ss`, save, and the page re-renders.
@@ -163,7 +163,7 @@ compiler running as a Wasm GC module, no server-side anything. Serve
 the repo root statically and open it:
 
 ```
-$ goeteia dev            # or: python3 -m http.server
+$ npx goeteia dev        # or: python3 -m http.server
 ```
 
 then visit `http://localhost:8100/playground.html`. It compiles and
