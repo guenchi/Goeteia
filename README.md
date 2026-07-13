@@ -4,7 +4,7 @@
 
 **[goeteia.dev](https://goeteia.dev)**
 
-A self-hosting Scheme for the WebAssembly GC era.
+A pure-Scheme web toolkit, compiled to WebAssembly.
 
 Goeteia is a Scheme-to-WebAssembly compiler built on the WebAssembly
 GC extension (Wasm 3.0).  It is an independent implementation written
