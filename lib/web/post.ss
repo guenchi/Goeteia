@@ -26,7 +26,8 @@
   (export post-quad! post-pass!
           make-blur blur-run! blur-texture
           make-bloom bloom-run! bloom-texture bloom-composite!
-          make-fxaa fxaa-run! make-grade grade-run!)
+          make-fxaa fxaa-run! make-grade grade-run!
+          make-dof dof-run!)
   (import (rnrs) (web gl) (web glsl) (web fx))
 
   ;; ---- the floor: one fullscreen pass ----
@@ -223,6 +224,57 @@
                   (fx-uniform! p 'u_texel
                                (fl/ 1.0 (fixnum->flonum w))
                                (fl/ 1.0 (fixnum->flonum h))))))
+
+  ;; ---- depth of field: blur by distance from the focal plane ----
+  ;; Needs a linear-depth texture alongside the scene (the fx-ssao
+  ;; pattern: view distance / far into the red channel).  The circle
+  ;; of confusion is |depth - focus| / range, and it mixes the sharp
+  ;; scene toward a half-resolution gaussian of itself.
+  (define-record-type ($dof $make-dof dof?)
+    (fields (immutable blur $dof-blur)
+            (immutable cq $dof-cq)
+            (immutable w $dof-w)
+            (immutable h $dof-h)))
+
+  (define $dof-fs
+    '((precision mediump float)
+      (uniform sampler2D u_scene)
+      (uniform sampler2D u_soft)
+      (uniform sampler2D u_depth)
+      (uniform vec2 u_texel)
+      (uniform float u_focus)            ; both in depth-texture units
+      (uniform float u_range)
+      (define (main) void
+        (local vec2 uv (* gl_FragCoord.xy u_texel))
+        (local vec4 sharp (texture2D u_scene uv))
+        (local vec4 soft (texture2D u_soft uv))
+        (local vec4 d (texture2D u_depth uv))
+        (local float coc (clamp (/ (abs (- d.r u_focus)) u_range)
+                                (fl 0) (fl 1)))
+        (set! gl_FragColor (vec4 (mix sharp.rgb soft.rgb coc)
+                                 sharp.a)))))
+
+  (define (make-dof w h)
+    ($make-dof (make-blur (quotient w 2) (quotient h 2))
+               (post-quad! $dof-fs) w h))
+
+  ;; focus and range live in the depth texture's units (distance /
+  ;; far, if you rendered it that way); tgt #f = the canvas
+  (define (dof-run! d scene-tex depth-tex tgt focus range)
+    (blur-run! ($dof-blur d) scene-tex 2)
+    (post-pass! ($dof-cq d) tgt
+                (lambda (p)
+                  (cmd-bind-texture! 0 scene-tex)
+                  (cmd-bind-texture! 1 (blur-texture ($dof-blur d)))
+                  (cmd-bind-texture! 2 depth-tex)
+                  (fx-uniform! p 'u_scene 0)
+                  (fx-uniform! p 'u_soft 1)
+                  (fx-uniform! p 'u_depth 2)
+                  (fx-uniform! p 'u_focus focus)
+                  (fx-uniform! p 'u_range range)
+                  (fx-uniform! p 'u_texel
+                               (fl/ 1.0 (fixnum->flonum ($dof-w d)))
+                               (fl/ 1.0 (fixnum->flonum ($dof-h d)))))))
 
   ;; ---- grade: exposure + tonemap + gamma, LINEAR in, display out ----
   ;; 'aces is the Narkowicz fit; 'reinhard the extended curve; 'none

@@ -86,4 +86,19 @@
        (has-from? base5 "bindTexture:T1")
        (has-from? base5 "uniform2f:U:u_texel:0.002:0.002")))
 
-(and run-ok comp-ok blur-ok grade-ok fxaa-ok)
+;; ---- dof: blur the scene, then mix by focal distance ----
+(define depth-t (fx-target! 640 480))
+(define dof (make-dof 640 480))
+(define base6 (log-len))
+(cmd-begin!)
+(dof-run! dof (fx-target-texture scene) (fx-target-texture depth-t)
+          #f 0.3 0.12)
+(cmd-flush!)
+(define dof-ok
+  (and (= (count-from base6 "draw:STRIP:0:4") 5)   ; 4 blur + composite
+       (has-from? base6 "viewport:0,0,320,240")    ; half-res gaussian
+       (has-from? base6 "bindFB:null")
+       (has-from? base6 "uniform1f:U:u_focus:0.30")
+       (has-from? base6 "uniform1f:U:u_range:0.12")))
+
+(and run-ok comp-ok blur-ok grade-ok fxaa-ok dof-ok)
