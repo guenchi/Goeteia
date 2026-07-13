@@ -106,7 +106,8 @@
        (cmd-buffer-data! ibase (* N 32))  ; fill A...
        (cmd-bind-buffer! (cdr bufs))
        (cmd-buffer-data! ibase (* N 32))  ; ...and size B like it
-       (set! uploaded #t))
+       (cmd-bind-buffer! (car bufs))      ; B is about to catch the
+       (set! uploaded #t))                ; feedback: leave it unbound
      (fx-uniform! update-p 'u_dt dtc)
      (cmd-tf-buffer! (cdr bufs))
      (cmd-tf-begin!)
