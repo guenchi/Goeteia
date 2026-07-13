@@ -59,11 +59,15 @@
     (let ((g (js-get (js-global) "__goeteia_fx_gen")))
       (if (js-truthy? g) (js->number g) 0)))
 
+  ;; the VAO cache: (program, buffer, instance buffer) -> vao slot
+  (define $fx-vaos (make-eq-hashtable))
+
   (define (fx-init! canvas)
     (set! $fx-canvas canvas)
     (gl-attach! canvas)
     (set! $fx-slot 0)
     (set! $fx-heap $fx-cmd-limit)
+    (set! $fx-vaos (make-eq-hashtable))
     ;; a fresh init retires loops from any earlier run of the page
     ;; (live editors re-run whole programs; fx-ticks! checks this)
     (js-set! (js-global) "__goeteia_fx_gen" (+ 1 ($fx-gen)))
@@ -242,27 +246,54 @@
                     (loop (cdr as) (+ loc 1) (+ voff (* 4 size)) ioff
                           (cons (list loc size voff) vacc) iacc))))))))
 
-  ;; use-program, bind the buffer, then the attribs: the pointer
-  ;; captures the buffer bound at that moment
+  ;; use-program, then the attributes -- through a vertex array
+  ;; object: the first use of a (program, buffer[, instance buffer])
+  ;; trio binds the buffer and records every pointer into a fresh
+  ;; VAO; each later use rebinds the VAO in one word.  The array
+  ;; buffer is still bound every time because VAOs do not capture
+  ;; that binding, and dynamic streams upload right after fx-use!.
+  ;; The index binding IS VAO state: a caller's cmd-bind-index!
+  ;; lands in the open VAO and is restored with it.
+  ;; Keys pack three slot numbers into one fixnum, so slots must
+  ;; stay under 1024 -- far past any real scene
+  (define ($fx-vao-key pslot buf inst)
+    (+ (* pslot 1048576) (* buf 1024) (+ inst 1)))
+
   (define (fx-use! prog buf-slot)
-    (cmd-use-program! (fx-program-slot prog))
-    (cmd-bind-buffer! buf-slot)
-    (for-each (lambda (a)
-                (cmd-vertex-attrib! (car a) (cadr a)
-                                    (fx-program-stride prog) (caddr a)))
-              ($fx-program-attribs prog)))
+    ($fx-use-vao! prog buf-slot -1))
 
   ;; the instanced variant: vertex attributes from one buffer,
   ;; i_* attributes from another with divisor 1 (webgl2); draw with
   ;; cmd-draw-elements-instanced!
   (define (fx-use-instanced! prog buf-slot inst-slot)
-    (fx-use! prog buf-slot)
-    (cmd-bind-buffer! inst-slot)
-    (for-each (lambda (a)
-                (cmd-vertex-attrib! (car a) (cadr a)
-                                    (fx-program-istride prog) (caddr a))
-                (cmd-attrib-divisor! (car a) 1))
-              ($fx-program-iattribs prog)))
+    ($fx-use-vao! prog buf-slot inst-slot))
+
+  (define ($fx-use-vao! prog buf-slot inst-slot)
+    (cmd-use-program! (fx-program-slot prog))
+    (let* ((key ($fx-vao-key (fx-program-slot prog) buf-slot inst-slot))
+           (vao (hashtable-ref $fx-vaos key #f)))
+      (if vao
+          (begin
+            (cmd-bind-vao! vao)
+            (cmd-bind-buffer! buf-slot))
+          (let ((v (fx-slot!)))
+            (gl-vao! v)
+            (hashtable-set! $fx-vaos key v)
+            (cmd-bind-vao! v)
+            (cmd-bind-buffer! buf-slot)
+            (for-each (lambda (a)
+                        (cmd-vertex-attrib! (car a) (cadr a)
+                                            (fx-program-stride prog)
+                                            (caddr a)))
+                      ($fx-program-attribs prog))
+            (when (>= inst-slot 0)
+              (cmd-bind-buffer! inst-slot)
+              (for-each (lambda (a)
+                          (cmd-vertex-attrib! (car a) (cadr a)
+                                              (fx-program-istride prog)
+                                              (caddr a))
+                          (cmd-attrib-divisor! (car a) 1))
+                        ($fx-program-iattribs prog)))))))
 
   ;; dispatch on the declared type; sampler values are texture units
   (define (fx-uniform! prog name . vs)

@@ -118,7 +118,10 @@ A small UI stack over the JS bridge, in `lib/web/`:
   `fx-program!` reads the attribute/uniform declarations back out of
   the same forms and does the wiring — locations, interleaved
   offsets, typed uniform dispatch, slot numbers, staging-memory
-  allocation.  `fx-loop!` frames commands around a t/dt callback;
+  allocation.  Attribute setup rides vertex array objects without
+  being asked: the first `fx-use!` of a (program, buffer) pair
+  records every pointer into a VAO, each later one is a single-word
+  rebind.  `fx-loop!` frames commands around a t/dt callback;
   `fx-fullscreen!` makes a fragment-shader effect ~15 lines
   (`examples/fx-plasma.html`); `fx-target-mrt!` is a G-buffer —
   n half-float attachments one shader fills in one pass
