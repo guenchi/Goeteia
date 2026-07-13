@@ -112,6 +112,24 @@
     (string-append
      "#version 300 es\n"
      "layout(std140) uniform Env { highp mat4 u_vp; highp vec4 u_fog; }; "))
+ ;; explicit (out ...) forms: MRT.  They pin their locations, and the
+ ;; implicit goe_FragColor head disappears -- it would collide with
+ ;; an explicit location 0
+ (t (glsl300-fs->string
+     '((precision mediump float)
+       (varying vec3 v_n)
+       (out 0 vec4 o_albedo)
+       (out 1 vec4 o_normal)
+       (define (main) void
+         (set! o_albedo (vec4 (fl 1)))
+         (set! o_normal (vec4 v_n (fl 0))))))
+    (string-append
+     "#version 300 es\n"
+     "precision mediump float; in vec3 v_n; "
+     "layout(location = 0) out highp vec4 o_albedo; "
+     "layout(location = 1) out highp vec4 o_normal; "
+     "void main() { o_albedo = vec4(1.0); "
+     "o_normal = vec4(v_n, 0.0); } "))
  ;; extraction still works on the neutral forms
  (equal? (glsl-attributes '((attribute vec3 a_pos) (varying vec3 v_n)))
          '((a_pos vec3 3)))

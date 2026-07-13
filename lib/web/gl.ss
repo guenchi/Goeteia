@@ -33,6 +33,7 @@
           gl-texture! gl-texture-upload! gl-texture-data! gl-cubemap!
           gl-cubemap-empty! gl-cube-face-fb!
           gl-target! gl-target-hdr! gl-target-msaa! gl-cube-target!
+          gl-target-mrt!
           cmd-bind-target! cmd-bind-canvas! cmd-resolve!
           cmd-region! cmd-begin! cmd-flush! cmd-pos
           cmd-clear! cmd-use-program! cmd-bind-buffer! cmd-buffer-data!
@@ -137,6 +138,32 @@
      "      gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT,"
      "                                 gl.RENDERBUFFER, rb);"
      "    }"
+     "    gl.bindFramebuffer(gl.FRAMEBUFFER, null);"
+     "    slots[slot] = fb; },"
+     "  targetMrt(slot, tslot0, n, w, h) {"
+     "    const fb = gl.createFramebuffer();"
+     "    gl.bindFramebuffer(gl.FRAMEBUFFER, fb);"
+     "    const bufs = [];"
+     "    for (let i = 0; i < n; i++) {"
+     "      const t = gl.createTexture();"
+     "      gl.bindTexture(gl.TEXTURE_2D, t);"
+     "      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA16F, w, h, 0,"
+     "                    gl.RGBA, gl.HALF_FLOAT, null);"
+     "      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);"
+     "      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);"
+     "      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);"
+     "      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);"
+     "      gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0 + i,"
+     "                              gl.TEXTURE_2D, t, 0);"
+     "      bufs.push(gl.COLOR_ATTACHMENT0 + i);"
+     "      slots[tslot0 + i] = t;"
+     "    }"
+     "    const rb = gl.createRenderbuffer();"
+     "    gl.bindRenderbuffer(gl.RENDERBUFFER, rb);"
+     "    gl.renderbufferStorage(gl.RENDERBUFFER, gl.DEPTH_COMPONENT16, w, h);"
+     "    gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT,"
+     "                               gl.RENDERBUFFER, rb);"
+     "    gl.drawBuffers(bufs);"
      "    gl.bindFramebuffer(gl.FRAMEBUFFER, null);"
      "    slots[slot] = fb; },"
      "  cubemapEmpty(slot, dim, levels) {"
@@ -392,6 +419,14 @@
   ;; a half-float target (RGBA16F): light in real HDR, tonemap later
   (define (gl-target-hdr! slot tslot w h)
     (js-method $gl "target" slot tslot w h 2))
+  ;; a multi render target (webgl2 drawBuffers): one framebuffer in
+  ;; `slot` with n half-float color attachments in slots tslot0..
+  ;; tslot0+n-1 plus a depth renderbuffer -- a shader with (out ...)
+  ;; forms writes them all in one pass.  Filters are NEAREST: a
+  ;; G-buffer is read back pixel for pixel, and half-float LINEAR
+  ;; would need one more extension for nothing
+  (define (gl-target-mrt! slot tslot0 n w h)
+    (js-method $gl "targetMrt" slot tslot0 n w h))
   ;; six half-float faces around a point: slots slot..slot+5 become
   ;; framebuffers (one per face, sharing a depth renderbuffer) and
   ;; tslot the cube map they render into -- point-light shadows

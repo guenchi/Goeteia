@@ -31,6 +31,7 @@
   (export fx-init! fx-slot! fx-alloc! fx-buffer! fx-texture!
           fx-width fx-height
           fx-target! fx-target-hdr! fx-target-msaa! fx-resolve!
+          fx-target-mrt! fx-mrt-texture
           fx-cube-target! fx-bind-cube-face!
           fx-target? fx-target-texture
           fx-target-width fx-target-height
@@ -109,6 +110,19 @@
            (tex (fx-slot!)))
       (gl-target-hdr! fb tex w h)
       ($make-fx-target fb tex w h #f)))
+
+  ;; a multi render target: n half-float attachments behind one
+  ;; framebuffer -- the G-buffer of deferred shading.  A fragment
+  ;; shader with (out 0 ...) (out 1 ...) forms (fx-program3!) fills
+  ;; every attachment in one pass; (fx-mrt-texture t i) is the
+  ;; texture that caught output i
+  (define (fx-target-mrt! n w h)
+    (let* ((fb (fx-slot!))
+           (t0 (fx-slot!)))
+      (let eat ((k 1)) (when (< k n) (fx-slot!) (eat (+ k 1))))
+      (gl-target-mrt! fb t0 n w h)
+      ($make-fx-target fb t0 w h #f)))
+  (define (fx-mrt-texture t i) (+ (fx-target-texture t) i))
 
   ;; a cube target: six faces around a point.  Bind face i, render
   ;; the world as the light sees it, then sample the texture with a

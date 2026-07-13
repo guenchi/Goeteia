@@ -15,6 +15,9 @@
 ;; Top-level forms:
 ;;   (attribute T name) (uniform T name) (varying T name)
 ;;   (precision P T)
+;;   (out loc T name)      -- a fragment output at an explicit
+;;                            location; ESSL 3.00 only (MRT), and it
+;;                            replaces gl_FragColor in that shader
 ;;   (define (name (T arg) ...) RET stmt ...)
 ;; Statements:
 ;;   (local T name expr)   -> "T name = expr;"
@@ -157,6 +160,8 @@
       ((precision)
        (string-append "precision " (symbol->string (cadr f)) " "
                       (symbol->string (caddr f)) "; "))
+      ((out)
+       (error 'glsl "out needs the ESSL 3.00 dialect (fx-program3!)" f))
       ((define)
        ;; (define (name (T a) ...) RET stmt ...)
        (let* ((head (cadr f))
@@ -203,6 +208,13 @@
                             "[" (number->string (caddr (cadr f))) "]; ")
              (string-append kw " " (symbol->string (cadr f)) " "
                             (symbol->string (caddr f)) "; "))))
+      ((out)
+       ;; (out loc T name): one of several fragment outputs -- MRT.
+       ;; The location is explicit because with more than one output
+       ;; ESSL 3.00 wants them all pinned anyway
+       (string-append "layout(location = " (number->string (cadr f))
+                      ") out highp " (symbol->string (caddr f)) " "
+                      (symbol->string (cadddr f)) "; "))
       ((uniform-block)
        ;; members carry explicit highp: the vertex default is highp,
        ;; a mediump fragment default would otherwise disagree, and
@@ -227,8 +239,20 @@
 
   (define (glsl300-vs->string forms)
     ($glsl300 forms 'vertex ""))
+  ;; a shader that declares its own (out ...) forms replaces the
+  ;; default output entirely -- an implicit goe_FragColor would
+  ;; collide with an explicit location 0
+  (define ($glsl-has-out? forms)
+    (let loop ((fs forms))
+      (cond ((null? fs) #f)
+            ((eq? (caar fs) 'out) #t)
+            (else (loop (cdr fs))))))
+
   (define (glsl300-fs->string forms)
-    ($glsl300 forms 'fragment "out highp vec4 goe_FragColor; "))
+    ($glsl300 forms 'fragment
+              (if ($glsl-has-out? forms)
+                  ""
+                  "out highp vec4 goe_FragColor; ")))
 
   ;; the interface, extracted: shader forms are data, so the
   ;; attribute/uniform declarations that (web fx) wires up come from
