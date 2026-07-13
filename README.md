@@ -139,12 +139,13 @@ A small UI stack over the JS bridge, in `lib/web/`:
   fields (`examples/fx-scene.html`: the lit scene, declaratively)
 - `(web mat)` — 3D math for raw-GL scenes: vec3 and column-major mat4
   over flonum vectors, with `m4-perspective` / `m4-ortho` /
-  `m4-look-at` / rotations and its own range-reduced trig, so it is
-  pure Scheme all
+  `m4-look-at` / rotations / `m4-inverse` and its own range-reduced
+  trig, so it is pure Scheme all
   the way down and verifies headlessly; `fx-uniform!` feeds a mat4
   straight through the command buffer
   (`examples/fx-cube.html`: an indexed, depth-tested cube, no
-  Three.js)
+  Three.js; `examples/fx-pick.html`: `m4-unproject` casts the cursor
+  as a ray and `ray-aabb` answers what it hit)
 - `(web mesh)` — parametric geometry in pure Scheme: plane, box,
   sphere, cylinder, torus as interleaved positions + normals with u16
   indices, generated headlessly-verifiably and laid into the staging

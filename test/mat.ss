@@ -71,6 +71,30 @@
  (let ((s (flsin (fl/ pi 4.0))) (c (flcos (fl/ pi 4.0))))
    (m4~ (m4-from-quat 0.0 s 0.0 c) (m4-rotate-y (fl/ pi 2.0))))
  (m4~ (m4-from-quat 0.0 0.0 0.0 1.0) (m4-identity))
+ ;; inverse: m * m^-1 = identity, for the matrices games build
+ (let* ((m (m4-mul (m4-perspective 0.9 1.5 0.1 100.0)
+                   (m4-look-at (v3 3 4 5) (v3 0 1 0) (v3 0 1 0))))
+        (inv (m4-inverse m)))
+   (and inv (m4~ (m4-mul m inv) (m4-identity))
+        (m4~ (m4-mul inv m) (m4-identity))))
+ (let ((inv (m4-inverse (m4-mul (m4-translate 2 -3 7)
+                                (m4-rotate-y 0.8)))))
+   (and inv (v3~ (m4-transform inv (m4-transform
+                                    (m4-mul (m4-translate 2 -3 7)
+                                            (m4-rotate-y 0.8))
+                                    (v3 1 2 3)))
+                 1.0 2.0 3.0)))
+ ;; singular matrices say so
+ (not (m4-inverse (m4-scale 1 1 0)))
+ ;; unproject inverts projection: a world point projected to NDC by
+ ;; the VP comes back from m4-unproject at the same place
+ (let* ((vp (m4-mul (m4-perspective 1.0 1.0 0.1 50.0)
+                    (m4-look-at (v3 0 2 8) (v3 0 0 0) (v3 0 1 0))))
+        (p (v3 1.5 0.5 -2.0))
+        (ndc (m4-transform vp p))
+        (back (m4-unproject (m4-inverse vp)
+                            (v3-x ndc) (v3-y ndc) (v3-z ndc))))
+   (v3~ back 1.5 0.5 -2.0))
  ;; look-at from +z: axis-aligned view, eye distance in m14
  (let ((v (m4-look-at (v3 0 0 5) (v3 0 0 0) (v3 0 1 0))))
    (and (near? (vector-ref v 0) 1.0)
