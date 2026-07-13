@@ -41,6 +41,7 @@
           cmd-bind-cubemap! cmd-unbind-cubemap!
           cmd-depth!
           gl-vao! cmd-bind-vao! cmd-unbind-vao!
+          gl-ubo! gl-uniform-block! cmd-bind-ubo! cmd-ubo-data!
           cmd-bind-index! cmd-index-data! cmd-draw-elements!
           cmd-attrib-divisor! cmd-draw-elements-instanced!
           cmd-uniform-matrices!
@@ -79,6 +80,15 @@
      "    slots[slot] = p; },"
      "  buffer(slot) { slots[slot] = gl.createBuffer(); },"
      "  vao(slot) { slots[slot] = gl.createVertexArray(); },"
+     "  ubo(slot, bytes) {"
+     "    const b = gl.createBuffer();"
+     "    gl.bindBuffer(gl.UNIFORM_BUFFER, b);"
+     "    gl.bufferData(gl.UNIFORM_BUFFER, bytes, gl.DYNAMIC_DRAW);"
+     "    slots[slot] = b; },"
+     "  uniformBlock(pslot, name, binding) {"
+     "    const p = slots[pslot];"
+     "    gl.uniformBlockBinding(p, gl.getUniformBlockIndex(p, name),"
+     "                           binding); },"
      "  uniform(slot, pslot, name) {"
      "    slots[slot] = gl.getUniformLocation(slots[pslot], name); },"
      "  texture(slot) {"
@@ -279,6 +289,12 @@
      "     case 30: gl.activeTexture(gl.TEXTURE0 + u[p]);"
      "              gl.bindTexture(gl.TEXTURE_2D, null);"
      "              p += 1; break;"
+     "     case 31: gl.bindBufferBase(gl.UNIFORM_BUFFER, u[p],"
+     "                                slots[u[p+1]]); p += 2; break;"
+     "     case 32: gl.bindBuffer(gl.UNIFORM_BUFFER, slots[u[p]]);"
+     "              gl.bufferSubData(gl.UNIFORM_BUFFER, 0,"
+     "                new Uint8Array(memory.buffer, u[p+1], u[p+2]));"
+     "              p += 3; break;"
      "     case 26: gl.bindFramebuffer(gl.READ_FRAMEBUFFER, slots[u[p]]);"
      "              gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, slots[u[p+1]]);"
      "              gl.blitFramebuffer(0, 0, u[p+2], u[p+3],"
@@ -340,6 +356,12 @@
   ;; a vertex array object (webgl2): record a whole attribute setup
   ;; once, rebind it with one word per frame
   (define (gl-vao! slot) (js-method $gl "vao" slot))
+  ;; a uniform buffer (webgl2 + ESSL 300 uniform blocks): shared
+  ;; per-frame state every program reads from one upload
+  (define (gl-ubo! slot bytes) (js-method $gl "ubo" slot bytes))
+  ;; wire a program's named block to a binding point
+  (define (gl-uniform-block! pslot name binding)
+    (js-method $gl "uniformBlock" pslot name binding))
   ;; raw RGBA bytes out of the staging memory -- procedural textures
   (define (gl-texture-data! slot base w h)
     (js-method $gl "textureData" slot base w h))
@@ -379,6 +401,9 @@
   (define (cmd-unbind-texture! unit) (u! 30) (u! unit))
   (define (cmd-bind-vao! slot) (u! 27) (u! slot))
   (define (cmd-unbind-vao!) (u! 28))
+  (define (cmd-bind-ubo! binding slot) (u! 31) (u! binding) (u! slot))
+  (define (cmd-ubo-data! slot base bytes)  ; staging -> uniform buffer
+    (u! 32) (u! slot) (u! base) (u! bytes))
   (define (cmd-uniform1i! slot v) (u! 12) (u! slot) (u! v))
   (define (cmd-uniform2f! slot x y) (u! 13) (u! slot) (f! x) (f! y))
   (define (cmd-uniform3f! slot x y z)

@@ -35,7 +35,8 @@
           fx-target? fx-target-texture
           fx-target-width fx-target-height
           fx-bind-target! fx-bind-canvas!
-          fx-program! fx-program? fx-program-slot fx-program-stride
+          fx-program! fx-program3! fx-ubo!
+          fx-program? fx-program-slot fx-program-stride
           fx-program-istride
           fx-use! fx-use-instanced! fx-uniform!
           fx-ticks! fx-loop!
@@ -76,6 +77,7 @@
 
   (define (fx-buffer!) (let ((s (fx-slot!))) (gl-buffer! s) s))
   (define (fx-texture!) (let ((s (fx-slot!))) (gl-texture! s) s))
+  (define (fx-ubo! bytes) (let ((s (fx-slot!))) (gl-ubo! s bytes) s))
 
   ;; ---- offscreen render targets (webgl2) ----
   (define-record-type (fx-target $make-fx-target fx-target?)
@@ -166,9 +168,19 @@
                    (cdr as))))
 
   (define (fx-program! vs-forms fs-forms)
+    ($fx-program-src! vs-forms fs-forms
+                      (glsl->string vs-forms) (glsl->string fs-forms)))
+  ;; the same wiring from the same forms, rendered as ESSL 3.00 --
+  ;; for shaders that need uniform blocks or transform feedback
+  (define (fx-program3! vs-forms fs-forms)
+    ($fx-program-src! vs-forms fs-forms
+                      (glsl300-vs->string vs-forms)
+                      (glsl300-fs->string fs-forms)))
+
+  (define ($fx-program-src! vs-forms fs-forms vs-src fs-src)
     (let* ((pslot (fx-slot!))
            (as (glsl-attributes vs-forms)))
-      (gl-program! pslot (glsl->string vs-forms) (glsl->string fs-forms)
+      (gl-program! pslot vs-src fs-src
                    ($fx-attr-names as))
       (let ((uniforms (make-eq-hashtable)))
         (for-each (lambda (u)
