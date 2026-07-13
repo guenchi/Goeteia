@@ -30,6 +30,9 @@
 (library (web fx)
   (export fx-init! fx-slot! fx-alloc! fx-buffer! fx-texture!
           fx-width fx-height
+          fx-target! fx-target? fx-target-texture
+          fx-target-width fx-target-height
+          fx-bind-target! fx-bind-canvas!
           fx-program! fx-program? fx-program-slot fx-program-stride
           fx-use! fx-uniform!
           fx-ticks! fx-loop!
@@ -70,6 +73,29 @@
 
   (define (fx-buffer!) (let ((s (fx-slot!))) (gl-buffer! s) s))
   (define (fx-texture!) (let ((s (fx-slot!))) (gl-texture! s) s))
+
+  ;; ---- offscreen render targets (webgl2) ----
+  (define-record-type (fx-target $make-fx-target fx-target?)
+    (fields (immutable fb $fx-target-fb)
+            (immutable tex fx-target-texture)  ; sample it like any texture
+            (immutable w fx-target-width)
+            (immutable h fx-target-height)))
+
+  (define (fx-target! w h . depth-only?)
+    (let* ((fb (fx-slot!))
+           (tex (fx-slot!)))
+      (if (and (pair? depth-only?) (car depth-only?))
+          (gl-target! fb tex w h #t)
+          (gl-target! fb tex w h))
+      ($make-fx-target fb tex w h)))
+
+  ;; binding also sets the viewport to match
+  (define (fx-bind-target! t)
+    (cmd-bind-target! ($fx-target-fb t))
+    (cmd-viewport! 0 0 (fx-target-width t) (fx-target-height t)))
+  (define (fx-bind-canvas!)
+    (cmd-bind-canvas!)
+    (cmd-viewport! 0 0 (fx-width) (fx-height)))
 
   (define (fx-width) (js->number (js-get $fx-canvas "width")))
   (define (fx-height) (js->number (js-get $fx-canvas "height")))

@@ -30,7 +30,8 @@
 ;; Copyright (c) 2026 guenchi. MIT license; see LICENSE.
 (library (web gl)
   (export gl-attach! gl-program! gl-buffer! gl-uniform!
-          gl-texture! gl-texture-upload!
+          gl-texture! gl-texture-upload! gl-target!
+          cmd-bind-target! cmd-bind-canvas!
           cmd-region! cmd-begin! cmd-flush! cmd-pos
           cmd-clear! cmd-use-program! cmd-bind-buffer! cmd-buffer-data!
           cmd-vertex-attrib! cmd-uniform1f! cmd-uniform4f!
@@ -51,7 +52,7 @@
   (define replayer-src
     (string-append
      "globalThis.__goeteia_gl = (canvas, memory) => {"
-     " const gl = canvas.getContext('webgl');"
+     " const gl = canvas.getContext('webgl2') || canvas.getContext('webgl');"
      " const slots = [];"
      " const compile = (kind, src) => {"
      "   const s = gl.createShader(kind); gl.shaderSource(s, src); gl.compileShader(s);"
@@ -80,6 +81,38 @@
      "    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);"
      "    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);"
      "    slots[slot] = t; },"
+     "  target(slot, tslot, w, h, depthOnly) {"
+     "    const t = gl.createTexture();"
+     "    gl.bindTexture(gl.TEXTURE_2D, t);"
+     "    if (depthOnly)"
+     "      gl.texImage2D(gl.TEXTURE_2D, 0, gl.DEPTH_COMPONENT24, w, h, 0,"
+     "                    gl.DEPTH_COMPONENT, gl.UNSIGNED_INT, null);"
+     "    else"
+     "      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, w, h, 0,"
+     "                    gl.RGBA, gl.UNSIGNED_BYTE, null);"
+     "    const f = depthOnly ? gl.NEAREST : gl.LINEAR;"
+     "    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, f);"
+     "    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, f);"
+     "    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);"
+     "    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);"
+     "    slots[tslot] = t;"
+     "    const fb = gl.createFramebuffer();"
+     "    gl.bindFramebuffer(gl.FRAMEBUFFER, fb);"
+     "    if (depthOnly) {"
+     "      gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT,"
+     "                              gl.TEXTURE_2D, t, 0);"
+     "      gl.drawBuffers([gl.NONE]);"
+     "    } else {"
+     "      gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0,"
+     "                              gl.TEXTURE_2D, t, 0);"
+     "      const rb = gl.createRenderbuffer();"
+     "      gl.bindRenderbuffer(gl.RENDERBUFFER, rb);"
+     "      gl.renderbufferStorage(gl.RENDERBUFFER, gl.DEPTH_COMPONENT16, w, h);"
+     "      gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT,"
+     "                                 gl.RENDERBUFFER, rb);"
+     "    }"
+     "    gl.bindFramebuffer(gl.FRAMEBUFFER, null);"
+     "    slots[slot] = fb; },"
      "  textureUpload(slot, src, premul) {"
      "    if (premul) gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, true);"
      "    gl.bindTexture(gl.TEXTURE_2D, slots[slot]);"
@@ -131,6 +164,9 @@
      "                p += 2; break; }"
      "     case 19: gl.uniform3f(slots[u[p]], f[p+1], f[p+2], f[p+3]);"
      "              p += 4; break;"
+     "     case 20: gl.bindFramebuffer(gl.FRAMEBUFFER, slots[u[p]]);"
+     "              p += 1; break;"
+     "     case 21: gl.bindFramebuffer(gl.FRAMEBUFFER, null); break;"
      "     default: throw new Error('bad gl opcode');"
      "    } } }; };"))
 
@@ -158,6 +194,12 @@
   ;; #t as the third argument to premultiply alpha on upload (image
   ;; sprites under (cmd-blend! 'premul))
   (define (gl-texture! slot) (js-method $gl "texture" slot))
+  ;; an offscreen render target (webgl2): a framebuffer in `slot`
+  ;; whose attachment texture lands in `tslot` for later sampling.
+  ;; depth-only? = a shadow-map style depth texture, else color+depth
+  (define (gl-target! slot tslot w h . depth-only?)
+    (js-method $gl "target" slot tslot w h
+               (if (and (pair? depth-only?) (car depth-only?)) 1 0)))
   ;; premul crosses as 1/0: a boolean would convert through js-eval,
   ;; whose nested %js-call would swallow the args already pushed
   (define (gl-texture-upload! slot src . premul)
@@ -202,6 +244,9 @@
   (define (cmd-bind-index! slot) (u! 16) (u! slot))
   (define (cmd-index-data! offset bytes) (u! 17) (u! offset) (u! bytes))
   (define (cmd-draw-elements! mode count) (u! 18) (u! mode) (u! count))
+  ;; render into an offscreen target, or back to the canvas
+  (define (cmd-bind-target! slot) (u! 20) (u! slot))
+  (define (cmd-bind-canvas!) (u! 21))
   (define (cmd-pos) $p)                 ; for overflow checks by callers
   (define (cmd-viewport! x y w h) (u! 9) (u! x) (u! y) (u! w) (u! h))
   ;; blending for translucent draws: (cmd-blend! 'alpha) src-over,
