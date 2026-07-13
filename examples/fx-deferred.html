@@ -16,7 +16,7 @@
     behind one framebuffer (<code>fx-target-mrt!</code>), filled by a
     fragment shader with <code>(out 0/1/2 ...)</code> forms.  Then 24
     moving point lights cost a single fullscreen pass: lighting no
-    longer scales with scene complexity.  Needs WebGL&nbsp;2.
+    longer scales with scene complexity.  The same G-buffer then feeds screen-space reflections (the polished floor mirrors the scene), and the frame closes HDR → ACES → FXAA.  Needs WebGL&nbsp;2.
     See <code>fx-deferred.ss</code>.</p>
     <canvas id="c" width="800" height="600"></canvas>
     <script type="module">
