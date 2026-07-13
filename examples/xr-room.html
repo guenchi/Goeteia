@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <title>Goeteia — a room, into the headset</title>
+    <style>
+      body { font-family: system-ui; text-align: center; margin-top: 2em; background: #f2f4fa; color: #14203a; }
+      canvas { border-radius: 12px; box-shadow: 0 4px 20px rgba(16,20,42,.2); }
+      code { font-family: ui-monospace, Menlo, monospace; color: #1550c4; }
+      #enter { display: none; margin: 0 0 1em; padding: .5em 1.4em;
+               font-size: 1em; border: 1px solid #1550c4; border-radius: 8px;
+               background: #fff; color: #1550c4; cursor: pointer; }
+      #enter:hover { background: #1550c4; color: #fff; }
+    </style>
+  </head>
+  <body>
+    <h1>A room, into the headset</h1>
+    <p>One scene, two pumps: on a desktop it orbits as usual; where
+    WebXR answers, the button appears and <code>(web xr)</code> swaps
+    the loop for the session's rAF, takes each eye's projection and
+    view from the <code>XRPose</code> (written straight into staging
+    memory), and draws once per eye into the session's framebuffer.
+    The command buffer and the shader do not change at all.
+    See <code>xr-room.ss</code>.</p>
+    <div><button id="enter">Enter VR</button></div>
+    <canvas id="c" width="800" height="600"></canvas>
+    <script type="module">
+      import { loadGoeteia } from '../rt/web.mjs';
+      loadGoeteia('xr-room.wasm');
+    </script>
+  </body>
+</html>
