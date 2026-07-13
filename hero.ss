@@ -9,7 +9,7 @@
 
 ;; ---- the page ----
 (sx-mount (get-element-by-id "live")
-  (sx (div (@ (class "hero"))
+  (sx (div (@ (class "hero") (translate "no"))
         (canvas (@ (id "gl-title") (width "720") (height "230")
                    (role "img")
                    (aria-label "Γοητεία — The black ars of commanding what lies beneath.")
