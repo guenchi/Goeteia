@@ -19,6 +19,7 @@
           v3 v3-x v3-y v3-z
           v3-add v3-sub v3-scale v3-dot v3-cross v3-normalize
           m4-identity m4-mul m4-scratch! m4-transform
+          m4s-write! m4s-read m4s-identity! m4s-mul! m4s-trs!
           m4-translate m4-scale m4-rotate-x m4-rotate-y m4-rotate-z
           m4-from-quat m4-perspective m4-ortho m4-look-at
           m4-inverse m4-unproject
@@ -113,6 +114,78 @@
           (vector-set! m k (%mem-f32-ref (+ cbase (* k 4))))
           (out (+ k 1))))
       m))
+
+  ;; ---- staging-resident matrices: the copy tax refunded ----
+  ;; An m4s is a byte address of sixteen f32 in the linear memory.
+  ;; Chains multiply entirely in SIMD -- no boxed reads in, no boxed
+  ;; vector out -- and consumers that live in staging anyway
+  ;; (instance buffers, uniform uploads) read the bytes where they
+  ;; already are.  Convert at the edges with m4s-write!/m4s-read.
+  (define (m4s-write! at m)             ; vector -> staging
+    (let put ((k 0))
+      (when (< k 16)
+        (%mem-f32-set! (+ at (* k 4)) (vector-ref m k))
+        (put (+ k 1)))))
+
+  (define (m4s-read at)                 ; staging -> vector
+    (let ((m (make-vector 16 0.0)))
+      (let get ((k 0))
+        (when (< k 16)
+          (vector-set! m k (%mem-f32-ref (+ at (* k 4))))
+          (get (+ k 1))))
+      m))
+
+  (define (m4s-identity! at)
+    (let put ((k 0))
+      (when (< k 16)
+        (%mem-f32-set! (+ at (* k 4))
+                       (if (= 0 (remainder k 5)) 1.0 0.0))
+        (put (+ k 1)))))
+
+  ;; dst = a x b, pure SIMD: one scale and three axpys per column,
+  ;; scalars loaded straight from staging through the f64 context.
+  ;; dst must not alias a or b (the columns land as they compute)
+  (define (m4s-mul! dst a b)
+    (let col ((c 0))
+      (when (< c 4)
+        (let ((d (+ dst (* c 16)))
+              (bc (+ b (* c 16))))
+          (%f32x4-scale! d a (%mem-f32-ref bc))
+          (%f32x4-axpy! d d (+ a 16) (%mem-f32-ref (+ bc 4)))
+          (%f32x4-axpy! d d (+ a 32) (%mem-f32-ref (+ bc 8)))
+          (%f32x4-axpy! d d (+ a 48) (%mem-f32-ref (+ bc 12))))
+        (col (+ c 1)))))
+
+  ;; the whole T x Ry x Rx x Rz x S(s) composite in closed form,
+  ;; written straight into staging -- the per-object matrix every
+  ;; scene rebuilds each frame, without four constructors and three
+  ;; multiplies' worth of boxed intermediates
+  (define (m4s-trs! at px py pz rx ry rz s)
+    (let* ((s ($mat-fl s))
+           (cx (flcos ($mat-fl rx))) (sx (flsin ($mat-fl rx)))
+           (cy (flcos ($mat-fl ry))) (sy (flsin ($mat-fl ry)))
+           (cz (flcos ($mat-fl rz))) (sz (flsin ($mat-fl rz))))
+      (%mem-f32-set! at (fl* s (fl+ (fl* cy cz) (fl* sy (fl* sx sz)))))
+      (%mem-f32-set! (+ at 4) (fl* s (fl* cx sz)))
+      (%mem-f32-set! (+ at 8)
+                     (fl* s (fl+ (fl- 0.0 (fl* sy cz))
+                                 (fl* cy (fl* sx sz)))))
+      (%mem-f32-set! (+ at 12) 0.0)
+      (%mem-f32-set! (+ at 16)
+                     (fl* s (fl+ (fl- 0.0 (fl* cy sz))
+                                 (fl* sy (fl* sx cz)))))
+      (%mem-f32-set! (+ at 20) (fl* s (fl* cx cz)))
+      (%mem-f32-set! (+ at 24)
+                     (fl* s (fl+ (fl* sy sz) (fl* cy (fl* sx cz)))))
+      (%mem-f32-set! (+ at 28) 0.0)
+      (%mem-f32-set! (+ at 32) (fl* s (fl* sy cx)))
+      (%mem-f32-set! (+ at 36) (fl* s (fl- 0.0 sx)))
+      (%mem-f32-set! (+ at 40) (fl* s (fl* cy cx)))
+      (%mem-f32-set! (+ at 44) 0.0)
+      (%mem-f32-set! (+ at 48) ($mat-fl px))
+      (%mem-f32-set! (+ at 52) ($mat-fl py))
+      (%mem-f32-set! (+ at 56) ($mat-fl pz))
+      (%mem-f32-set! (+ at 60) 1.0)))
 
   (define (m4-mul a b)                  ; (m4-mul a b) transforms as a after b
     (if $mat-scratch

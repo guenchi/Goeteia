@@ -138,4 +138,35 @@
               (and (fl<? d (fl+ 0.0001 (fl* 0.00001 m)))
                    (lane (+ i 1)))))))))
 
-(and main-ok simd-ok)
+;; ---- m4s: staging-resident matrices agree with the vector path ----
+(define (m4~32 got want)                 ; f32-lane tolerance
+  (let lane ((i 0))
+    (or (= i 16)
+        (let* ((g (vector-ref got i)) (w (vector-ref want i))
+               (d (if (fl<? g w) (fl- w g) (fl- g w)))
+               (m (if (fl<? w 0.0) (fl- 0.0 w) w)))
+          (and (fl<? d (fl+ 0.0001 (fl* 0.00001 m)))
+               (lane (+ i 1)))))))
+(define m4s-ok
+  (let* ((a (m4-mul (m4-perspective 0.9 1.5 0.1 100.0)
+                    (m4-look-at (v3 3.0 4.0 5.0) (v3 0.0 1.0 0.0)
+                                (v3 0.0 1.0 0.0))))
+         (b (m4-mul (m4-translate 1.0 2.0 3.0) (m4-rotate-y 0.7))))
+    (m4s-write! 4096 a)
+    (m4s-write! 4160 b)
+    (m4s-mul! 4224 4096 4160)
+    (and (m4~32 (m4s-read 4224) (m4-mul a b))
+         (m4~ (m4s-read 4096) a)         ; write/read round-trips
+         (begin (m4s-identity! 4224)
+                (m4~ (m4s-read 4224) (m4-identity))))))
+;; the closed-form TRS matches the constructor chain, sign for sign
+(define m4s-trs-ok
+  (let ((want (m4-mul (m4-translate 1.5 -2.0 3.0)
+                      (m4-mul (m4-rotate-y 0.6)
+                              (m4-mul (m4-rotate-x -0.4)
+                                      (m4-mul (m4-rotate-z 1.1)
+                                              (m4-scale 1.7 1.7 1.7)))))))
+    (m4s-trs! 4288 1.5 -2.0 3.0 -0.4 0.6 1.1 1.7)
+    (m4~32 (m4s-read 4288) want)))
+
+(and main-ok simd-ok m4s-ok m4s-trs-ok)
