@@ -121,6 +121,7 @@
      (set! uploaded #t))
    (let ((models (box-models t)))
      ;; pass 1: casters only, from the light (the ground only receives)
+     (cmd-unbind-texture! 0)           ; the map was sampled last frame
      (fx-bind-target! shadow-t)
      (cmd-clear! 1.0 1.0 1.0 1.0)
      (draw-boxes! depth-p models

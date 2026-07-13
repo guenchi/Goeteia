@@ -208,13 +208,15 @@
          (or (null? es)
              (and (check i (car es))
                   (loop (+ i 1) (cdr es))))))
-     ;; --- unbinding the cube: the anti-feedback-loop opcode ---
+     ;; --- unbinding: the anti-feedback-loop opcodes ---
      (let ((base (js->number (js-get log "length"))))
        (cmd-begin!)
        (cmd-unbind-cubemap! 1)
+       (cmd-unbind-texture! 2)
        (cmd-flush!)
        (let loop ((i base)
-                  (es (list "activeTexture:33985" "bindTexture:null")))
+                  (es (list "activeTexture:33985" "bindTexture:null"
+                            "activeTexture:33986" "bindTexture:null")))
          (or (null? es)
              (and (check i (car es))
                   (loop (+ i 1) (cdr es))))))

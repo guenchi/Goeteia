@@ -62,6 +62,7 @@
 
 (fx-loop!
  (lambda (t dt)
+   (cmd-unbind-texture! 0)                ; the scene was sampled last frame
    ;; pass 1: the scene, into the offscreen target
    (fx-bind-target! scene)
    (cmd-clear! 0.06 0.07 0.12 1.0)
