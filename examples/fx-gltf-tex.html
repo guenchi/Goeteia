@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <title>Goeteia — a textured GLB asset</title>
+    <style>
+      body { font-family: system-ui; text-align: center; margin-top: 2em; background: #f2f4fa; color: #14203a; }
+      canvas { border-radius: 12px; box-shadow: 0 4px 20px rgba(16,20,42,.2); }
+      code { font-family: ui-monospace, Menlo, monospace; color: #1550c4; }
+      .credit { font-size: .8em; color: #6b7690; }
+    </style>
+  </head>
+  <body>
+    <h1>A textured asset: BoxTextured.glb</h1>
+    <p>The GLB's embedded PNG decodes through
+    <code>gltf-load-textures!</code>; the primitive arrives with its
+    texture coordinates and samples under the directional light.
+    See <code>fx-gltf-tex.ss</code>.</p>
+    <canvas id="c" width="800" height="600"></canvas>
+    <p class="credit">Model: BoxTextured from the Khronos glTF Sample
+    Assets, © 2017 Cesium, licensed CC-BY 4.0.</p>
+    <script type="module">
+      import { loadGoeteia } from '../rt/web.mjs';
+      loadGoeteia('fx-gltf-tex.wasm');
+    </script>
+  </body>
+</html>

@@ -88,8 +88,73 @@
        (= (%mem-i32-ref (gprim-ibase p1)) (+ 0 (* 65536 1)))
        (= (%mem-i32-ref (+ (gprim-ibase p1) 4)) 2)))
 
+;; ---- a second GLB: textured triangle (TEXCOORD_0 + image) ----
+(define json2
+  (string-append
+   "{\"asset\":{\"version\":\"2.0\"},\"scene\":0,"
+   "\"scenes\":[{\"nodes\":[0]}],"
+   "\"nodes\":[{\"mesh\":0}],"
+   "\"meshes\":[{\"primitives\":[{\"attributes\":"
+   "{\"POSITION\":0,\"NORMAL\":1,\"TEXCOORD_0\":2},"
+   "\"indices\":3,\"material\":0}]}],"
+   "\"materials\":[{\"pbrMetallicRoughness\":"
+   "{\"baseColorFactor\":[1,1,1,1],\"baseColorTexture\":{\"index\":0}}}],"
+   "\"textures\":[{\"source\":0}],"
+   "\"images\":[{\"bufferView\":4,\"mimeType\":\"image/png\"}],"
+   "\"buffers\":[{\"byteLength\":108}],"
+   "\"bufferViews\":["
+   "{\"buffer\":0,\"byteOffset\":0,\"byteLength\":36},"
+   "{\"buffer\":0,\"byteOffset\":36,\"byteLength\":36},"
+   "{\"buffer\":0,\"byteOffset\":72,\"byteLength\":24},"
+   "{\"buffer\":0,\"byteOffset\":96,\"byteLength\":6},"
+   "{\"buffer\":0,\"byteOffset\":104,\"byteLength\":4}],"
+   "\"accessors\":["
+   "{\"bufferView\":0,\"componentType\":5126,\"count\":3,\"type\":\"VEC3\"},"
+   "{\"bufferView\":1,\"componentType\":5126,\"count\":3,\"type\":\"VEC3\"},"
+   "{\"bufferView\":2,\"componentType\":5126,\"count\":3,\"type\":\"VEC2\"},"
+   "{\"bufferView\":3,\"componentType\":5123,\"count\":3,\"type\":\"SCALAR\"}]}"))
+(define jlen2 (string-length json2))
+(define jpad2 (remainder (- 4 (remainder jlen2 4)) 4))
+(define total2 (+ 12 8 jlen2 jpad2 8 108))
+(set! base 10240)
+(set! at 0)
+(u32! #x46546C67)
+(u32! 2)
+(u32! total2)
+(u32! (+ jlen2 jpad2))
+(u32! #x4E4F534A)
+(str! json2)
+(let pad ((i 0)) (when (< i jpad2) (b! 32) (pad (+ i 1))))
+(u32! 108)
+(u32! #x004E4942)
+(f0!) (f0!) (f0!)                        ; positions
+(f1!) (f0!) (f0!)
+(f0!) (f1!) (f0!)
+(f0!) (f0!) (f1!)                        ; normals
+(f0!) (f0!) (f1!)
+(f0!) (f0!) (f1!)
+(f0!) (f0!)                              ; uvs: (0 0) (1 0) (0 1)
+(f1!) (f0!)
+(f0!) (f1!)
+(u16! 0) (u16! 1) (u16! 2) (u16! 0)      ; indices + pad -> offset 104
+(str! "PNG!")                            ; the "image" bytes
+
+(define g2 (gltf-parse 10240 total2))
+(define p2 (car (gltf-prims g2)))
+(define tex-parse-ok
+  (and (= (gprim-stride p2) 32)
+       (= (gprim-vbytes p2) 96)
+       (near? (%mem-f32-ref (+ (gprim-vbase p2) 24)) 0.0)   ; v0 u
+       (near? (%mem-f32-ref (+ (gprim-vbase p2) 32 24)) 1.0); v1 u
+       (not (gprim-tex p2))              ; nothing decoded yet
+       (= (vector-length (gltf-images g2)) 1)
+       (let ((info (vector-ref (gltf-images g2) 0)))
+         (and (= (cadr info) 4)
+              (string=? (caddr info) "image/png")
+              (= (%mem-u8-ref (car info)) 80)))))   ; 'P'
+
 ;; ---- draw through the recording mock: one upload, then reuse ----
-(js-eval "globalThis.__gllog = []; globalThis.__mockcanvas = { width:640, height:480, addEventListener(k,f){}, getContext(kind) { const log = globalThis.__gllog; const push = (...a) => log.push(a.join(':')); return { VERTEX_SHADER:'VS', FRAGMENT_SHADER:'FS', COMPILE_STATUS:'CS', LINK_STATUS:'LS', COLOR_BUFFER_BIT:16384, DEPTH_BUFFER_BIT:256, ARRAY_BUFFER:'AB', DYNAMIC_DRAW:'DD', FLOAT:'F', TRIANGLES:'TRI', DEPTH_TEST:'DT', ELEMENT_ARRAY_BUFFER:'EAB', UNSIGNED_SHORT:'US', createShader(k){ return {kind:k} }, shaderSource(s,src){}, compileShader(s){}, getShaderParameter(){ return true }, createProgram(){ return {id:'P'+(this._p=(this._p||0)+1)} }, attachShader(p,s){}, linkProgram(p){}, getProgramParameter(){ return true }, bindAttribLocation(p,i,n){ push('bindAttrib', i, n) }, createBuffer(){ return {id:'B'+(this._b=(this._b||0)+1)} }, getUniformLocation(p,n){ return {id:'U:'+n} }, useProgram(p){ push('useProgram', p.id) }, bindBuffer(t,b){ push(t==='EAB'?'bindIndex':'bindBuffer', b.id) }, bufferData(t,arr,u){ push('bufferData', arr.length) }, enableVertexAttribArray(l){ push('enable', l) }, vertexAttribPointer(...a){ push('attrib', a.join(',')) }, uniform1f(loc,x){ push('uniform1f', loc.id, x.toFixed(2)) }, uniform3f(loc,x,y,z){ push('uniform3f', loc.id, x.toFixed(2), y.toFixed(2), z.toFixed(2)) }, uniform4f(loc,...a){ push('uniform4f', loc.id, a.map(x=>x.toFixed(1)).join(',')) }, uniformMatrix4fv(loc,tr,arr){ push('uniformMat4', loc.id, arr.length, arr[12].toFixed(2), arr[13].toFixed(2)) }, drawElements(m,c,t,o){ push('drawElements', m, c, t) }, viewport(...a){ push('viewport', a.join(',')) } } } }")
+(js-eval "globalThis.__gllog = []; globalThis.__mockcanvas = { width:640, height:480, addEventListener(k,f){}, getContext(kind) { const log = globalThis.__gllog; const push = (...a) => log.push(a.join(':')); return { VERTEX_SHADER:'VS', FRAGMENT_SHADER:'FS', COMPILE_STATUS:'CS', LINK_STATUS:'LS', COLOR_BUFFER_BIT:16384, DEPTH_BUFFER_BIT:256, ARRAY_BUFFER:'AB', DYNAMIC_DRAW:'DD', FLOAT:'F', TRIANGLES:'TRI', DEPTH_TEST:'DT', ELEMENT_ARRAY_BUFFER:'EAB', UNSIGNED_SHORT:'US', createTexture(){ return {id:'T'+(this._t=(this._t||0)+1)} }, bindTexture(t,tex){ push('bindTexture', tex.id) }, texParameteri(t,k,v){ push('texParam', k, v) }, texImage2D(...a){ const d = a[a.length-1]; push('texImage', d ? d.id : 'null') }, activeTexture(u){ push('activeTexture', u) }, uniform1i(loc,v){ push('uniform1i', loc.id, v) }, uniform2f(loc,x,y){ push('uniform2f', loc.id, x.toFixed(2), y.toFixed(2)) }, createShader(k){ return {kind:k} }, shaderSource(s,src){}, compileShader(s){}, getShaderParameter(){ return true }, createProgram(){ return {id:'P'+(this._p=(this._p||0)+1)} }, attachShader(p,s){}, linkProgram(p){}, getProgramParameter(){ return true }, bindAttribLocation(p,i,n){ push('bindAttrib', i, n) }, createBuffer(){ return {id:'B'+(this._b=(this._b||0)+1)} }, getUniformLocation(p,n){ return {id:'U:'+n} }, useProgram(p){ push('useProgram', p.id) }, bindBuffer(t,b){ push(t==='EAB'?'bindIndex':'bindBuffer', b.id) }, bufferData(t,arr,u){ push('bufferData', arr.length) }, enableVertexAttribArray(l){ push('enable', l) }, vertexAttribPointer(...a){ push('attrib', a.join(',')) }, uniform1f(loc,x){ push('uniform1f', loc.id, x.toFixed(2)) }, uniform3f(loc,x,y,z){ push('uniform3f', loc.id, x.toFixed(2), y.toFixed(2), z.toFixed(2)) }, uniform4f(loc,...a){ push('uniform4f', loc.id, a.map(x=>x.toFixed(1)).join(',')) }, uniformMatrix4fv(loc,tr,arr){ push('uniformMat4', loc.id, arr.length, arr[12].toFixed(2), arr[13].toFixed(2)) }, drawElements(m,c,t,o){ push('drawElements', m, c, t) }, viewport(...a){ push('viewport', a.join(',')) } } } }")
 
 (define gllog (js-get (js-global) "__gllog"))
 (define (entry i) (js->string (js-index gllog i)))
@@ -122,4 +187,30 @@
   (and (= (count-log "bufferData") 2)      ; still the first frame's two
        (= (count-log "drawElements:TRI:3:US") 2)))
 
-(and parse-ok draw-ok reuse-ok)
+;; ---- decode the image (sync-thenable mocks) and draw textured ----
+(js-eval "globalThis.__syncThen = (v) => ({ then(f) { const r = f(v); return (r && r.then) ? r : globalThis.__syncThen(r); } }); globalThis.Blob = function(parts, opts) { this.mime = opts.type; this.len = parts[0].length; }; globalThis.createImageBitmap = (b) => globalThis.__syncThen({ id: 'BMP', mime: b.mime, len: b.len })")
+(define loaded #f)
+(gltf-load-textures! g2 (lambda (g) (set! loaded #t)))
+(define tex-load-ok
+  (and loaded
+       (number? (gprim-tex p2))
+       (= (count-log "texImage:BMP") 1)))
+
+(define tprog (fx-program! mesh-tex-vs mesh-tex-fs))
+(cmd-begin!)
+(gltf-draw! g2 tprog (m4-identity))
+(cmd-flush!)
+(define tex-draw-ok
+  (and (= (count-log "bufferData:24") 1)      ; 3 verts x 8 f32
+       (= (count-log "attrib:2,2,F,false,32,24") 1)
+       (= (count-log "uniform1i:U:u_tex:0") 1)
+       (= (count-log "drawElements:TRI:3:US") 3)))
+
+;; the guard rail: a 24-byte program cannot draw a 32-byte primitive
+(define mismatch-ok
+  (guard (e (#t #t))
+    (gltf-draw! g2 prog (m4-identity))
+    #f))
+
+(and parse-ok tex-parse-ok draw-ok reuse-ok tex-load-ok tex-draw-ok
+     mismatch-ok)
