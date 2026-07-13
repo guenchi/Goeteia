@@ -31,6 +31,7 @@
           gltf-load-textures! gltf-draw!
           gltf-anims gltf-animation-names gltf-animate!
           gltf-animate-blend! gltf-weights! gprim-morph
+          anim-machine anim-machine? anim-state anim-goto! anim-update!
           gltf-joint-matrices gltf-skin-vs
           gprim-vbase gprim-vbytes gprim-ibase gprim-ibytes
           gprim-icount gprim-index-u32? gprim-color
@@ -495,6 +496,66 @@
         (if (< k 0)
             acc
             (loop (- k 1) (cons (vector-ref (vector-ref as k) 0) acc))))))
+
+  ;; ---- the animation state machine ----
+  ;; The pattern every animated character repeats, packaged: named
+  ;; states over clip indices, transitions that crossfade over a
+  ;; fade time, and clip clocks that keep running under the fade so
+  ;; feet do not freeze mid-stride.
+  ;;
+  ;;   (define m (anim-machine g '((walk . 1) (survey . 0) (run . 2))
+  ;;                           0.3))          ; starts in the first state
+  ;;   (anim-goto! m 'run)                    ; crossfade over 0.3s
+  ;;   (anim-goto! m 'walk 0.1)               ; ... or this one's own fade
+  ;;   (anim-update! m dt)                    ; each frame: clocks + pose
+  ;;   (anim-state m)                         ; -> the current name
+  (define-record-type ($anim-machine $am-make anim-machine?)
+    (fields (immutable g $am-g)
+            (immutable states $am-states)     ; ((name . clip) ...)
+            (immutable fade $am-fade)         ; default seconds
+            (mutable cur $am-cur $am-cur!)
+            (mutable prev $am-prev $am-prev!) ; #f when settled
+            (mutable tcur $am-tcur $am-tcur!)
+            (mutable tprev $am-tprev $am-tprev!)
+            (mutable k $am-k $am-k!)          ; fade seconds elapsed
+            (mutable len $am-len $am-len!)))  ; this transition's fade
+
+  (define (anim-machine g states . fade)
+    ($am-make g states
+              (if (pair? fade) ($gltf-fl (car fade)) 0.25)
+              (car (car states)) #f 0.0 0.0 0.0 0.0))
+
+  (define (anim-state m) ($am-cur m))
+
+  (define (anim-goto! m name . fade)
+    (unless (assq name ($am-states m))
+      (error 'anim-goto! "unknown state" name))
+    (unless (eq? name ($am-cur m))
+      ($am-prev! m ($am-cur m))
+      ($am-tprev! m ($am-tcur m))
+      ($am-cur! m name)
+      ($am-tcur! m 0.0)
+      ($am-k! m 0.0)
+      ($am-len! m (if (pair? fade) ($gltf-fl (car fade)) ($am-fade m)))))
+
+  (define (anim-update! m dt)
+    (let* ((dt ($gltf-fl dt))
+           (g ($am-g m))
+           (ci (cdr (assq ($am-cur m) ($am-states m)))))
+      ($am-tcur! m (fl+ ($am-tcur m) dt))
+      (if (and ($am-prev m) (fl<? ($am-k m) ($am-len m)))
+          (begin
+            ($am-tprev! m (fl+ ($am-tprev m) dt))
+            ($am-k! m (fl+ ($am-k m) dt))
+            (let ((w (if (fl<? ($am-len m) 0.000001)
+                         1.0
+                         (fl/ ($am-k m) ($am-len m))))
+                  (pi (cdr (assq ($am-prev m) ($am-states m)))))
+              (if (fl<? w 1.0)
+                  (gltf-animate-blend! g pi ($am-tprev m) ci ($am-tcur m) w)
+                  (begin ($am-prev! m #f)
+                         (gltf-animate! g ci ($am-tcur m))))))
+          (gltf-animate! g ci ($am-tcur m)))))
 
   ;; joint matrices for one skin: global(joint) x inverse-bind
   (define (gltf-joint-matrices g si)

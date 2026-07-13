@@ -12,10 +12,13 @@
   </head>
   <body>
     <h1>Skeletal animation: the Fox</h1>
-    <p>24 joints sample through <code>gltf-animate!</code> each frame
-    and upload as one uniform array; <code>gltf-skin-vs</code> blends
-    four weighted bones per vertex.
-    <strong>Keys 1 / 2 / 3: Survey / Walk / Run.</strong>
+    <p>24 joints pose through the <code>anim-machine</code> state
+    machine each frame — states over clips, crossfading transitions,
+    both clocks running under the fade — and upload as one uniform
+    array; <code>gltf-skin-vs</code> blends four weighted bones per
+    vertex.
+    <strong>Keys 1 / 2 / 3: <code>anim-goto!</code> Survey / Walk /
+    Run.</strong>
     See <code>fx-fox.ss</code>.</p>
     <canvas id="c" width="800" height="600"></canvas>
     <p class="credit">Model: Fox from the Khronos glTF Sample Assets —

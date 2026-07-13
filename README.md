@@ -216,7 +216,10 @@ A small UI stack over the JS bridge, in `lib/web/`:
   factors, embedded textures
   (`gltf-load-textures!`), skins and animations all load: 
   `gltf-animate!` samples the channels each frame (looping, nlerp
-  rotations), `gltf-animate-blend!` crossfades two clips, and
+  rotations), `gltf-animate-blend!` crossfades two clips,
+  `anim-machine` packages the pattern every character repeats —
+  named states over clips, `anim-goto!` transitions that fade over
+  a per-transition time while both clocks keep running — and
   `gltf-skin-vs` blends four weighted joints per
   vertex from one mat4-array upload
   (`examples/fx-gltf.html`: the lit Box; `fx-gltf-tex.html`: a
