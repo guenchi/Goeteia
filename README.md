@@ -178,9 +178,16 @@ A small UI stack over the JS bridge, in `lib/web/`:
   uv gradients and `mesh-normal-vs`/`-fs` light through a
   tangent-space normal map (`examples/fx-normalmap.html`: the bumps
   are procedural bytes fed to `gl-texture-data!`, and an illusion).
-  `mesh-pbr-vs`/`-fs` are Cook-Torrance GGX with the sky as light
-  probe (`examples/fx-pbr.html`: the metallic × roughness
+  `mesh-pbr-vs`/`-fs` are Cook-Torrance GGX with Karis' split-sum
+  ambient — a prefiltered environment plus the BRDF lookup table
+  from `(web ibl)` (`examples/fx-pbr.html`: the metallic × roughness
   calibration grid)
+- `(web ibl)` — the light-probe bake, on the GPU: `ibl-prefilter!`
+  renders a fresh cube map whose mip chain is the source environment
+  convolved with GGX at rising roughness (one pass per face × level,
+  through `gl-cube-face-fb!`), and `ibl-brdf-lut!` bakes the
+  split-sum integration into a 2D scale/bias table — both with
+  Fibonacci-spiral importance sampling, so the shaders stay ESSL 1.00
 - `(web collide)` — collision tests and raycasts for 3D games:
   sphere/AABB overlaps, ray against sphere, box, plane, triangle and
   whole meshes (Möller–Trumbore), and `sphere-aabb-push` — the
