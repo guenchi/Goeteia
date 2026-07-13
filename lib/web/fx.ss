@@ -54,11 +54,18 @@
   (define $fx-slot 0)
   (define $fx-heap 65536)
 
+  (define ($fx-gen)
+    (let ((g (js-get (js-global) "__goeteia_fx_gen")))
+      (if (js-truthy? g) (js->number g) 0)))
+
   (define (fx-init! canvas)
     (set! $fx-canvas canvas)
     (gl-attach! canvas)
     (set! $fx-slot 0)
     (set! $fx-heap $fx-cmd-limit)
+    ;; a fresh init retires loops from any earlier run of the page
+    ;; (live editors re-run whole programs; fx-ticks! checks this)
+    (js-set! (js-global) "__goeteia_fx_gen" (+ 1 ($fx-gen)))
     (cmd-region! 0))
 
   (define (fx-slot!)
@@ -266,16 +273,18 @@
   ;; proc gets (t dt) in seconds; no GL side effects, so a Three.js
   ;; render loop can use it directly
   (define (fx-ticks! proc)
-    (let ((t0 -1.0) (last 0.0))
+    (let ((t0 -1.0) (last 0.0) (gen ($fx-gen)))
       (letrec ((tick (lambda args
-                       (let ((s (fl/ ($fx-fl (js->number (car args)))
-                                     1000.0)))
-                         (when (fl<? t0 0.0)
-                           (set! t0 s)
+                       (when (= gen ($fx-gen))
+                         (let ((s (fl/ ($fx-fl (js->number (car args)))
+                                       1000.0)))
+                           (when (fl<? t0 0.0)
+                             (set! t0 s)
+                             (set! last s))
+                           (proc (fl- s t0) (fl- s last))
                            (set! last s))
-                         (proc (fl- s t0) (fl- s last))
-                         (set! last s))
-                       (js-method (js-global) "requestAnimationFrame" tick))))
+                         (js-method (js-global) "requestAnimationFrame"
+                                    tick)))))
         (js-method (js-global) "requestAnimationFrame" tick))))
 
   ;; ticks plus the GL frame plumbing: begin, viewport, user commands,
