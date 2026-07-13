@@ -101,22 +101,34 @@
     (fields (immutable prog $sgl-prog)     ; lit; #f when unused
             (immutable tprog $sgl-tprog)   ; tex; #f when unused
             (immutable pprog $sgl-pprog)   ; pbr; #f when unused
+            (immutable iprog $sgl-iprog)   ; lit, instanced; #f
             (immutable probe $sgl-probe)   ; (sky lut mips) | #f
             (immutable cam $sgl-cam)     ; fov near far px py pz lx ly lz
             (immutable light $sgl-light) ; dx dy dz ambient
             (immutable lits $sgl-lits)   ; nodes, split by material
             (immutable texs $sgl-texs)
-            (immutable pbrs $sgl-pbrs)))
+            (immutable pbrs $sgl-pbrs)
+            ;; lit nodes sharing a geometry, two or more: each group
+            ;; is #(geo nodes inst-buf inst-base cap), one draw each
+            (immutable igroups $sgl-igroups)
+            (immutable iscratch $sgl-iscratch)))  ; m4s work area
+
+  ;; geometry, shared: nodes with the SAME literal spec point at one
+  ;; of these -- one upload, and the key instancing groups by.
+  ;; #(vbuf ibuf vbase ibase vbytes ibytes icount uploaded? bc br)
+  (define ($sgl-geo-vbuf g) (vector-ref g 0))
+  (define ($sgl-geo-ibuf g) (vector-ref g 1))
+  (define ($sgl-geo-icount g) (vector-ref g 6))
+  (define ($sgl-geo-upload! g)          ; geometry ships on first use
+    (unless (vector-ref g 7)
+      (cmd-bind-buffer! ($sgl-geo-vbuf g))
+      (cmd-buffer-data! (vector-ref g 2) (vector-ref g 4))
+      (cmd-bind-index! ($sgl-geo-ibuf g))
+      (cmd-index-data! (vector-ref g 3) (vector-ref g 5))
+      (vector-set! g 7 #t)))
 
   (define-record-type ($sgl-node $make-sgl-node $sgl-node?)
-    (fields (immutable vbuf $sgl-nd-vbuf)
-            (immutable ibuf $sgl-nd-ibuf)
-            (immutable vbase $sgl-nd-vbase)
-            (immutable ibase $sgl-nd-ibase)
-            (immutable vbytes $sgl-nd-vbytes)
-            (immutable ibytes $sgl-nd-ibytes)
-            (immutable icount $sgl-nd-icount)
-            (mutable up? $sgl-nd-up? $sgl-nd-up!)
+    (fields (immutable geo $sgl-nd-geo)
             ;; px py pz rx ry rz scale r g b a metallic roughness
             (immutable f $sgl-nd-f)
             (immutable mat $sgl-nd-mat)  ; lit | tex | pbr
@@ -125,6 +137,39 @@
             (immutable br $sgl-nd-br)
             ;; enclosing groups' transform fields, outermost first
             (immutable chain $sgl-nd-chain)))
+
+  ;; the instanced flavor of the lit program: the model matrix rides
+  ;; four vec4 instance attributes, the color a fifth -- so a whole
+  ;; group of same-geometry meshes is ONE draw, its uniforms just
+  ;; u_vp and the light
+  (define $sgl-inst-vs
+    '((attribute vec3 a_pos)
+      (attribute vec3 a_normal)
+      (attribute vec4 i_m0)
+      (attribute vec4 i_m1)
+      (attribute vec4 i_m2)
+      (attribute vec4 i_m3)
+      (attribute vec4 i_color)
+      (uniform mat4 u_vp)
+      (varying vec3 v_normal)
+      (varying vec4 v_color)
+      (define (main) void
+        (local mat4 m (mat4 i_m0 i_m1 i_m2 i_m3))
+        (set! gl_Position (* u_vp (* m (vec4 a_pos (fl 1)))))
+        (set! v_normal (vec3 (* m (vec4 a_normal (fl 0)))))
+        (set! v_color i_color))))
+  (define $sgl-inst-fs
+    '((precision mediump float)
+      (uniform vec3 u_light)
+      (uniform float u_ambient)
+      (varying vec3 v_normal)
+      (varying vec4 v_color)
+      (define (main) void
+        (local vec3 n (normalize v_normal))
+        (local float d (max (dot n u_light) (fl 0)))
+        (local vec3 c (* v_color.rgb
+                         (+ u_ambient (* d (- (fl 1) u_ambient)))))
+        (set! gl_FragColor (vec4 c v_color.a)))))
 
   ;; a single-valued slot: a hole gets an effect, a value sets once
   (define ($sgl-set1! vec idx v ds)
@@ -179,7 +224,7 @@
         want
         (error 'sgl "one material per mesh" (list cur want))))
 
-  (define ($sgl-mesh attrs ds chain)
+  (define ($sgl-mesh attrs ds chain cache)
     (let ((gspec #f) (mat 'lit) (tex #f)
           (f (vector 0.0 0.0 0.0 0.0 0.0 0.0 1.0
                      0.8 0.8 0.8 1.0 0.0 0.5)))
@@ -212,23 +257,39 @@
            (else (error 'sgl "unknown mesh attribute" (car a)))))
        attrs)
       (unless gspec (error 'sgl "mesh needs a geometry"))
-      (let* ((geom ($sgl-geometry gspec ds))
-             (uv? (eq? mat 'tex))       ; tex material samples uvs
-             (vbytes (if uv?
-                         (mesh-vertex-bytes-uv geom)
-                         (mesh-vertex-bytes geom)))
-             (bounds (mesh-bounds geom))
-             (vbuf (fx-buffer!))
-             (ibuf (fx-buffer!))
-             (vbase (fx-alloc! vbytes))
-             (ibase (fx-alloc! (mesh-index-bytes geom))))
-        (if uv?
-            (mesh-write-uv! geom vbase ibase)
-            (mesh-write! geom vbase ibase))
-        ($make-sgl-node vbuf ibuf vbase ibase
-                        vbytes (mesh-index-bytes geom)
-                        (mesh-index-count geom) #f f mat tex
+      (let* ((geo ($sgl-geo! gspec (eq? mat 'tex) ds cache))
+             (bounds (vector-ref geo 8)))
+        ($make-sgl-node geo f mat tex
                         (car bounds) (cdr bounds) chain))))
+
+  ;; build (or find) the shared geometry for a literal spec: equal
+  ;; specs with the same layout come back as the SAME vector, so
+  ;; they upload once and instance together.  Injected (unquote)
+  ;; meshes stay private -- each thunk is its own geometry
+  (define ($sgl-geo! gspec uv? ds cache)
+    (let* ((key (and (not ($sgl-d? gspec)) (cons uv? gspec)))
+           (hit (and key (assoc key (car cache)))))
+      (if hit
+          (cdr hit)
+          (let* ((geom ($sgl-geometry gspec ds))
+                 (vbytes (if uv?
+                             (mesh-vertex-bytes-uv geom)
+                             (mesh-vertex-bytes geom)))
+                 (vbuf (fx-buffer!))
+                 (ibuf (fx-buffer!))
+                 (vbase (fx-alloc! vbytes))
+                 (ibase (fx-alloc! (mesh-index-bytes geom))))
+            (if uv?
+                (mesh-write-uv! geom vbase ibase)
+                (mesh-write! geom vbase ibase))
+            (let ((geo (vector vbuf ibuf vbase ibase
+                               vbytes (mesh-index-bytes geom)
+                               (mesh-index-count geom) #f
+                               (mesh-bounds geom))))
+              (when key
+                (set-car! cache (cons (cons key geo) (car cache))))
+              geo)))))
+
 
   ;; a group's transform fields: px py pz rx ry rz scale, holes
   ;; welcome in the single-valued ones
@@ -267,6 +328,7 @@
     (let ((cam (vector 0.9 0.1 100.0 0.0 2.0 8.0 0.0 0.0 0.0))
           (light (vector 0.5 0.8 0.4 0.25))
           (probe #f)
+          (cache (list '()))            ; spec -> shared geometry
           (meshes '()))
       ;; groups nest, so the walk recurses carrying the transform
       ;; chain (outermost first) every mesh inside inherits
@@ -285,7 +347,8 @@
                 (walk kids
                       (append chain (list ($sgl-group-f attrs ds)))))
                ((mesh) (set! meshes
-                             (cons ($sgl-mesh attrs ds chain) meshes)))
+                             (cons ($sgl-mesh attrs ds chain cache)
+                                   meshes)))
                (else (error 'sgl "unknown tag" (car f))))))
          forms))
       ;; split by material; each program exists only if a mesh asks
@@ -298,12 +361,43 @@
             (begin
               (when (and (pair? pbrs) (not probe))
                 (error 'sgl "pbr meshes need a probe tag"))
-              ($make-sgl
-               (and (pair? lits) (fx-program! mesh-lit-vs mesh-lit-fs))
-               (and (pair? texs) (fx-program! mesh-tex-vs mesh-tex-fs))
-               (and (pair? pbrs) (fx-program! mesh-pbr-vs mesh-pbr-fs))
-               probe cam light
-               (reverse lits) (reverse texs) (reverse pbrs)))))))
+              (let-values (((groups singles)
+                            ($sgl-igroups! (reverse lits))))
+                ($make-sgl
+                 (and (pair? singles)
+                      (fx-program! mesh-lit-vs mesh-lit-fs))
+                 (and (pair? texs) (fx-program! mesh-tex-vs mesh-tex-fs))
+                 (and (pair? pbrs) (fx-program! mesh-pbr-vs mesh-pbr-fs))
+                 (and (pair? groups)
+                      (fx-program! $sgl-inst-vs $sgl-inst-fs))
+                 probe cam light
+                 singles (reverse texs) (reverse pbrs)
+                 groups
+                 (if (pair? groups) (fx-alloc! 192) 0))))))))
+
+  ;; lit nodes sharing a geometry, two or more, become an instanced
+  ;; group -- one buffer of matrix+color per instance, one draw
+  (define ($sgl-igroups! lits)
+    (let outer ((ns lits) (grouped '()) (groups '()) (singles '()))
+      (cond
+       ((null? ns) (values (reverse groups) (reverse singles)))
+       ((memq ($sgl-nd-geo (car ns)) grouped)
+        (outer (cdr ns) grouped groups singles))
+       (else
+        (let* ((g ($sgl-nd-geo (car ns)))
+               (mine (let pick ((k lits) (acc '()))
+                       (cond ((null? k) (reverse acc))
+                             ((eq? ($sgl-nd-geo (car k)) g)
+                              (pick (cdr k) (cons (car k) acc)))
+                             (else (pick (cdr k) acc))))))
+          (if (null? (cdr mine))
+              (outer (cdr ns) grouped groups (cons (car ns) singles))
+              (outer (cdr ns) (cons g grouped)
+                     (cons (vector g mine (fx-buffer!)
+                                   (fx-alloc! (* (length mine) 80))
+                                   (length mine))
+                           groups)
+                     singles)))))))
 
   ;; ---- a frame: pure arithmetic over the current fields ----
   ;; the TRS matrix any 7-field transform vector describes
@@ -321,6 +415,7 @@
   ;; cannot see costs exactly this arithmetic and no commands.
   (define ($sgl-draw-node! prog vp planes nd)
     (let* ((f ($sgl-nd-f nd))
+           (geo ($sgl-nd-geo nd))
            (model (fold-left (lambda (acc gf) (m4-mul acc ($sgl-trs gf)))
                              (m4-identity) ($sgl-nd-chain nd)))
            (model (m4-mul model ($sgl-trs f)))
@@ -329,12 +424,9 @@
       (when (sphere-in-frustum? planes
                                 (m4-transform model ($sgl-nd-bc nd))
                                 (fl* s ($sgl-nd-br nd)))
-        (fx-use! prog ($sgl-nd-vbuf nd))
-        (cmd-bind-index! ($sgl-nd-ibuf nd))
-        (unless ($sgl-nd-up? nd)        ; geometry ships on first draw
-          (cmd-buffer-data! ($sgl-nd-vbase nd) ($sgl-nd-vbytes nd))
-          (cmd-index-data! ($sgl-nd-ibase nd) ($sgl-nd-ibytes nd))
-          ($sgl-nd-up! nd #t))
+        (fx-use! prog ($sgl-geo-vbuf geo))
+        ($sgl-geo-upload! geo)
+        (cmd-bind-index! ($sgl-geo-ibuf geo))
         (when ($sgl-nd-tex nd)
           (cmd-bind-texture! 0 ($sgl-nd-tex nd)))
         (fx-uniform! prog 'u_mvp (m4-mul vp model))
@@ -347,7 +439,85 @@
               (fx-uniform! prog 'u_roughness (vector-ref f 12)))
             (fx-uniform! prog 'u_color (vector-ref f 7) (vector-ref f 8)
                          (vector-ref f 9) (vector-ref f 10)))
-        (cmd-draw-elements! GL-TRIANGLES ($sgl-nd-icount nd)))))
+        (cmd-draw-elements! GL-TRIANGLES ($sgl-geo-icount geo)))))
+
+  ;; ---- the instanced path: staging all the way down ----
+  ;; the node's TRS composes in closed form (m4s-trs!), the chain
+  ;; multiplies in SIMD (m4s-mul!), and the result lands DIRECTLY in
+  ;; the instance buffer slot -- no boxed matrix exists at any point
+  (define ($sgl-f-trs! f at)
+    (m4s-trs! at (vector-ref f 0) (vector-ref f 1) (vector-ref f 2)
+              (vector-ref f 3) (vector-ref f 4) (vector-ref f 5)
+              (vector-ref f 6)))
+
+  (define ($sgl-model-into! nd at s)    ; s: 192 bytes of work area
+    (let* ((f ($sgl-nd-f nd))
+           (chain ($sgl-nd-chain nd))
+           (n-ch (length chain)))
+      (if (= n-ch 0)
+          ($sgl-f-trs! f at)
+          (let ((sg s) (sa (+ s 64)) (sb (+ s 128)))
+            ($sgl-f-trs! f sa)
+            ;; innermost group first; the last multiply lands on `at`
+            (let fold ((gs (reverse chain)) (i 0) (acc sa))
+              (when (pair? gs)
+                ($sgl-f-trs! (car gs) sg)
+                (let ((dst (if (= i (- n-ch 1))
+                               at
+                               (if (= acc sa) sb sa))))
+                  (m4s-mul! dst sg acc)
+                  (fold (cdr gs) (+ i 1) dst))))))))
+
+  (define ($sgl-m4s-center at bc)       ; M x bc, read off staging
+    (let ((x (v3-x bc)) (y (v3-y bc)) (z (v3-z bc)))
+      (v3 (fl+ (fl+ (fl* (%mem-f32-ref at) x)
+                    (fl* (%mem-f32-ref (+ at 16)) y))
+               (fl+ (fl* (%mem-f32-ref (+ at 32)) z)
+                    (%mem-f32-ref (+ at 48))))
+          (fl+ (fl+ (fl* (%mem-f32-ref (+ at 4)) x)
+                    (fl* (%mem-f32-ref (+ at 20)) y))
+               (fl+ (fl* (%mem-f32-ref (+ at 36)) z)
+                    (%mem-f32-ref (+ at 52))))
+          (fl+ (fl+ (fl* (%mem-f32-ref (+ at 8)) x)
+                    (fl* (%mem-f32-ref (+ at 24)) y))
+               (fl+ (fl* (%mem-f32-ref (+ at 40)) z)
+                    (%mem-f32-ref (+ at 56)))))))
+
+  ;; one group: compose every visible instance into the buffer, one
+  ;; upload, one instanced draw
+  (define ($sgl-draw-igroup! prog ig planes scratch)
+    (let ((geo (vector-ref ig 0))
+          (ibuf (vector-ref ig 2))
+          (ibase (vector-ref ig 3)))
+      (let fill ((ns (vector-ref ig 1)) (n 0))
+        (if (pair? ns)
+            (let* ((nd (car ns))
+                   (f ($sgl-nd-f nd))
+                   (slot (+ ibase (* n 80))))
+              ($sgl-model-into! nd slot scratch)
+              (if (sphere-in-frustum?
+                   planes
+                   ($sgl-m4s-center slot ($sgl-nd-bc nd))
+                   (fl* (fold-left (lambda (acc gf)
+                                     (fl* acc (vector-ref gf 6)))
+                                   (vector-ref f 6)
+                                   ($sgl-nd-chain nd))
+                        ($sgl-nd-br nd)))
+                  (begin                ; visible: color joins the slot
+                    (%mem-f32-set! (+ slot 64) (vector-ref f 7))
+                    (%mem-f32-set! (+ slot 68) (vector-ref f 8))
+                    (%mem-f32-set! (+ slot 72) (vector-ref f 9))
+                    (%mem-f32-set! (+ slot 76) (vector-ref f 10))
+                    (fill (cdr ns) (+ n 1)))
+                  (fill (cdr ns) n)))   ; culled: the slot is reused
+            (when (> n 0)
+              (fx-use-instanced! prog ($sgl-geo-vbuf geo) ibuf)
+              ($sgl-geo-upload! geo)
+              (cmd-bind-index! ($sgl-geo-ibuf geo))
+              (cmd-bind-buffer! ibuf)
+              (cmd-buffer-data! ibase (* n 80))
+              (cmd-draw-elements-instanced!
+               GL-TRIANGLES ($sgl-geo-icount geo) n))))))
 
   (define (sgl-draw! sc)
     (let* ((cam ($sgl-cam sc))
@@ -366,6 +536,17 @@
            (ld (v3-normalize (v3 (vector-ref light 0) (vector-ref light 1)
                                  (vector-ref light 2)))))
       (cmd-depth! #t)
+      ;; instanced groups first: one draw per shared geometry
+      (when ($sgl-iprog sc)
+        (let ((p ($sgl-iprog sc)))
+          (cmd-use-program! (fx-program-slot p))
+          (fx-uniform! p 'u_light (v3-x ld) (v3-y ld) (v3-z ld))
+          (fx-uniform! p 'u_ambient (vector-ref light 3))
+          (fx-uniform! p 'u_vp vp)
+          (for-each (lambda (ig)
+                      ($sgl-draw-igroup! p ig planes
+                                         ($sgl-iscratch sc)))
+                    ($sgl-igroups sc))))
       ($sgl-group! ($sgl-prog sc) ($sgl-lits sc) vp planes ld
                    (lambda (p)
                      (fx-uniform! p 'u_ambient (vector-ref light 3))))

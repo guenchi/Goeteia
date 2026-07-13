@@ -194,7 +194,12 @@ A small UI stack over the JS bridge, in `lib/web/`:
   builds and uploads once, each unquoted attribute becomes a
   signal-driven hole, and a frame is pure arithmetic over current
   fields.  Groups nest — children inherit the parent transform, so one
-  signal swings a whole assembly.  Meshes pick materials
+  signal swings a whole assembly.  Meshes with the same literal
+  geometry share one upload and draw as ONE instanced call: each
+  visible instance's model matrix composes in closed form straight
+  into the instance buffer (m4s-trs!/m4s-mul! — SIMD, no boxed
+  matrix anywhere) with its color beside it, and culled instances
+  simply don't join the buffer.  Meshes pick materials
   declaratively — the lit default,
   `(texture slot)`, or `(metallic)`/`(roughness)` PBR against the
   scene's `(probe ...)` — and every frame culls each mesh's bounding
