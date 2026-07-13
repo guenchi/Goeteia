@@ -21,10 +21,10 @@ returns the `globalThis` object. Macros are shown the same way but headed
 
 A `*`-prefixed name is a *pointer to a host object*: `*jsObject` (a Wasm
 `externref` holding a JS value), and likewise `*domElement`, `*signal`,
-`*effect`, `*response`, `*ws`, `*sse`, `*three`. Other types: `any`,
+`*effect`, `*response`, `*ws`, `*sse`. Other types: `any`,
 `string`, `number`, `int`, `boolean`, `symbol`, `list`, `pair`, `vector`,
 `alist`, `procedure`, `port`, `hashtable`, `condition`, `datum`, `sxml`,
-`raw` (a raw-HTML marker), and `template` (a literal `sx`/`s3d` form).
+`raw` (a raw-HTML marker), and `template` (a literal `sx` form).
 
 ## Contents
 
@@ -1264,79 +1264,7 @@ export default function App() {
 
 ## 3D and WebGL
 
-Three graphics libraries, layered from high to low. All share the same principle as `sx`: the scene is described as data, built once, and the rendering surface is write-only—bridge traffic is O(changes), never O(frames).
-
-### `(web three)`: Reactive Scenes
-
-The `s3d` template builds a Three.js scene graph the way `sx` builds DOM. Static structure is built once; unquoted attribute values become signal-driven holes updated in place. `three-loop!` pumps frames into a Scheme thunk, which drives the signals and renders.
-
-```scheme
-(import (web three) (web reactive) (web dom))
-
-(define angle (signal 0.0))
-
-(define world
-  (s3d (scene
-    (mesh (@ (geometry (box 1 1 1))
-             (material (standard (@ (color "#1550c4") (metalness 0.3))))
-             (rotation-y ,(signal-ref angle))
-             (rotation-x ,(* 0.4 (signal-ref angle)))))
-    (ambient-light (@ (intensity 0.6)))
-    (directional-light (@ (intensity 1.6) (position 5 10 7))))))
-
-(define camera (s3d (perspective-camera (@ (fov 60) (position 0 0.8 3)))))
-(define renderer (three-renderer (get-element-by-id "app") 640 480))
-
-(three-loop!
- (lambda ()
-   (signal-update! angle (lambda (a) (+ a 0.02)))
-   (three-render! renderer world camera)))
-```
-
-- Tags: `scene`, `group`, `mesh`, `perspective-camera`, `ambient-light`, `directional-light`, `point-light`
-- Geometry specs (the `geometry` attribute): `(box w h d)`, `(sphere r ...)`, `(plane w h)`, `(cylinder ...)`, `(torus ...)`, `(cone ...)`, or a raw `js-ref`
-- Material specs (the `material` attribute): `(basic|standard|phong|lambert|normal (@ (k v) ...))`
-- Transform attributes: `(position x y z)`, `(rotation x y z)`, `(scale x y z)`, single-axis `position-y` / `rotation-x` / …, plus any plain JS property (`intensity`, `fov`, `visible`, …)
-Procedures (a `*three` is a Three.js object — scene, camera, mesh or renderer — held as a `*jsObject`):
-
-```
-syntax: (s3d template)
-
-template -> *three
-```
-Expand a scene template into a Three.js object graph: static structure
-built once, `,`-unquoted attribute values become signal-driven holes
-updated in place.
-
-```
-procedure: (three-ref name)
-
-func -> string -> *jsObject
-```
-Look up `globalThis.THREE[name]` — a raw constructor or value.
-
-```
-procedure: (three-renderer parent width height)
-
-func -> *domElement -> int -> int -> *three
-```
-Create a WebGL renderer of the given size, mounted under `parent`.
-
-```
-procedure: (three-render! renderer scene camera)
-
-func -> *three -> *three -> *three -> void
-```
-Render one frame of `scene` through `camera`.
-
-```
-procedure: (three-loop! thunk)
-
-func -> procedure -> void
-```
-Call `thunk` once per animation frame (drives the render loop).
-
-Constructor attributes (`geometry` / `material`, a camera's `fov`, a light's `intensity`) are static; put reactive holes in the others. Uses `globalThis.THREE`, so the page loads Three.js separately. Rendering stays on the GPU; only the changed attributes cross the bridge.
+Two graphics libraries, from high to low. `(web gl)` shares `sx`'s principle: the frame is described as data, built once, and the rendering surface is write-only—bridge traffic is O(changes), never O(frames).
 
 ### Linear Staging Memory
 

@@ -57,10 +57,11 @@
            " renderer, and a " '(code "(web js)") " FFI that reaches straight "
            "into the host — this page is built with it.")
         ,(card "3D and WebGL"
-           '(code "(web three)") " builds reactive Three.js scenes the way "
-           '(code "sx") " builds DOM; " '(code "(web gl)") " drives raw WebGL "
-           "through a command buffer — one bridge call per frame — with "
-           "shaders written as s-expressions in " '(code "(web glsl)") ". "
+           '(code "(web gl)") " drives raw WebGL through a command buffer — "
+           "one bridge call per frame — with shaders written as s-expressions "
+           "in " '(code "(web glsl)") "; " '(code "(web mat)") " and "
+           '(code "(web mesh)") " add 3D math and geometry, "
+           '(code "(web gltf)") " loads real assets, all self-contained. "
            "The title above is exactly this: dot-matrix glyphs, a vertex "
            "shader, one draw call.")
         ,(card "Scheme-to-Scheme, no codec"
