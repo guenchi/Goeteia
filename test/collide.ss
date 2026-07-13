@@ -119,4 +119,57 @@
    (and (fl<? 1.5 (v3-z p)) (fl<? (v3-z p) 1.51)
         (fl<? (v3-x p) 0.51)))
  ;; nothing in the way: the full step lands
- (v3~ (move-and-slide (v3 0 0 0) 0.5 (v3 1.0 2.0 3.0) '()) 1.0 2.0 3.0))
+ (v3~ (move-and-slide (v3 0 0 0) 0.5 (v3 1.0 2.0 3.0) '()) 1.0 2.0 3.0)
+
+ ;; ---- the character: fall, land, walk, wall, jump ----
+ (let* ((ground (cons (v3 -20.0 -1.0 -20.0) (v3 20.0 0.0 20.0)))
+        (wall (cons (v3 3.0 0.0 -20.0) (v3 4.0 6.0 20.0)))
+        (world (list ground wall))
+        (ch (make-character (v3 0.0 3.0 0.0) 0.5))
+        (step! (lambda (n vx)
+                 (let go ((k 0))
+                   (when (< k n)
+                     (character-move! ch vx 0.0 0.016666 world)
+                     (go (+ k 1)))))))
+   (and (not (character-grounded? ch))
+        ;; two simulated seconds: fallen and resting on the slab
+        (begin (step! 120 0.0)
+               (and (character-grounded? ch)
+                    (fl<? 0.49 (v3-y (character-pos ch)))
+                    (fl<? (v3-y (character-pos ch)) 0.52)))
+        ;; walk east one second: about two units, still grounded
+        (begin (step! 60 2.0)
+               (and (character-grounded? ch)
+                    (fl<? 1.8 (v3-x (character-pos ch)))
+                    (fl<? (v3-x (character-pos ch)) 2.1)))
+        ;; charge the wall: the slide stops the sphere a skin short
+        (begin (step! 90 5.0)
+               (and (fl<? 2.4 (v3-x (character-pos ch)))
+                    (fl<? (v3-x (character-pos ch)) 2.51)
+                    (character-grounded? ch)))
+        ;; jump: airborne at once, higher shortly after, down again
+        (begin (character-jump! ch 7.0)
+               (and (not (character-grounded? ch))
+                    (begin (step! 12 0.0)
+                           (fl<? 1.0 (v3-y (character-pos ch))))
+                    (begin (step! 120 0.0)
+                           (and (character-grounded? ch)
+                                (fl<? (v3-y (character-pos ch)) 0.52))))))
+   )
+
+ ;; ---- the broadphase grid ----
+ (let* ((near-box (cons (v3 -1.0 0.0 -1.0) (v3 1.0 1.0 1.0)))
+        (far-box (cons (v3 40.0 0.0 40.0) (v3 42.0 1.0 42.0)))
+        (wide-box (cons (v3 -9.0 0.0 6.0) (v3 9.0 1.0 7.0)))
+        (g (make-aabb-grid (list near-box far-box wide-box) 4.0)))
+   (and ;; near the origin: the origin box, once, and not the far one
+        (let ((hits (grid-near g (v3 0.0 0.5 0.0) 1.0)))
+          (and (= (length hits) 1) (eq? (car hits) near-box)))
+        ;; the wide box spans many cells but reports once
+        (let ((hits (grid-near g (v3 0.0 0.5 6.5) 1.0)))
+          (and (= (length hits) 1) (eq? (car hits) wide-box)))
+        ;; by the far box: it alone
+        (let ((hits (grid-near g (v3 41.0 0.5 41.0) 1.0)))
+          (and (= (length hits) 1) (eq? (car hits) far-box)))
+        ;; empty space: nothing
+        (null? (grid-near g (v3 -30.0 0.5 -30.0) 1.0)))))

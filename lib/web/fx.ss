@@ -40,7 +40,7 @@
           fx-program? fx-program-slot fx-program-stride
           fx-program-istride
           fx-use! fx-use-instanced! fx-uniform!
-          fx-ticks! fx-loop!
+          fx-ticks! fx-loop! fx-loop-fixed!
           fx-init-input! key-down? pointer-x pointer-y pointer-down?
           pointer-lock! pointer-locked? pointer-motion!
           fx-fullscreen! fx-quad-program
@@ -343,6 +343,31 @@
        (when (> (cmd-pos) $fx-cmd-limit)
          (error 'fx-loop! "command region overflow" (cmd-pos)))
        (cmd-flush!))))
+
+  ;; the fixed-timestep variant: physics that must not depend on the
+  ;; frame rate.  sim runs zero or more times per frame, always with
+  ;; exactly `step` seconds; render runs once with alpha = how far
+  ;; into the next step the frame landed (blend previous/current
+  ;; states by it for perfectly smooth motion).  The accumulator is
+  ;; clamped to 4 steps so a background tab does not spiral
+  (define (fx-loop-fixed! step sim render)
+    (let ((acc 0.0)
+          (cap (fl* ($fx-fl step) 4.0)))
+      (fx-ticks!
+       (lambda (t dt)
+         (set! acc (fl+ acc dt))
+         (when (fl<? cap acc) (set! acc cap))
+         (let pump ()
+           (when (fl<? ($fx-fl step) acc)
+             (set! acc (fl- acc ($fx-fl step)))
+             (sim ($fx-fl step))
+             (pump)))
+         (cmd-begin!)
+         (cmd-viewport! 0 0 (fx-width) (fx-height))
+         (render (fl/ acc ($fx-fl step)) t dt)
+         (when (> (cmd-pos) $fx-cmd-limit)
+           (error 'fx-loop-fixed! "command region overflow" (cmd-pos)))
+         (cmd-flush!)))))
 
   ;; ---- polled input ----
   (define $fx-keys (make-hashtable string-hash string=?))

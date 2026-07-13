@@ -1,8 +1,10 @@
 ;; First-person walking: click to capture the mouse (Esc releases),
-;; WASD or arrows to move, look around freely.  The camera is
-;; (web mat)'s look-at fed by pointer-motion! deltas, and the walls
-;; push back through (web collide)'s sphere-aabb-push -- motion along
-;; a wall survives, so you slide instead of sticking.
+;; WASD or arrows to move, SPACE to jump, look around freely.  The
+;; player is (web collide)'s packaged character -- gravity, landing
+;; and the slide all inside character-move! -- stepping at a fixed
+;; 120Hz through fx-loop-fixed! so the physics ignores the frame
+;; rate, and each step sweeps only the walls the broadphase grid
+;; hands back.  Jump onto the low violet box.
 (import (rnrs) (web js) (web dom) (web gl) (web glsl) (web fx)
         (web mat) (web mesh) (web collide))
 
@@ -64,9 +66,14 @@
                  (vector-ref o 6) 1.0)
     (cmd-draw-elements! GL-TRIANGLES (vector-ref gv 6))))
 
-;; the player: an eye-height sphere on the xz plane
-(define px 0.0)
-(define pz 6.0)
+;; the player: the packaged character, spawned eye-height over a
+;; solid ground slab (gravity needs a floor with thickness)
+(define world
+  (cons (cons (v3 -12.0 -1.0 -12.0) (v3 12.0 0.0 12.0))
+        (map (lambda (w) (cons (vector-ref w 2) (vector-ref w 3)))
+             walls)))
+(define grid (make-aabb-grid world 4.0))
+(define player (make-character (v3 0.0 0.36 6.0) 0.35))
 (define yaw 0.0)
 (define pitch 0.0)
 
@@ -75,38 +82,33 @@
   (let loop ((ks ks))
     (and (pair? ks) (or (key-down? (car ks)) (loop (cdr ks))))))
 
-(fx-loop!
- (lambda (t dt)
-   ;; look: relative mouse while captured
+(fx-loop-fixed!
+ 0.0083333                              ; the physics ticks at 120Hz,
+ (lambda (step)                         ; whatever the display does
+   (let ((fwx (flsin yaw)) (fwz (fl- 0.0 (flcos yaw)))
+         (rtx (flcos yaw)) (rtz (flsin yaw))
+         (vx 0.0) (vz 0.0))
+     (when (down? "w" "W" "ArrowUp")
+       (set! vx (fl+ vx fwx)) (set! vz (fl+ vz fwz)))
+     (when (down? "s" "S" "ArrowDown")
+       (set! vx (fl- vx fwx)) (set! vz (fl- vz fwz)))
+     (when (down? "d" "D" "ArrowRight")
+       (set! vx (fl+ vx rtx)) (set! vz (fl+ vz rtz)))
+     (when (down? "a" "A" "ArrowLeft")
+       (set! vx (fl- vx rtx)) (set! vz (fl- vz rtz)))
+     (when (down? " ")
+       (character-jump! player 8.0))
+     ;; only the boxes near the player are worth sweeping
+     (character-move! player (fl* 5.0 vx) (fl* 5.0 vz) step
+                      (grid-near grid (character-pos player) 1.5))))
+ (lambda (alpha t dt)
+   ;; look: relative mouse while captured (a per-frame affair)
    (let ((d (pointer-motion!)))
      (set! yaw (fl+ yaw (fl* 0.0025 (car d))))
      (set! pitch (clamp (fl- pitch (fl* 0.0025 (cdr d))) -1.4 1.4)))
-   ;; move in the yaw plane
-   (let* ((sp (fl* 5.0 (if (fl<? 0.05 dt) 0.05 dt)))
-          (fwx (fl* sp (flsin yaw))) (fwz (fl* sp (fl- 0.0 (flcos yaw))))
-          (rtx (fl* sp (flcos yaw))) (rtz (fl* sp (flsin yaw))))
-     (when (down? "w" "W" "ArrowUp")
-       (set! px (fl+ px fwx)) (set! pz (fl+ pz fwz)))
-     (when (down? "s" "S" "ArrowDown")
-       (set! px (fl- px fwx)) (set! pz (fl- pz fwz)))
-     (when (down? "d" "D" "ArrowRight")
-       (set! px (fl+ px rtx)) (set! pz (fl+ pz rtz)))
-     (when (down? "a" "A" "ArrowLeft")
-       (set! px (fl- px rtx)) (set! pz (fl- pz rtz))))
-   ;; the walls push back; sliding falls out of the shortest exit
-   (for-each
-    (lambda (w)
-      (let ((push (sphere-aabb-push (v3 px 0.9 pz) 0.35
-                                    (vector-ref w 2) (vector-ref w 3))))
-        (when push
-          (set! px (fl+ px (v3-x push)))
-          (set! pz (fl+ pz (v3-z push))))))
-    walls)
-   (set! px (clamp px -11.5 11.5))
-   (set! pz (clamp pz -11.5 11.5))
-   ;; camera and frame
    (let* ((cp (flcos pitch))
-          (eye (v3 px 0.9 pz))
+          (pp (character-pos player))
+          (eye (v3 (v3-x pp) (fl+ (v3-y pp) 0.55) (v3-z pp)))
           (fwd (v3 (fl* cp (flsin yaw))
                    (flsin pitch)
                    (fl* cp (fl- 0.0 (flcos yaw)))))

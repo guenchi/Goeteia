@@ -25,6 +25,13 @@
 ;;                                         drop the normal component,
 ;;                                         continue -- walls slide,
 ;;                                         corners stop
+;;   (make-character pos r)             -- gravity, landing and jumping
+;;   (character-move! ch vx vz dt boxes)   packaged over the slide;
+;;   (character-jump! ch speed)            grounded only
+;;   (character-pos ch) (character-grounded? ch)
+;;   (make-aabb-grid boxes cell)        -- broadphase: hash static
+;;   (grid-near grid pos r)                boxes into xz cells, query
+;;                                         the handful near a sphere
 ;;
 ;; Ray directions must be unit vectors (v3-normalize) so distances
 ;; come back in world units.  Triangles hit from either side.
@@ -36,7 +43,10 @@
   (export sphere-sphere? aabb-aabb? sphere-aabb?
           capsule-sphere? capsule-capsule? capsule-aabb?
           ray-sphere ray-aabb ray-plane ray-triangle ray-mesh
-          sphere-aabb-push sweep-sphere-aabb move-and-slide)
+          sphere-aabb-push sweep-sphere-aabb move-and-slide
+          make-character character? character-pos character-grounded?
+          character-move! character-jump!
+          make-aabb-grid grid-near)
   (import (rnrs) (web mat) (web mesh))
 
   (define $col-eps 0.000000001)
@@ -325,5 +335,108 @@
                                  (v3-scale n $col-skin)))
                      (rem (v3-scale m (fl- 1.0 t)))
                      (slide (v3-sub rem (v3-scale n (v3-dot rem n)))))
-                (go at slide (+ k 1))))))))))
+                (go at slide (+ k 1)))))))))
+
+  ;; ---- the character, packaged: gravity, landing, jumping ----
+  ;; The loop every walking player repeats over move-and-slide:
+  ;; gravity accumulates in vy, the horizontal wish is yours, and a
+  ;; short downward probe after the slide answers "standing?" --
+  ;; which zeroes the fall and arms the jump.
+  (define-record-type ($character $make-char character?)
+    (fields (mutable pos character-pos $char-pos!)
+            (immutable r $char-r)
+            (mutable vy $char-vy $char-vy!)
+            (mutable grounded $char-grounded $char-grounded!)))
+
+  (define $char-gravity 22.0)
+
+  (define (make-character pos r)
+    ($make-char pos ($col-fl r) 0.0 #f))
+
+  (define (character-grounded? ch) ($char-grounded ch))
+
+  (define (character-jump! ch speed)
+    (when ($char-grounded ch)
+      ($char-vy! ch ($col-fl speed))
+      ($char-grounded! ch #f)))
+
+  ;; vx / vz are the wished horizontal velocity, world units per
+  ;; second; dt and the box list as for move-and-slide.  Returns the
+  ;; new position (also stored in the character).
+  (define (character-move! ch vx vz dt boxes)
+    (let* ((dt ($col-fl dt))
+           (vy (fl- ($char-vy ch) (fl* $char-gravity dt)))
+           (motion (v3 (fl* ($col-fl vx) dt)
+                       (fl* vy dt)
+                       (fl* ($col-fl vz) dt)))
+           (pos (move-and-slide (character-pos ch) ($char-r ch)
+                                motion boxes))
+           (standing
+            (let scan ((bs boxes))
+              (cond ((null? bs) #f)
+                    ((sweep-sphere-aabb pos ($char-r ch)
+                                        (v3 0.0 -0.08 0.0)
+                                        (car (car bs)) (cdr (car bs)))
+                     #t)
+                    (else (scan (cdr bs)))))))
+      ($char-pos! ch pos)
+      ($char-grounded! ch (and standing (not (fl<? 0.0 vy))))
+      ($char-vy! ch (if (and standing (fl<? vy 0.0)) 0.0 vy))
+      pos))
+
+  ;; ---- broadphase: static boxes hashed into xz cells ----
+  ;; Build once over the level's boxes; each frame ask for the
+  ;; handful near the player instead of sweeping every wall.
+  ;; Cells pack into one fixnum, so coordinates live within
+  ;; +/- 8191 cells of the origin -- kilometers, at game scale.
+  (define ($grid-key cx cz)
+    (+ (* (+ cx 8192) 16384) (+ cz 8192)))
+
+  (define ($grid-cell v cf) (%fl->fx (flfloor (fl/ v cf))))
+
+  (define (make-aabb-grid boxes cell)
+    (let ((cf ($col-fl cell))
+          (ht (make-eq-hashtable)))
+      (for-each
+       (lambda (b)
+         (let ((x0 ($grid-cell (v3-x (car b)) cf))
+               (x1 ($grid-cell (v3-x (cdr b)) cf))
+               (z0 ($grid-cell (v3-z (car b)) cf))
+               (z1 ($grid-cell (v3-z (cdr b)) cf)))
+           (let xloop ((x x0))
+             (when (<= x x1)
+               (let zloop ((z z0))
+                 (when (<= z z1)
+                   (let ((k ($grid-key x z)))
+                     (hashtable-set! ht k
+                                     (cons b (hashtable-ref ht k '()))))
+                   (zloop (+ z 1))))
+               (xloop (+ x 1))))))
+       boxes)
+      (cons cf ht)))
+
+  ;; every box whose cells the sphere (pos, r) touches, each once
+  (define (grid-near g pos r)
+    (let* ((cf (car g)) (ht (cdr g)) (r ($col-fl r))
+           (x0 ($grid-cell (fl- (v3-x pos) r) cf))
+           (x1 ($grid-cell (fl+ (v3-x pos) r) cf))
+           (z0 ($grid-cell (fl- (v3-z pos) r) cf))
+           (z1 ($grid-cell (fl+ (v3-z pos) r) cf)))
+      (let xloop ((x x0) (acc '()))
+        (if (> x x1)
+            acc
+            (xloop (+ x 1)
+                   (let zloop ((z z0) (acc acc))
+                     (if (> z z1)
+                         acc
+                         (zloop (+ z 1)
+                                (let dedup ((bs (hashtable-ref
+                                                 ht ($grid-key x z) '()))
+                                            (acc acc))
+                                  (cond ((null? bs) acc)
+                                        ((memq (car bs) acc)
+                                         (dedup (cdr bs) acc))
+                                        (else (dedup (cdr bs)
+                                                     (cons (car bs)
+                                                           acc))))))))))))))
 
