@@ -34,10 +34,21 @@
       const wasm = new URLSearchParams(location.search).get('wasm') || 'fx-ssao.wasm';
       document.getElementById('which').textContent = wasm;
       say('[info] loading ' + wasm + ' — ' + navigator.userAgent.slice(0, 80));
-      first = true;
+      const t0 = performance.now();
+      const ms = () => (performance.now() - t0).toFixed(0) + 'ms';
+      // count rAF frames so a running loop is visible
+      let frames = 0;
+      const raf = window.requestAnimationFrame.bind(window);
+      window.requestAnimationFrame = (f) => raf((ts) => {
+        if (++frames === 1) say('[info] first frame at ' + ms());
+        if (frames === 60) say('[info] 60 frames at ' + ms());
+        return f(ts);
+      });
       try {
         const { loadGoeteia } = await import('../rt/web.mjs');
+        say('[info] runtime imported at ' + ms());
         await loadGoeteia(wasm);
+        say('[info] wasm instantiated + started at ' + ms());
         // poll the GL error state for the first few seconds
         const gl = document.getElementById('c').getContext('webgl2');
         let polls = 0;
