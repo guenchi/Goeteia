@@ -10,14 +10,17 @@
     </style>
   </head>
   <body>
-    <h1>Skybox and a mirror ball</h1>
-    <p>The cube map is procedural — six faces of gradient sky with a
-    baked sun, computed as bytes in a Scheme loop and handed to
-    <code>gl-cubemap!</code>.  The box draws with the camera's
-    translation erased (a <code>w&nbsp;=&nbsp;0</code> multiply), so
-    the sky never moves; the sphere samples the same cube map along
-    the reflected eye ray.  Needs WebGL&nbsp;2.
-    See <code>fx-skybox.ss</code>.</p>
+    <h1>Skybox, clouds, and a mirror ball at sea</h1>
+    <p>The cube map is procedural — deep-blue sky, a hazy horizon, a
+    baked sun, and cumulus from four octaves of 3D value noise over
+    the view <em>direction</em>, so the clouds cross the cube's face
+    seams without an edge — computed as bytes in a Scheme loop and
+    handed to <code>gl-cubemap!</code>.  The box draws with the
+    camera's translation erased (a <code>w = 0</code> multiply), so
+    the sky never moves; the sea ruffles its normal with traveling
+    sines and reflects the same cube map, Fresnel-blended over the
+    deep, and the ball floats in the middle of it.  Needs
+    WebGL&nbsp;2.  See <code>fx-skybox.ss</code>.</p>
     <canvas id="c" width="800" height="600"></canvas>
     <script type="module">
       import { loadGoeteia } from '../rt/web.mjs';
