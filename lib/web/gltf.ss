@@ -30,6 +30,7 @@
   (export gltf? gltf-prims gltf-images gltf-parse gltf-fetch!
           gltf-load-textures! gltf-draw!
           gltf-anims gltf-animation-names gltf-animate!
+          gltf-animate-blend!
           gltf-joint-matrices gltf-skin-vs
           gprim-vbase gprim-vbytes gprim-ibase gprim-ibytes
           gprim-icount gprim-color gprim-world gprim-stride gprim-tex)
@@ -345,7 +346,10 @@
                            (fl+ (fl* z z) (fl* w w))))))
       (vector (fl/ x n) (fl/ y n) (fl/ z n) (fl/ w n))))
 
-  (define ($chan-sample! g ch tw)
+  ;; write channel ch's value at time tw into its node's TRS; w < 1
+  ;; blends toward the sampled value from whatever the node already
+  ;; holds -- the crossfade primitive
+  (define ($chan-sample! g ch tw w)
     (let* ((times (vector-ref ch 2))
            (vals (vector-ref ch 3))
            (n (vector-length times))
@@ -367,7 +371,14 @@
                      (v0 (vector-ref vals k))
                      (v1 (vector-ref vals k1)))
                 (if (eq? path 'rotation)
-                    (let ((q ($q-nlerp v0 v1 a)))
+                    (let* ((qs ($q-nlerp v0 v1 a))
+                           (q (if (fl<? w 1.0)
+                                  ($q-nlerp (vector (vector-ref node 3)
+                                                    (vector-ref node 4)
+                                                    (vector-ref node 5)
+                                                    (vector-ref node 6))
+                                            qs w)
+                                  qs)))
                       (vector-set! node 3 (vector-ref q 0))
                       (vector-set! node 4 (vector-ref q 1))
                       (vector-set! node 5 (vector-ref q 2))
@@ -376,9 +387,15 @@
                            (u (fl- 1.0 a)))
                       (let comp ((j 0))
                         (when (< j 3)
-                          (vector-set! node (+ base j)
-                                       (fl+ (fl* u (vector-ref v0 j))
-                                            (fl* a (vector-ref v1 j))))
+                          (let ((s (fl+ (fl* u (vector-ref v0 j))
+                                        (fl* a (vector-ref v1 j)))))
+                            (vector-set!
+                             node (+ base j)
+                             (if (fl<? w 1.0)
+                                 (fl+ (fl* (fl- 1.0 w)
+                                           (vector-ref node (+ base j)))
+                                      (fl* w s))
+                                 s)))
                           (comp (+ j 1))))))))))))
 
   ;; sample animation `ai` at time t (looping over its duration):
@@ -393,7 +410,25 @@
                    (fl- tf (fl* dur (flfloor (fl/ tf dur)))))))
       (let loop ((c 0))
         (when (< c (vector-length chans))
-          ($chan-sample! g (vector-ref chans c) tw)
+          ($chan-sample! g (vector-ref chans c) tw 1.0)
+          (loop (+ c 1))))))
+
+  ;; the crossfade: pose animation ai at ti, then blend animation
+  ;; aj's pose at tj over it with weight k (0 = all ai, 1 = all aj)
+  (define (gltf-animate-blend! g ai ti aj tj k)
+    (gltf-animate! g ai ti)
+    (let* ((anim (vector-ref (gltf-anims g) aj))
+           (chans (vector-ref anim 1))
+           (dur (vector-ref anim 2))
+           (kf (let ((kf ($gltf-fl k)))
+                 (if (fl<? kf 0.0) 0.0 (if (fl<? 1.0 kf) 1.0 kf))))
+           (tf ($gltf-fl tj))
+           (tw (if (fl<? dur 0.000001)
+                   0.0
+                   (fl- tf (fl* dur (flfloor (fl/ tf dur)))))))
+      (let loop ((c 0))
+        (when (< c (vector-length chans))
+          ($chan-sample! g (vector-ref chans c) tw kf)
           (loop (+ c 1))))))
 
   (define (gltf-animation-names g)
