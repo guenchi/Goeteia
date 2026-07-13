@@ -34,8 +34,8 @@
 (define a2 (fx-alloc! 4))                ; re-aligned to 8
 (define a3 (fx-alloc! 300000))           ; must grow the memory
 (define alloc-ok
-  (and (= a1 16384)
-       (= a2 16488)
+  (and (= a1 65536)
+       (= a2 65640)
        (= (remainder a3 8) 0)
        (>= (* 65536 (%mem-size)) (+ a3 300000))))
 

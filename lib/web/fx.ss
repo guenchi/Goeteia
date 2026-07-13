@@ -15,7 +15,7 @@
 ;; Slot numbers are owned by fx from (fx-init!) on: create resources
 ;; through fx-program!/fx-buffer!/fx-texture!, not with hand-numbered
 ;; gl-buffer! calls, or the two schemes collide.  Staging memory is
-;; owned the same way: bytes [0, 16KiB) are the command region,
+;; owned the same way: bytes [0, 64KiB) are the command region,
 ;; fx-alloc! hands out what lies above and grows the memory as needed.
 ;;
 ;; fx-ticks! (the timing pump: t and dt in seconds, no GL) and
@@ -47,10 +47,10 @@
   (define ($fx-fl v) (if (flonum? v) v (exact->inexact v)))
 
   ;; ---- init, slots, staging-memory allocation ----
-  (define $fx-cmd-limit 16384)          ; command region [0, 16KiB)
+  (define $fx-cmd-limit 65536)          ; command region [0, 64KiB)
   (define $fx-canvas #f)
   (define $fx-slot 0)
-  (define $fx-heap 16384)
+  (define $fx-heap 65536)
 
   (define (fx-init! canvas)
     (set! $fx-canvas canvas)
