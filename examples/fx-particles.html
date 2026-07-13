@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <title>Goeteia — 4,000 sparks, one draw call</title>
+    <style>
+      body { font-family: system-ui; text-align: center; margin-top: 2em; background: #f2f4fa; color: #14203a; }
+      canvas { border-radius: 12px; box-shadow: 0 4px 20px rgba(16,20,42,.2); }
+      code { font-family: ui-monospace, Menlo, monospace; color: #1550c4; }
+    </style>
+  </head>
+  <body>
+    <h1>4,000 sparks, one draw call</h1>
+    <p>A particle fountain from parts the toolkit already has:
+    state integrates in staging memory, the instance stream uploads
+    once per frame, and <code>drawElementsInstanced</code> billboards
+    one quad through it under additive blending.  No new library
+    code.  Needs WebGL&nbsp;2.  See <code>fx-particles.ss</code>.</p>
+    <canvas id="c" width="800" height="600"></canvas>
+    <script type="module">
+      import { loadGoeteia } from '../rt/web.mjs';
+      loadGoeteia('fx-particles.wasm');
+    </script>
+  </body>
+</html>
