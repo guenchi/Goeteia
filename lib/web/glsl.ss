@@ -22,7 +22,9 @@
 ;;   (return expr) (return)
 ;;   (if c stmt ...)       / (if-else c (stmt ...) (stmt ...))
 ;;   (for (T name init cond step) stmt ...)
-;;                         -> "for (T name = init; cond; name = step)"
+;;                         -> "for (T name = init; cond; name += k)"
+;;                            (step (+ name k) / (- name k) becomes
+;;                            += / -= as ESSL 1.00 loops require)
 ;;   (discard)
 ;; Expressions:
 ;;   symbols pass through verbatim (p, gl_Position, v.xy);
@@ -114,14 +116,25 @@
                         "} "))
         ((for)
          ;; (for (T name init cond step) stmt ...) -- step is an
-         ;; expression assigned back to name each iteration
+         ;; expression assigned back to name each iteration.  ESSL
+         ;; 1.00 (Appendix A) only allows the loop index to advance
+         ;; by ++/--/+=/-=, so (+ name e) and (- name e) render as
+         ;; compound assignment; anything else is on the caller.
          (let* ((h (cadr s))
                 (ty (car h)) (name (cadr h)) (init (caddr h))
                 (c (cadddr h)) (step (list-ref h 4)))
            (string-append "for (" (symbol->string ty) " "
                           (symbol->string name) " = " (expr->glsl init)
                           "; " (expr->glsl c) "; "
-                          (symbol->string name) " = " (expr->glsl step)
+                          (if (and (pair? step) (pair? (cdr step))
+                                   (pair? (cddr step)) (null? (cdddr step))
+                                   (memq (car step) '(+ -))
+                                   (eq? (cadr step) name))
+                              (string-append (symbol->string name)
+                                             (if (eq? (car step) '+) " += " " -= ")
+                                             (expr->glsl (caddr step)))
+                              (string-append (symbol->string name) " = "
+                                             (expr->glsl step)))
                           ") { "
                           (apply string-append (map stmt->glsl (cddr s)))
                           "} ")))

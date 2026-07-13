@@ -54,18 +54,19 @@
          '((u_tex sampler2D) (u_res vec2)))
  (null? (glsl-attributes '((uniform float u_t) (precision mediump float))))
  (null? (glsl-uniforms '((attribute vec2 p))))
- ;; for loops: kernel sweeps for PCF shadows and blurs
+ ;; for loops: kernel sweeps for PCF shadows and blurs.  The index
+ ;; steps by += / -= because ESSL 1.00 forbids plain = on it.
  (t (glsl->string '((define (main) void
                       (for (int i 0 (< i 3) (+ i 1))
                         (set! x (+ x i))))))
-    "void main() { for (int i = 0; (i < 3); i = (i + 1)) { x = (x + i); } } ")
+    "void main() { for (int i = 0; (i < 3); i += 1) { x = (x + i); } } ")
  (t (glsl->string '((define (main) void
                       (for (int x -1 (< x 2) (+ x 1))
-                        (for (int y -1 (< y 2) (+ y 1))
+                        (for (int y 2 (> y 0) (- y 1))
                           (set! a (+ a (f x y))))))))
     (string-append
-     "void main() { for (int x = -1; (x < 2); x = (x + 1)) { "
-     "for (int y = -1; (y < 2); y = (y + 1)) { "
+     "void main() { for (int x = -1; (x < 2); x += 1) { "
+     "for (int y = 2; (y > 0); y -= 1) { "
      "a = (a + f(x, y)); } } } "))
  ;; array uniforms and indexing, for skinning
  (t (glsl->string '((uniform (array mat4 32) u_joints)))

@@ -626,13 +626,13 @@
               (vec4 (pow c (vec3 "0.4545" "0.4545" "0.4545"))
                     u_color.a)))))
 
-  ;; ---- PBR: Cook-Torrance GGX, the sky as light probe ----
-  ;; One directional light plus image-based ambient: a mipmapped
-  ;; cube map stands in for both irradiance (sampled at high bias)
-  ;; and prefiltered specular (bias scaled by roughness).  Pair with
-  ;; mesh-write! (stride 24); gltf's gprim-metallic/gprim-roughness
-  ;; feed the factor uniforms directly.  Reinhard tonemap + gamma
-  ;; on the way out.
+  ;; ---- PBR: Cook-Torrance GGX with a real light probe ----
+  ;; One directional light plus split-sum image-based ambient: u_sky
+  ;; is a cube map prefiltered by (web ibl)'s ibl-prefilter! (its mip
+  ;; chain holds GGX convolutions, u_mips = levels - 1) and u_lut is
+  ;; ibl-brdf-lut!'s scale/bias table.  Pair with mesh-write! (stride
+  ;; 24); gltf's gprim-metallic/gprim-roughness feed the factor
+  ;; uniforms directly.  Reinhard tonemap + gamma on the way out.
   (define mesh-pbr-vs
     '((attribute vec3 a_pos)
       (attribute vec3 a_normal)
@@ -653,6 +653,8 @@
       (uniform float u_metallic)
       (uniform float u_roughness)
       (uniform samplerCube u_sky)
+      (uniform sampler2D u_lut)
+      (uniform float u_mips)
       (varying vec3 v_n)
       (varying vec3 v_wp)
       (define (main) void
@@ -684,17 +686,18 @@
         (local vec3 kd (* (- one F) (- (fl 1) u_metallic)))
         (local vec3 direct (* (+ (* kd (/ albedo "3.14159265")) spec)
                               (* ndl (fl 3))))
-        ;; ambient from the sky: high bias ~ irradiance, roughness
-        ;; bias ~ prefiltered specular
-        (local vec4 irr4 (textureCube u_sky n (fl 6)))
+        ;; split-sum ambient: the prefiltered mip chain picks the
+        ;; blur by roughness, the LUT folds in the BRDF integral
+        (local vec4 irr4 (textureCube u_sky n u_mips))
         (local vec3 irr (pow irr4.rgb (vec3 "2.2" "2.2" "2.2")))
         (local vec3 r (reflect (- v) n))
-        (local vec4 pre4 (textureCube u_sky r (* u_roughness (fl 6))))
+        (local vec4 pre4 (textureCube u_sky r (* u_roughness u_mips)))
         (local vec3 pre (pow pre4.rgb (vec3 "2.2" "2.2" "2.2")))
-        (local vec3 fenv (+ f0 (* (- one f0)
-                                  (pow (- (fl 1) ndv) (fl 5)))))
+        (local vec4 ab (texture2D u_lut (vec2 ndv u_roughness)))
         (local vec3 c (+ direct
-                         (+ (* (* kd albedo) irr) (* fenv pre))))
+                         (+ (* (* kd albedo) irr)
+                            (* pre (+ (* f0 ab.r)
+                                      (vec3 ab.g ab.g ab.g))))))
         (set! c (/ c (+ c one)))          ; Reinhard
         (set! gl_FragColor
               (vec4 (pow c (vec3 "0.4545" "0.4545" "0.4545"))

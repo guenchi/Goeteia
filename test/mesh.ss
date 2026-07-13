@@ -241,6 +241,6 @@
  (equal? (glsl-uniforms mesh-pbr-fs)
          '((u_light vec3) (u_eye vec3) (u_albedo vec4)
            (u_metallic float) (u_roughness float)
-           (u_sky samplerCube)))
+           (u_sky samplerCube) (u_lut sampler2D) (u_mips float)))
  ;; and it renders to source without incident
  (< 0 (string-length (glsl->string mesh-pbr-fs))))

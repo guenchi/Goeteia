@@ -1,10 +1,11 @@
 ;; The PBR calibration scene: a 5x5 grid of spheres, metallic rising
-;; front to back, roughness left to right, lit by one sun and the
-;; same procedural sky the skybox draws -- the mipmapped cube map
-;; doubles as irradiance (high sampling bias) and prefiltered
-;; specular (bias scaled by roughness).  Needs WebGL 2.
+;; front to back, roughness left to right, lit by one sun and a REAL
+;; light probe -- (web ibl) prefilters the procedural sky's mip chain
+;; with GGX at rising roughness and bakes the split-sum BRDF lookup
+;; table, so the ambient term is Karis' split-sum, not a mip-bias
+;; approximation.  Needs WebGL 2.
 (import (rnrs) (web js) (web dom) (web gl) (web glsl) (web fx)
-        (web mat) (web mesh))
+        (web ibl) (web mat) (web mesh))
 
 (fx-init! (get-element-by-id "c"))
 
@@ -54,6 +55,10 @@
 
 (define sky-map (fx-slot!))
 (gl-cubemap! sky-map sky-base DIM)
+
+;; the real probe: GGX-prefiltered mips + the split-sum BRDF table
+(define lut (ibl-brdf-lut!))
+(define env (ibl-prefilter! sky-map DIM 6))
 
 (define sky-p
   (fx-program!
@@ -113,8 +118,11 @@
      ;; the grid: metallic front to back, roughness left to right
      (cmd-depth! #t)
      (bind-upload! pbr-p ball)
-     (cmd-bind-cubemap! 0 sky-map)
+     (cmd-bind-cubemap! 0 env)
+     (cmd-bind-texture! 1 lut)
      (fx-uniform! pbr-p 'u_sky 0)
+     (fx-uniform! pbr-p 'u_lut 1)
+     (fx-uniform! pbr-p 'u_mips 5.0)
      (fx-uniform! pbr-p 'u_light (v3-x sun) (v3-y sun) (v3-z sun))
      (fx-uniform! pbr-p 'u_eye (v3-x eye) (v3-y eye) (v3-z eye))
      (fx-uniform! pbr-p 'u_albedo 0.75 0.22 0.15 1.0)
