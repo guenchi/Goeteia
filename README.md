@@ -70,10 +70,6 @@ A small UI stack over the JS bridge, in `lib/web/`:
   app: `react-component` registers a factory the React side wraps
   in one `useEffect` (`rt/react.mjs`); props flow in as JS objects,
   the dispose thunk flows back as a JS function
-- `(web three)` — reactive 3D scenes over Three.js: the `s3d`
-  template builds the scene graph once, unquoted attributes become
-  signal-driven holes, and `three-loop!` pumps frames into Scheme —
-  bridge traffic is O(changes), rendering stays on the GPU
 - `(web gl)` — raw WebGL through a command buffer: Scheme encodes a
   frame of GL commands as words in the shared linear memory and one
   bridge call replays them; vertex data uploads zero-copy from the

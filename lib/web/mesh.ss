@@ -1,6 +1,6 @@
 ;; Parametric meshes for raw-GL scenes: positions, normals, indices,
-;; generated in pure Scheme -- what (web three) gets from Three.js's
-;; geometry classes, without the framework.
+;; generated in pure Scheme -- what a framework's geometry classes
+;; give you (box, sphere, torus...), without the framework.
 ;;
 ;;   (define m (mesh-torus 1.5 0.5))
 ;;   (define vbase (fx-alloc! (mesh-vertex-bytes m)))
