@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <title>Goeteia — terrain from a height function</title>
+    <style>
+      body { font-family: system-ui; text-align: center; margin-top: 2em; background: #f2f4fa; color: #14203a; }
+      canvas { border-radius: 12px; box-shadow: 0 4px 20px rgba(16,20,42,.2); }
+      code { font-family: ui-monospace, Menlo, monospace; color: #1550c4; }
+    </style>
+  </head>
+  <body>
+    <h1>Terrain from a height function</h1>
+    <p><code>mesh-heightmap</code> samples layered sines into a
+    180×180 grid — the normals are the function's own central
+    differences.  The shader ramps grass/rock/snow by altitude and
+    exponential fog folds the far hills into the sky.  One mesh, one
+    draw call, no assets.  See <code>fx-terrain.ss</code>.</p>
+    <canvas id="c" width="800" height="600"></canvas>
+    <script type="module">
+      import { loadGoeteia } from '../rt/web.mjs';
+      loadGoeteia('fx-terrain.wasm');
+    </script>
+  </body>
+</html>

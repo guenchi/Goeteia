@@ -143,6 +143,25 @@
  (equal? (glsl-uniforms mesh-tex-fs)
          '((u_light vec3) (u_color vec4) (u_ambient float)
            (u_tex sampler2D)))
+ ;; ---- heightmaps ----
+ ;; flat field: a grid of plane, normals all +y, uv corners
+ (let ((m (mesh-heightmap 8.0 8.0 4 4 (lambda (x z) 0.0))))
+   (and (= (mesh-vert-count m) 25)
+        (= (mesh-index-count m) 96)
+        (unit-normals? m)
+        (all-verts? m (lambda (x y z nx ny nz)
+                        (and (near? y 0.0) (near? ny 1.0))))
+        (indices-in-range? m)
+        (near? (vector-ref (mesh-uvs m) 0) 0.0)
+        (near? (vector-ref (mesh-uvs m) (- (* 25 2) 1)) 1.0)))
+ ;; a slope y = x: height follows, normals lean (-1,1,0)/sqrt2
+ (let ((m (mesh-heightmap 4.0 4.0 2 2 (lambda (x z) x))))
+   (and (all-verts? m (lambda (x y z nx ny nz)
+                        (and (near? y x)
+                             (near? nx (fl- 0.0 (fl/ 1.0 (flsqrt 2.0))))
+                             (near? ny (fl/ 1.0 (flsqrt 2.0)))
+                             (near? nz 0.0))))
+        (unit-normals? m)))
  ;; ---- bounding spheres ----
  (let ((b (mesh-bounds plane)))          ; 4 x 2 on xz
    (and (near? (v3-x (car b)) 0.0) (near? (v3-y (car b)) 0.0)

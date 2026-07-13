@@ -149,7 +149,10 @@ A small UI stack over the JS bridge, in `lib/web/`:
   Three.js; `examples/fx-pick.html`: `m4-unproject` casts the cursor
   as a ray and `ray-aabb` answers what it hit)
 - `(web mesh)` — parametric geometry in pure Scheme: plane, box,
-  sphere, cylinder, torus as interleaved positions + normals with u16
+  sphere, cylinder, torus — and `mesh-heightmap`, terrain from any
+  pure height function with its own central-difference normals
+  (`examples/fx-terrain.html`: altitude-ramped hills under
+  exponential fog) — as interleaved positions + normals with u16
   indices, generated headlessly-verifiably and laid into the staging
   memory by `mesh-write!`; `mesh-lit-vs`/`-fs` ship the standard
   directional-light program as composable glsl forms
