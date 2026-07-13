@@ -57,4 +57,66 @@
  ;; a wall at x >= 2: the player slides, keeping y/z motion
  (v3~ (sphere-aabb-push (v3 1.6 0.0 0.0) 0.75
                         (v3 2.0 -5.0 -5.0) (v3 3.0 5.0 5.0))
-      -0.35 0.0 0.0))
+      -0.35 0.0 0.0)
+
+ ;; ---- capsules ----
+ ;; a standing capsule vs a sphere overhead: reach is cr + r past q
+ (capsule-sphere? (v3 0 0 0) (v3 0 2.0 0) 0.5 (v3 0 3.0 0) 0.6)
+ (not (capsule-sphere? (v3 0 0 0) (v3 0 2.0 0) 0.5 (v3 0 3.0 0) 0.4))
+ ;; beside the shaft: radial distance only
+ (capsule-sphere? (v3 0 0 0) (v3 0 2.0 0) 0.5 (v3 1.0 1.0 0) 0.6)
+ (not (capsule-sphere? (v3 0 0 0) (v3 0 2.0 0) 0.5 (v3 1.2 1.0 0) 0.6))
+ ;; parallel capsules a unit apart; then crossed ones that touch at
+ ;; their midpoints
+ (capsule-capsule? (v3 0 0 0) (v3 0 2.0 0) 0.6 (v3 1.0 0 0) (v3 1.0 2.0 0) 0.6)
+ (not (capsule-capsule? (v3 0 0 0) (v3 0 2.0 0) 0.4
+                        (v3 1.0 0 0) (v3 1.0 2.0 0) 0.4))
+ (capsule-capsule? (v3 -1.0 0 0) (v3 1.0 0 0) 0.3
+                   (v3 0 -1.0 0.5) (v3 0 1.0 0.5) 0.3)
+ (not (capsule-capsule? (v3 -1.0 0 0) (v3 1.0 0 0) 0.3
+                        (v3 0 -1.0 0.7) (v3 0 1.0 0.7) 0.3))
+ ;; capsule vs box: the shaft passes a face; then clears it
+ (capsule-aabb? (v3 2.0 -1.0 0) (v3 2.0 1.0 0) 1.1 bmin bmax)
+ (not (capsule-aabb? (v3 2.0 -1.0 0) (v3 2.0 1.0 0) 0.9 bmin bmax))
+ ;; a diagonal capsule whose nearest point is mid-segment
+ (capsule-aabb? (v3 -3.0 2.5 0) (v3 3.0 2.5 0) 1.6 bmin bmax)
+ (not (capsule-aabb? (v3 -3.0 2.5 0) (v3 3.0 2.5 0) 1.4 bmin bmax))
+
+ ;; ---- the sweep: first contact along the motion ----
+ ;; head-on: the face sits at x = -1, the sphere skin at r = 1,
+ ;; so contact is at x = -2 -- t = 3/10 of the (10,0,0) motion
+ (let ((hit (sweep-sphere-aabb (v3 -5.0 0 0) 1.0 (v3 10.0 0 0) bmin bmax)))
+   (and hit (near? (car hit) 0.3) (v3~ (cdr hit) -1.0 0.0 0.0)))
+ ;; moving away, and stopping short: both miss
+ (not (sweep-sphere-aabb (v3 -5.0 0 0) 1.0 (v3 -10.0 0 0) bmin bmax))
+ (not (sweep-sphere-aabb (v3 -5.0 0 0) 1.0 (v3 2.0 0 0) bmin bmax))
+ ;; a passing shot misses; tunnelling through in one step does not
+ (not (sweep-sphere-aabb (v3 -5.0 3.0 0) 1.0 (v3 10.0 0 0) bmin bmax))
+ (let ((hit (sweep-sphere-aabb (v3 -50.0 0 0) 1.0 (v3 100.0 0 0) bmin bmax)))
+   (and hit (near? (car hit) 0.48)))
+ ;; approaching the +z face gets that face's normal
+ (let ((hit (sweep-sphere-aabb (v3 0 0 5.0) 1.0 (v3 0 0 -10.0) bmin bmax)))
+   (and hit (near? (car hit) 0.3) (v3~ (cdr hit) 0.0 0.0 1.0)))
+ ;; already touching: t = 0 and the shortest way out
+ (let ((hit (sweep-sphere-aabb (v3 1.5 0 0) 1.0 (v3 -1.0 0 0) bmin bmax)))
+   (and hit (near? (car hit) 0.0) (v3~ (cdr hit) 1.0 0.0 0.0)))
+
+ ;; ---- move-and-slide ----
+ ;; straight into a wall: stop a skin off the face
+ (let* ((wall (cons (v3 -10.0 -10.0 -1.0) (v3 10.0 10.0 1.0)))
+        (p (move-and-slide (v3 0 0 3.0) 0.5 (v3 0 0 -5.0) (list wall))))
+   (and (fl<? 1.5 (v3-z p)) (fl<? (v3-z p) 1.51)
+        (near? (v3-x p) 0.0) (near? (v3-y p) 0.0)))
+ ;; diagonal motion keeps its along-the-wall component
+ (let* ((wall (cons (v3 -10.0 -10.0 -1.0) (v3 10.0 10.0 1.0)))
+        (p (move-and-slide (v3 0 0 3.0) 0.5 (v3 3.0 0 -5.0) (list wall))))
+   (and (fl<? 1.5 (v3-z p)) (fl<? (v3-z p) 1.51)
+        (fl<? 2.9 (v3-x p)) (fl<? (v3-x p) 3.01)))
+ ;; an inside corner stops both components
+ (let* ((wz (cons (v3 -10.0 -10.0 -1.0) (v3 10.0 10.0 1.0)))
+        (wx (cons (v3 1.0 -10.0 -10.0) (v3 3.0 10.0 10.0)))
+        (p (move-and-slide (v3 0 0 3.0) 0.5 (v3 5.0 0 -5.0) (list wz wx))))
+   (and (fl<? 1.5 (v3-z p)) (fl<? (v3-z p) 1.51)
+        (fl<? (v3-x p) 0.51)))
+ ;; nothing in the way: the full step lands
+ (v3~ (move-and-slide (v3 0 0 0) 0.5 (v3 1.0 2.0 3.0) '()) 1.0 2.0 3.0))
