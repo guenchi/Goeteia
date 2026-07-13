@@ -71,6 +71,17 @@ A small UI stack over the JS bridge, in `lib/web/`:
            (button (@ (on-click ,(lambda _ (signal-update! n (lambda (v) (+ v 1))))))
              "+")))
   ```
+- `(web html)` — the same SXML vocabulary `(web sx)` turns into live
+  DOM, rendered to a *string* instead: `sxml->html` for fragments,
+  `html->document` for a whole page, with text escaped, void tags
+  closed, `(raw "...")` passed through for `<script>`/`<style>`.  One
+  notation authors both the dynamic client and the static page
+- `(web css)` — CSS as Scheme data: `css->string` renders a rule
+  list (`(selector (prop value ...) ...)`) to a stylesheet, with
+  variable-arity unit forms (`(em 1)` → `"1em"`, `(em 0 92)` →
+  `"0.92em"`) that stay exact — no flonums, since the printer isn't
+  bit-exact.  The `(web css)` of shaders is `(web glsl)`; this is the
+  `(web css)` of pages
 - `(web react)` — embed Goeteia components into an existing React
   app: `react-component` registers a factory the React side wraps
   in one `useEffect` (`rt/react.mjs`); props flow in as JS objects,
@@ -106,6 +117,14 @@ A small UI stack over the JS bridge, in `lib/web/`:
   fragment outputs (MRT), and transform feedback captures the
   varyings (`examples/fx-gpu-particles.html`: 100,000 particles
   whose physics is a vertex shader)
+- `(web wgsl)` — the third dialect, for WebGPU: `wgsl->string`
+  renders the *same* shader forms `(web glsl)` renders into one WGSL
+  module — the two stages' uniforms merge into a struct at
+  `@group(0) @binding(0)`, varyings become the `VOut` struct, and
+  `gl_Position` / `gl_FragColor` / a `sampler2D` (split into a
+  sampler + texture pair) respell themselves — while `wgsl-layout`
+  derives the pipeline's vertex formats from the same attribute
+  declarations.  One shader source, three APIs
 - `(web typeset)` — DOM-free text layout, after
   [pretext](https://www.pretext.cool): `prepare` measures each
   distinct code point once, `layout` is pure arithmetic from the
@@ -300,9 +319,16 @@ A small UI stack over the JS bridge, in `lib/web/`:
   (`examples/fx-gltf.html`: the lit Box; `fx-gltf-tex.html`: a
   textured asset; `fx-fox.html`: the rigged Fox — Survey / Walk /
   Run crossfade on keys 1-3)
+- `(web sexpr)` — the s-expression wire codec, byte-for-byte
+  compatible with Igropyr's `(igropyr sexpr)` extended mode:
+  `sexpr->string` / `string->sexpr` over a depth- and size-limited
+  whitelist — proper and dotted lists, symbols, strings, exact
+  integers and ratios, vectors, and bytevectors as `#vu8"<base64>"`.
+  No flonums on the wire (this runtime cannot print one that reads
+  back bit-identically), so exactness is the contract
 - `(web rpc)` — s-expression RPC to a Scheme backend (Igropyr's
-  `(igropyr sexpr)` is the server half): `write` on one side, a safe
-  whitelisted parser on the other, so exact integers and ratios cross
+  `(igropyr sexpr)` is the server half): serialized and parsed
+  through `(web sexpr)`, so exact integers, ratios and binary cross
   the wire intact and there is no codec at all
 - `(web fetch)` — direct-style HTTP over JSPI: `(http-get url)` reads
   like a blocking call, suspending the whole wasm stack on the
