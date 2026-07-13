@@ -102,4 +102,44 @@
  ;; the lit shaders are extractable data like any glsl forms
  (equal? (map car (glsl-attributes mesh-lit-vs)) '(a_pos a_normal))
  (equal? (glsl-uniforms mesh-lit-fs)
-         '((u_light vec3) (u_color vec4) (u_ambient float))))
+         '((u_light vec3) (u_color vec4) (u_ambient float)))
+ ;; ---- texture coordinates ----
+ ;; every generator carries them, two per vertex, inside [0,1]
+ (let uv-ok ((ms (list plane box sphere cyl torus)))
+   (or (null? ms)
+       (let* ((m (car ms)) (uvs (mesh-uvs m)))
+         (and (= (vector-length uvs) (* 2 (mesh-vert-count m)))
+              (let loop ((i 0))
+                (or (= i (vector-length uvs))
+                    (and (fl<? -0.00001 (vector-ref uvs i))
+                         (fl<? (vector-ref uvs i) 1.00001)
+                         (loop (+ i 1)))))
+              (uv-ok (cdr ms))))))
+ ;; the plane spans the full tile corner to corner
+ (near? (vector-ref (mesh-uvs plane) 0) 0.0)
+ (near? (vector-ref (mesh-uvs plane) 4) 1.0)
+ (near? (vector-ref (mesh-uvs plane) 5) 1.0)
+ ;; the sphere seam: first vertex (0,0), last (1,1)
+ (let ((uvs (mesh-uvs sphere)))
+   (and (near? (vector-ref uvs 0) 0.0)
+        (near? (vector-ref uvs (- (vector-length uvs) 2)) 1.0)
+        (near? (vector-ref uvs (- (vector-length uvs) 1)) 1.0)))
+ ;; the interleaved uv writer: 32 bytes per vertex
+ (= (mesh-vertex-bytes-uv plane) 128)
+ (begin
+   (mesh-write-uv! plane 4608 4800)
+   (and (near? (%mem-f32-ref 4608) -2.0)     ; x of vertex 0
+        (near? (%mem-f32-ref 4620) 0.0)      ; nx
+        (near? (%mem-f32-ref 4624) 1.0)      ; ny
+        (near? (%mem-f32-ref 4632) 0.0)      ; u
+        (near? (%mem-f32-ref 4636) 0.0)      ; v
+        (near? (%mem-f32-ref (+ 4608 64)) 2.0)       ; vertex 2: x
+        (near? (%mem-f32-ref (+ 4608 64 24)) 1.0)    ; its u
+        (near? (%mem-f32-ref (+ 4608 64 28)) 1.0)    ; its v
+        (= (%mem-i32-ref 4800) (+ 0 (* 65536 1)))))  ; indices unchanged
+ ;; the textured shader pair declares the 32-byte layout
+ (equal? (glsl-attributes mesh-tex-vs)
+         '((a_pos vec3 3) (a_normal vec3 3) (a_uv vec2 2)))
+ (equal? (glsl-uniforms mesh-tex-fs)
+         '((u_light vec3) (u_color vec4) (u_ambient float)
+           (u_tex sampler2D))))
