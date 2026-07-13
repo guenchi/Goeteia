@@ -82,7 +82,9 @@ A small UI stack over the JS bridge, in `lib/web/`:
   `examples/fx-shadow.html`: PCF shadow mapping through a depth-only
   target; `examples/fx-bloom.html`: a five-pass bloom chain),
   instanced draws (`examples/fx-forest.html`: 8,000 trees,
-  one call), and mat4-array uniforms for skinning
+  one call), cube maps (`examples/fx-skybox.html`: a procedural sky
+  and a mirror ball reflecting it), and mat4-array uniforms for
+  skinning
 - `(web glsl)` — GLSL as s-expressions: `glsl->string` is a pure
   function from a shader form list to GLSL source (the `(web css)` of
   shaders), so shaders compose with `append`/`map` and helper
