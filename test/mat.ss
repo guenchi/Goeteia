@@ -14,7 +14,8 @@
 
 (define pi 3.141592653589793)
 
-(and
+(define main-ok
+ (and
  ;; trig: knowns, quadrants, range reduction
  (near? (flsin 0.0) 0.0)
  (near? (flsin (fl/ pi 2.0)) 1.0)
@@ -116,4 +117,25 @@
         (near? (vector-ref v 10) 1.0)
         (near? (vector-ref v 14) -5.0)
         ;; a point at the origin lands 5 in front of the camera
-        (v3~ (m4-transform v (v3 0 0 0)) 0.0 0.0 -5.0))))
+        (v3~ (m4-transform v (v3 0 0 0)) 0.0 0.0 -5.0)))))
+
+;; ---- the SIMD path agrees with the scalar one (to f32 lanes) ----
+(define simd-ok
+  (let* ((a (m4-mul (m4-perspective 0.9 1.5 0.1 100.0)
+                    (m4-look-at (v3 3.0 4.0 5.0) (v3 0.0 1.0 0.0)
+                                (v3 0.0 1.0 0.0))))
+         (b (m4-mul (m4-translate 1.0 2.0 3.0) (m4-rotate-y 0.7)))
+         (scalar (m4-mul a b)))
+    (m4-scratch! 4096)                   ; SIMD on...
+    (let ((wide (m4-mul a b)))
+      (m4-scratch! #f)                   ; ...and off again
+      (let lane ((i 0))
+        (or (= i 16)
+            (let* ((s (vector-ref scalar i))
+                   (w (vector-ref wide i))
+                   (d (if (fl<? s w) (fl- w s) (fl- s w)))
+                   (m (if (fl<? s 0.0) (fl- 0.0 s) s)))
+              (and (fl<? d (fl+ 0.0001 (fl* 0.00001 m)))
+                   (lane (+ i 1)))))))))
+
+(and main-ok simd-ok)

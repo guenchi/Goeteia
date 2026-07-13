@@ -1164,6 +1164,8 @@
     (%mem-f32-ref . 1) (%mem-f32-set! . 2)
     (%mem-f64-ref . 1) (%mem-f64-set! . 2)
     (%mem-size . 0) (%mem-grow . 1)
+    (%f32x4-add! . 3) (%f32x4-sub! . 3) (%f32x4-mul! . 3)
+    (%f32x4-scale! . 3) (%f32x4-axpy! . 4)
     (%js-await . 1)))
 
 (define primitives
@@ -1191,6 +1193,7 @@
     %mem-u8-ref %mem-u8-set! %mem-i32-ref %mem-i32-set!
     %mem-f32-ref %mem-f32-set! %mem-f64-ref %mem-f64-set!
     %mem-size %mem-grow
+    %f32x4-add! %f32x4-sub! %f32x4-mul! %f32x4-scale! %f32x4-axpy!
     %unreachable %throw-k))
 
 (define (compile-exp e locals cell tail?)
@@ -1891,7 +1894,8 @@
 ;; in the f64 context (no intermediate boxing)
 (define fl-context-prims
   '(fl+ fl- fl* fl/ fl=? fl<? flsqrt flfloor fltruncate
-    fixnum->flonum %fl->fx %mem-f64-set! %mem-f32-set!))
+    fixnum->flonum %fl->fx %mem-f64-set! %mem-f32-set!
+    %f32x4-scale! %f32x4-axpy!))
 (define (compile-fl-prim op args locals cell)
   (let ((expect (assq op prim-arity)))
     (unless (= (length args) (cdr expect))
@@ -1923,6 +1927,34 @@
      (let* ((a (compile-exp (car args) locals cell #f))
             (v (compile-f64 (cadr args) locals cell)))
        (list a (unwrap-int) v #xB6 #x38 (uleb 2) (uleb 0)
+             (global-get G-VOID))))
+    ;; ---- wasm SIMD, the scalar-mixing pair: the flonum argument
+    ;; compiles in the f64 context, demotes, and splats to 4 lanes
+    ((%f32x4-scale!)
+     ;; (%f32x4-scale! dst a s): [dst] = [a] * splat(s)
+     (let* ((d (compile-exp (car args) locals cell #f))
+            (a (compile-exp (cadr args) locals cell #f))
+            (s (compile-f64 (caddr args) locals cell)))
+       (list d (unwrap-int)
+             a (unwrap-int) #xFD (uleb 0) (uleb 0) (uleb 0)
+             s #xB6 #xFD (uleb 19)                  ; f32x4.splat
+             #xFD (uleb 230)                        ; f32x4.mul
+             #xFD (uleb 11) (uleb 0) (uleb 0)       ; v128.store
+             (global-get G-VOID))))
+    ((%f32x4-axpy!)
+     ;; (%f32x4-axpy! dst a b s): [dst] = [a] + [b] * splat(s) --
+     ;; one column of a matrix product per call
+     (let* ((d (compile-exp (car args) locals cell #f))
+            (a (compile-exp (cadr args) locals cell #f))
+            (b (compile-exp (caddr args) locals cell #f))
+            (s (compile-f64 (cadddr args) locals cell)))
+       (list d (unwrap-int)
+             a (unwrap-int) #xFD (uleb 0) (uleb 0) (uleb 0)
+             b (unwrap-int) #xFD (uleb 0) (uleb 0) (uleb 0)
+             s #xB6 #xFD (uleb 19)
+             #xFD (uleb 230)                        ; f32x4.mul
+             #xFD (uleb 228)                        ; f32x4.add
+             #xFD (uleb 11) (uleb 0) (uleb 0)
              (global-get G-VOID))))))
 
 (define (compile-prim op args locals cell)
@@ -2113,6 +2145,19 @@
            (struct-new TY-FLONUM)))
     ((%mem-size) (list #x3F #x00 (wrap-int)))        ; pages (64 KiB each)
     ((%mem-grow) (list (arg 0) (unwrap-int) #x40 #x00 (wrap-int)))
+    ;; ---- wasm SIMD over staging memory: [dst] = [a] OP [b], four
+    ;; f32 lanes per instruction.  The v128 lives only on the wasm
+    ;; stack inside this one sequence, so no new types anywhere
+    ((%f32x4-add! %f32x4-sub! %f32x4-mul!)
+     (list (arg 0) (unwrap-int)
+           (arg 1) (unwrap-int) #xFD (uleb 0) (uleb 0) (uleb 0)
+           (arg 2) (unwrap-int) #xFD (uleb 0) (uleb 0) (uleb 0)
+           #xFD (uleb (case op
+                        ((%f32x4-add!) 228)          ; f32x4.add
+                        ((%f32x4-sub!) 229)          ; f32x4.sub
+                        (else 230)))                 ; f32x4.mul
+           #xFD (uleb 11) (uleb 0) (uleb 0)          ; v128.store
+           (global-get G-VOID)))
     ((bitwise-and bitwise-ior bitwise-xor)
      ;; the *2 fixnum tag passes through and/ior/xor unchanged
      (list (arg 0) (untag) (arg 1) (untag)

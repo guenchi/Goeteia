@@ -30,12 +30,12 @@
 
 ;; ---- init + allocator ----
 (fx-init! (js-get (js-global) "__mockcanvas"))
-(define a1 (fx-alloc! 100))              ; first block: right after cmd region
-(define a2 (fx-alloc! 4))                ; re-aligned to 8
-(define a3 (fx-alloc! 300000))           ; must grow the memory
-(define alloc-ok
-  (and (= a1 65536)
-       (= a2 65640)
+(define a1 (fx-alloc! 100))              ; first block: after the cmd
+(define a2 (fx-alloc! 4))                ; region and the 128-byte m4
+(define a3 (fx-alloc! 300000))           ; scratch; re-aligned to 8;
+(define alloc-ok                         ; the big one grows memory
+  (and (= a1 (+ 65536 128))
+       (= a2 (+ 65640 128))
        (= (remainder a3 8) 0)
        (>= (* 65536 (%mem-size)) (+ a3 300000))))
 
