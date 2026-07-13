@@ -78,9 +78,10 @@ A small UI stack over the JS bridge, in `lib/web/`:
   `gl-program!` binds attribute locations before linking, and indexed
   meshes draw through an element buffer with the depth test on.
   The context is WebGL 2 (with fallback): offscreen render targets
-  (`examples/fx-post.html`: the scene through a ripple + vignette),
-  instanced draws (`examples/fx-forest.html`: 8,000 trees, one call),
-  and mat4-array uniforms for skinning
+  (`examples/fx-post.html`: the scene through a ripple + vignette;
+  `examples/fx-shadow.html`: shadow mapping through a depth-only
+  target), instanced draws (`examples/fx-forest.html`: 8,000 trees,
+  one call), and mat4-array uniforms for skinning
 - `(web glsl)` — GLSL as s-expressions: `glsl->string` is a pure
   function from a shader form list to GLSL source (the `(web css)` of
   shaders), so shaders compose with `append`/`map` and helper
@@ -132,8 +133,9 @@ A small UI stack over the JS bridge, in `lib/web/`:
   signal-driven hole, and a frame is pure arithmetic over current
   fields (`examples/fx-scene.html`: the lit scene, declaratively)
 - `(web mat)` — 3D math for raw-GL scenes: vec3 and column-major mat4
-  over flonum vectors, with `m4-perspective` / `m4-look-at` /
-  rotations and its own range-reduced trig, so it is pure Scheme all
+  over flonum vectors, with `m4-perspective` / `m4-ortho` /
+  `m4-look-at` / rotations and its own range-reduced trig, so it is
+  pure Scheme all
   the way down and verifies headlessly; `fx-uniform!` feeds a mat4
   straight through the command buffer
   (`examples/fx-cube.html`: an indexed, depth-tested cube, no
