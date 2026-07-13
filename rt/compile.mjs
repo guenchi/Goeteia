@@ -87,10 +87,22 @@ function libraryImports(text) {
     return [];
 }
 
-function resolveImports(text, dirs, visited = new Set()) {
+// a (%loc "file" line) marker: the compiler maps stream lines back
+// to source lines with these, so errors can say file:line
+function locMark(file, line) {
+    return `\n(%loc ${JSON.stringify(file)} ${line})\n`;
+}
+function lineAt(text, idx) {
+    let n = 1;
+    for (let i = 0; i < idx && i < text.length; i++)
+        if (text[i] === '\n') n++;
+    return n;
+}
+
+function resolveImports(text, dirs, visited = new Set(), file = 'input') {
     // replace top-level (import ...) spans with the inlined
     // libraries; every other byte passes through untouched
-    let result = '';
+    let result = locMark(file, 1);
     let at = 0;
     for (const [start, end] of topLevelSpans(text)) {
         const form = text.slice(start, end);
@@ -100,6 +112,7 @@ function resolveImports(text, dirs, visited = new Set()) {
                 .map(spec => loadLibrary(specTarget(spec), dirs, visited)
                              + '\n' + specAliases(spec))
                 .join('\n');
+            result += locMark(file, lineAt(text, end));
             at = end;
         }
     }
@@ -117,9 +130,10 @@ function loadLibrary(spec, dirs, visited) {
         if (fs.existsSync(p)) {
             const text = fs.readFileSync(p, 'latin1');
             const deps = libraryImports(text)
-                .map(s => loadLibrary(s, dirs, visited))
+                .map(s => loadLibrary(specTarget(s), dirs, visited)
+                          + '\n' + specAliases(s))
                 .join('\n');
-            return deps + '\n' + text;
+            return deps + locMark(p, 1) + text;
         }
     }
     throw new Error(`library not found: (${spec.join(' ')})`);
@@ -128,16 +142,8 @@ function loadLibrary(spec, dirs, visited) {
 // the bundled self-hosted compiler, shipped at the package root
 const defaultCompiler = path.join(here, '../goeteia.wasm');
 
-// Compile a source file to wasm bytes.  Resolves (import ...) forms
-// against the source directory, its lib/, and the bundled lib/, then
-// prepends the prelude and feeds the whole stream to the compiler.
-export async function compileToBytes(sourceFile, { compilerWasm = defaultCompiler } = {}) {
-    const inDir = path.dirname(path.resolve(sourceFile));
-    const dirs = [inDir, path.join(inDir, 'lib'), path.join(here, '../lib')];
-    const prelude = fs.readFileSync(path.join(here, '../src/prelude.ss'), 'latin1');
-    const source = resolveImports(fs.readFileSync(sourceFile, 'latin1'), dirs);
-    const input = Buffer.from(prelude + '\n' + source, 'latin1');
-
+// feed a prelude+source stream to the compiler, collect wasm bytes
+async function runCompiler(input, compilerWasm) {
     const out = [];
     let pos = 0;
     const { instance } = await WebAssembly.instantiate(
@@ -161,6 +167,37 @@ export async function compileToBytes(sourceFile, { compilerWasm = defaultCompile
         throw err;
     }
     return Buffer.from(out);
+}
+
+// Compile a source file to wasm bytes.  Resolves (import ...) forms
+// against the source directory, its lib/, and the bundled lib/, then
+// prepends the prelude and feeds the whole stream to the compiler.
+export async function compileToBytes(sourceFile, { compilerWasm = defaultCompiler } = {}) {
+    const inDir = path.dirname(path.resolve(sourceFile));
+    const dirs = [inDir, path.join(inDir, 'lib'), path.join(here, '../lib')];
+    const preludePath = path.join(here, '../src/prelude.ss');
+    const prelude = fs.readFileSync(preludePath, 'latin1');
+    const source = resolveImports(fs.readFileSync(sourceFile, 'latin1'),
+                                  dirs, new Set(), sourceFile);
+    const input = Buffer.from(locMark(preludePath, 1) + prelude
+                              + '\n' + source, 'latin1');
+    return runCompiler(input, compilerWasm);
+}
+
+// Compile source text (a REPL session, a playground snippet): imports
+// resolve against baseDir, its lib/, and the bundled lib/.
+export async function compileSource(text,
+    { baseDir = process.cwd(), compilerWasm = defaultCompiler,
+      name = 'repl' } = {}) {
+    const dirs = [baseDir, path.join(baseDir, 'lib'), path.join(here, '../lib')];
+    const preludePath = path.join(here, '../src/prelude.ss');
+    const prelude = fs.readFileSync(preludePath, 'latin1');
+    // utf-8 text to one-byte-per-char, matching the byte reader
+    const raw = Buffer.from(text, 'utf8').toString('latin1');
+    const source = resolveImports(raw, dirs, new Set(), name);
+    const input = Buffer.from(locMark(preludePath, 1) + prelude
+                              + '\n' + source, 'latin1');
+    return runCompiler(input, compilerWasm);
 }
 
 // Compile a source file straight to an output file.

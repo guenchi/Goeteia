@@ -22,6 +22,7 @@ Usage:
   goeteia compile <input.ss> [output.wasm]   compile to a wasm module
   goeteia run <module.wasm> [input-file]      run a compiled module
   goeteia <input.ss> [input-file]             compile and run in one step
+  goeteia repl                                interactive session
   goeteia dev [port]                          live-reload dev server (cwd)
   goeteia --version                           print the version
   goeteia --help                              show this message
@@ -60,6 +61,12 @@ async function main() {
 
         if (cmd === 'dev') {
             startDevServer({ port: Number(argv[1]) || 8100 });
+            return;
+        }
+
+        if (cmd === 'repl') {
+            const { startRepl } = await import('../rt/repl.mjs');
+            await startRepl();
             return;
         }
 

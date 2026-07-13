@@ -39,6 +39,10 @@ for t in test/*.ss; do
         else
             echo "FAIL $t (stage1: want '$want', got '$got')"; fail=1
         fi
+        # both hosts must emit identical bytes from identical source
+        if ! cmp -s /tmp/goeteia-test.wasm /tmp/goeteia-test1.wasm; then
+            echo "FAIL $t (cross-host: stage0/stage1 bytes differ)"; fail=1
+        fi
     fi
 done
 exit $fail

@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <title>Goeteia — a streaming feed over (web scroll)</title>
+    <style>
+      body { font-family: system-ui; text-align: center; margin-top: 2em; background: #f2f4fa; color: #14203a; }
+      #app { display: inline-block; text-align: left; }
+      #app > div { border-radius: 12px; box-shadow: 0 4px 20px rgba(16,20,42,.15); background: #fff; padding: 0; }
+      code { font-family: ui-monospace, Menlo, monospace; color: #1550c4; }
+    </style>
+  </head>
+  <body>
+    <h1>A streaming feed, virtually scrolled</h1>
+    <p>Messages stream in forever; only the visible window is in the
+    DOM.  Heights come from <code>(web typeset)</code> before anything
+    mounts — no measurement reflows — then self-correct once per item.
+    Scroll up: the view holds; return to the bottom: it sticks again.
+    See <code>chat.ss</code>.</p>
+    <div id="app"></div>
+    <script type="module">
+      import { loadGoeteia } from '../rt/web.mjs';
+      loadGoeteia('chat.wasm');
+    </script>
+  </body>
+</html>

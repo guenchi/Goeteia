@@ -1,0 +1,105 @@
+;; expect: #t
+;; (web mesh): parametric geometry, pure and fully verifiable --
+;; counts, unit normals, radii, index ranges, and the staging-memory
+;; writer's exact words.
+(import (rnrs) (web mat) (web glsl) (web mesh))
+
+(define (near? a b)
+  (and (fl<? (fl- a b) 0.00001) (fl<? (fl- b a) 0.00001)))
+
+(define (vert m v)                       ; (x y z nx ny nz) of vertex v
+  (let ((vs (mesh-verts m)) (b (* v 6)))
+    (list (vector-ref vs b) (vector-ref vs (+ b 1)) (vector-ref vs (+ b 2))
+          (vector-ref vs (+ b 3)) (vector-ref vs (+ b 4))
+          (vector-ref vs (+ b 5)))))
+
+(define (all-verts? m pred)
+  (let loop ((v 0))
+    (or (= v (mesh-vert-count m))
+        (and (apply pred (vert m v)) (loop (+ v 1))))))
+
+(define (unit-normals? m)
+  (all-verts? m (lambda (x y z nx ny nz)
+                  (near? (fl+ (fl+ (fl* nx nx) (fl* ny ny)) (fl* nz nz))
+                         1.0))))
+
+(define (indices-in-range? m)
+  (let ((ix (mesh-indices m)) (n (mesh-vert-count m)))
+    (let loop ((i 0))
+      (or (= i (vector-length ix))
+          (and (< (vector-ref ix i) n) (loop (+ i 1)))))))
+
+(define plane (mesh-plane 4.0 2.0))
+(define box (mesh-box 2 2 2))
+(define sphere (mesh-sphere 2.0 8 4))
+(define cyl (mesh-cylinder 1.0 2.0 8))
+(define torus (mesh-torus 2.0 0.5 8 6))
+
+(and
+ ;; plane: one quad on xz, +y normals, the right extents
+ (= (mesh-vert-count plane) 4)
+ (= (mesh-index-count plane) 6)
+ (all-verts? plane (lambda (x y z nx ny nz)
+                     (and (near? ny 1.0) (near? nx 0.0) (near? nz 0.0)
+                          (near? (fl* x x) 4.0) (near? (fl* z z) 1.0))))
+ ;; box 2x2x2 = the unit cube: 24 verts, 576/72 staging bytes
+ (= (mesh-vert-count box) 24)
+ (= (mesh-index-count box) 36)
+ (= (mesh-vertex-bytes box) 576)
+ (= (mesh-index-bytes box) 72)
+ (unit-normals? box)
+ ;; the first face is +x: position x = 1, normal (1 0 0)
+ (let ((v (vert box 0)))
+   (and (near? (list-ref v 0) 1.0)
+        (near? (list-ref v 3) 1.0)
+        (near? (list-ref v 4) 0.0)))
+ ;; sphere: (segs+1)(rings+1) grid, |pos| = r, normal = pos / r
+ (= (mesh-vert-count sphere) 45)
+ (= (mesh-index-count sphere) (* 8 4 6))
+ (unit-normals? sphere)
+ (all-verts? sphere
+             (lambda (x y z nx ny nz)
+               (and (near? (fl+ (fl+ (fl* x x) (fl* y y)) (fl* z z)) 4.0)
+                    (near? x (fl* 2.0 nx))
+                    (near? y (fl* 2.0 ny))
+                    (near? z (fl* 2.0 nz)))))
+ ;; the first vertex is the +y pole
+ (let ((v (vert sphere 0)))
+   (and (near? (list-ref v 1) 2.0) (near? (list-ref v 4) 1.0)))
+ ;; cylinder: side rings + capped ends
+ (= (mesh-vert-count cyl) 38)                ; 2*9 side + 2*10 caps
+ (= (mesh-index-count cyl) 96)
+ (unit-normals? cyl)
+ ;; a side vertex: radial normal, no y component
+ (let ((v (vert cyl 0)))
+   (and (near? (list-ref v 0) 1.0) (near? (list-ref v 1) 1.0)
+        (near? (list-ref v 3) 1.0) (near? (list-ref v 4) 0.0)))
+ ;; torus: every vertex sits tube-radius from the ring circle
+ (= (mesh-vert-count torus) (* 9 7))
+ (= (mesh-index-count torus) (* 8 6 6))
+ (unit-normals? torus)
+ (all-verts? torus
+             (lambda (x y z nx ny nz)
+               (let* ((d (flsqrt (fl+ (fl* x x) (fl* z z))))
+                      (dx (fl- d 2.0)))
+                 (near? (fl+ (fl* dx dx) (fl* y y)) 0.25))))
+ ;; every index addresses a real vertex
+ (indices-in-range? plane)
+ (indices-in-range? box)
+ (indices-in-range? sphere)
+ (indices-in-range? cyl)
+ (indices-in-range? torus)
+ ;; the writer: exact f32s and packed u16 pairs in staging memory
+ (begin
+   (mesh-write! plane 4096 4192)
+   (and (near? (%mem-f32-ref 4096) -2.0)     ; x of vertex 0
+        (near? (%mem-f32-ref 4100) 0.0)
+        (near? (%mem-f32-ref 4104) -1.0)
+        (near? (%mem-f32-ref 4112) 1.0)      ; ny of vertex 0
+        (= (%mem-i32-ref 4192) (+ 0 (* 65536 1)))
+        (= (%mem-i32-ref 4196) (+ 2 (* 65536 0)))
+        (= (%mem-i32-ref 4200) (+ 2 (* 65536 3)))))
+ ;; the lit shaders are extractable data like any glsl forms
+ (equal? (map car (glsl-attributes mesh-lit-vs)) '(a_pos a_normal))
+ (equal? (glsl-uniforms mesh-lit-fs)
+         '((u_light vec3) (u_color vec4) (u_ambient float))))

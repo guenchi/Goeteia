@@ -1,0 +1,162 @@
+;; expect: #t
+;; (web fx) against recording mocks: programs wire their own
+;; attributes/uniforms from the glsl forms, the allocator hands out
+;; aligned staging memory, the loop pumps t/dt and frames commands,
+;; input state follows fired events.
+(import (rnrs) (web js) (web gl) (web glsl) (web fx))
+
+(js-eval "globalThis.__gllog = []; globalThis.__ls = {}; globalThis.addEventListener = (k,f) => { globalThis.__ls[k] = f }; globalThis.__frames = []; globalThis.requestAnimationFrame = f => { globalThis.__frames.push(f); return globalThis.__frames.length }; globalThis.__el2 = { addEventListener(k,f){ globalThis.__ls['el2-'+k] = f } }; globalThis.__mockcanvas = { width:640, height:480, addEventListener(k,f){ globalThis.__ls[k] = f }, getContext(kind) { const log = globalThis.__gllog; const push = (...a) => log.push(a.join(':')); return { VERTEX_SHADER:'VS', FRAGMENT_SHADER:'FS', COMPILE_STATUS:'CS', LINK_STATUS:'LS', COLOR_BUFFER_BIT:16384, DEPTH_BUFFER_BIT:256, ARRAY_BUFFER:'AB', DYNAMIC_DRAW:'DD', FLOAT:'F', POINTS:'PTS', LINES:'LNS', TRIANGLES:'TRI', TRIANGLE_STRIP:'STRIP', TEXTURE_2D:'T2D', TEXTURE0:33984, TEXTURE_MIN_FILTER:'MIN', TEXTURE_MAG_FILTER:'MAG', TEXTURE_WRAP_S:'WS', TEXTURE_WRAP_T:'WT', LINEAR:'LIN', CLAMP_TO_EDGE:'CL', RGBA:'RGBA', UNSIGNED_BYTE:'UB', BLEND:'BL', SRC_ALPHA:'SA', ONE:'ONE', ONE_MINUS_SRC_ALPHA:'OMSA', createShader(k){ return {kind:k} }, shaderSource(s,src){}, compileShader(s){}, getShaderParameter(){ return true }, createProgram(){ return {id:'P'+(this._p=(this._p||0)+1)} }, attachShader(p,s){}, linkProgram(p){}, getProgramParameter(){ return true }, bindAttribLocation(p,i,n){ push('bindAttrib', i, n) }, createBuffer(){ return {id:'B'+(this._b=(this._b||0)+1)} }, getUniformLocation(p,n){ return {id:'U:'+n} }, createTexture(){ return {id:'T'+(this._t=(this._t||0)+1)} }, bindTexture(t,tex){ push('bindTexture', tex.id) }, texParameteri(t,k,v){ push('texParam', k, v) }, texImage2D(...a){ push('texImage', a[a.length-1].id) }, activeTexture(u){ push('activeTexture', u) }, enable(c){ push('gEnable', c) }, disable(c){ push('gDisable', c) }, blendFunc(a,b){ push('blendFunc', a, b) }, clearColor(...a){ push('clearColor', ...a.map(x=>x.toFixed(2))) }, clear(bits){ push('clear', bits) }, useProgram(p){ push('useProgram', p.id) }, bindBuffer(t,b){ push('bindBuffer', b.id) }, bufferData(t,arr,u){ push('bufferData', Array.from(arr).map(x=>x.toFixed(2)).join(',')) }, enableVertexAttribArray(l){ push('enable', l) }, vertexAttribPointer(...a){ push('attrib', a.join(',')) }, uniform1f(loc,x){ push('uniform1f', loc.id, x.toFixed(2)) }, uniform2f(loc,x,y){ push('uniform2f', loc.id, x.toFixed(2), y.toFixed(2)) }, uniform4f(loc,...a){ push('uniform4f', loc.id, a.map(x=>x.toFixed(1)).join(',')) }, uniform1i(loc,v){ push('uniform1i', loc.id, v) }, uniformMatrix4fv(loc,tr,arr){ push('uniformMat4', loc.id, arr.length, arr[0].toFixed(2), arr[12].toFixed(2)) }, drawArrays(m,f,c){ push('draw', m, f, c) }, viewport(...a){ push('viewport', a.join(',')) } } } }")
+
+(define log (js-get (js-global) "__gllog"))
+(define (entry i) (js->string (js-index log i)))
+(define (log-len) (js->number (js-get log "length")))
+(define (check-from base es)
+  (let loop ((i base) (es es))
+    (or (null? es)
+        (and (or (string=? (entry i) (car es))
+                 (begin (display "mismatch at ") (display i)
+                        (display ": got ") (display (entry i))
+                        (display " want ") (display (car es)) (newline)
+                        #f))
+             (loop (+ i 1) (cdr es))))))
+(define (pump! ms)
+  (let* ((fr (js-get (js-global) "__frames"))
+         (n (js->number (js-get fr "length"))))
+    (js-call (js-index fr (- n 1)) (js-undefined) ms)))
+(define (fire! name evt)
+  (js-call (js-get (js-get (js-global) "__ls") name) (js-undefined) evt))
+(define (near? a b)
+  (and (fl<? (fl- a b) 0.0001) (fl<? (fl- b a) 0.0001)))
+
+;; ---- init + allocator ----
+(fx-init! (js-get (js-global) "__mockcanvas"))
+(define a1 (fx-alloc! 100))              ; first block: right after cmd region
+(define a2 (fx-alloc! 4))                ; re-aligned to 8
+(define a3 (fx-alloc! 300000))           ; must grow the memory
+(define alloc-ok
+  (and (= a1 16384)
+       (= a2 16488)
+       (= (remainder a3 8) 0)
+       (>= (* 65536 (%mem-size)) (+ a3 300000))))
+
+;; ---- a program wired from its own forms ----
+(define base-b (log-len))
+(define p
+  (fx-program!
+   '((attribute vec2 a_pos) (attribute vec4 a_tint) (uniform vec2 u_res)
+     (define (main) void (set! gl_Position (vec4 a_pos (fl 0) (fl 1)))))
+   '((precision mediump float) (uniform float u_glow) (uniform sampler2D u_tex)
+     (define (main) void (set! gl_FragColor (vec4 (fl 1) (fl 1) (fl 1) u_glow))))))
+(define buf (fx-buffer!))
+(define prog-ok
+  (and (check-from base-b '("bindAttrib:0:a_pos" "bindAttrib:1:a_tint"))
+       (= (fx-program-slot p) 0)
+       (= (fx-program-stride p) 24)
+       (= buf 4)))                       ; program 0, uniforms 1-3, buffer 4
+
+;; ---- use + typed uniform dispatch (with fixnum coercion) ----
+(define base-c (log-len))
+(cmd-begin!)
+(fx-use! p buf)
+(fx-uniform! p 'u_glow 2)                ; fixnum in, 1f out
+(fx-uniform! p 'u_res 640 480)
+(fx-uniform! p 'u_tex 0)
+(cmd-flush!)
+(define use-ok
+  (check-from base-c
+              '("useProgram:P1" "bindBuffer:B1"
+                "enable:0" "attrib:0,2,F,false,24,0"
+                "enable:1" "attrib:1,4,F,false,24,8"
+                "uniform1f:U:u_glow:2.00"
+                "uniform2f:U:u_res:640.00:480.00"
+                "uniform1i:U:u_tex:0")))
+
+;; ---- the timing pump: t/dt in seconds, no GL ----
+(define ticks '())
+(fx-ticks! (lambda (t dt) (set! ticks (cons (cons t dt) ticks))))
+(pump! 1000)                             ; fixnum timestamp
+(pump! 1016.5)
+(define ticks-ok
+  (and (= (length ticks) 2)
+       (near? (car (cadr ticks)) 0.0)    ; first frame: t = dt = 0
+       (near? (cdr (cadr ticks)) 0.0)
+       (near? (car (car ticks)) 0.0165)
+       (near? (cdr (car ticks)) 0.0165)))
+
+;; ---- the frame loop: begin, viewport, commands, flush ----
+(define base-e (log-len))
+(define loop-t -1.0)
+(fx-loop! (lambda (t dt)
+            (set! loop-t t)
+            (cmd-clear! 0.0 0.0 0.0 1.0)))
+(pump! 2000)
+(define loop-ok
+  (and (near? loop-t 0.0)
+       (check-from base-e
+                   '("viewport:0,0,640,480"
+                     "clearColor:0.00:0.00:0.00:1.00"
+                     "clear:16640"))))
+
+;; ---- the fullscreen quad ----
+(define base-f (log-len))
+(define q
+  (fx-fullscreen!
+   '((precision mediump float)
+     (uniform float u_time) (uniform vec2 u_resolution)
+     (define (main) void
+       (set! gl_FragColor (vec4 (fl 0) (fl 0) (fl 0) (fl 1)))))))
+(cmd-begin!)
+(fx-fullscreen-use! q 1.5)
+(fx-fullscreen-draw! q)
+(cmd-flush!)
+(define quad-ok
+  (check-from base-f
+              '("bindAttrib:0:a_pos"
+                "useProgram:P2" "bindBuffer:B2"
+                "enable:0" "attrib:0,2,F,false,8,0"
+                "bufferData:-1.00,-1.00,1.00,-1.00,-1.00,1.00,1.00,1.00"
+                "uniform1f:U:u_time:1.50"
+                "uniform2f:U:u_resolution:640.00:480.00"
+                "draw:STRIP:0:4")))
+
+;; ---- mat4 uniforms dispatch through the same table ----
+(define base-m (log-len))
+(define pm
+  (fx-program!
+   '((attribute vec2 a_pos) (uniform mat4 u_mvp)
+     (define (main) void
+       (set! gl_Position (* u_mvp (vec4 a_pos (fl 0) (fl 1))))))
+   '((precision mediump float)
+     (define (main) void
+       (set! gl_FragColor (vec4 (fl 1) (fl 1) (fl 1) (fl 1)))))))
+(cmd-begin!)
+(fx-uniform! pm 'u_mvp
+             (vector 1.0 0.0 0.0 0.0  0.0 1.0 0.0 0.0
+                     0.0 0.0 1.0 0.0  9.0 0.0 0.0 1.0))
+(cmd-flush!)
+(define mat-ok
+  (check-from base-m '("bindAttrib:0:a_pos"
+                       "uniformMat4:U:u_mvp:16:1.00:9.00")))
+
+;; ---- polled input from fired events ----
+(fx-init-input!)                         ; default element: the canvas
+(define input-ok
+  (and (not (key-down? "ArrowLeft"))
+       (begin (fire! "keydown" (js-eval "({key:'ArrowLeft'})"))
+              (key-down? "ArrowLeft"))
+       (begin (fire! "keyup" (js-eval "({key:'ArrowLeft'})"))
+              (not (key-down? "ArrowLeft")))
+       (begin (fire! "pointermove" (js-eval "({offsetX:12, offsetY:34})"))
+              (and (fl=? (pointer-x) 12.0) (fl=? (pointer-y) 34.0)))
+       (not (pointer-down?))
+       (begin (fire! "pointerdown" (js-eval "({})")) (pointer-down?))
+       (begin (fire! "pointerup" (js-eval "({})")) (not (pointer-down?)))))
+
+;; input on an explicit element (the Three.js path: no GL needed)
+(fx-init-input! (js-get (js-global) "__el2"))
+(define input2-ok
+  (begin (fire! "el2-pointermove" (js-eval "({offsetX:7, offsetY:9})"))
+         (and (fl=? (pointer-x) 7.0) (fl=? (pointer-y) 9.0))))
+
+(and alloc-ok prog-ok use-ok ticks-ok loop-ok quad-ok mat-ok
+     input-ok input2-ok)

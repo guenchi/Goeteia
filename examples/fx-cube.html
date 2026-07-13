@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <title>Goeteia — a cube, raw WebGL, no Three.js</title>
+    <style>
+      body { font-family: system-ui; text-align: center; margin-top: 2em; background: #f2f4fa; color: #14203a; }
+      canvas { border-radius: 12px; box-shadow: 0 4px 20px rgba(16,20,42,.2); }
+      code { font-family: ui-monospace, Menlo, monospace; color: #1550c4; }
+    </style>
+  </head>
+  <body>
+    <h1>A cube, raw WebGL</h1>
+    <p>No Three.js: <code>(web mat)</code> computes perspective,
+    look-at and the spin in pure Scheme (its own trig — both compiler
+    hosts emit identical bytes), the mesh is indexed, and the frame is
+    one <code>drawElements</code> through the command buffer.
+    See <code>fx-cube.ss</code>.</p>
+    <canvas id="c" width="800" height="600"></canvas>
+    <script type="module">
+      import { loadGoeteia } from '../rt/web.mjs';
+      loadGoeteia('fx-cube.wasm');
+    </script>
+  </body>
+</html>

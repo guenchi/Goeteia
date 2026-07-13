@@ -1,0 +1,234 @@
+;; The effects harness over (web gl): programs that wire themselves.
+;;
+;; A shader authored as (web glsl) forms already declares its
+;; interface; fx reads the attribute/uniform declarations back out of
+;; the same forms and does the bookkeeping that gl-particles.ss does
+;; by hand -- attribute locations and interleaved offsets, uniform
+;; slots, resource slot numbers, staging-memory layout, the rAF loop:
+;;
+;;   (fx-init! canvas)
+;;   (define q (fx-fullscreen! fragment-forms))   ; a shadertoy in ~15 lines
+;;   (fx-loop! (lambda (t dt)
+;;               (fx-fullscreen-use! q t)
+;;               (fx-fullscreen-draw! q)))
+;;
+;; Slot numbers are owned by fx from (fx-init!) on: create resources
+;; through fx-program!/fx-buffer!/fx-texture!, not with hand-numbered
+;; gl-buffer! calls, or the two schemes collide.  Staging memory is
+;; owned the same way: bytes [0, 16KiB) are the command region,
+;; fx-alloc! hands out what lies above and grows the memory as needed.
+;;
+;; fx-ticks! (the timing pump: t and dt in seconds, no GL) and
+;; fx-init-input! (polled keys and pointer) work without fx-init!'s
+;; GL attachment, so a Three.js scene can use them too: pass the
+;; renderer's domElement to fx-init-input!.
+;;
+;; Every float that reaches the command encoder is coerced here --
+;; %mem-f32-set! traps on fixnums, so user code may pass either.
+;;
+;; Copyright (c) 2026 guenchi. MIT license; see LICENSE.
+(library (web fx)
+  (export fx-init! fx-slot! fx-alloc! fx-buffer! fx-texture!
+          fx-width fx-height
+          fx-program! fx-program? fx-program-slot fx-program-stride
+          fx-use! fx-uniform!
+          fx-ticks! fx-loop!
+          fx-init-input! key-down? pointer-x pointer-y pointer-down?
+          fx-fullscreen! fx-quad-program
+          fx-fullscreen-use! fx-fullscreen-draw!)
+  (import (rnrs) (web js) (web gl) (web glsl))
+
+  (define ($fx-fl v) (if (flonum? v) v (exact->inexact v)))
+
+  ;; ---- init, slots, staging-memory allocation ----
+  (define $fx-cmd-limit 16384)          ; command region [0, 16KiB)
+  (define $fx-canvas #f)
+  (define $fx-slot 0)
+  (define $fx-heap 16384)
+
+  (define (fx-init! canvas)
+    (set! $fx-canvas canvas)
+    (gl-attach! canvas)
+    (set! $fx-slot 0)
+    (set! $fx-heap $fx-cmd-limit)
+    (cmd-region! 0))
+
+  (define (fx-slot!)
+    (unless $fx-canvas (error 'fx-slot! "call fx-init! first"))
+    (let ((s $fx-slot)) (set! $fx-slot (+ s 1)) s))
+
+  (define (fx-alloc! bytes)             ; 8-aligned bump; grows memory
+    (let* ((r (remainder $fx-heap 8))
+           (base (if (= r 0) $fx-heap (+ $fx-heap (- 8 r))))
+           (end (+ base bytes))
+           (have (* 65536 (%mem-size))))
+      (when (> end have)
+        (%mem-grow (quotient (+ (- end have) 65535) 65536)))
+      (set! $fx-heap end)
+      base))
+
+  (define (fx-buffer!) (let ((s (fx-slot!))) (gl-buffer! s) s))
+  (define (fx-texture!) (let ((s (fx-slot!))) (gl-texture! s) s))
+
+  (define (fx-width) (js->number (js-get $fx-canvas "width")))
+  (define (fx-height) (js->number (js-get $fx-canvas "height")))
+
+  ;; ---- programs wired from their own glsl forms ----
+  (define-record-type (fx-program $make-fx-program fx-program?)
+    (fields (immutable slot fx-program-slot)
+            (immutable stride fx-program-stride)      ; bytes per vertex
+            (immutable attribs $fx-program-attribs)   ; ((loc size offset) ...)
+            (immutable uniforms $fx-program-uniforms))) ; name -> (slot . type)
+
+  (define ($fx-attr-names as)           ; "a_pos,a_uv,..." for binding
+    (if (null? as)
+        ""
+        (fold-left (lambda (acc a)
+                     (string-append acc "," (symbol->string (car a))))
+                   (symbol->string (caar as))
+                   (cdr as))))
+
+  (define (fx-program! vs-forms fs-forms)
+    (let* ((pslot (fx-slot!))
+           (as (glsl-attributes vs-forms)))
+      (gl-program! pslot (glsl->string vs-forms) (glsl->string fs-forms)
+                   ($fx-attr-names as))
+      (let ((stride (* 4 (fold-left (lambda (n a) (+ n (caddr a))) 0 as)))
+            (uniforms (make-eq-hashtable)))
+        (for-each (lambda (u)
+                    (unless (hashtable-contains? uniforms (car u))
+                      (let ((s (fx-slot!)))
+                        (gl-uniform! s pslot (symbol->string (car u)))
+                        (hashtable-set! uniforms (car u)
+                                        (cons s (cadr u))))))
+                  (append (glsl-uniforms vs-forms) (glsl-uniforms fs-forms)))
+        (let loop ((as as) (loc 0) (off 0) (acc '()))
+          (if (null? as)
+              ($make-fx-program pslot stride (reverse acc) uniforms)
+              (loop (cdr as) (+ loc 1) (+ off (* 4 (caddr (car as))))
+                    (cons (list loc (caddr (car as)) off) acc)))))))
+
+  ;; use-program, bind the buffer, then the attribs: the pointer
+  ;; captures the buffer bound at that moment
+  (define (fx-use! prog buf-slot)
+    (cmd-use-program! (fx-program-slot prog))
+    (cmd-bind-buffer! buf-slot)
+    (for-each (lambda (a)
+                (cmd-vertex-attrib! (car a) (cadr a)
+                                    (fx-program-stride prog) (caddr a)))
+              ($fx-program-attribs prog)))
+
+  ;; dispatch on the declared type; sampler values are texture units
+  (define (fx-uniform! prog name . vs)
+    (let ((u (hashtable-ref ($fx-program-uniforms prog) name #f)))
+      (unless u (error 'fx-uniform! "undeclared uniform" name))
+      (let ((slot (car u)) (ty (cdr u)))
+        (case ty
+          ((float) (cmd-uniform1f! slot ($fx-fl (car vs))))
+          ((vec2) (cmd-uniform2f! slot ($fx-fl (car vs)) ($fx-fl (cadr vs))))
+          ((vec3) (cmd-uniform3f! slot ($fx-fl (car vs)) ($fx-fl (cadr vs))
+                                  ($fx-fl (caddr vs))))
+          ((vec4) (cmd-uniform4f! slot
+                                  ($fx-fl (car vs)) ($fx-fl (cadr vs))
+                                  ($fx-fl (caddr vs)) ($fx-fl (cadddr vs))))
+          ((sampler2D int) (cmd-uniform1i! slot (car vs)))
+          ((mat4) (cmd-uniform-matrix4! slot (car vs)))  ; (web mat) m4
+          (else (error 'fx-uniform! "unsupported uniform type" ty))))))
+
+  ;; ---- the timing pump and the frame loop ----
+  ;; proc gets (t dt) in seconds; no GL side effects, so a Three.js
+  ;; render loop can use it directly
+  (define (fx-ticks! proc)
+    (let ((t0 -1.0) (last 0.0))
+      (letrec ((tick (lambda args
+                       (let ((s (fl/ ($fx-fl (js->number (car args)))
+                                     1000.0)))
+                         (when (fl<? t0 0.0)
+                           (set! t0 s)
+                           (set! last s))
+                         (proc (fl- s t0) (fl- s last))
+                         (set! last s))
+                       (js-method (js-global) "requestAnimationFrame" tick))))
+        (js-method (js-global) "requestAnimationFrame" tick))))
+
+  ;; ticks plus the GL frame plumbing: begin, viewport, user commands,
+  ;; overflow check, one flush
+  (define (fx-loop! proc)
+    (fx-ticks!
+     (lambda (t dt)
+       (cmd-begin!)
+       (cmd-viewport! 0 0 (fx-width) (fx-height))
+       (proc t dt)
+       (when (> (cmd-pos) $fx-cmd-limit)
+         (error 'fx-loop! "command region overflow" (cmd-pos)))
+       (cmd-flush!))))
+
+  ;; ---- polled input ----
+  (define $fx-keys (make-hashtable string-hash string=?))
+  (define $fx-px 0.0)
+  (define $fx-py 0.0)
+  (define $fx-pdown #f)
+
+  ;; keys on the window, pointer on the element (default: fx-init!'s
+  ;; canvas; pass a Three.js renderer's domElement to use it there)
+  (define (fx-init-input! . el)
+    (let ((target (if (null? el) $fx-canvas (car el))))
+      (unless target
+        (error 'fx-init-input! "no element: pass one or call fx-init! first"))
+      (js-method (js-global) "addEventListener" "keydown"
+                 (lambda (e)
+                   (hashtable-set! $fx-keys (js->string (js-get e "key")) #t)
+                   (js-undefined)))
+      (js-method (js-global) "addEventListener" "keyup"
+                 (lambda (e)
+                   (hashtable-set! $fx-keys (js->string (js-get e "key")) #f)
+                   (js-undefined)))
+      (js-method target "addEventListener" "pointermove"
+                 (lambda (e)
+                   (set! $fx-px ($fx-fl (js->number (js-get e "offsetX"))))
+                   (set! $fx-py ($fx-fl (js->number (js-get e "offsetY"))))
+                   (js-undefined)))
+      (js-method target "addEventListener" "pointerdown"
+                 (lambda (e) (set! $fx-pdown #t) (js-undefined)))
+      (js-method target "addEventListener" "pointerup"
+                 (lambda (e) (set! $fx-pdown #f) (js-undefined)))))
+
+  (define (key-down? k) (hashtable-ref $fx-keys k #f))
+  (define (pointer-x) $fx-px)
+  (define (pointer-y) $fx-py)
+  (define (pointer-down?) $fx-pdown)
+
+  ;; ---- the fullscreen quad: fragment-shader effects ----
+  (define-record-type (fx-quad $make-fx-quad fx-quad?)
+    (fields (immutable prog fx-quad-program)
+            (immutable buf $fx-quad-buf)
+            (immutable base $fx-quad-base)))
+
+  (define $fx-quad-vs
+    '((attribute vec2 a_pos)
+      (define (main) void
+        (set! gl_Position (vec4 a_pos (fl 0) (fl 1))))))
+
+  (define (fx-fullscreen! fs-forms)
+    (let* ((prog (fx-program! $fx-quad-vs fs-forms))
+           (buf (fx-buffer!))
+           (base (fx-alloc! 32)))       ; one static triangle strip
+      (%mem-f32-set! base -1.0)         (%mem-f32-set! (+ base 4) -1.0)
+      (%mem-f32-set! (+ base 8) 1.0)    (%mem-f32-set! (+ base 12) -1.0)
+      (%mem-f32-set! (+ base 16) -1.0)  (%mem-f32-set! (+ base 20) 1.0)
+      (%mem-f32-set! (+ base 24) 1.0)   (%mem-f32-set! (+ base 28) 1.0)
+      ($make-fx-quad prog buf base)))
+
+  ;; u_time and u_resolution are set iff the fragment declares them;
+  ;; set anything else with fx-uniform! on (fx-quad-program q)
+  (define (fx-fullscreen-use! q t)
+    (let ((prog (fx-quad-program q)))
+      (fx-use! prog ($fx-quad-buf q))
+      (cmd-buffer-data! ($fx-quad-base q) 32)
+      (when (hashtable-contains? ($fx-program-uniforms prog) 'u_time)
+        (fx-uniform! prog 'u_time t))
+      (when (hashtable-contains? ($fx-program-uniforms prog) 'u_resolution)
+        (fx-uniform! prog 'u_resolution (fx-width) (fx-height)))))
+
+  (define (fx-fullscreen-draw! q)
+    (cmd-draw-arrays! GL-TRIANGLE-STRIP 0 4)))

@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <title>Goeteia — a reactive scene template over raw WebGL</title>
+    <style>
+      body { font-family: system-ui; text-align: center; margin-top: 2em; background: #f2f4fa; color: #14203a; }
+      canvas { border-radius: 12px; box-shadow: 0 4px 20px rgba(16,20,42,.2); }
+      code { font-family: ui-monospace, Menlo, monospace; color: #1550c4; }
+    </style>
+  </head>
+  <body>
+    <h1>A reactive scene, raw WebGL</h1>
+    <p>The <code>sgl</code> template is to raw GL what <code>sx</code>
+    is to the DOM: geometry builds and uploads once, and each unquoted
+    attribute is a signal-driven hole.  Two signals animate the torus
+    and the sphere.  No Three.js. See <code>fx-scene.ss</code>.</p>
+    <canvas id="c" width="800" height="600"></canvas>
+    <script type="module">
+      import { loadGoeteia } from '../rt/web.mjs';
+      loadGoeteia('fx-scene.wasm');
+    </script>
+  </body>
+</html>

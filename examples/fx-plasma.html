@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <title>Goeteia — a fragment-shader effect over (web fx)</title>
+    <style>
+      body { font-family: system-ui; text-align: center; margin-top: 2em; background: #f2f4fa; color: #14203a; }
+      canvas { border-radius: 12px; box-shadow: 0 4px 20px rgba(16,20,42,.2); }
+      code { font-family: ui-monospace, Menlo, monospace; color: #1550c4; }
+    </style>
+  </head>
+  <body>
+    <h1>Plasma, one fragment shader</h1>
+    <p>The shader is s-expressions; <code>(web fx)</code> reads the
+    attribute/uniform declarations back out of the same forms and does
+    all the wiring — <code>u_time</code> and <code>u_resolution</code>
+    flow automatically, the mouse feeds <code>u_mouse</code>.
+    Move the pointer. See <code>fx-plasma.ss</code>.</p>
+    <canvas id="c" width="800" height="600"></canvas>
+    <script type="module">
+      import { loadGoeteia } from '../rt/web.mjs';
+      loadGoeteia('fx-plasma.wasm');
+    </script>
+  </body>
+</html>

@@ -1,6 +1,6 @@
 {
   "name": "goeteia",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "A pure-Scheme web programming toolkit, compiled to WebAssembly.",
   "type": "module",
   "bin": {
