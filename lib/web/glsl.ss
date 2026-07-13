@@ -21,6 +21,8 @@
 ;;   (set! lhs expr)       -> "lhs = expr;"
 ;;   (return expr) (return)
 ;;   (if c stmt ...)       / (if-else c (stmt ...) (stmt ...))
+;;   (for (T name init cond step) stmt ...)
+;;                         -> "for (T name = init; cond; name = step)"
 ;;   (discard)
 ;; Expressions:
 ;;   symbols pass through verbatim (p, gl_Position, v.xy);
@@ -109,6 +111,19 @@
                         "} else { "
                         (apply string-append (map stmt->glsl (cadddr s)))
                         "} "))
+        ((for)
+         ;; (for (T name init cond step) stmt ...) -- step is an
+         ;; expression assigned back to name each iteration
+         (let* ((h (cadr s))
+                (ty (car h)) (name (cadr h)) (init (caddr h))
+                (c (cadddr h)) (step (list-ref h 4)))
+           (string-append "for (" (symbol->string ty) " "
+                          (symbol->string name) " = " (expr->glsl init)
+                          "; " (expr->glsl c) "; "
+                          (symbol->string name) " = " (expr->glsl step)
+                          ") { "
+                          (apply string-append (map stmt->glsl (cddr s)))
+                          "} ")))
         (else (error 'glsl "bad statement" s)))))
 
   (define (param->glsl p)                 ; (T name)

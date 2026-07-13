@@ -42,16 +42,22 @@
      (uniform sampler2D u_shadow)
      (uniform vec3 u_light)              ; unit vector toward the light
      (uniform vec4 u_color)
+     (uniform vec2 u_texel)              ; 1/shadow-map-size
      (varying vec3 v_normal)
      (varying vec4 v_shadow)
      (define (main) void
        ;; light-space NDC -> [0,1] texture/depth coordinates
        (local vec3 sp (+ (* (/ v_shadow.xyz v_shadow.w) (fl 0 50))
                          (vec3 (fl 0 50) (fl 0 50) (fl 0 50))))
-       (local vec4 sv (texture2D u_shadow sp.xy))
-       ;; in shadow when something else was nearer the light; the
-       ;; small bias absorbs depth quantization (shadow acne)
-       (local float lit (step (- sp.z "0.002") sv.r))
+       ;; PCF: average the depth test over a 3x3 texel neighborhood
+       ;; for soft edges; the small bias absorbs depth quantization
+       (local float lit (fl 0))
+       (for (int x -1 (< x 2) (+ x 1))
+         (for (int y -1 (< y 2) (+ y 1))
+           (local vec4 sv (texture2D u_shadow
+                                     (+ sp.xy (* (vec2 x y) u_texel))))
+           (set! lit (+ lit (step (- sp.z "0.002") sv.r)))))
+       (set! lit (/ lit (fl 9)))
        (local float d (max (dot (normalize v_normal) u_light) (fl 0)))
        (set! gl_FragColor
              (vec4 (* u_color.rgb (+ (fl 0 25) (* (fl 0 75) (* d lit))))
@@ -138,6 +144,7 @@
        (cmd-bind-texture! 0 (fx-target-texture shadow-t))
        (fx-uniform! lit-p 'u_shadow 0)
        (fx-uniform! lit-p 'u_light (v3-x light) (v3-y light) (v3-z light))
+       (fx-uniform! lit-p 'u_texel (fl/ 1.0 1024.0) (fl/ 1.0 1024.0))
        (unis! (m4-identity) 0.35 0.4 0.45)
        (cmd-draw-elements! GL-TRIANGLES (mesh-index-count ground))
        ;; the boxes, shadowing each other too
