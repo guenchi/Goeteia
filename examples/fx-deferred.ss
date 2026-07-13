@@ -6,7 +6,7 @@
 ;; scene traversals.  Lighting price stops depending on scene
 ;; complexity: the classic trade.  Needs WebGL 2.
 (import (rnrs) (web js) (web dom) (web gl) (web glsl) (web fx)
-        (web mat) (web mesh))
+        (web mat) (web mesh) (web post))
 
 (fx-init! (get-element-by-id "c"))
 
@@ -32,7 +32,9 @@
      (out 1 vec4 o_normal)
      (out 2 vec4 o_pos)
      (define (main) void
-       (set! o_albedo u_albedo)
+       ;; albedo arrives sRGB; the light math downstream is linear
+       (set! o_albedo (vec4 (pow u_albedo.rgb (vec3 "2.2" "2.2" "2.2"))
+                            u_albedo.a))
        (set! o_normal (vec4 (normalize v_normal) (fl 0)))
        ;; w = 1 marks a covered pixel; the clear leaves 0 behind
        (set! o_pos (vec4 v_pos (fl 1)))))))
@@ -56,7 +58,7 @@
        (if-else (< ps.w (fl 0 50))
          ((set! gl_FragColor (vec4 "0.03" "0.04" "0.06" (fl 1))))
          ((local vec3 n (normalize nrm.xyz))
-          (local vec3 acc (* alb.rgb "0.12"))    ; a whisper of ambient
+          (local vec3 acc (* alb.rgb "0.05"))    ; a whisper of ambient
           (for (int i 0 (< i 24) (+ i 1))
             (local float fi (float i))
             ;; each light orbits at its own radius, height and speed
@@ -120,6 +122,12 @@
                            acc))))))))
 
 (define gbuf (fx-target-mrt! 3 800 600))
+;; the lights accumulate in real HDR; grade tonemaps (ACES) and
+;; gamma-encodes, FXAA smooths the result onto the canvas
+(define hdr (fx-target-hdr! 800 600))
+(define ldr (fx-target! 800 600))
+(define grade (make-grade))
+(define fxaa (make-fxaa))
 (define proj (m4-perspective 0.9 (/ 800.0 600.0) 0.5 80.0))
 
 (fx-loop!
@@ -155,7 +163,7 @@
       models)
      ;; lights: one quad, whatever the scene weighed
      (cmd-depth! #f)
-     (fx-bind-canvas!)
+     (fx-bind-target! hdr)
      (fx-fullscreen-use! light-q t)
      (cmd-bind-texture! 0 (fx-mrt-texture gbuf 0))
      (cmd-bind-texture! 1 (fx-mrt-texture gbuf 1))
@@ -164,4 +172,7 @@
        (fx-uniform! p 'u_albedo 0)
        (fx-uniform! p 'u_normal 1)
        (fx-uniform! p 'u_pos 2))
-     (fx-fullscreen-draw! light-q))))
+     (fx-fullscreen-draw! light-q)
+     ;; tonemap, then anti-alias, onto the canvas
+     (grade-run! grade (fx-target-texture hdr) ldr 'aces 1.3 800 600)
+     (fxaa-run! fxaa (fx-target-texture ldr) #f 800 600))))

@@ -61,4 +61,29 @@
        (has-from? base3 "uniform2f:U:u_texel:0.010:0.020")
        (= blurred (blur-texture blr))))
 
-(and run-ok comp-ok blur-ok)
+;; ---- grade: linear in, exposure + tonemap + gamma out ----
+(define grade (make-grade))
+(define base4 (log-len))
+(cmd-begin!)
+(grade-run! grade (fx-target-texture scene) #f 'aces 1.3 640 480)
+(cmd-flush!)
+(define grade-ok
+  (and (= (count-from base4 "draw:STRIP:0:4") 1)
+       (has-from? base4 "bindFB:null")
+       (has-from? base4 "bindTexture:T1")
+       (has-from? base4 "uniform1f:U:u_exposure:1.30")
+       (has-from? base4 "uniform1f:U:u_mode:2.00")))
+
+;; ---- fxaa: one pass over display-ready color ----
+(define fxaa (make-fxaa))
+(define base5 (log-len))
+(cmd-begin!)
+(fxaa-run! fxaa (fx-target-texture scene) #f 640 480)
+(cmd-flush!)
+(define fxaa-ok
+  (and (= (count-from base5 "draw:STRIP:0:4") 1)
+       (has-from? base5 "bindFB:null")
+       (has-from? base5 "bindTexture:T1")
+       (has-from? base5 "uniform2f:U:u_texel:0.002:0.002")))
+
+(and run-ok comp-ok blur-ok grade-ok fxaa-ok)

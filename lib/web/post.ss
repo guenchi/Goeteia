@@ -25,7 +25,8 @@
 (library (web post)
   (export post-quad! post-pass!
           make-blur blur-run! blur-texture
-          make-bloom bloom-run! bloom-texture bloom-composite!)
+          make-bloom bloom-run! bloom-texture bloom-composite!
+          make-fxaa fxaa-run! make-grade grade-run!)
   (import (rnrs) (web gl) (web glsl) (web fx))
 
   ;; ---- the floor: one fullscreen pass ----
@@ -164,6 +165,108 @@
                  (fx-target-texture ($bloom-bright b)) 2)))
 
   (define (bloom-texture b) (blur-texture ($bloom-blur b)))
+
+  ;; ---- FXAA: the classic screen-space anti-alias, one pass ----
+  ;; Runs on DISPLAY-READY (gamma-encoded) color -- put it last.
+  (define $fxaa-fs
+    '((precision mediump float)
+      (uniform sampler2D u_src)
+      (uniform vec2 u_texel)
+      (define (lum (vec4 c)) float
+        (return (dot c.rgb (vec3 "0.299" "0.587" "0.114"))))
+      (define (main) void
+        (local vec2 uv (* gl_FragCoord.xy u_texel))
+        (local float lNW (lum (texture2D u_src
+                                (+ uv (* u_texel (vec2 (- (fl 1))
+                                                       (- (fl 1))))))))
+        (local float lNE (lum (texture2D u_src
+                                (+ uv (* u_texel (vec2 (fl 1)
+                                                       (- (fl 1))))))))
+        (local float lSW (lum (texture2D u_src
+                                (+ uv (* u_texel (vec2 (- (fl 1))
+                                                       (fl 1)))))))
+        (local float lSE (lum (texture2D u_src
+                                (+ uv (* u_texel (vec2 (fl 1) (fl 1)))))))
+        (local vec4 cM (texture2D u_src uv))
+        (local float lM (lum cM))
+        (local float lo (min lM (min (min lNW lNE) (min lSW lSE))))
+        (local float hi (max lM (max (max lNW lNE) (max lSW lSE))))
+        ;; the local gradient picks the edge direction
+        (local vec2 dir (vec2 (- (+ lSW lSE) (+ lNW lNE))
+                              (- (+ lNW lSW) (+ lNE lSE))))
+        (local float dr (max (* (+ (+ lNW lNE) (+ lSW lSE)) "0.03125")
+                             "0.0078125"))
+        (local float rcp (/ (fl 1) (+ (min (abs dir.x) (abs dir.y)) dr)))
+        (set! dir (* (clamp (* dir rcp)
+                            (vec2 "-8.0" "-8.0") (vec2 "8.0" "8.0"))
+                     u_texel))
+        ;; two taps near, two far along the edge
+        (local vec4 a (* (fl 0 50)
+                         (+ (texture2D u_src (+ uv (* dir "-0.166667")))
+                            (texture2D u_src (+ uv (* dir "0.166667"))))))
+        (local vec4 b (+ (* a (fl 0 50))
+                         (* "0.25"
+                            (+ (texture2D u_src (+ uv (* dir "-0.5")))
+                               (texture2D u_src (+ uv (* dir "0.5")))))))
+        ;; the far blend overshot the local range: fall back to near
+        (local float lB (lum b))
+        (local float useA (min (+ (step lB lo) (step hi lB)) (fl 1)))
+        (set! gl_FragColor (mix b a useA)))))
+
+  (define (make-fxaa) (post-quad! $fxaa-fs))
+  ;; src-tex is w x h; tgt #f = the canvas
+  (define (fxaa-run! q src-tex tgt w h)
+    (post-pass! q tgt
+                (lambda (p)
+                  (cmd-bind-texture! 0 src-tex)
+                  (fx-uniform! p 'u_src 0)
+                  (fx-uniform! p 'u_texel
+                               (fl/ 1.0 (fixnum->flonum w))
+                               (fl/ 1.0 (fixnum->flonum h))))))
+
+  ;; ---- grade: exposure + tonemap + gamma, LINEAR in, display out ----
+  ;; 'aces is the Narkowicz fit; 'reinhard the extended curve; 'none
+  ;; just exposure + gamma.  Point HDR scene targets at this, then
+  ;; (optionally) FXAA the result.
+  (define $grade-fs
+    '((precision mediump float)
+      (uniform sampler2D u_src)
+      (uniform vec2 u_texel)
+      (uniform float u_exposure)
+      (uniform float u_mode)             ; 0 none, 1 reinhard, 2 aces
+      (define (main) void
+        (local vec2 uv (* gl_FragCoord.xy u_texel))
+        (local vec4 c (texture2D u_src uv))
+        (local vec3 x (* c.rgb u_exposure))
+        (local vec3 one (vec3 (fl 1) (fl 1) (fl 1)))
+        (local vec3 rein (* x (/ (+ one (/ x "9.0")) (+ one x))))
+        (local vec3 aces (clamp (/ (* x (+ (* x "2.51") (vec3 "0.03" "0.03" "0.03")))
+                                   (+ (* x (+ (* x "2.43") (vec3 "0.59" "0.59" "0.59")))
+                                      (vec3 "0.14" "0.14" "0.14")))
+                                (vec3 (fl 0) (fl 0) (fl 0)) one))
+        (set! x (mix x rein (* (step (fl 0 50) u_mode)
+                               (- (fl 1) (step (fl 1 50) u_mode)))))
+        (set! x (mix x aces (step (fl 1 50) u_mode)))
+        (set! gl_FragColor
+              (vec4 (pow x (vec3 "0.4545" "0.4545" "0.4545")) c.a)))))
+
+  (define (make-grade) (post-quad! $grade-fs))
+  (define (grade-run! q src-tex tgt mode exposure w h)
+    (post-pass! q tgt
+                (lambda (p)
+                  (cmd-bind-texture! 0 src-tex)
+                  (fx-uniform! p 'u_src 0)
+                  (fx-uniform! p 'u_exposure exposure)
+                  (fx-uniform! p 'u_mode
+                               (case mode
+                                 ((none) 0.0)
+                                 ((reinhard) 1.0)
+                                 ((aces) 2.0)
+                                 (else (error 'grade-run!
+                                              "unknown tonemap" mode))))
+                  (fx-uniform! p 'u_texel
+                               (fl/ 1.0 (fixnum->flonum w))
+                               (fl/ 1.0 (fixnum->flonum h))))))
 
   ;; scene + glow into `tgt` (#f = the canvas); tonemap is 'none,
   ;; 'clamp or 'reinhard
