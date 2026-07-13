@@ -30,7 +30,7 @@
 ;; Copyright (c) 2026 guenchi. MIT license; see LICENSE.
 (library (web gl)
   (export gl-attach! gl-program! gl-buffer! gl-uniform!
-          gl-texture! gl-texture-upload! gl-target!
+          gl-texture! gl-texture-upload! gl-texture-data! gl-target!
           cmd-bind-target! cmd-bind-canvas!
           cmd-region! cmd-begin! cmd-flush! cmd-pos
           cmd-clear! cmd-use-program! cmd-bind-buffer! cmd-buffer-data!
@@ -121,6 +121,11 @@
      "    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA,"
      "                  gl.UNSIGNED_BYTE, src);"
      "    if (premul) gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false); },"
+     "  textureData(slot, base, w, h) {"
+     "    gl.bindTexture(gl.TEXTURE_2D, slots[slot]);"
+     "    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, w, h, 0, gl.RGBA,"
+     "                  gl.UNSIGNED_BYTE,"
+     "                  new Uint8Array(memory.buffer, base, w * h * 4)); },"
      "  replay(base, end) {"
      "    const u = new Uint32Array(memory.buffer);"
      "    const f = new Float32Array(memory.buffer);"
@@ -218,6 +223,9 @@
     (if (or (null? premul) (not (car premul)))
         (js-method $gl "textureUpload" slot src)
         (js-method $gl "textureUpload" slot src 1)))
+  ;; raw RGBA bytes out of the staging memory -- procedural textures
+  (define (gl-texture-data! slot base w h)
+    (js-method $gl "textureData" slot base w h))
 
   ;; ---- the encoder: words into the staging memory ----
   (define $base 0)
