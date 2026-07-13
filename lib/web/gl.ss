@@ -31,7 +31,7 @@
 (library (web gl)
   (export gl-attach! gl-program! gl-buffer! gl-uniform!
           gl-texture! gl-texture-upload! gl-texture-data! gl-cubemap!
-          gl-cubemap-empty! gl-cube-face-fb!
+          gl-cubemap-empty! gl-cube-face-fb! gl-slot-object!
           gl-target! gl-target-hdr! gl-target-msaa! gl-cube-target!
           gl-target-mrt!
           cmd-bind-target! cmd-bind-canvas! cmd-resolve!
@@ -166,6 +166,7 @@
      "    gl.drawBuffers(bufs);"
      "    gl.bindFramebuffer(gl.FRAMEBUFFER, null);"
      "    slots[slot] = fb; },"
+     "  slotObject(slot, obj) { slots[slot] = obj; },"
      "  cubemapEmpty(slot, dim, levels) {"
      "    const t = gl.createTexture();"
      "    gl.bindTexture(gl.TEXTURE_CUBE_MAP, t);"
@@ -469,6 +470,10 @@
     (js-method $gl "cubemapEmpty" slot dim levels))
   (define (gl-cube-face-fb! slot tslot face level)
     (js-method $gl "cubeFaceFb" slot tslot face level))
+  ;; park a host-owned GL object (say, an XRWebGLLayer's
+  ;; framebuffer) in the slot table, so commands can bind it
+  (define (gl-slot-object! slot obj)
+    (js-method $gl "slotObject" slot obj))
 
   ;; ---- the encoder: words into the staging memory ----
   (define $base 0)
