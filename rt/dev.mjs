@@ -29,11 +29,18 @@ const MIME = {
   '.png': 'image/png', '.svg': 'image/svg+xml', '.ico': 'image/x-icon',
 };
 
-// injected into every served .html: reconnecting SSE that reloads the tab
+// injected into every served .html: reconnecting SSE that reloads
+// the tab.  Only the visible tab holds its stream -- browsers allow
+// ~6 connections per host, and a pile of background example tabs
+// each pinning one starves every new page into a blank screen.
 const RELOAD_SNIPPET =
-  '<script>(function(){function c(){var e=new EventSource("/livereload");' +
+  '<script>(function(){var e=null;' +
+  'function c(){if(e||document.hidden)return;e=new EventSource("/livereload");' +
   'e.onmessage=function(m){if(m.data==="reload")location.reload()};' +
-  'e.onerror=function(){e.close();setTimeout(c,500)}}c()})()</script>';
+  'e.onerror=function(){if(e){e.close();e=null}setTimeout(c,500)}}' +
+  'document.addEventListener("visibilitychange",function(){' +
+  'if(document.hidden){if(e){e.close();e=null}}else c()});' +
+  'c()})()</script>';
 
 const clients = new Set();
 const notifyReload = () => { for (const r of clients) r.write('data: reload\n\n'); };
