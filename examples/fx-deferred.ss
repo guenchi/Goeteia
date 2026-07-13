@@ -26,6 +26,7 @@
        (set! gl_Position (* u_mvp (vec4 a_pos (fl 1))))))
    '((precision mediump float)
      (uniform vec4 u_albedo)
+     (uniform float u_reflect)           ; rides o_normal.w for SSR
      (varying vec3 v_normal)
      (varying vec3 v_pos)
      (out 0 vec4 o_albedo)
@@ -35,7 +36,7 @@
        ;; albedo arrives sRGB; the light math downstream is linear
        (set! o_albedo (vec4 (pow u_albedo.rgb (vec3 "2.2" "2.2" "2.2"))
                             u_albedo.a))
-       (set! o_normal (vec4 (normalize v_normal) (fl 0)))
+       (set! o_normal (vec4 (normalize v_normal) u_reflect))
        ;; w = 1 marks a covered pixel; the clear leaves 0 behind
        (set! o_pos (vec4 v_pos (fl 1)))))))
 
@@ -78,6 +79,63 @@
             (local float nl (max (dot n (normalize dv)) (fl 0)))
             (set! acc (+ acc (* (* alb.rgb lc) (* nl att)))))
           (set! gl_FragColor (vec4 acc (fl 1)))))))))
+
+;; ---- pass 3: screen-space reflections over the lit result ----
+;; march the reflected eye ray through world space, reproject each
+;; step through u_vp, and compare its distance-from-eye against the
+;; G-buffer's -- the first step that lands behind geometry is the
+;; hit, and its lit color tints the surface by o_normal.w
+(define ssr-q
+  (fx-fullscreen!
+   '((precision highp float)
+     (uniform sampler2D u_scene)
+     (uniform sampler2D u_normal)
+     (uniform sampler2D u_pos)
+     (uniform vec2 u_resolution)
+     (uniform mat4 u_vp)
+     (uniform vec3 u_eye)
+     (define (main) void
+       (local vec2 uv (/ gl_FragCoord.xy u_resolution))
+       (local vec4 sc (texture2D u_scene uv))
+       (local vec4 nrm (texture2D u_normal uv))
+       (local vec4 ps (texture2D u_pos uv))
+       (local vec3 outc sc.rgb)
+       (if (> (* ps.w nrm.w) "0.01")
+           (local vec3 n (normalize nrm.xyz))
+           (local vec3 v (normalize (- ps.xyz u_eye)))
+           (local vec3 rd (normalize (reflect v n)))
+           (local vec3 hit (vec3 (fl 0) (fl 0) (fl 0)))
+           (local float found (fl 0))
+           (for (int i 1 (< i 25) (+ i 1))
+             (local vec3 sp (+ ps.xyz (* rd (* (float i) "0.35"))))
+             (local vec4 clip (* u_vp (vec4 sp (fl 1))))
+             (local vec3 ndc (/ clip.xyz clip.w))
+             (local vec2 suv (+ (* ndc.xy (fl 0 50))
+                                (vec2 (fl 0 50) (fl 0 50))))
+             (local float inb (* (* (step (fl 0) suv.x)
+                                    (step suv.x (fl 1)))
+                                 (* (step (fl 0) suv.y)
+                                    (step suv.y (fl 1)))))
+             (local vec4 gp (texture2D u_pos suv))
+             (local float dray (distance sp u_eye))
+             (local float dsc (distance gp.xyz u_eye))
+             ;; behind geometry, but not by more than a step
+             (local float hitnow (* (* inb gp.w)
+                                    (* (step dsc dray)
+                                       (step (- dray dsc) "0.7"))))
+             (set! hitnow (* hitnow (- (fl 1) found)))
+             (if (> hitnow (fl 0 50))
+                 (local vec4 hc (texture2D u_scene suv))
+                 (set! hit hc.rgb)
+                 (set! found (fl 1))))
+           ;; grazing angles reflect harder (Schlick-ish)
+           (local float fres (+ (fl 0 30)
+                                (* (fl 0 70)
+                                   (pow (- (fl 1)
+                                           (max (dot (- v) n) (fl 0)))
+                                        (fl 2)))))
+           (set! outc (mix sc.rgb hit (* (* found nrm.w) fres))))
+       (set! gl_FragColor (vec4 outc sc.a))))))
 
 ;; ---- geometry ----
 (define (upload m)
@@ -125,6 +183,7 @@
 ;; the lights accumulate in real HDR; grade tonemaps (ACES) and
 ;; gamma-encodes, FXAA smooths the result onto the canvas
 (define hdr (fx-target-hdr! 800 600))
+(define hdr2 (fx-target-hdr! 800 600))  ; after reflections
 (define ldr (fx-target! 800 600))
 (define grade (make-grade))
 (define fxaa (make-fxaa))
@@ -148,7 +207,9 @@
      (fx-uniform! geo-p 'u_mvp vp)
      (fx-uniform! geo-p 'u_model (m4-identity))
      (fx-uniform! geo-p 'u_albedo 0.42 0.44 0.48 1.0)
+     (fx-uniform! geo-p 'u_reflect 0.6)  ; the floor is polished
      (cmd-draw-elements! GL-TRIANGLES (vector-ref ground 6))
+     (fx-uniform! geo-p 'u_reflect 0.1)
      (for-each
       (lambda (om)
         (let ((obj (vector-ref om 0))
@@ -173,6 +234,19 @@
        (fx-uniform! p 'u_normal 1)
        (fx-uniform! p 'u_pos 2))
      (fx-fullscreen-draw! light-q)
+     ;; reflections: march the lit image against the G-buffer
+     (fx-bind-target! hdr2)
+     (fx-fullscreen-use! ssr-q t)
+     (cmd-bind-texture! 0 (fx-target-texture hdr))
+     (cmd-bind-texture! 1 (fx-mrt-texture gbuf 1))
+     (cmd-bind-texture! 2 (fx-mrt-texture gbuf 2))
+     (let ((p (fx-quad-program ssr-q)))
+       (fx-uniform! p 'u_scene 0)
+       (fx-uniform! p 'u_normal 1)
+       (fx-uniform! p 'u_pos 2)
+       (fx-uniform! p 'u_vp vp)
+       (fx-uniform! p 'u_eye (v3-x eye) (v3-y eye) (v3-z eye)))
+     (fx-fullscreen-draw! ssr-q)
      ;; tonemap, then anti-alias, onto the canvas
-     (grade-run! grade (fx-target-texture hdr) ldr 'aces 1.3 800 600)
+     (grade-run! grade (fx-target-texture hdr2) ldr 'aces 1.3 800 600)
      (fxaa-run! fxaa (fx-target-texture ldr) #f 800 600))))
