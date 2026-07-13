@@ -27,7 +27,7 @@
 (library (web mesh)
   (export mesh? mesh-verts mesh-indices mesh-uvs
           mesh-vert-count mesh-index-count
-          mesh-vertex-bytes mesh-index-bytes mesh-write!
+          mesh-vertex-bytes mesh-index-bytes mesh-index-u32? mesh-write!
           mesh-vertex-bytes-uv mesh-write-uv!
           mesh-tangents mesh-vertex-bytes-tan mesh-write-tan!
           mesh-bounds
@@ -50,8 +50,14 @@
   (define (mesh-index-count m) (vector-length (mesh-indices m)))
   (define (mesh-vertex-bytes m) (* 4 (vector-length (mesh-verts m))))
   (define (mesh-vertex-bytes-uv m) (* 32 (mesh-vert-count m)))
-  (define (mesh-index-bytes m)                ; u16 pairs, padded to words
-    (* 4 (quotient (+ (mesh-index-count m) 1) 2)))
+  ;; meshes past 65536 vertices index as u32 (webgl2); the writers
+  ;; switch layout automatically -- callers ask mesh-index-u32? to
+  ;; pick cmd-index-data32!/cmd-draw-elements32! over the u16 pair
+  (define (mesh-index-u32? m) (> (mesh-vert-count m) 65536))
+  (define (mesh-index-bytes m)
+    (if (mesh-index-u32? m)
+        (* 4 (mesh-index-count m))
+        (* 4 (quotient (+ (mesh-index-count m) 1) 2))))
 
   ;; one vertex into the verts vector at slot v
   (define ($mesh-v! vs v x y z nx ny nz)
@@ -100,9 +106,7 @@
            (vs (make-vector (* cols rows 6) 0.0))
            (uvs (make-vector (* cols rows 2) 0.0))
            (ix (make-vector (* nx nz 6) 0)))
-      (when (> (* cols rows) 65536)
-        (error 'mesh-heightmap "u16 indices allow at most 65536 vertices"
-               (* cols rows)))
+
       ;; sample the function once per grid point (plus a border ring
       ;; for the gradients) -- Safari's WasmGC pays dearly for boxed
       ;; flonum churn, so every avoided call counts
@@ -340,16 +344,24 @@
   (define ($mesh-u16! at v)
     (%mem-u8-set! at (remainder v 256))
     (%mem-u8-set! (+ at 1) (quotient v 256)))
+  (define ($mesh-u32! at v)
+    ($mesh-u16! at (remainder v 65536))
+    ($mesh-u16! (+ at 2) (quotient v 65536)))
   (define ($mesh-write-ix! m ibase)
     (let* ((ix (mesh-indices m))
            (n (vector-length ix)))
-      (let loop ((i 0) (at ibase))
-        (when (< i n)
-          ($mesh-u16! at (vector-ref ix i))
-          ($mesh-u16! (+ at 2) (if (< (+ i 1) n)
-                                   (vector-ref ix (+ i 1))
-                                   0))
-          (loop (+ i 2) (+ at 4))))))
+      (if (mesh-index-u32? m)
+          (let loop ((i 0) (at ibase))
+            (when (< i n)
+              ($mesh-u32! at (vector-ref ix i))
+              (loop (+ i 1) (+ at 4))))
+          (let loop ((i 0) (at ibase))
+            (when (< i n)
+              ($mesh-u16! at (vector-ref ix i))
+              ($mesh-u16! (+ at 2) (if (< (+ i 1) n)
+                                       (vector-ref ix (+ i 1))
+                                       0))
+              (loop (+ i 2) (+ at 4)))))))
 
   (define (mesh-write! m vbase ibase)
     (let ((vs (mesh-verts m)))
@@ -614,13 +626,13 @@
               (vec4 (pow c (vec3 "0.4545" "0.4545" "0.4545"))
                     u_color.a)))))
 
-  ;; ---- PBR: Cook-Torrance GGX, the sky as light probe ----
-  ;; One directional light plus image-based ambient: a mipmapped
-  ;; cube map stands in for both irradiance (sampled at high bias)
-  ;; and prefiltered specular (bias scaled by roughness).  Pair with
-  ;; mesh-write! (stride 24); gltf's gprim-metallic/gprim-roughness
-  ;; feed the factor uniforms directly.  Reinhard tonemap + gamma
-  ;; on the way out.
+  ;; ---- PBR: Cook-Torrance GGX with a real light probe ----
+  ;; One directional light plus split-sum image-based ambient: u_sky
+  ;; is a cube map prefiltered by (web ibl)'s ibl-prefilter! (its mip
+  ;; chain holds GGX convolutions, u_mips = levels - 1) and u_lut is
+  ;; ibl-brdf-lut!'s scale/bias table.  Pair with mesh-write! (stride
+  ;; 24); gltf's gprim-metallic/gprim-roughness feed the factor
+  ;; uniforms directly.  Reinhard tonemap + gamma on the way out.
   (define mesh-pbr-vs
     '((attribute vec3 a_pos)
       (attribute vec3 a_normal)
@@ -641,6 +653,8 @@
       (uniform float u_metallic)
       (uniform float u_roughness)
       (uniform samplerCube u_sky)
+      (uniform sampler2D u_lut)
+      (uniform float u_mips)
       (varying vec3 v_n)
       (varying vec3 v_wp)
       (define (main) void
@@ -672,17 +686,18 @@
         (local vec3 kd (* (- one F) (- (fl 1) u_metallic)))
         (local vec3 direct (* (+ (* kd (/ albedo "3.14159265")) spec)
                               (* ndl (fl 3))))
-        ;; ambient from the sky: high bias ~ irradiance, roughness
-        ;; bias ~ prefiltered specular
-        (local vec4 irr4 (textureCube u_sky n (fl 6)))
+        ;; split-sum ambient: the prefiltered mip chain picks the
+        ;; blur by roughness, the LUT folds in the BRDF integral
+        (local vec4 irr4 (textureCube u_sky n u_mips))
         (local vec3 irr (pow irr4.rgb (vec3 "2.2" "2.2" "2.2")))
         (local vec3 r (reflect (- v) n))
-        (local vec4 pre4 (textureCube u_sky r (* u_roughness (fl 6))))
+        (local vec4 pre4 (textureCube u_sky r (* u_roughness u_mips)))
         (local vec3 pre (pow pre4.rgb (vec3 "2.2" "2.2" "2.2")))
-        (local vec3 fenv (+ f0 (* (- one f0)
-                                  (pow (- (fl 1) ndv) (fl 5)))))
+        (local vec4 ab (texture2D u_lut (vec2 ndv u_roughness)))
         (local vec3 c (+ direct
-                         (+ (* (* kd albedo) irr) (* fenv pre))))
+                         (+ (* (* kd albedo) irr)
+                            (* pre (+ (* f0 ab.r)
+                                      (vec3 ab.g ab.g ab.g))))))
         (set! c (/ c (+ c one)))          ; Reinhard
         (set! gl_FragColor
               (vec4 (pow c (vec3 "0.4545" "0.4545" "0.4545"))

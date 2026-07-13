@@ -18,7 +18,7 @@
   (export flsin flcos fltan
           v3 v3-x v3-y v3-z
           v3-add v3-sub v3-scale v3-dot v3-cross v3-normalize
-          m4-identity m4-mul m4-transform
+          m4-identity m4-mul m4-scratch! m4-transform
           m4-translate m4-scale m4-rotate-x m4-rotate-y m4-rotate-z
           m4-from-quat m4-perspective m4-ortho m4-look-at
           m4-inverse m4-unproject
@@ -83,21 +83,54 @@
     (vector 1.0 0.0 0.0 0.0  0.0 1.0 0.0 0.0
             0.0 0.0 1.0 0.0  0.0 0.0 0.0 1.0))
 
-  (define (m4-mul a b)                  ; (m4-mul a b) transforms as a after b
-    (let ((m (make-vector 16 0.0)))
-      (let col ((c 0))
+  ;; hand these kernels 128 bytes of staging memory and m4-mul goes
+  ;; wide: each result column is one f32x4 scale and three axpys
+  ;; instead of sixteen scalar multiply-adds over boxed reads.
+  ;; fx-init! wires this up automatically; without it the scalar
+  ;; path runs (headless math tests exercise both).  The lanes are
+  ;; f32 -- matrices bound for the GPU lose nothing
+  (define $mat-scratch #f)
+  (define (m4-scratch! base) (set! $mat-scratch base))
+
+  (define ($m4-mul-simd a b s)
+    (let ((m (make-vector 16 0.0))
+          (cbase (+ s 64)))
+      (let in ((k 0))                   ; A's columns, once, as f32
+        (when (< k 16)
+          (%mem-f32-set! (+ s (* k 4)) (vector-ref a k))
+          (in (+ k 1))))
+      (let col ((c 0))                  ; C[:,c] = sum A[:,k] * b_kc
         (when (< c 4)
-          (let row ((r 0))
-            (when (< r 4)
-              (let sum ((k 0) (s 0.0))
-                (if (= k 4)
-                    (vector-set! m (+ (* c 4) r) s)
-                    (sum (+ k 1)
-                         (fl+ s (fl* (vector-ref a (+ (* k 4) r))
-                                     (vector-ref b (+ (* c 4) k)))))))
-              (row (+ r 1))))
+          (let ((dst (+ cbase (* c 16)))
+                (bc (* c 4)))
+            (%f32x4-scale! dst s (vector-ref b bc))
+            (%f32x4-axpy! dst dst (+ s 16) (vector-ref b (+ bc 1)))
+            (%f32x4-axpy! dst dst (+ s 32) (vector-ref b (+ bc 2)))
+            (%f32x4-axpy! dst dst (+ s 48) (vector-ref b (+ bc 3))))
           (col (+ c 1))))
+      (let out ((k 0))
+        (when (< k 16)
+          (vector-set! m k (%mem-f32-ref (+ cbase (* k 4))))
+          (out (+ k 1))))
       m))
+
+  (define (m4-mul a b)                  ; (m4-mul a b) transforms as a after b
+    (if $mat-scratch
+        ($m4-mul-simd a b $mat-scratch)
+        (let ((m (make-vector 16 0.0)))
+          (let col ((c 0))
+            (when (< c 4)
+              (let row ((r 0))
+                (when (< r 4)
+                  (let sum ((k 0) (s 0.0))
+                    (if (= k 4)
+                        (vector-set! m (+ (* c 4) r) s)
+                        (sum (+ k 1)
+                             (fl+ s (fl* (vector-ref a (+ (* k 4) r))
+                                         (vector-ref b (+ (* c 4) k)))))))
+                  (row (+ r 1))))
+              (col (+ c 1))))
+          m)))
 
   (define (m4-transform m v)            ; point transform, w-divided
     (let ((x (v3-x v)) (y (v3-y v)) (z (v3-z v)))

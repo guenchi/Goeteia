@@ -31,8 +31,11 @@
 (define hidden (create-element "canvas"))
 (js-set! hidden "width" 720)
 (js-set! hidden "height" 230)
-(define hctx (js-method hidden "getContext" "2d"))
 (js-set! (js-global) "__hero_cv" hidden)
+;; the sampler reads this canvas back repeatedly: say so, and the
+;; browser keeps it off the GPU (and stops warning about it)
+(define hctx
+  (js-eval "globalThis.__hero_cv.getContext('2d', { willReadFrequently: true })"))
 (js-set! hctx "fillStyle" "#fff")
 (js-set! hctx "textBaseline" "top")
 
@@ -179,9 +182,23 @@
                     "px")))
         (each (+ i 1))))))
 (define ($fl* v) (if (flonum? v) v (exact->inexact v)))
+
+;; the container's viewport position, cached: reading
+;; getBoundingClientRect every frame forces a layout pass -- the
+;; rect only moves on resize and scroll, so ask again only then
+(define sub-left 0.0)
+(define sub-top 0.0)
+(define (sub-rect!)
+  (let ((r (js-method sub-el "getBoundingClientRect")))
+    (set! sub-left ($fl* (js->number (js-get r "left"))))
+    (set! sub-top ($fl* (js->number (js-get r "top"))))))
+
 (sub-layout!)
+(sub-rect!)
 (add-event-listener! (js-global) "resize"
-  (lambda (e) (sub-layout!) (js-undefined)))
+  (lambda (e) (sub-layout!) (sub-rect!) (js-undefined)))
+(add-event-listener! (js-global) "scroll"
+  (lambda (e) (sub-rect!) (js-undefined)))
 
 ;; the pointer, in page coordinates
 (define pcx -9999.0)
@@ -194,9 +211,8 @@
 
 ;; fifty characters of spring physics: light work for Scheme
 (define (sub-step!)
-  (let* ((r (js-method sub-el "getBoundingClientRect"))
-         (mx (fl- pcx ($fl* (js->number (js-get r "left")))))
-         (my (fl- pcy ($fl* (js->number (js-get r "top"))))))
+  (let* ((mx (fl- pcx sub-left))
+         (my (fl- pcy sub-top)))
     (let each ((i 0))
       (when (< i (vector-length sub-chars))
         (let* ((c (vector-ref sub-chars i))
@@ -351,29 +367,34 @@
     (js-undefined)))
 
 ;; ---- one bridge call per frame; Scheme only counts time ----
-(define bufs (cons buf-a buf-b))
+;; fx-use! rides vertex array objects now: the four
+;; (program, buffer) pairs of the ping-pong record their six
+;; attribute pointers once, in the first two frames -- after that
+;; each use is a one-word VAO rebind instead of six pointer setups
+(define front buf-a)
+(define back buf-b)
 (define t 0.0)
 (define (frame!)
   (set! t (fl+ t 0.016))
   (when (fl<? 3768.0 t) (set! t (fl- t 3768.0)))  ; 314 cycles, f32-safe
   (cmd-begin!)
-  (fx-use! update-p (car bufs))
+  (fx-use! update-p front)
   (fx-uniform! update-p 'u_mouse mx my)
   (fx-uniform! update-p 'u_dt 0.016)
   (fx-uniform! update-p 'u_t t)
-  (cmd-tf-buffer! (cdr bufs))
+  (cmd-tf-buffer! back)
   (cmd-tf-begin!)
   (cmd-draw-arrays! GL-POINTS 0 count)
   (cmd-tf-end!)
   (cmd-viewport! 0 0 720 230)
   (cmd-clear! 0.0 0.0 0.0 0.0)         ; transparent: dots on the page
   (cmd-blend! 'alpha)
-  (fx-use! draw-p (cdr bufs))
+  (fx-use! draw-p back)
   (fx-uniform! draw-p 'u_res 720.0 230.0)
   (cmd-draw-arrays! GL-POINTS 0 count)
   (cmd-flush!)
   (sub-step!)
-  (set! bufs (cons (cdr bufs) (car bufs))))
+  (let ((tmp front)) (set! front back) (set! back tmp)))
 
 ;; re-running this source bumps the generation; the old loop lets go
 (let ((v (js-get (js-global) "__hero_gen")))
