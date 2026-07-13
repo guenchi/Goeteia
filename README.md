@@ -230,13 +230,16 @@ A small UI stack over the JS bridge, in `lib/web/`:
   because WebGPU has no `uniform1f`
   (`examples/gpu-particles.html`: the fountain, no WebGL;
   `examples/gpu-torus.html`: lit indexed 3D through a
-  `@group(0) @binding(0)` matrix struct).  The header documents the
-  mapping and what remains (textures, compute).  `(web wgsl)`
+  `@group(0) @binding(0)` matrix struct).  The header documents the mapping.  `(web wgsl)`
   closes the shader gap: `wgsl->string` renders the SAME s-expression
   forms `(web glsl)` renders — merged uniform struct, VOut varyings,
   entry-point rewrites — and `wgsl-layout` derives the pipeline's
   vertex formats from the same attribute declarations, so one shader
-  source now speaks ESSL 1.00, ESSL 3.00 and WGSL.  Compute passes
+  source now speaks ESSL 1.00, ESSL 3.00 and WGSL — `sampler2D`
+  uniforms included: they split into sampler + texture binding
+  pairs (`gpu-texture!`/`gpu-sampler!`/`gpu-texgroup!` on the other
+  side; `examples/gpu-tex.html`: a checkerboard box, shader from
+  forms, texture from staging bytes).  Compute passes
   close the loop: `gpu-dispatch!` runs a `@compute` shader over a
   storage buffer that doubles as the render pass's instance stream
   (`examples/gpu-compute.html`: 100,000 particles whose physics

@@ -52,7 +52,9 @@
 (library (web gpu)
   (export gpu-attach! gpu-pipeline! gpu-pipeline2!
           gpu-buffer! gpu-index! gpu-uniforms! gpu-storage!
-          gpu-bindgroup! gpu-compute! gpu-compute-group!
+          gpu-texture! gpu-texture-data! gpu-sampler!
+          gpu-bindgroup! gpu-texgroup!
+          gpu-compute! gpu-compute-group!
           gpu-begin! gpu-flush!
           gpu-clear! gpu-use-pipeline! gpu-bind-vbuf! gpu-bind-vbuf2!
           gpu-bind-ibuf! gpu-set-group! gpu-buffer-data!
@@ -134,6 +136,30 @@
      "      layout: slots[pslot].getBindGroupLayout(0),"
      "      entries: [{ binding: 0,"
      "                  resource: { buffer: slots[ubslot] } }] }); },"
+     "  texture(slot, w, h) {"
+     "    const GT = globalThis.GPUTextureUsage"
+     "             || { TEXTURE_BINDING: 4, COPY_DST: 2 };"
+     "    slots[slot] = st.dev.createTexture({"
+     "      size: [w, h], format: 'rgba8unorm',"
+     "      usage: GT.TEXTURE_BINDING | GT.COPY_DST }); },"
+     "  texData(slot, base, w, h) {"
+     "    st.q.writeTexture({ texture: slots[slot] },"
+     "      new Uint8Array(memory.buffer, base, w * h * 4),"
+     "      { bytesPerRow: w * 4 }, [w, h]); },"
+     "  sampler(slot) {"
+     "    slots[slot] = st.dev.createSampler({"
+     "      magFilter: 'linear', minFilter: 'linear' }); },"
+     "  texgroup(slot, pslot, ubslot, sslot, tslot) {"
+     "    const entries = [];"
+     "    if (ubslot >= 0)"
+     "      entries.push({ binding: 0,"
+     "                     resource: { buffer: slots[ubslot] } });"
+     "    entries.push({ binding: entries.length,"
+     "                   resource: slots[sslot] });"
+     "    entries.push({ binding: entries.length,"
+     "                   resource: slots[tslot].createView() });"
+     "    slots[slot] = st.dev.createBindGroup({"
+     "      layout: slots[pslot].getBindGroupLayout(0), entries }); },"
      "  compute(slot, code) {"
      "    slots[slot] = st.dev.createComputePipeline({"
      "      layout: 'auto',"
@@ -235,6 +261,18 @@
   ;; writes it, the render pass reads it back as attributes
   (define (gpu-storage! slot bytes)
     (js-method $gpu "buffer" slot bytes 3))
+  ;; an rgba8 texture, filled straight from staging bytes
+  (define (gpu-texture! slot w h)
+    (js-method $gpu "texture" slot w h))
+  (define (gpu-texture-data! slot base w h)
+    (js-method $gpu "texData" slot base w h))
+  (define (gpu-sampler! slot)
+    (js-method $gpu "sampler" slot))
+  ;; the textured bind group, in the order (web wgsl) declares its
+  ;; bindings: the uniform struct at 0 (pass -1 when the shader has
+  ;; no scalar uniforms), then sampler, then texture view
+  (define (gpu-texgroup! slot pslot ubslot sslot tslot)
+    (js-method $gpu "texgroup" slot pslot ubslot sslot tslot))
   (define (gpu-bindgroup! slot pslot ubslot)
     (js-method $gpu "bindgroup" slot pslot ubslot))
 

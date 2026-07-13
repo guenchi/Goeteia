@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <title>Goeteia — a textured box on WebGPU</title>
+    <style>
+      body { font-family: system-ui; text-align: center; margin-top: 2em; background: #f2f4fa; color: #14203a; }
+      canvas { border-radius: 12px; box-shadow: 0 4px 20px rgba(16,20,42,.2); }
+      code { font-family: ui-monospace, Menlo, monospace; color: #1550c4; }
+    </style>
+  </head>
+  <body>
+    <h1>A textured box, on WebGPU</h1>
+    <p>The shader is authored once as the s-expression forms every
+    dialect renders: <code>(uniform sampler2D u_tex)</code> becomes a
+    sampler + texture binding pair in WGSL and
+    <code>(texture2D ...)</code> respells as
+    <code>textureSample</code>.  The checkerboard is procedural bytes
+    out of staging memory, shipped by one
+    <code>queue.writeTexture</code>.  Needs a WebGPU browser.
+    See <code>gpu-tex.ss</code>.</p>
+    <canvas id="c" width="800" height="600"></canvas>
+    <script type="module">
+      import { loadGoeteia } from '../rt/web.mjs';
+      loadGoeteia('gpu-tex.wasm');
+    </script>
+  </body>
+</html>

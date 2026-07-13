@@ -16,16 +16,22 @@ globalThis.__gpulog = [];
       push('writeBuffer', buf.id, bytes,
            fs[0].toFixed(2), fs[1].toFixed(2));
     },
-    submit(l){ push('submit', l.length) } };
+    submit(l){ push('submit', l.length) },
+    writeTexture(dst, data, lay, size) {
+      push('writeTexture', dst.texture.id, data.length,
+           lay.bytesPerRow, size.join('x')) } };
   const device = {
     queue,
     createShaderModule(d){ push('module', d.code.length); return {} },
     createTexture(d){
       push('texture', d.size.join('x'), d.format);
-      return { createView(){ return {} } } },
+      const id = 'T' + (this._t = (this._t || 0) + 1);
+      return { id, createView(){ return { id: id + 'v' } } } },
     createBindGroup(d){
       push('bindgroup', d.layout.id,
-           d.entries.map(e => e.binding + '=' + e.resource.buffer.id)
+           d.entries.map(e => e.binding + '=' +
+                         (e.resource.buffer ? e.resource.buffer.id
+                                            : e.resource.id))
              .join('|'));
       return { id: 'G' + (this._g = (this._g || 0) + 1) } },
     createRenderPipeline(d){
@@ -45,6 +51,9 @@ globalThis.__gpulog = [];
     createBuffer(d){
       push('buffer', d.size, d.usage);
       return { id: 'B' + (this._b = (this._b || 0) + 1) } },
+    createSampler(d){
+      push('sampler', d.magFilter);
+      return { id: 'S' + (this._s = (this._s || 0) + 1) } },
     createComputePipeline(d){
       push('computePipeline', d.compute.entryPoint);
       return { id: 'CP' + (this._c = (this._c || 0) + 1),
@@ -209,4 +218,20 @@ globalThis.__gpulog = [];
        (check 47 "endPass")
        (check 48 "submit:1")))
 
-(and attach-ok resource-ok frame-ok clear-ok indexed-ok compute-ok)
+;; textures: rgba8 + one writeTexture out of staging, and the
+;; textured bind group in (web wgsl)'s binding order
+(gpu-texture! 12 64 64)
+(%mem-u8-set! 4096 200)
+(gpu-texture-data! 12 4096 64 64)
+(gpu-sampler! 13)
+(gpu-texgroup! 14 0 6 13 12)
+(gpu-texgroup! 15 0 -1 13 12)           ; no scalar uniforms
+(define tex-ok
+  (and (check 49 "texture:64x64:rgba8unorm")
+       (check 50 "writeTexture:T2:16384:256:64x64")
+       (check 51 "sampler:linear")
+       (check 52 "bindgroup:L0:0=B3|1=S1|2=T2v")
+       (check 53 "bindgroup:L0:0=S1|1=T2v")))
+
+(and attach-ok resource-ok frame-ok clear-ok indexed-ok compute-ok
+     tex-ok)
