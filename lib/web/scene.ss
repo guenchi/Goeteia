@@ -26,6 +26,9 @@
 ;;       (probe (@ (sky slot) (lut slot) (mips m)))  -- the (web ibl)
 ;;         pair the scene's pbr meshes reflect; slots may be unquotes,
 ;;         evaluated once
+;;       (group (@ (position ...) (rotation-y ,sig) (scale s))
+;;         child ...)  -- children (meshes or groups) inherit the
+;;         parent transform; holes animate whole assemblies
 ;;       (mesh (@ (geometry SPEC) attrs...))
 ;; Geometry specs: (plane w d) (box w h d) (sphere r [segs rings])
 ;;       (cylinder r h [segs]) (torus R r [segs rings]), or a lone
@@ -74,11 +77,18 @@
                        a)))
                 (walk-form
                  (lambda (f)
-                   (let ((tag (car f)) (rest (cdr f)))
-                     (if (and (pair? rest) (pair? (car rest))
-                              (eq? (car (car rest)) '@))
-                         (list tag (cons '@ (map walk-attr (cdr (car rest)))))
-                         f)))))
+                   (let* ((tag (car f)) (rest (cdr f))
+                          (attrs? (and (pair? rest) (pair? (car rest))
+                                       (eq? (car (car rest)) '@)))
+                          (attrs (if attrs?
+                                     (cons '@ (map walk-attr
+                                                   (cdr (car rest))))
+                                     '(@)))
+                          (kids (if attrs? (cdr rest) rest)))
+                     ;; groups nest: their children walk too
+                     (if (eq? tag 'group)
+                         (cons tag (cons attrs (map walk-form kids)))
+                         (if attrs? (list tag attrs) f))))))
              (let ((anno (map walk-form forms)))
                (list '$sgl-build (list 'quote anno)
                      (cons 'list (reverse thunks))))))))))
@@ -112,7 +122,9 @@
             (immutable mat $sgl-nd-mat)  ; lit | tex | pbr
             (immutable tex $sgl-nd-tex)  ; texture slot | #f
             (immutable bc $sgl-nd-bc)    ; bounding sphere, local
-            (immutable br $sgl-nd-br)))
+            (immutable br $sgl-nd-br)
+            ;; enclosing groups' transform fields, outermost first
+            (immutable chain $sgl-nd-chain)))
 
   ;; a single-valued slot: a hole gets an effect, a value sets once
   (define ($sgl-set1! vec idx v ds)
@@ -167,7 +179,7 @@
         want
         (error 'sgl "one material per mesh" (list cur want))))
 
-  (define ($sgl-mesh attrs ds)
+  (define ($sgl-mesh attrs ds chain)
     (let ((gspec #f) (mat 'lit) (tex #f)
           (f (vector 0.0 0.0 0.0 0.0 0.0 0.0 1.0
                      0.8 0.8 0.8 1.0 0.0 0.5)))
@@ -216,7 +228,27 @@
         ($make-sgl-node vbuf ibuf vbase ibase
                         vbytes (mesh-index-bytes geom)
                         (mesh-index-count geom) #f f mat tex
-                        (car bounds) (cdr bounds)))))
+                        (car bounds) (cdr bounds) chain))))
+
+  ;; a group's transform fields: px py pz rx ry rz scale, holes
+  ;; welcome in the single-valued ones
+  (define ($sgl-group-f attrs ds)
+    (let ((f (vector 0.0 0.0 0.0 0.0 0.0 0.0 1.0)))
+      (for-each
+       (lambda (a)
+         (case (car a)
+           ((position) ($sgl-set3! f 0 (cdr a)))
+           ((rotation) ($sgl-set3! f 3 (cdr a)))
+           ((position-x) ($sgl-set1! f 0 (cadr a) ds))
+           ((position-y) ($sgl-set1! f 1 (cadr a) ds))
+           ((position-z) ($sgl-set1! f 2 (cadr a) ds))
+           ((rotation-x) ($sgl-set1! f 3 (cadr a) ds))
+           ((rotation-y) ($sgl-set1! f 4 (cadr a) ds))
+           ((rotation-z) ($sgl-set1! f 5 (cadr a) ds))
+           ((scale) ($sgl-set1! f 6 (cadr a) ds))
+           (else (error 'sgl "unknown group attribute" (car a)))))
+       attrs)
+      f))
 
   (define ($sgl-probe! attrs ds)
     (let ((sky #f) (lut #f) (mips 0.0))
@@ -236,19 +268,26 @@
           (light (vector 0.5 0.8 0.4 0.25))
           (probe #f)
           (meshes '()))
-      (for-each
-       (lambda (f)
-         (let ((attrs (if (and (pair? (cdr f)) (pair? (cadr f))
-                               (eq? (car (cadr f)) '@))
-                          (cdr (cadr f))
-                          '())))
-           (case (car f)
-             ((camera) ($sgl-cam! cam attrs ds))
-             ((light) ($sgl-light! light attrs ds))
-             ((probe) (set! probe ($sgl-probe! attrs ds)))
-             ((mesh) (set! meshes (cons ($sgl-mesh attrs ds) meshes)))
-             (else (error 'sgl "unknown tag" (car f))))))
-       forms)
+      ;; groups nest, so the walk recurses carrying the transform
+      ;; chain (outermost first) every mesh inside inherits
+      (let walk ((forms forms) (chain '()))
+        (for-each
+         (lambda (f)
+           (let* ((attrs? (and (pair? (cdr f)) (pair? (cadr f))
+                               (eq? (car (cadr f)) '@)))
+                  (attrs (if attrs? (cdr (cadr f)) '()))
+                  (kids (if attrs? (cddr f) (cdr f))))
+             (case (car f)
+               ((camera) ($sgl-cam! cam attrs ds))
+               ((light) ($sgl-light! light attrs ds))
+               ((probe) (set! probe ($sgl-probe! attrs ds)))
+               ((group)
+                (walk kids
+                      (append chain (list ($sgl-group-f attrs ds)))))
+               ((mesh) (set! meshes
+                             (cons ($sgl-mesh attrs ds chain) meshes)))
+               (else (error 'sgl "unknown tag" (car f))))))
+         forms))
       ;; split by material; each program exists only if a mesh asks
       (let loop ((ms (reverse meshes)) (lits '()) (texs '()) (pbrs '()))
         (if (pair? ms)
@@ -267,18 +306,26 @@
                (reverse lits) (reverse texs) (reverse pbrs)))))))
 
   ;; ---- a frame: pure arithmetic over the current fields ----
-  ;; The model matrix places the node's bounding sphere; a node the
-  ;; frustum cannot see costs exactly this arithmetic and no commands.
+  ;; the TRS matrix any 7-field transform vector describes
+  (define ($sgl-trs f)
+    (let ((s (vector-ref f 6)))
+      (m4-mul (m4-translate (vector-ref f 0) (vector-ref f 1)
+                            (vector-ref f 2))
+              (m4-mul (m4-rotate-y (vector-ref f 4))
+                      (m4-mul (m4-rotate-x (vector-ref f 3))
+                              (m4-mul (m4-rotate-z (vector-ref f 5))
+                                      (m4-scale s s s)))))))
+
+  ;; The model matrix -- the group chain's transforms, then the
+  ;; node's own -- places the bounding sphere; a node the frustum
+  ;; cannot see costs exactly this arithmetic and no commands.
   (define ($sgl-draw-node! prog vp planes nd)
     (let* ((f ($sgl-nd-f nd))
-           (s (vector-ref f 6))
-           (model
-            (m4-mul (m4-translate (vector-ref f 0) (vector-ref f 1)
-                                  (vector-ref f 2))
-                    (m4-mul (m4-rotate-y (vector-ref f 4))
-                            (m4-mul (m4-rotate-x (vector-ref f 3))
-                                    (m4-mul (m4-rotate-z (vector-ref f 5))
-                                            (m4-scale s s s)))))))
+           (model (fold-left (lambda (acc gf) (m4-mul acc ($sgl-trs gf)))
+                             (m4-identity) ($sgl-nd-chain nd)))
+           (model (m4-mul model ($sgl-trs f)))
+           (s (fold-left (lambda (acc gf) (fl* acc (vector-ref gf 6)))
+                         (vector-ref f 6) ($sgl-nd-chain nd))))
       (when (sphere-in-frustum? planes
                                 (m4-transform model ($sgl-nd-bc nd))
                                 (fl* s ($sgl-nd-br nd)))
