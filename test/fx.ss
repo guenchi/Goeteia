@@ -241,5 +241,19 @@
                    (let ((d (pointer-motion!)))
                      (and (fl=? (car d) 0.0) (fl=? (cdr d) 0.0)))))))
 
+;; ---- the fixed-timestep loop: sim at its own cadence ----
+(define sims 0)
+(define alphas '())
+(fx-loop-fixed! 0.01
+                (lambda (step) (set! sims (+ sims 1)))
+                (lambda (alpha t dt) (set! alphas (cons alpha alphas))))
+(pump! 5000)                            ; first frame: dt 0, no sim
+(pump! 5025)                            ; +25ms: two steps, half left
+(pump! 15025)                           ; a stall: clamped to 3 more
+(define fixed-ok
+  (and (= sims 5)
+       (near? (car (cdr alphas)) 0.5)
+       (near? (car alphas) 1.0)))
+
 (and alloc-ok prog-ok use-ok reuse-ok ticks-ok loop-ok quad-ok mat-ok
-     input-ok input2-ok inst-ok target-ok lock-ok)
+     input-ok input2-ok inst-ok target-ok lock-ok fixed-ok)

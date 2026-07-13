@@ -122,7 +122,9 @@ A small UI stack over the JS bridge, in `lib/web/`:
   allocation.  Attribute setup rides vertex array objects without
   being asked: the first `fx-use!` of a (program, buffer) pair
   records every pointer into a VAO, each later one is a single-word
-  rebind.  `fx-loop!` frames commands around a t/dt callback;
+  rebind.  `fx-loop!` frames commands around a t/dt callback
+  (`fx-loop-fixed!` splits it: physics at its own fixed cadence,
+  render once per frame with a blend alpha);
   `fx-fullscreen!` makes a fragment-shader effect ~15 lines
   (`examples/fx-plasma.html`); `fx-target-mrt!` is a G-buffer —
   n half-float attachments one shader fills in one pass
@@ -131,8 +133,9 @@ A small UI stack over the JS bridge, in `lib/web/`:
   `fx-init-input!` (polled keys/pointer) have no GL dependency, so a
   Three.js scene uses them directly; `pointer-lock!` adds captured
   relative mouse for first-person cameras
-  (`examples/fx-fps.html`: click to capture, WASD to walk, walls
-  slide via `(web collide)`)
+  (`examples/fx-fps.html`: click to capture, WASD to walk, SPACE to
+  jump — the packaged character at a fixed 120Hz over the
+  broadphase grid)
 - `(web sprite)` — 2D games over `(web fx)` and `(web typeset)`: a
   glyph atlas rasterizes each distinct code point once and its
   measurer doubles as typeset's `measure`, so layout and rendering
@@ -237,7 +240,11 @@ A small UI stack over the JS bridge, in `lib/web/`:
   cannot tunnel) with the contact normal, and `move-and-slide`
   packages the character-controller loop over it: advance to
   contact, shed the into-the-wall component, continue — walls
-  slide, corners stop.  Pure arithmetic, verifies headlessly
+  slide, corners stop.  `make-character`/`character-move!` finish
+  the job — gravity, landing and `character-jump!` over the slide —
+  and `make-aabb-grid`/`grid-near` are the broadphase: static boxes
+  hash into xz cells so each step sweeps a handful, not the level.
+  Pure arithmetic, verifies headlessly
 - `(web audio)` — game audio over WebAudio: `beep!` is an oscillator
   with a click-free fade (no asset files needed), `load-sound!` runs
   the fetch/decode chain, `play!`/`loop-sound!` wire

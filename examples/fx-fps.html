@@ -12,10 +12,13 @@
   <body>
     <h1>First-person walking</h1>
     <p><strong>Click the canvas to capture the mouse</strong> (Esc
-    releases), then WASD or arrows to move.  The look camera is
-    <code>pointer-motion!</code> deltas into <code>m4-look-at</code>;
-    the walls push back through <code>sphere-aabb-push</code>, so you
-    slide along them.  See <code>fx-fps.ss</code>.</p>
+    releases), then WASD or arrows to move and SPACE to jump — onto
+    the low violet box, even.  The player is <code>(web
+    collide)</code>'s packaged character (gravity, landing and the
+    slide inside <code>character-move!</code>), stepping at a fixed
+    120Hz through <code>fx-loop-fixed!</code>, and each step sweeps
+    only the boxes the broadphase grid hands back.
+    See <code>fx-fps.ss</code>.</p>
     <canvas id="c" width="800" height="600"></canvas>
     <script type="module">
       import { loadGoeteia } from '../rt/web.mjs';
