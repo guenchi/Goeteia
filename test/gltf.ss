@@ -422,6 +422,43 @@
        (near? (%mem-f32-ref (+ (gprim-vbase p4) 4)) 0.0)
        (near? (%mem-f32-ref (+ (gprim-vbase p4) 24)) 1.0)))
 
+;; ---- the animation state machine, over the spin clip ----
+;; two states on the same clip still exercise the bookkeeping: each
+;; state runs its own clock, and the fade blends the two samples
+(define am (anim-machine g3 '((a . 0) (b . 0)) 1.0))
+(anim-update! am 0.75)                   ; a's clock at 0.75 of 0..90:
+(define am-jm1 (gltf-joint-matrices g3 0)); nlerp puts m00 at 0.36811
+(define am-run-ok
+  (and (anim-machine? am)
+       (eq? (anim-state am) 'a)
+       (< (abs (- (m4at am-jm1 1 0) 0.36811)) 0.002)))
+;; a quarter into the fade: a has wrapped to 0 deg, b's own nlerp
+;; sits near 22 deg, and the blend leans a quarter toward b
+(anim-goto! am 'b)
+(anim-update! am 0.25)
+(define am-jm2 (gltf-joint-matrices g3 0))
+(define am-fade-ok
+  (and (eq? (anim-state am) 'b)
+       (< (abs (- (m4at am-jm2 1 0) 0.99558)) 0.003)))
+;; this update completes the fade exactly: pure b, wrapped to 0 deg
+(anim-update! am 0.75)
+(define am-jm3 (gltf-joint-matrices g3 0))
+(define am-done-ok (< (abs (- (m4at am-jm3 1 0) 1.0)) 0.001))
+;; a goto with its own fade of 0: the switch is instant
+(anim-goto! am 'a 0.0)
+(anim-update! am 0.5)
+(define am-jm4 (gltf-joint-matrices g3 0))
+(define am-instant-ok
+  (and (eq? (anim-state am) 'a)
+       (< (abs (- (m4at am-jm4 1 0) 0.7071)) 0.002)))
+;; a goto to the state already playing is a no-op
+(anim-goto! am 'a)
+(anim-update! am 0.25)                   ; the clock just keeps going
+(define am-jm5 (gltf-joint-matrices g3 0))
+(define am-noop-ok
+  (< (abs (- (m4at am-jm5 1 0) 0.36811)) 0.002))  ; 0.75 again
+
 (and parse-ok tex-parse-ok skin-parse-ok pose0-ok pose1-ok pose-mid-ok
      blend-ok morph-parse-ok morph0-ok morph-anim-ok morph-hand-ok
+     am-run-ok am-fade-ok am-done-ok am-instant-ok am-noop-ok
      skin-draw-ok draw-ok reuse-ok tex-load-ok tex-draw-ok mismatch-ok)
