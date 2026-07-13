@@ -162,6 +162,19 @@
                              (near? ny (fl/ 1.0 (flsqrt 2.0)))
                              (near? nz 0.0))))
         (unit-normals? m)))
+ ;; past 65536 vertices the index stream switches to u32
+ (let ((big (mesh-heightmap 10.0 10.0 300 300 (lambda (x z) 0.0))))
+   (and (= (mesh-vert-count big) 90601)
+        (mesh-index-u32? big)
+        (= (mesh-index-bytes big) (* 4 (mesh-index-count big)))
+        (begin
+          (%mem-grow 75)                ; ~5 MB: 2.2M verts + 2.2M u32 indices
+          (mesh-write! big 262144 2500000)
+          ;; first triangle of the first cell: 0, cols=301, 302
+          (and (= (%mem-i32-ref 2500000) 0)
+               (= (%mem-i32-ref 2500004) 301)
+               (= (%mem-i32-ref 2500008) 302)))))
+ (not (mesh-index-u32? plane))
  ;; ---- bounding spheres ----
  (let ((b (mesh-bounds plane)))          ; 4 x 2 on xz
    (and (near? (v3-x (car b)) 0.0) (near? (v3-y (car b)) 0.0)

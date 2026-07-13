@@ -44,6 +44,7 @@
           gl-ubo! gl-uniform-block! cmd-bind-ubo! cmd-ubo-data!
           gl-tf-program! cmd-tf-buffer! cmd-tf-begin! cmd-tf-end!
           cmd-bind-index! cmd-index-data! cmd-draw-elements!
+          cmd-index-data32! cmd-draw-elements32!
           cmd-attrib-divisor! cmd-draw-elements-instanced!
           cmd-uniform-matrices!
           cmd-draw-arrays! cmd-viewport! cmd-blend!
@@ -302,6 +303,13 @@
      "     case 30: gl.activeTexture(gl.TEXTURE0 + u[p]);"
      "              gl.bindTexture(gl.TEXTURE_2D, null);"
      "              p += 1; break;"
+     "     case 36: gl.bufferData(gl.ELEMENT_ARRAY_BUFFER,"
+     "               new Uint32Array(memory.buffer, u[p], u[p+1] >> 2),"
+     "               gl.DYNAMIC_DRAW); p += 2; break;"
+     "     case 37: { const m = u[p] === 0 ? gl.POINTS : u[p] === 1 ? gl.LINES"
+     "                : u[p] === 5 ? gl.TRIANGLE_STRIP : gl.TRIANGLES;"
+     "                gl.drawElements(m, u[p+1], gl.UNSIGNED_INT, 0);"
+     "                p += 2; break; }"
      "     case 31: gl.bindBufferBase(gl.UNIFORM_BUFFER, u[p],"
      "                                slots[u[p+1]]); p += 2; break;"
      "     case 33: gl.bindBufferBase(gl.TRANSFORM_FEEDBACK_BUFFER, 0,"
@@ -449,6 +457,10 @@
   ;; indexed meshes: a buffer slot bound as the element array, u16
   ;; indices uploaded from the staging memory, one drawElements
   (define (cmd-bind-index! slot) (u! 16) (u! slot))
+  ;; 32-bit indices (webgl2): meshes past 65536 vertices
+  (define (cmd-index-data32! base bytes) (u! 36) (u! base) (u! bytes))
+  (define (cmd-draw-elements32! mode count)
+    (u! 37) (u! mode) (u! count))
   (define (cmd-index-data! offset bytes) (u! 17) (u! offset) (u! bytes))
   (define (cmd-draw-elements! mode count) (u! 18) (u! mode) (u! count))
   ;; render into an offscreen target, or back to the canvas

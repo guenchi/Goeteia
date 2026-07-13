@@ -27,7 +27,7 @@
 (library (web mesh)
   (export mesh? mesh-verts mesh-indices mesh-uvs
           mesh-vert-count mesh-index-count
-          mesh-vertex-bytes mesh-index-bytes mesh-write!
+          mesh-vertex-bytes mesh-index-bytes mesh-index-u32? mesh-write!
           mesh-vertex-bytes-uv mesh-write-uv!
           mesh-tangents mesh-vertex-bytes-tan mesh-write-tan!
           mesh-bounds
@@ -50,8 +50,14 @@
   (define (mesh-index-count m) (vector-length (mesh-indices m)))
   (define (mesh-vertex-bytes m) (* 4 (vector-length (mesh-verts m))))
   (define (mesh-vertex-bytes-uv m) (* 32 (mesh-vert-count m)))
-  (define (mesh-index-bytes m)                ; u16 pairs, padded to words
-    (* 4 (quotient (+ (mesh-index-count m) 1) 2)))
+  ;; meshes past 65536 vertices index as u32 (webgl2); the writers
+  ;; switch layout automatically -- callers ask mesh-index-u32? to
+  ;; pick cmd-index-data32!/cmd-draw-elements32! over the u16 pair
+  (define (mesh-index-u32? m) (> (mesh-vert-count m) 65536))
+  (define (mesh-index-bytes m)
+    (if (mesh-index-u32? m)
+        (* 4 (mesh-index-count m))
+        (* 4 (quotient (+ (mesh-index-count m) 1) 2))))
 
   ;; one vertex into the verts vector at slot v
   (define ($mesh-v! vs v x y z nx ny nz)
@@ -100,9 +106,7 @@
            (vs (make-vector (* cols rows 6) 0.0))
            (uvs (make-vector (* cols rows 2) 0.0))
            (ix (make-vector (* nx nz 6) 0)))
-      (when (> (* cols rows) 65536)
-        (error 'mesh-heightmap "u16 indices allow at most 65536 vertices"
-               (* cols rows)))
+
       ;; sample the function once per grid point (plus a border ring
       ;; for the gradients) -- Safari's WasmGC pays dearly for boxed
       ;; flonum churn, so every avoided call counts
@@ -340,16 +344,24 @@
   (define ($mesh-u16! at v)
     (%mem-u8-set! at (remainder v 256))
     (%mem-u8-set! (+ at 1) (quotient v 256)))
+  (define ($mesh-u32! at v)
+    ($mesh-u16! at (remainder v 65536))
+    ($mesh-u16! (+ at 2) (quotient v 65536)))
   (define ($mesh-write-ix! m ibase)
     (let* ((ix (mesh-indices m))
            (n (vector-length ix)))
-      (let loop ((i 0) (at ibase))
-        (when (< i n)
-          ($mesh-u16! at (vector-ref ix i))
-          ($mesh-u16! (+ at 2) (if (< (+ i 1) n)
-                                   (vector-ref ix (+ i 1))
-                                   0))
-          (loop (+ i 2) (+ at 4))))))
+      (if (mesh-index-u32? m)
+          (let loop ((i 0) (at ibase))
+            (when (< i n)
+              ($mesh-u32! at (vector-ref ix i))
+              (loop (+ i 1) (+ at 4))))
+          (let loop ((i 0) (at ibase))
+            (when (< i n)
+              ($mesh-u16! at (vector-ref ix i))
+              ($mesh-u16! (+ at 2) (if (< (+ i 1) n)
+                                       (vector-ref ix (+ i 1))
+                                       0))
+              (loop (+ i 2) (+ at 4)))))))
 
   (define (mesh-write! m vbase ibase)
     (let ((vs (mesh-verts m)))

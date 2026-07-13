@@ -288,6 +288,19 @@
          (or (null? es)
              (and (check i (car es))
                   (loop (+ i 1) (cdr es))))))
+     ;; --- 32-bit indices (webgl2): big meshes ---
+     (let ((base (js->number (js-get log "length"))))
+       (cmd-begin!)
+       (cmd-index-data32! 1024 8)
+       (cmd-draw-elements32! GL-TRIANGLES 100000)
+       (cmd-flush!)
+       (let loop ((i base)
+                  (es (list  ; the raw u32 view over 0.5f / -0.5f bits
+                        "bufferData:1056964608.00,3204448256.00"
+                        "drawElements:TRI:100000:UI")))
+         (or (null? es)
+             (and (check i (car es))
+                  (loop (+ i 1) (cdr es))))))
      ;; --- uniform buffers (webgl2 + ESSL 300 blocks) ---
      (let ((base (js->number (js-get log "length"))))
        (gl-ubo! 21 96)

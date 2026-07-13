@@ -12,14 +12,14 @@
 ;;     (gltf-draw! g p vp)))              ; all primitives, lit
 ;;
 ;; What loads: every primitive's POSITION (+ NORMAL when present),
-;; u8/u16/u32 indices (u32 values must still fit u16 -- generators
-;; and most assets do), node TRS or matrix transforms accumulated
-;; through the scene graph, and the material's baseColorFactor.
-;; Untextured primitives come out in mesh-lit-vs's 24-byte layout;
-;; primitives with TEXCOORD_0 come out at 32 bytes for mesh-tex-vs,
-;; and (gltf-load-textures! g k) decodes the embedded images and
-;; hands each one its texture.  Skins and animations are not loaded
-;; (yet); a missing NORMAL becomes +y.
+;; u8/u16/u32 indices (past 65536 vertices the stream stays 32-bit),
+;; node TRS or matrix transforms accumulated through the scene
+;; graph, baseColorFactor and the metallic/roughness factors,
+;; embedded textures (gltf-load-textures!), skins with their joint
+;; matrices, animations (sampled, blended, morph targets), and a
+;; missing NORMAL becomes +y.  Untextured primitives come out in
+;; mesh-lit-vs's 24-byte layout; textured ones at 32 bytes for
+;; mesh-tex-vs; skinned ones at 64 for gltf-skin-vs.
 ;;
 ;; (gltf-parse base len) works on any GLB bytes already in staging
 ;; memory, so parsing verifies headlessly; gltf-fetch! is the
@@ -33,7 +33,8 @@
           gltf-animate-blend! gltf-weights! gprim-morph
           gltf-joint-matrices gltf-skin-vs
           gprim-vbase gprim-vbytes gprim-ibase gprim-ibytes
-          gprim-icount gprim-color gprim-metallic gprim-roughness
+          gprim-icount gprim-index-u32? gprim-color
+          gprim-metallic gprim-roughness
           gprim-world gprim-stride gprim-tex)
   (import (rnrs) (web js) (web gl) (web fx) (web mat) (web json))
 
@@ -55,6 +56,7 @@
             (immutable ibase gprim-ibase)
             (immutable ibytes gprim-ibytes)
             (immutable icount gprim-icount)
+            (immutable iu32 gprim-index-u32?) ; 32-bit indices?
             (immutable color gprim-color)     ; r g b a flonum vector
             (immutable mr $gprim-mr)          ; (metallic . roughness)
             (immutable world gprim-world)     ; m4
@@ -597,35 +599,41 @@
                                    (%mem-f32-ref (+ ws (* 4 c))))
                     (comp (+ c 1)))))))
           (copy (+ v 1))))
-      ;; indices: u8/u16/u32 accessor, or none (sequential vertices)
+      ;; indices: u8/u16/u32 accessor, or none (sequential vertices).
+      ;; primitives past 65536 vertices keep 32-bit indices (webgl2);
+      ;; everything else packs u16 pairs
       (let* ((ii (json-ref prim "indices"))
              (inf (and ii ($acc-info json bin ii 0)))
              (icount (if inf (caddr inf) count))
+             (u32? (> count 65536))
              (idx (if inf
                       (let ((at (car inf)) (ct (cadddr inf)))
                         (lambda (k)
-                          (let ((v (cond
-                                    ((= ct 5121) (%mem-u8-ref (+ at k)))
-                                    ((= ct 5123) ($glb-u16 (+ at (* k 2))))
-                                    ((= ct 5125) ($glb-u32 (+ at (* k 4))))
-                                    (else (error 'gltf
-                                                 "bad index component"
-                                                 ct)))))
-                            (when (> v 65535)
-                              (error 'gltf "index exceeds u16" v))
-                            v)))
+                          (cond
+                           ((= ct 5121) (%mem-u8-ref (+ at k)))
+                           ((= ct 5123) ($glb-u16 (+ at (* k 2))))
+                           ((= ct 5125) ($glb-u32 (+ at (* k 4))))
+                           (else (error 'gltf "bad index component"
+                                        ct)))))
                       (lambda (k) k)))
-             (ibytes (* 4 (quotient (+ icount 1) 2)))
+             (ibytes (if u32?
+                         (* 4 icount)
+                         (* 4 (quotient (+ icount 1) 2))))
              (ibase (fx-alloc! ibytes)))
-        (let pack ((k 0) (at ibase))
-          (when (< k icount)
-            (%mem-i32-set! at
-                           (+ (idx k)
-                              (* 65536 (if (< (+ k 1) icount)
-                                           (idx (+ k 1))
-                                           0))))
-            (pack (+ k 2) (+ at 4))))
-        ($make-gprim vbase vbytes ibase ibytes icount
+        (if u32?
+            (let pack ((k 0) (at ibase))
+              (when (< k icount)
+                (%mem-i32-set! at (idx k))
+                (pack (+ k 1) (+ at 4))))
+            (let pack ((k 0) (at ibase))
+              (when (< k icount)
+                (%mem-i32-set! at
+                               (+ (idx k)
+                                  (* 65536 (if (< (+ k 1) icount)
+                                               (idx (+ k 1))
+                                               0))))
+                (pack (+ k 2) (+ at 4)))))
+        ($make-gprim vbase vbytes ibase ibytes icount u32?
                      ($material-color json (json-ref prim "material"))
                      ($material-mr json (json-ref prim "material"))
                      world stride ($prim-tex-image json prim)
@@ -852,7 +860,9 @@
                (cmd-buffer-data! (gprim-vbase p) (gprim-vbytes p)))))
          (when fresh
            (cmd-buffer-data! (gprim-vbase p) (gprim-vbytes p))
-           (cmd-index-data! (gprim-ibase p) (gprim-ibytes p)))
+           (if (gprim-index-u32? p)
+               (cmd-index-data32! (gprim-ibase p) (gprim-ibytes p))
+               (cmd-index-data! (gprim-ibase p) (gprim-ibytes p))))
          (let ((c (gprim-color p)))
            (if (= (gprim-stride p) 64)
                ;; skinned: the joint matrices carry the pose; the
@@ -869,5 +879,7 @@
                  (fx-uniform! prog 'u_model world)))
            (fx-uniform! prog 'u_color (vector-ref c 0) (vector-ref c 1)
                         (vector-ref c 2) (vector-ref c 3))
-           (cmd-draw-elements! GL-TRIANGLES (gprim-icount p)))))
+           (if (gprim-index-u32? p)
+               (cmd-draw-elements32! GL-TRIANGLES (gprim-icount p))
+               (cmd-draw-elements! GL-TRIANGLES (gprim-icount p))))))
      (gltf-prims g))))
