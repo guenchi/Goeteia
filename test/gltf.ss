@@ -1,10 +1,10 @@
 ;; expect: #t
-;; (web gltf): a GLB built byte by byte in staging memory -- one red
+;; (gfx gltf): a GLB built byte by byte in staging memory -- one red
 ;; translated triangle -- parses to the right geometry, color and
 ;; world transform, and draws through the mock GL with a single
 ;; upload.
-(import (rnrs) (web js) (web gl) (web glsl) (web fx) (web mat)
-        (web mesh) (web gltf))
+(import (rnrs) (web js) (gfx gl) (gfx glsl) (gfx fx) (gfx mat)
+        (gfx mesh) (gfx gltf))
 
 ;; ---- write the GLB into staging at 8192 ----
 (define base 8192)

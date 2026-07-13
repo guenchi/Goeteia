@@ -17,12 +17,12 @@
 ;; Fibonacci-spiral GGX importance sampling (no bit tricks, so the
 ;; shaders stay ESSL 1.00), after Karis' split-sum approximation.
 ;;
-;; mesh-pbr-vs/-fs in (web mesh) consume exactly these two.
+;; mesh-pbr-vs/-fs in (gfx mesh) consume exactly these two.
 ;;
 ;; Copyright (c) 2026 guenchi. MIT license; see LICENSE.
-(library (web ibl)
+(library (gfx ibl)
   (export ibl-brdf-lut! ibl-prefilter!)
-  (import (rnrs) (web gl) (web glsl) (web fx))
+  (import (rnrs) (gfx gl) (gfx glsl) (gfx fx))
 
   ;; GGX importance sample k of n around +z, for alpha = r*r:
   ;; a Fibonacci spiral supplies the (u, phi) sequence

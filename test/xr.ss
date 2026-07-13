@@ -1,9 +1,9 @@
 ;; expect: #t
-;; (web xr) against a mock session: the handshake resolves through
+;; (gfx xr) against a mock session: the handshake resolves through
 ;; synchronous thenables, one fake XRFrame carries two eyes with
 ;; known matrices and viewports, and the frame callback sees them
-;; as (web mat) m4s and viewport commands.
-(import (rnrs) (web js) (web gl) (web fx) (web mat) (web xr))
+;; as (gfx mat) m4s and viewport commands.
+(import (rnrs) (web js) (gfx gl) (gfx fx) (gfx mat) (gfx xr))
 
 (js-eval "
 globalThis.__xrlog = [];

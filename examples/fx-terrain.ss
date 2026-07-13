@@ -3,8 +3,8 @@
 ;; central differences), the shader ramps grass/rock/snow by
 ;; altitude, and exponential fog folds the far hills into the sky.
 ;; One mesh, one draw call, no assets.
-(import (rnrs) (web js) (web dom) (web gl) (web glsl) (web fx)
-        (web mat) (web mesh))
+(import (rnrs) (web js) (web dom) (gfx gl) (gfx glsl) (gfx fx)
+        (gfx mat) (gfx mesh))
 
 (fx-init! (get-element-by-id "c"))
 

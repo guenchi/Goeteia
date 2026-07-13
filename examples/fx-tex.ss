@@ -3,8 +3,8 @@
 ;; mesh-tex-vs/-fs (sample * tint * one directional light).  The
 ;; checkerboard is painted onto a 2d canvas right here -- no asset
 ;; files -- and uploaded once.
-(import (rnrs) (web js) (web dom) (web gl) (web glsl) (web fx)
-        (web mat) (web mesh))
+(import (rnrs) (web js) (web dom) (gfx gl) (gfx glsl) (gfx fx)
+        (gfx mat) (gfx mesh))
 
 (fx-init! (get-element-by-id "c"))
 

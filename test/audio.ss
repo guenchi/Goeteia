@@ -1,9 +1,9 @@
 ;; expect: #t
-;; (web audio) against a recording mock: init is idempotent, beeps
+;; (aud sfx) against a recording mock: init is idempotent, beeps
 ;; wire oscillator->gain->destination with a click-free fade, loads
 ;; run the fetch/decode chain (synchronous thenables stand in for
 ;; promises), and buffer playback sets volume, rate and looping.
-(import (rnrs) (web js) (web audio))
+(import (rnrs) (web js) (aud sfx))
 
 (js-eval "globalThis.__alog = []; globalThis.__push = (...a) => globalThis.__alog.push(a.join(':')); globalThis.__syncThen = (v) => ({ then(f) { const r = f(v); return (r && r.then) ? r : globalThis.__syncThen(r); } }); globalThis.AudioContext = function() { const push = globalThis.__push; this.currentTime = 2.0; this.destination = { id:'DEST' }; this.resume = () => push('resume'); this.createOscillator = () => ({ id:'OSC', type:'', frequency:{ value:0 }, connect(x){ push('osc.connect', x.id) }, start(t){ push('osc.start', t.toFixed(2)) }, stop(t){ push('osc.stop', t.toFixed(2)) } }); this.createGain = () => ({ id:'GAIN', gain:{ value:0, setValueAtTime(v,t){ push('gain.set', v.toFixed(2), t.toFixed(2)) }, linearRampToValueAtTime(v,t){ push('gain.ramp', v.toFixed(4), t.toFixed(2)) } }, connect(x){ push('gain.connect', x.id) } }); this.createBufferSource = () => ({ id:'SRC', buffer:null, loop:false, playbackRate:{ value:1 }, connect(x){ push('src.connect', x.id) }, start(t){ push('src.start', t) }, stop(t){ push('src.stop', t) } }); this.decodeAudioData = (ab) => { push('decode', ab.id); return globalThis.__syncThen({ id:'BUF' }); }; }; globalThis.fetch = (url) => { globalThis.__push('fetch', url); return globalThis.__syncThen({ arrayBuffer: () => globalThis.__syncThen({ id:'AB' }) }); }")
 

@@ -1,4 +1,4 @@
-;; 2D sprites and GL text over (web fx) and (web typeset).
+;; 2D sprites and GL text over (gfx fx) and (web typeset).
 ;;
 ;; A glyph atlas rasterizes each distinct code point once (hidden 2d
 ;; canvas, measureText + fillText), uploads as one texture, and its
@@ -36,14 +36,14 @@
 ;; making sense there (~28k Latin glyphs at 16px first).
 ;;
 ;; Copyright (c) 2026 guenchi. MIT license; see LICENSE.
-(library (web sprite)
+(library (gfx sprite)
   (export atlas? make-atlas atlas-measurer atlas-line-height
           batch? make-batch batch-atlas
           batch-begin! sprite! rect! draw-text! batch-draw!
           load-image! sheet? make-sheet sheet-width sheet-height
           sheet-batch? make-sheet-batch sheet-batch-sheet
           sheet! sheet-draw!)
-  (import (rnrs) (web js) (web gl) (web glsl) (web fx) (web typeset))
+  (import (rnrs) (web js) (gfx gl) (gfx glsl) (gfx fx) (web typeset))
 
   (define ($spr-fl v) (if (flonum? v) v (exact->inexact v)))
   (define ($spr-ceil f)                 ; flonum -> fixnum, rounded up

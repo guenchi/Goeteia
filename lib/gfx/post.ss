@@ -1,4 +1,4 @@
-;; Post-processing passes over (web fx): the chains every effect
+;; Post-processing passes over (gfx fx): the chains every effect
 ;; rebuilds -- threshold, separable gaussian, composite -- packaged
 ;; once.  fx-bloom, fx-ssao and the Igropyr fire each hand-wrote
 ;; these; this is that code, made a library.
@@ -22,13 +22,13 @@
 ;; anything: shadows, AO, glow).
 ;;
 ;; Copyright (c) 2026 guenchi. MIT license; see LICENSE.
-(library (web post)
+(library (gfx post)
   (export post-quad! post-pass!
           make-blur blur-run! blur-texture
           make-bloom bloom-run! bloom-texture bloom-composite!
           make-fxaa fxaa-run! make-grade grade-run!
           make-dof dof-run!)
-  (import (rnrs) (web gl) (web glsl) (web fx))
+  (import (rnrs) (gfx gl) (gfx glsl) (gfx fx))
 
   ;; ---- the floor: one fullscreen pass ----
   (define (post-quad! fs-forms) (fx-fullscreen! fs-forms))

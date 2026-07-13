@@ -1,11 +1,11 @@
 ;; The PBR calibration scene: a 5x5 grid of spheres, metallic rising
 ;; front to back, roughness left to right, lit by one sun and a REAL
-;; light probe -- (web ibl) prefilters the procedural sky's mip chain
+;; light probe -- (gfx ibl) prefilters the procedural sky's mip chain
 ;; with GGX at rising roughness and bakes the split-sum BRDF lookup
 ;; table, so the ambient term is Karis' split-sum, not a mip-bias
 ;; approximation.  Needs WebGL 2.
-(import (rnrs) (web js) (web dom) (web gl) (web glsl) (web fx)
-        (web ibl) (web mat) (web mesh))
+(import (rnrs) (web js) (web dom) (gfx gl) (gfx glsl) (gfx fx)
+        (gfx ibl) (gfx mat) (gfx mesh))
 
 (fx-init! (get-element-by-id "c"))
 

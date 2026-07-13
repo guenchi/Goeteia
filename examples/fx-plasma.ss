@@ -1,8 +1,8 @@
-;; A fragment-shader effect in ~15 lines of harness: (web fx) wires
+;; A fragment-shader effect in ~15 lines of harness: (gfx fx) wires
 ;; the program from its own glsl forms (u_time and u_resolution are
 ;; set automatically because the fragment declares them), and the
 ;; mouse feeds one extra uniform through the polled input layer.
-(import (rnrs) (web js) (web dom) (web glsl) (web fx))
+(import (rnrs) (web js) (web dom) (gfx glsl) (gfx fx))
 
 (define canvas (get-element-by-id "c"))
 (fx-init! canvas)

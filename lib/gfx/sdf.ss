@@ -20,7 +20,7 @@
 ;; for outlines and glow; the field carries all of it.
 ;;
 ;; Copyright (c) 2026 guenchi. MIT license; see LICENSE.
-(library (web sdf)
+(library (gfx sdf)
   (export sdf-from-canvas!)
   (import (rnrs) (web js))
 

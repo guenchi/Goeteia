@@ -30,7 +30,7 @@
 ;;  - megabyte-scale reflow -> incremental, per-paragraph prepare.
 ;;
 ;; Copyright (c) 2026 guenchi. MIT license; see LICENSE.
-(import (rnrs) (web js) (web mat) (web mesh) (web typeset))
+(import (rnrs) (web js) (gfx mat) (gfx mesh) (web typeset))
 
 (define (now) (js->number (js-eval "Date.now()")))
 
@@ -75,7 +75,7 @@
     (let loop ((i 0) (s 0.0))
       (if (= i n) s (loop (+ i 1) (fl+ s 1.5))))))
 
-;; ---- (web mat) ----
+;; ---- (gfx mat) ----
 (define ma (m4-rotate-y 0.7))
 (define mb (m4-translate 1.0 2.0 3.0))
 
@@ -125,7 +125,7 @@
       (if (= i n) (v3-x (v3-normalize vv))
           (begin (set! sink (v3-normalize vv)) (loop (+ i 1)))))))
 
-;; ---- (web mesh) ----
+;; ---- (gfx mesh) ----
 (run "mesh-sphere (24x16)" 10000
   (lambda (n)
     (let loop ((i 0))

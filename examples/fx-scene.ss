@@ -3,12 +3,12 @@
 ;; spin and the sphere bob through reactive holes.  The ground is a
 ;; checkerboard painted here ((texture ...) switches that mesh to
 ;; the uv program), the sphere is metal ((metallic)/(roughness)
-;; switch it to PBR against the scene's probe, baked by (web ibl)
+;; switch it to PBR against the scene's probe, baked by (gfx ibl)
 ;; from a tiny procedural sky), and the far torus only costs its
 ;; matrix while the camera cannot see it: sgl-draw! culls against
 ;; the frustum.  Compare fx-mesh.ss: same picture, imperative.
-(import (rnrs) (web js) (web dom) (web gl) (web fx) (web mat)
-        (web ibl) (web reactive) (web scene))
+(import (rnrs) (web js) (web dom) (gfx gl) (gfx fx) (gfx mat)
+        (gfx ibl) (web reactive) (gfx scene))
 
 (fx-init! (get-element-by-id "c"))
 

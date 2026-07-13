@@ -1,4 +1,4 @@
-;; WGSL from the same shader forms (web glsl) renders -- one source
+;; WGSL from the same shader forms (gfx glsl) renders -- one source
 ;; of truth, three dialects.  wgsl->string takes the VERTEX and
 ;; FRAGMENT form lists together, because WebGPU wants one module:
 ;; the uniforms of both merge into a single struct bound at
@@ -24,9 +24,9 @@
 ;; mat4 / vec4 / vec3+pad / f32, as WGSL will read them.
 ;;
 ;; Copyright (c) 2026 guenchi. MIT license; see LICENSE.
-(library (web wgsl)
+(library (gfx wgsl)
   (export wgsl->string wgsl-layout)
-  (import (rnrs) (web glsl))
+  (import (rnrs) (gfx glsl))
 
   (define ($wgsl-join parts sep)
     (cond

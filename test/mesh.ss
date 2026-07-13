@@ -1,8 +1,8 @@
 ;; expect: #t
-;; (web mesh): parametric geometry, pure and fully verifiable --
+;; (gfx mesh): parametric geometry, pure and fully verifiable --
 ;; counts, unit normals, radii, index ranges, and the staging-memory
 ;; writer's exact words.
-(import (rnrs) (web mat) (web glsl) (web mesh))
+(import (rnrs) (gfx mat) (gfx glsl) (gfx mesh))
 
 (define (near? a b)
   (and (fl<? (fl- a b) 0.00001) (fl<? (fl- b a) 0.00001)))

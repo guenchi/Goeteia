@@ -1,6 +1,6 @@
 ;; expect: #t
-;; (web glsl): s-expressions -> GLSL source. Pure, fully verifiable.
-(import (rnrs) (web glsl))
+;; (gfx glsl): s-expressions -> GLSL source. Pure, fully verifiable.
+(import (rnrs) (gfx glsl))
 
 (define (t got want) (string=? got want))
 

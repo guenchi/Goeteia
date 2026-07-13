@@ -4,8 +4,8 @@
 ;; loop integrates it each frame and writes the compact instance
 ;; stream next door; drawElementsInstanced billboards one quad
 ;; through it under additive blending.  Needs WebGL 2.
-(import (rnrs) (web js) (web dom) (web gl) (web glsl) (web fx)
-        (web mat))
+(import (rnrs) (web js) (web dom) (gfx gl) (gfx glsl) (gfx fx)
+        (gfx mat))
 
 (fx-init! (get-element-by-id "c"))
 

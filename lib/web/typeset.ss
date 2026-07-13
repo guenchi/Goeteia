@@ -1,6 +1,6 @@
 ;; DOM-free text layout: measure once, lay out anywhere.
 ;;
-;; The (web glsl) of text -- layout is a pure function from prepared
+;; The (gfx glsl) of text -- layout is a pure function from prepared
 ;; metrics to line boxes, so heights are known before anything touches
 ;; the DOM (virtual scrolls, streaming chat) and text can be set in
 ;; canvas/WebGL scenes, where there is no layout engine at all.

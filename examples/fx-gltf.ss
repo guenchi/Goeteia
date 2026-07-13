@@ -1,10 +1,10 @@
 ;; A real 3D asset: the Khronos Box.glb sample (CC0) fetched, parsed
-;; by (web gltf) -- the binary chunk lands in staging memory and the
+;; by (gfx gltf) -- the binary chunk lands in staging memory and the
 ;; accessors read floats straight out of it -- and drawn through the
 ;; same lit shader as the parametric meshes.  The base color comes
 ;; from the file's material.
-(import (rnrs) (web js) (web dom) (web gl) (web glsl) (web fx)
-        (web mat) (web mesh) (web gltf))
+(import (rnrs) (web js) (web dom) (gfx gl) (gfx glsl) (gfx fx)
+        (gfx mat) (gfx mesh) (gfx gltf))
 
 (fx-init! (get-element-by-id "c"))
 

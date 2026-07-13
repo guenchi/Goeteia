@@ -5,10 +5,10 @@
 ;; checkerboard is procedural bytes written into staging memory and
 ;; shipped by one queue.writeTexture (gpu-texture-data!); the bind
 ;; group carries the uniform struct, the sampler and the view in
-;; the order (web wgsl) declared them (gpu-texgroup!).
+;; the order (gfx wgsl) declared them (gpu-texgroup!).
 ;; Needs a WebGPU browser.
-(import (rnrs) (web js) (web dom) (web fx) (web mat) (web mesh)
-        (web wgsl) (web gpu))
+(import (rnrs) (web js) (web dom) (gfx fx) (gfx mat) (gfx mesh)
+        (gfx wgsl) (gfx gpu))
 
 (define box (mesh-box 2.2 2.2 2.2))
 

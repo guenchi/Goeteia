@@ -1,9 +1,9 @@
-;; A spinning cube, raw WebGL -- no Three.js.  (web mat) computes the
+;; A spinning cube, raw WebGL -- no Three.js.  (gfx mat) computes the
 ;; perspective / look-at / rotation matrices in pure Scheme (its own
 ;; trig, identical bytes on both compiler hosts), fx wires the shader
 ;; from its own forms, and the mesh is indexed: 24 vertices, 36 u16
 ;; indices, one drawElements per frame with the depth test on.
-(import (rnrs) (web js) (web dom) (web gl) (web glsl) (web fx) (web mat))
+(import (rnrs) (web js) (web dom) (gfx gl) (gfx glsl) (gfx fx) (gfx mat))
 
 (fx-init! (get-element-by-id "c"))
 
