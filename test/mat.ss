@@ -95,6 +95,20 @@
         (back (m4-unproject (m4-inverse vp)
                             (v3-x ndc) (v3-y ndc) (v3-z ndc))))
    (v3~ back 1.5 0.5 -2.0))
+ ;; frustum culling: a fov-1 camera at z=10 looking at the origin
+ (let* ((vp (m4-mul (m4-perspective 1.0 1.0 0.1 100.0)
+                    (m4-look-at (v3 0 0 10) (v3 0 0 0) (v3 0 1 0))))
+        (ps (m4-frustum-planes vp)))
+   (and (= (vector-length ps) 6)
+        (sphere-in-frustum? ps (v3 0 0 0) 1.0)       ; dead center
+        (sphere-in-frustum? ps (v3 0 0 9.0) 0.5)     ; near the eye
+        (not (sphere-in-frustum? ps (v3 0 0 20) 1.0))    ; behind
+        (not (sphere-in-frustum? ps (v3 0 0 -200) 1.0))  ; past far
+        ;; at the origin plane the half-width is 10*tan(0.5) ~ 5.46
+        (sphere-in-frustum? ps (v3 6 0 0) 2.0)       ; straddles right
+        (not (sphere-in-frustum? ps (v3 8 0 0) 1.0)) ; fully outside
+        (sphere-in-frustum? ps (v3 0 -6 0) 2.0)
+        (not (sphere-in-frustum? ps (v3 0 -8 0) 1.0))))
  ;; look-at from +z: axis-aligned view, eye distance in m14
  (let ((v (m4-look-at (v3 0 0 5) (v3 0 0 0) (v3 0 1 0))))
    (and (near? (vector-ref v 0) 1.0)

@@ -143,6 +143,16 @@
  (equal? (glsl-uniforms mesh-tex-fs)
          '((u_light vec3) (u_color vec4) (u_ambient float)
            (u_tex sampler2D)))
+ ;; ---- bounding spheres ----
+ (let ((b (mesh-bounds plane)))          ; 4 x 2 on xz
+   (and (near? (v3-x (car b)) 0.0) (near? (v3-y (car b)) 0.0)
+        (near? (v3-z (car b)) 0.0)
+        (near? (cdr b) (flsqrt 5.0))))
+ (let ((b (mesh-bounds box)))            ; 2 x 2 x 2
+   (and (near? (v3-x (car b)) 0.0) (near? (v3-y (car b)) 0.0)
+        (near? (v3-z (car b)) 0.0)
+        (near? (cdr b) (flsqrt 3.0))))
+ (near? (cdr (mesh-bounds sphere)) 2.0)
  ;; ---- tangents ----
  ;; the plane: u runs with +x, v with +z, normal +y, so the tangent
  ;; is +x and the handedness rebuilds the bitangent as +z

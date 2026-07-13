@@ -21,7 +21,8 @@
           m4-identity m4-mul m4-transform
           m4-translate m4-scale m4-rotate-x m4-rotate-y m4-rotate-z
           m4-from-quat m4-perspective m4-ortho m4-look-at
-          m4-inverse m4-unproject)
+          m4-inverse m4-unproject
+          m4-frustum-planes sphere-in-frustum?)
   (import (rnrs))
 
   (define ($mat-fl v) (if (flonum? v) v (exact->inexact v)))
@@ -235,6 +236,38 @@
   ;; inverted view-projection: m4-transform already divides by w
   (define (m4-unproject inv-vp x y z)
     (m4-transform inv-vp (v3 x y z)))
+
+  ;; the view frustum as six inward-facing planes #(nx ny nz d)
+  ;; (Gribb-Hartmann rows of the view-projection), normalized so
+  ;; nx*x + ny*y + nz*z + d is a true signed distance
+  (define ($mat-plane m i sign)         ; row3 +/- row_i
+    (define (r j) (vector-ref m (+ (* j 4) i)))
+    (define (r3 j) (vector-ref m (+ (* j 4) 3)))
+    (let* ((nx (fl+ (r3 0) (fl* sign (r 0))))
+           (ny (fl+ (r3 1) (fl* sign (r 1))))
+           (nz (fl+ (r3 2) (fl* sign (r 2))))
+           (d (fl+ (r3 3) (fl* sign (r 3))))
+           (len (flsqrt (fl+ (fl+ (fl* nx nx) (fl* ny ny))
+                             (fl* nz nz)))))
+      (vector (fl/ nx len) (fl/ ny len) (fl/ nz len) (fl/ d len))))
+
+  (define (m4-frustum-planes vp)
+    (vector ($mat-plane vp 0 1.0) ($mat-plane vp 0 -1.0)   ; left right
+            ($mat-plane vp 1 1.0) ($mat-plane vp 1 -1.0)   ; bottom top
+            ($mat-plane vp 2 1.0) ($mat-plane vp 2 -1.0))) ; near far
+
+  ;; #f only when the sphere is entirely outside some plane, so a
+  ;; #t is conservative -- exactly what a cull wants
+  (define (sphere-in-frustum? planes c r)
+    (let ((r (fl- 0.0 ($mat-fl r))))
+      (let each ((i 0))
+        (or (= i 6)
+            (let ((p (vector-ref planes i)))
+              (and (fl<? r (fl+ (fl+ (fl+ (fl* (vector-ref p 0) (v3-x c))
+                                          (fl* (vector-ref p 1) (v3-y c)))
+                                     (fl* (vector-ref p 2) (v3-z c)))
+                                (vector-ref p 3)))
+                   (each (+ i 1))))))))
 
   (define (m4-look-at eye center up)
     (let* ((z (v3-normalize (v3-sub eye center)))
