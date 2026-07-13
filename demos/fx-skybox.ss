@@ -161,12 +161,19 @@
    '((precision mediump float)
      (uniform samplerCube u_sky)
      (uniform vec3 u_eye)
+     (uniform float u_time)
      (varying vec3 v_n)
      (varying vec3 v_wp)
      (define (main) void
        (local vec3 n (normalize v_n))
        (local vec3 e (normalize (- u_eye v_wp)))
        (local vec3 r (reflect (- e) n))
+       ;; rays into the water see the sea band of the cube map --
+       ;; wobble them with the swell so the ball's waterline lives
+       (if (< r.y (fl 0))
+           (set! r.y (+ r.y (* "0.10"
+                               (sin (+ (* (+ v_wp.x v_wp.z) "3.0")
+                                       (* u_time "1.6")))))))
        (local vec4 sky (textureCube u_sky r))
        ;; a hint of fresnel: grazing angles reflect harder
        (local float f (- (fl 1) (max (dot n e) (fl 0))))
@@ -174,25 +181,33 @@
              (vec4 (* sky.rgb (+ (fl 0 70) (* (fl 0 45) f)))
                    (fl 1)))))))
 
-;; ---- the sea: a plane whose normal three traveling sines ruffle;
-;; each fragment reflects the eye ray into the SAME cube map (the
-;; clouds ride the swell for free), Fresnel-blended over the deep,
-;; with the sun's glitter path on top ----
+;; ---- the sea: a planar reflection, rippled ----
+;; Pass 1 renders the world as the water sees it (the camera
+;; mirrored about the surface) into a texture; each sea fragment
+;; projects itself through that mirrored camera, offsets the lookup
+;; by its wave normal, and Fresnel-blends the reflection over the
+;; deep -- so the BALL stands in the water, upside down, riding the
+;; same swell as the clouds.  The sun's glitter path goes on top.
 (define sea-p
   (fx-program!
    '((attribute vec3 a_pos)
      (attribute vec3 a_normal)
      (uniform mat4 u_mvp)
+     (uniform mat4 u_rvp)                ; the reflection camera's VP
      (uniform mat4 u_model)
+     (varying vec4 v_rclip)
      (varying vec3 v_wp)
      (define (main) void
+       (local vec4 w (* u_model (vec4 a_pos (fl 1))))
        (set! gl_Position (* u_mvp (vec4 a_pos (fl 1))))
-       (set! v_wp (vec3 (* u_model (vec4 a_pos (fl 1)))))))
+       (set! v_rclip (* u_rvp (vec4 a_pos (fl 1))))
+       (set! v_wp w.xyz)))
    '((precision mediump float)
-     (uniform samplerCube u_sky)
+     (uniform sampler2D u_refl)
      (uniform vec3 u_eye)
      (uniform vec3 u_sun)
      (uniform float u_time)
+     (varying vec4 v_rclip)
      (varying vec3 v_wp)
      (define (main) void
        (local float nx (+ (* "0.045" (sin (+ (* v_wp.x "1.7")
@@ -204,16 +219,18 @@
                           (* "0.028" (sin (+ (* (- v_wp.z v_wp.x) "2.6")
                                              (* u_time "1.6"))))))
        (local vec3 n (normalize (vec3 nx (fl 1) nz)))
+       ;; where the mirrored camera saw this spot, wave-shifted
+       (local vec2 uv (+ (* (/ v_rclip.xy v_rclip.w) (fl 0 50))
+                         (vec2 (fl 0 50) (fl 0 50))))
+       (local vec4 refl (texture2D u_refl (+ uv (* (vec2 nx nz) "0.35"))))
+       ;; flat views mirror the world, steep ones see into the deep
        (local vec3 v (normalize (- u_eye v_wp)))
-       (local vec3 r (reflect (- v) n))
-       (set! r.y (abs r.y))             ; the sky never comes from below
-       (local vec4 sky (textureCube u_sky r))
-       ;; flat views mirror the sky, steep ones see into the deep
        (local float f (+ (fl 0 25)
                          (* (fl 0 75)
                             (pow (- (fl 1) (max (dot n v) (fl 0)))
                                  (fl 3)))))
-       (local vec3 c (mix (vec3 "0.05" "0.16" "0.24") sky.rgb f))
+       (local vec3 c (mix (vec3 "0.05" "0.16" "0.24") refl.rgb f))
+       (local vec3 r (reflect (- v) n))
        (local float sp (pow (max (dot r u_sun) (fl 0)) "180.0"))
        (set! c (+ c (* (vec3 (fl 1) (fl 0 90) (fl 0 70)) sp)))
        (set! gl_FragColor (vec4 c (fl 1)))))))
@@ -237,38 +254,61 @@
 (define cube (upload (mesh-box 2.0 2.0 2.0)))
 (define ball (upload (mesh-sphere 1.4 48 24)))
 (define sea (upload (mesh-plane 240.0 240.0)))
+(define refl (fx-target! 400 300))      ; the world, as the sea sees it
 
 (define proj (m4-perspective 0.9 (/ 720.0 400.0) 0.1 100.0))
+(define SEA-Y -0.4)
+(define ball-m (m4-translate 0.0 1.0 0.0))
+(define sea-m (m4-translate 0.0 SEA-Y 0.0))
+
+;; the sky and the ball, from any camera -- pass 1 draws them into
+;; the reflection target, pass 2 onto the canvas
+(define (draw-world! vp cam t)
+  (cmd-depth! #f)
+  (bind-upload! sky-p cube)
+  (cmd-bind-cubemap! 0 sky-map)
+  (fx-uniform! sky-p 'u_sky 0)
+  (fx-uniform! sky-p 'u_vp vp)
+  (cmd-draw-elements! GL-TRIANGLES (vector-ref cube 6))
+  (cmd-depth! #t)
+  (bind-upload! env-p ball)
+  (cmd-bind-cubemap! 0 sky-map)
+  (fx-uniform! env-p 'u_sky 0)
+  (fx-uniform! env-p 'u_mvp (m4-mul vp ball-m))
+  (fx-uniform! env-p 'u_model ball-m)
+  (fx-uniform! env-p 'u_eye (v3-x cam) (v3-y cam) (v3-z cam))
+  (fx-uniform! env-p 'u_time t)
+  (cmd-draw-elements! GL-TRIANGLES (vector-ref ball 6)))
 
 (fx-loop!
  (lambda (t dt)
-   (cmd-clear! 0.0 0.0 0.0 1.0)
    (let* ((a (fl* 0.15 t))
           (eye (v3 (fl* 9.0 (flsin a)) 2.5 (fl* 9.0 (flcos a))))
           (vp (m4-mul proj (m4-look-at eye (v3 0.0 1.0 0.0)
-                                       (v3 0.0 1.0 0.0)))))
-     ;; the sky first, depth off; w=0 already erased the translation
-     (cmd-depth! #f)
-     (bind-upload! sky-p cube)
-     (cmd-bind-cubemap! 0 sky-map)
-     (fx-uniform! sky-p 'u_sky 0)
-     (fx-uniform! sky-p 'u_vp vp)
-     (cmd-draw-elements! GL-TRIANGLES (vector-ref cube 6))
-     ;; the world on top: the sea first
-     (cmd-depth! #t)
+                                       (v3 0.0 1.0 0.0))))
+          ;; the camera mirrored about the sea surface
+          (meye (v3 (v3-x eye) (fl- (fl* 2.0 SEA-Y) (v3-y eye))
+                    (v3-z eye)))
+          (rvp (m4-mul proj
+                       (m4-look-at meye
+                                   (v3 0.0 (fl- (fl* 2.0 SEA-Y) 1.0) 0.0)
+                                   (v3 0.0 1.0 0.0)))))
+     ;; pass 1: sky and ball as the water sees them
+     (cmd-unbind-texture! 0)            ; the sea sampled it last frame
+     (fx-bind-target! refl)
+     (cmd-clear! 0.0 0.0 0.0 1.0)
+     (draw-world! rvp meye t)
+     ;; pass 2: the same world, then the sea reflecting it
+     (fx-bind-canvas!)
+     (cmd-clear! 0.0 0.0 0.0 1.0)
+     (draw-world! vp eye t)
      (bind-upload! sea-p sea)
-     (cmd-bind-cubemap! 0 sky-map)
-     (fx-uniform! sea-p 'u_sky 0)
-     (fx-uniform! sea-p 'u_mvp (m4-mul vp (m4-translate 0.0 -0.4 0.0)))
-     (fx-uniform! sea-p 'u_model (m4-translate 0.0 -0.4 0.0))
+     (cmd-bind-texture! 0 (fx-target-texture refl))
+     (fx-uniform! sea-p 'u_refl 0)
+     (fx-uniform! sea-p 'u_mvp (m4-mul vp sea-m))
+     (fx-uniform! sea-p 'u_rvp (m4-mul rvp sea-m))
+     (fx-uniform! sea-p 'u_model sea-m)
      (fx-uniform! sea-p 'u_eye (v3-x eye) (v3-y eye) (v3-z eye))
      (fx-uniform! sea-p 'u_sun (v3-x sun) (v3-y sun) (v3-z sun))
      (fx-uniform! sea-p 'u_time t)
-     (cmd-draw-elements! GL-TRIANGLES (vector-ref sea 6))
-     (bind-upload! env-p ball)
-     (cmd-bind-cubemap! 0 sky-map)
-     (fx-uniform! env-p 'u_sky 0)
-     (fx-uniform! env-p 'u_mvp (m4-mul vp (m4-translate 0.0 1.0 0.0)))
-     (fx-uniform! env-p 'u_model (m4-translate 0.0 1.0 0.0))
-     (fx-uniform! env-p 'u_eye (v3-x eye) (v3-y eye) (v3-z eye))
-     (cmd-draw-elements! GL-TRIANGLES (vector-ref ball 6)))))
+     (cmd-draw-elements! GL-TRIANGLES (vector-ref sea 6)))))
