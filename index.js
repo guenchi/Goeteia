@@ -109,8 +109,9 @@ import { boot, render } from './live.js';
         }
       });
 
-      // "get Igropyr" loads a second demo into the editor and runs it:
-      // a Dijkstra fire front over a graph, rendered where the hero was.
+      // "get Igropyr" loads a second demo (a Dijkstra fire front over a
+      // graph) into the editor and focuses it — the user presses Run to
+      // render it, so the hero stays until they choose to.
       document.addEventListener('click', async e => {
         if (!e.target.closest('#get-igropyr')) return;
         e.preventDefault();
@@ -123,7 +124,8 @@ import { boot, render } from './live.js';
           syncHL();
           document.getElementById('editor')
             .scrollIntoView({ behavior: 'smooth', block: 'start' });
-          await go();
+          srcBox.focus({ preventScroll: true });
+          setStatus('loaded — press Run to render');
         } catch (err) {
           setStatus(`could not load Igropyr: ${err.message}`, true);
         }

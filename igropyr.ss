@@ -3,10 +3,21 @@
 ;; Edit the shader, the palette, or CYCLE below — then press Run.
 (import (rnrs) (web sx) (web js) (web dom) (web gl) (web glsl))
 
-;; a canvas in the hero area (#live is cleared on every Run)
+;; #live is cleared on every Run, so rebuild the hero shell — the fire
+;; canvas takes the title's place, the tagline and buttons stay put
 (sx-mount (get-element-by-id "live")
-  (sx (canvas (@ (id "hive") (width "1120") (height "760")
-                 (style "display:block;width:100%;max-width:44em")))))
+  (sx (div (@ (class "hero"))
+        (canvas (@ (id "hive") (width "1120") (height "760")
+                   (style "display:block;width:100%;max-width:44em")))
+        (p (@ (class "tagline"))
+           (span (@ (class "gname")) "Γοητεία")
+           " The black ars of commanding what lies beneath.")
+        (p (@ (class "sub")) "A self-hosting Scheme for the WebAssembly GC era.")
+        (pre (@ (class "cmd")) "$ npm install goeteia")
+        (div (@ (class "links"))
+          (a (@ (class "btn primary") (href "#editor")) "Try it now")
+          (a (@ (class "btn") (href "https://github.com/guenchi/Goeteia")) "GitHub")
+          (a (@ (class "btn") (id "get-igropyr") (style "cursor:pointer")) "get Igropyr")))))
 
 ;; ---- the graph: vertex positions, edges (a,b), and the fire's source ----
 
