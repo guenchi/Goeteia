@@ -6,7 +6,7 @@
 ;; scene traversals.  Lighting price stops depending on scene
 ;; complexity: the classic trade.  Needs WebGL 2.
 (import (rnrs) (web js) (web dom) (web gl) (web glsl) (web fx)
-        (web mat) (web mesh) (web post))
+        (web mat) (web mesh) (web post) (web stats))
 
 (fx-init! (get-element-by-id "c"))
 
@@ -187,6 +187,7 @@
 (define ldr (fx-target! 800 600))
 (define grade (make-grade))
 (define fxaa (make-fxaa))
+(define hud (make-stats))               ; ms / fps / draws / bytes
 (define proj (m4-perspective 0.9 (/ 800.0 600.0) 0.5 80.0))
 
 (fx-loop!
@@ -249,4 +250,5 @@
      (fx-fullscreen-draw! ssr-q)
      ;; tonemap, then anti-alias, onto the canvas
      (grade-run! grade (fx-target-texture hdr2) ldr 'aces 1.3 800 600)
-     (fxaa-run! fxaa (fx-target-texture ldr) #f 800 600))))
+     (fxaa-run! fxaa (fx-target-texture ldr) #f 800 600)
+     (stats-draw! hud dt))))

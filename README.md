@@ -158,6 +158,12 @@ A small UI stack over the JS bridge, in `lib/web/`:
   result with a smoothstep around 0.5 and text re-sharpens at any
   magnification (widen it for halos, shift it for outlines — the
   field carries all of it)
+- `(web stats)` — the performance HUD: frame time, FPS, draw calls
+  and command bytes in the corner, with a 60-frame frame-time strip.
+  The command buffer makes the numbers free — draws are counted as
+  they encode (`cmd-draws`) and the frame's size is the write cursor
+  (`cmd-pos`), so nothing is instrumented; `stats-draw!` goes last
+  in the frame and never counts itself (fx-deferred wears it)
 - `(web scroll)` — a virtual scroller for variable-height text, the
   use case `(web typeset)` was born for: heights are typeset before
   anything mounts (no reflow-forcing measurement), only the visible
