@@ -141,7 +141,9 @@ A small UI stack over the JS bridge, in `lib/web/`:
   over flonum vectors, with `m4-perspective` / `m4-ortho` /
   `m4-look-at` / rotations / `m4-inverse` and its own range-reduced
   trig, so it is pure Scheme all
-  the way down and verifies headlessly; `fx-uniform!` feeds a mat4
+  the way down and verifies headlessly; `m4-frustum-planes` +
+  `sphere-in-frustum?` (with `mesh-bounds`) cull what the camera
+  cannot see, and `fx-uniform!` feeds a mat4
   straight through the command buffer
   (`examples/fx-cube.html`: an indexed, depth-tested cube, no
   Three.js; `examples/fx-pick.html`: `m4-unproject` casts the cursor

@@ -30,6 +30,7 @@
           mesh-vertex-bytes mesh-index-bytes mesh-write!
           mesh-vertex-bytes-uv mesh-write-uv!
           mesh-tangents mesh-vertex-bytes-tan mesh-write-tan!
+          mesh-bounds
           mesh-plane mesh-box mesh-sphere mesh-cylinder mesh-torus
           mesh-lit-vs mesh-lit-fs mesh-tex-vs mesh-tex-fs
           mesh-normal-vs mesh-normal-fs)
@@ -291,6 +292,36 @@
             (%mem-f32-set! (+ at 28) (vector-ref uvs (+ ub 1))))
           (loop (+ v 1) (+ at 32)))))
     ($mesh-write-ix! m ibase))
+
+  ;; the bounding sphere, for frustum culls: AABB center, then the
+  ;; farthest vertex from it.  Pair with (web mat)'s
+  ;; m4-frustum-planes / sphere-in-frustum? -- remember to transform
+  ;; the center by the model matrix and scale the radius
+  (define ($mesh-min a b) (if (fl<? a b) a b))
+  (define ($mesh-max a b) (if (fl<? a b) b a))
+  (define (mesh-bounds m)               ; (center . radius)
+    (let* ((vs (mesh-verts m)) (n (mesh-vert-count m)))
+      (let scan ((v 1)
+                 (lx (vector-ref vs 0)) (hx (vector-ref vs 0))
+                 (ly (vector-ref vs 1)) (hy (vector-ref vs 1))
+                 (lz (vector-ref vs 2)) (hz (vector-ref vs 2)))
+        (if (< v n)
+            (let ((x (vector-ref vs (* v 6)))
+                  (y (vector-ref vs (+ (* v 6) 1)))
+                  (z (vector-ref vs (+ (* v 6) 2))))
+              (scan (+ v 1)
+                    ($mesh-min lx x) ($mesh-max hx x)
+                    ($mesh-min ly y) ($mesh-max hy y)
+                    ($mesh-min lz z) ($mesh-max hz z)))
+            (let ((c (v3 (fl* 0.5 (fl+ lx hx))
+                         (fl* 0.5 (fl+ ly hy))
+                         (fl* 0.5 (fl+ lz hz)))))
+              (let far ((v 0) (r2 0.0))
+                (if (< v n)
+                    (let* ((d (v3-sub ($mesh-p3 vs v 0) c))
+                           (q (v3-dot d d)))
+                      (far (+ v 1) (if (fl<? r2 q) q r2)))
+                    (cons c (flsqrt r2)))))))))
 
   ;; ---- tangents, for normal mapping ----
   ;; per-triangle tangent/bitangent from the uv gradients (Lengyel),
