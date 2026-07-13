@@ -40,6 +40,11 @@ wasmtime).  Proper tail calls compile to `return_call`.
   `math/utils.ss`-style `(library ...)` files, dependencies first
 - Dead code elimination: programs carry only what they use, and a
   conservative inliner erases small helper calls
+- Wasm SIMD, memory-to-memory: `%f32x4-add!/-sub!/-mul!` and the
+  scalar-mixing `%f32x4-scale!`/`%f32x4-axpy!` run four f32 lanes
+  per instruction over staging memory — the v128 lives only inside
+  each primitive, so no new types anywhere; modules pay for it only
+  when they use it
 - Compile errors carry source context (`at file:line (function)`),
   and emitted modules carry a name section, so browser stack traces
   read Scheme
@@ -183,7 +188,9 @@ A small UI stack over the JS bridge, in `lib/web/`:
   custom chains (`examples/fx-bloom.html` is three calls now;
   fx-deferred ends HDR → ACES → FXAA)
 - `(web mat)` — 3D math for raw-GL scenes: vec3 and column-major mat4
-  over flonum vectors, with `m4-perspective` / `m4-ortho` /
+  over flonum vectors (`m4-mul` runs 3.5× faster through the wasm
+  SIMD primitives once `fx-init!` hands it 128 bytes of scratch —
+  each result column is one f32x4 scale and three axpys), with `m4-perspective` / `m4-ortho` /
   `m4-look-at` / rotations / `m4-inverse` and its own range-reduced
   trig, so it is pure Scheme all
   the way down and verifies headlessly; `m4-frustum-planes` +

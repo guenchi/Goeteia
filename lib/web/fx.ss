@@ -45,7 +45,7 @@
           pointer-lock! pointer-locked? pointer-motion!
           fx-fullscreen! fx-quad-program
           fx-fullscreen-use! fx-fullscreen-draw!)
-  (import (rnrs) (web js) (web gl) (web glsl))
+  (import (rnrs) (web js) (web gl) (web glsl) (web mat))
 
   (define ($fx-fl v) (if (flonum? v) v (exact->inexact v)))
 
@@ -68,6 +68,8 @@
     (set! $fx-slot 0)
     (set! $fx-heap $fx-cmd-limit)
     (set! $fx-vaos (make-eq-hashtable))
+    ;; 128 bytes of scratch turn every m4-mul into wasm SIMD
+    (m4-scratch! (fx-alloc! 128))
     ;; a fresh init retires loops from any earlier run of the page
     ;; (live editors re-run whole programs; fx-ticks! checks this)
     (js-set! (js-global) "__goeteia_fx_gen" (+ 1 ($fx-gen)))
