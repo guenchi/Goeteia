@@ -31,8 +31,8 @@
 (library (web gl)
   (export gl-attach! gl-program! gl-buffer! gl-uniform!
           gl-texture! gl-texture-upload! gl-texture-data! gl-cubemap!
-          gl-target!
-          cmd-bind-target! cmd-bind-canvas!
+          gl-target! gl-target-msaa!
+          cmd-bind-target! cmd-bind-canvas! cmd-resolve!
           cmd-region! cmd-begin! cmd-flush! cmd-pos
           cmd-clear! cmd-use-program! cmd-bind-buffer! cmd-buffer-data!
           cmd-vertex-attrib! cmd-uniform1f! cmd-uniform4f!
@@ -115,6 +115,37 @@
      "      gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT,"
      "                                 gl.RENDERBUFFER, rb);"
      "    }"
+     "    gl.bindFramebuffer(gl.FRAMEBUFFER, null);"
+     "    slots[slot] = fb; },"
+     "  targetMsaa(slot, rslot, tslot, w, h, samples) {"
+     "    const t = gl.createTexture();"
+     "    gl.bindTexture(gl.TEXTURE_2D, t);"
+     "    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, w, h, 0, gl.RGBA,"
+     "                  gl.UNSIGNED_BYTE, null);"
+     "    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);"
+     "    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);"
+     "    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);"
+     "    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);"
+     "    slots[tslot] = t;"
+     "    const rf = gl.createFramebuffer();"
+     "    gl.bindFramebuffer(gl.FRAMEBUFFER, rf);"
+     "    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0,"
+     "                            gl.TEXTURE_2D, t, 0);"
+     "    slots[rslot] = rf;"
+     "    const fb = gl.createFramebuffer();"
+     "    gl.bindFramebuffer(gl.FRAMEBUFFER, fb);"
+     "    const cb = gl.createRenderbuffer();"
+     "    gl.bindRenderbuffer(gl.RENDERBUFFER, cb);"
+     "    gl.renderbufferStorageMultisample(gl.RENDERBUFFER, samples,"
+     "                                      gl.RGBA8, w, h);"
+     "    gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0,"
+     "                               gl.RENDERBUFFER, cb);"
+     "    const db = gl.createRenderbuffer();"
+     "    gl.bindRenderbuffer(gl.RENDERBUFFER, db);"
+     "    gl.renderbufferStorageMultisample(gl.RENDERBUFFER, samples,"
+     "                                      gl.DEPTH_COMPONENT16, w, h);"
+     "    gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT,"
+     "                               gl.RENDERBUFFER, db);"
      "    gl.bindFramebuffer(gl.FRAMEBUFFER, null);"
      "    slots[slot] = fb; },"
      "  textureUpload(slot, src, premul) {"
@@ -207,6 +238,13 @@
      "     case 25: gl.activeTexture(gl.TEXTURE0 + u[p]);"
      "              gl.bindTexture(gl.TEXTURE_CUBE_MAP, slots[u[p+1]]);"
      "              p += 2; break;"
+     "     case 26: gl.bindFramebuffer(gl.READ_FRAMEBUFFER, slots[u[p]]);"
+     "              gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, slots[u[p+1]]);"
+     "              gl.blitFramebuffer(0, 0, u[p+2], u[p+3],"
+     "                                 0, 0, u[p+2], u[p+3],"
+     "                                 gl.COLOR_BUFFER_BIT, gl.NEAREST);"
+     "              gl.bindFramebuffer(gl.FRAMEBUFFER, null);"
+     "              p += 4; break;"
      "     default: throw new Error('bad gl opcode');"
      "    } } }; };"))
 
@@ -240,6 +278,10 @@
   (define (gl-target! slot tslot w h . depth-only?)
     (js-method $gl "target" slot tslot w h
                (if (and (pair? depth-only?) (car depth-only?)) 1 0)))
+  ;; a multisampled target: render into `slot`, then cmd-resolve!
+  ;; blits it into `rslot`, whose texture `tslot` is what you sample
+  (define (gl-target-msaa! slot rslot tslot w h samples)
+    (js-method $gl "targetMsaa" slot rslot tslot w h samples))
   ;; premul crosses as 1/0: a boolean would convert through js-eval,
   ;; whose nested %js-call would swallow the args already pushed
   (define (gl-texture-upload! slot src . premul)
@@ -294,6 +336,8 @@
   (define (cmd-draw-elements! mode count) (u! 18) (u! mode) (u! count))
   ;; render into an offscreen target, or back to the canvas
   (define (cmd-bind-target! slot) (u! 20) (u! slot))
+  (define (cmd-resolve! slot rslot w h)  ; blit msaa -> its resolve fb
+    (u! 26) (u! slot) (u! rslot) (u! w) (u! h))
   (define (cmd-bind-canvas!) (u! 21))
   ;; instancing (webgl2): per-instance attributes advance once per
   ;; instance; one draw carries them all

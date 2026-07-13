@@ -30,7 +30,8 @@
 (library (web fx)
   (export fx-init! fx-slot! fx-alloc! fx-buffer! fx-texture!
           fx-width fx-height
-          fx-target! fx-target? fx-target-texture
+          fx-target! fx-target-msaa! fx-resolve!
+          fx-target? fx-target-texture
           fx-target-width fx-target-height
           fx-bind-target! fx-bind-canvas!
           fx-program! fx-program? fx-program-slot fx-program-stride
@@ -80,7 +81,8 @@
     (fields (immutable fb $fx-target-fb)
             (immutable tex fx-target-texture)  ; sample it like any texture
             (immutable w fx-target-width)
-            (immutable h fx-target-height)))
+            (immutable h fx-target-height)
+            (immutable rfb $fx-target-rfb)))   ; msaa resolve fb, or #f
 
   (define (fx-target! w h . depth-only?)
     (let* ((fb (fx-slot!))
@@ -88,7 +90,22 @@
       (if (and (pair? depth-only?) (car depth-only?))
           (gl-target! fb tex w h #t)
           (gl-target! fb tex w h))
-      ($make-fx-target fb tex w h)))
+      ($make-fx-target fb tex w h #f)))
+
+  ;; a multisampled target: render as usual, call (fx-resolve! t)
+  ;; when the passes into it are done, then sample its texture
+  (define (fx-target-msaa! w h samples)
+    (let* ((fb (fx-slot!))
+           (rfb (fx-slot!))
+           (tex (fx-slot!)))
+      (gl-target-msaa! fb rfb tex w h samples)
+      ($make-fx-target fb tex w h rfb)))
+
+  (define (fx-resolve! t)
+    (unless ($fx-target-rfb t)
+      (error 'fx-resolve! "not a multisampled target"))
+    (cmd-resolve! ($fx-target-fb t) ($fx-target-rfb t)
+                  (fx-target-width t) (fx-target-height t)))
 
   ;; binding also sets the viewport to match
   (define (fx-bind-target! t)
