@@ -17,7 +17,8 @@
         (pre (@ (class "cmd")) "$ npm install goeteia")
         (div (@ (class "links"))
           (a (@ (class "btn primary") (href "#editor")) "Try it now")
-          (a (@ (class "btn") (href "https://github.com/guenchi/Goeteia")) "GitHub")))))
+          (a (@ (class "btn") (href "https://github.com/guenchi/Goeteia")) "GitHub")
+          (a (@ (class "btn") (id "get-igropyr") (style "cursor:pointer")) "get Igropyr")))))
 
 ;; ---- the two dot-matrix words: edit these and press Run! ----
 (define pattern-a                      ; GOETEIA
