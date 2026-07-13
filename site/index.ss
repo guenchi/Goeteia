@@ -104,9 +104,9 @@ $ node rt/run.mjs fact.wasm
                               "source is compiled to WebAssembly in your browser and "
                               "mounted live. Edit the source, press Run, and the page "
                               "below re-renders.")
-               (string-append          ; the brand-font @import now
-                 (css->string (base-styles 60))   ; leads every page from
-                 (read-file "site/index.css")     ; render-page (chrome.ss)
+               (string-append
+                 (css->string (base-styles 60))
+                 (read-file "site/index.css")
                  (css->string (footer-styles)))
                'index "site/index.ss" body
                (list '(script (@ (type "module") (src "index.js"))))))

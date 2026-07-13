@@ -57,8 +57,7 @@
             (border-bottom (px 1) solid (var line)))
      '(.nav-inner (display flex) (align-items center) (justify-content space-between)
                   (height (em 3 40)))
-     ;; UnifrakturMaguntia: a blackletter Fraktur, echoing "the black arts"
-     '(.brand (font-family "\"UnifrakturMaguntia\", \"Hoefler Text\", Georgia, serif")
+     '(.brand (font-family "\"Times New Roman\", Times, serif")
               (font-weight 400) (font-size (em 1 45)) (color (var lapis))
               (letter-spacing (em 0 02)))
      '(".brand:hover" (text-decoration none))
@@ -163,11 +162,9 @@
            (title ,title)
            (meta (@ (name "description") (content ,desc)))
            ;; css is either a raw CSS string or a (web css) rule list;
-           ;; <style> is raw-text, emitted unescaped.  The font @import
-           ;; leads (imports must precede every other rule):
-           ;; UnifrakturMaguntia for the nav brand, on every page.
+           ;; <style> is raw-text, emitted unescaped. The nav brand uses
+           ;; Times New Roman (a system font), so no web-font @import.
            (style ,(string-append
-                    "@import url('https://fonts.googleapis.com/css2?family=UnifrakturMaguntia&display=swap');\n"
                     (if (string? css) css (css->string css))
                     "\n" badge-css)))
           (body
