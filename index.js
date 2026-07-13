@@ -115,8 +115,9 @@ import { boot, render } from './live.js';
       });
 
       // "Try it now" lives in the live-mounted hero, so bind by delegation.
-      // The wink: it selects the "#editor" inside its own (href "#editor")
-      // in the source, then scrolls the textarea so the highlight shows.
+      // The wink: it selects the title word in (draw-lines! "GOETEIA" ...)
+      // -- the edit that spells your own word in particles -- and
+      // scrolls the textarea so the highlight shows.
       document.addEventListener('click', e => {
         if (!e.target.closest('a[href="#editor"]')) return;
         e.preventDefault();
@@ -124,9 +125,11 @@ import { boot, render } from './live.js';
           .scrollIntoView({ behavior: 'smooth', block: 'start' });
         srcBox.focus({ preventScroll: true });
         const v = srcBox.value;
-        const s = v.indexOf('#editor');   // the (href "#editor") in the hero
+        const g = v.indexOf('"GOETEIA"'); // the word the particles spell
+        const s = g >= 0 ? g + 1 : v.indexOf('#editor');
+        const len = g >= 0 ? 'GOETEIA'.length : '#editor'.length;
         if (s >= 0) {
-          srcBox.setSelectionRange(s, s + '#editor'.length);
+          srcBox.setSelectionRange(s, s + len);
           // setSelectionRange doesn't reliably scroll the textarea, so put
           // the selected line near the top ourselves (the highlight layer
           // follows via the existing scroll listener)
