@@ -26,7 +26,7 @@
 ;; browser-side loader (fetch -> one bulk copy into staging).
 ;;
 ;; Copyright (c) 2026 guenchi. MIT license; see LICENSE.
-(library (web gltf)
+(library (gfx gltf)
   (export gltf? gltf-prims gltf-images gltf-parse gltf-fetch!
           gltf-load-textures! gltf-draw!
           gltf-anims gltf-animation-names gltf-animate!
@@ -37,7 +37,7 @@
           gprim-icount gprim-index-u32? gprim-color
           gprim-metallic gprim-roughness
           gprim-world gprim-stride gprim-tex)
-  (import (rnrs) (web js) (web gl) (web fx) (web mat) (web json))
+  (import (rnrs) (web js) (gfx gl) (gfx fx) (gfx mat) (web json))
 
   (define ($gltf-fl v) (if (flonum? v) v (exact->inexact v)))
 

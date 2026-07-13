@@ -8,8 +8,8 @@
 ;; a PCF whose radius IS that width does the test.  Shadows harden
 ;; at contact and melt with distance -- watch the hovering box
 ;; against the sitting one.  Needs WebGL 2.
-(import (rnrs) (web js) (web dom) (web gl) (web glsl) (web fx)
-        (web mat) (web mesh))
+(import (rnrs) (web js) (web dom) (gfx gl) (gfx glsl) (gfx fx)
+        (gfx mat) (gfx mesh))
 
 (fx-init! (get-element-by-id "c"))
 

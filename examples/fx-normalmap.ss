@@ -4,8 +4,8 @@
 ;; turns.  The map itself is procedural -- a Scheme loop writes RGBA
 ;; bytes into staging memory and gl-texture-data! makes a texture of
 ;; them; the tangent frame comes from mesh-write-tan!.
-(import (rnrs) (web js) (web dom) (web gl) (web glsl) (web fx)
-        (web mat) (web mesh))
+(import (rnrs) (web js) (web dom) (gfx gl) (gfx glsl) (gfx fx)
+        (gfx mat) (gfx mesh))
 
 (fx-init! (get-element-by-id "c"))
 

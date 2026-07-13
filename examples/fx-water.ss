@@ -5,8 +5,8 @@
 ;; that texture at its own position in the *reflection* camera's
 ;; clip space, ripples the lookup with moving sines, and blends
 ;; toward the reflection by a Fresnel term.  All existing parts.
-(import (rnrs) (web js) (web dom) (web gl) (web glsl) (web fx)
-        (web mat) (web mesh))
+(import (rnrs) (web js) (web dom) (gfx gl) (gfx glsl) (gfx fx)
+        (gfx mat) (gfx mesh))
 
 (fx-init! (get-element-by-id "c"))
 

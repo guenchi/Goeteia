@@ -1,6 +1,6 @@
 ;; expect: #t
-;; (web mat): pure 3D math, incl. our own trig. Fully verifiable.
-(import (rnrs) (web mat))
+;; (gfx mat): pure 3D math, incl. our own trig. Fully verifiable.
+(import (rnrs) (gfx mat))
 
 (define (near? a b)
   (and (fl<? (fl- a b) 0.000001) (fl<? (fl- b a) 0.000001)))

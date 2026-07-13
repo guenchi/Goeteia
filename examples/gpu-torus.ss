@@ -1,15 +1,15 @@
 ;; A lit, indexed, depth-tested torus on WebGPU -- the 3D milestone
-;; for (web gpu).  Geometry comes from (web mesh) (positions +
-;; normals, u16 indices), the matrices from (web mat), and the
-;; SHADER from the same s-expression forms (web glsl) renders:
-;; (web wgsl) respells them as one WGSL module, and wgsl-layout
+;; for (gfx gpu).  Geometry comes from (gfx mesh) (positions +
+;; normals, u16 indices), the matrices from (gfx mat), and the
+;; SHADER from the same s-expression forms (gfx glsl) renders:
+;; (gfx wgsl) respells them as one WGSL module, and wgsl-layout
 ;; derives the pipeline's vertex formats from the same attribute
 ;; declarations.  The whole per-frame uniform state (mvp + model) is
 ;; one 128-byte struct written into a uniform buffer and bound as
 ;; @group(0) @binding(0): WebGPU has no uniform1f, so the struct IS
 ;; the uniform interface.  Needs a WebGPU browser.
-(import (rnrs) (web js) (web dom) (web fx) (web mat) (web mesh)
-        (web wgsl) (web gpu))
+(import (rnrs) (web js) (web dom) (gfx fx) (gfx mat) (gfx mesh)
+        (gfx wgsl) (gfx gpu))
 
 (define tor2 (mesh-torus 1.5 0.55 48 24))
 

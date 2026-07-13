@@ -15,7 +15,7 @@
 ;;               (sgl-draw! sc)))
 ;;
 ;; The template splits at expansion time, like sx: geometry
-;; is built and uploaded once ((web mesh) generates it, the first
+;; is built and uploaded once ((gfx mesh) generates it, the first
 ;; draw ships it), and each unquoted attribute becomes a hole whose
 ;; effect copies the signal's value into the node -- so a frame is
 ;; pure arithmetic over current fields, and only changed values move.
@@ -23,7 +23,7 @@
 ;; Tags: (camera (@ (fov f) (near n) (far f) (position x y z)
 ;;                  (look-at x y z)))
 ;;       (light (@ (direction x y z) (ambient a)))
-;;       (probe (@ (sky slot) (lut slot) (mips m)))  -- the (web ibl)
+;;       (probe (@ (sky slot) (lut slot) (mips m)))  -- the (gfx ibl)
 ;;         pair the scene's pbr meshes reflect; slots may be unquotes,
 ;;         evaluated once
 ;;       (group (@ (position ...) (rotation-y ,sig) (scale s))
@@ -35,7 +35,7 @@
 ;;       (mesh (@ (geometry SPEC) attrs...))
 ;; Geometry specs: (plane w d) (box w h d) (sphere r [segs rings])
 ;;       (cylinder r h [segs]) (torus R r [segs rings]), or a lone
-;;       unquote yielding a (web mesh) mesh, injected once.
+;;       unquote yielding a (gfx mesh) mesh, injected once.
 ;; Mesh attributes: (position x y z) (rotation x y z) (color r g b [a])
 ;;       and the single-valued position-x/-y/-z rotation-* scale
 ;;       color-r/-g/-b/-a; holes go in single-valued attributes
@@ -51,10 +51,10 @@
 ;; falls outside contributes nothing, uniforms included.
 ;;
 ;; Copyright (c) 2026 guenchi. MIT license; see LICENSE.
-(library (web scene)
+(library (gfx scene)
   (export sgl $sgl-build sgl-scene? sgl-draw!)
-  (import (rnrs) (web js) (web gl) (web glsl) (web fx) (web mat)
-          (web mesh) (web reactive))
+  (import (rnrs) (web js) (gfx gl) (gfx glsl) (gfx fx) (gfx mat)
+          (gfx mesh) (web reactive))
 
   ;; ---- the template macro: the sx walker, attribute-only ----
   (define-syntax sgl

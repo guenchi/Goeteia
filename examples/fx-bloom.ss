@@ -1,11 +1,11 @@
-;; Bloom, via (web post): the scene renders offscreen past white
+;; Bloom, via (gfx post): the scene renders offscreen past white
 ;; (an HDR target), and the packaged chain does the rest -- a
 ;; luminance threshold at half resolution, a separable gaussian
 ;; ping-ponged twice, and a tonemapped composite.  What used to be
 ;; three hand-written shader passes is now three calls.
 ;; Needs WebGL 2.
-(import (rnrs) (web js) (web dom) (web gl) (web glsl) (web fx)
-        (web post) (web mat) (web mesh))
+(import (rnrs) (web js) (web dom) (gfx gl) (gfx glsl) (gfx fx)
+        (gfx post) (gfx mat) (gfx mesh))
 
 (fx-init! (get-element-by-id "c"))
 

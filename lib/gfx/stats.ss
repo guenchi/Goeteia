@@ -9,16 +9,16 @@
 ;;               ...the frame...
 ;;               (stats-draw! hud dt)))   ; LAST, so it sees it all
 ;;
-;; One (web sprite) batch draws a translucent backdrop, a 60-frame
+;; One (gfx sprite) batch draws a translucent backdrop, a 60-frame
 ;; frame-time strip (each sliver one frame; taller is slower; the
 ;; 16.7ms line is where 60fps lives), and one line of text re-set
 ;; every quarter second.  The HUD's own commands land after the
 ;; numbers are read, so it never counts itself.
 ;;
 ;; Copyright (c) 2026 guenchi. MIT license; see LICENSE.
-(library (web stats)
+(library (gfx stats)
   (export make-stats stats-draw!)
-  (import (rnrs) (web gl) (web fx) (web typeset) (web sprite))
+  (import (rnrs) (gfx gl) (gfx fx) (web typeset) (gfx sprite))
 
   (define-record-type ($stats $make-stats stats?)
     (fields (immutable atlas $st-atlas)

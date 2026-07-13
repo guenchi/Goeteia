@@ -5,8 +5,8 @@
 ;; invisible -- then a point-sprite pass draws B and the buffers
 ;; swap.  Scheme's whole frame is a handful of command words.
 ;; Needs WebGL 2.
-(import (rnrs) (web js) (web dom) (web gl) (web glsl) (web fx)
-        (web mat))
+(import (rnrs) (web js) (web dom) (gfx gl) (gfx glsl) (gfx fx)
+        (gfx mat))
 
 (fx-init! (get-element-by-id "c"))
 

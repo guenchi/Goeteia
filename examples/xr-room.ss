@@ -1,12 +1,12 @@
 ;; A room you can stand in: the same raw-GL scene renders two ways.
 ;; On a desktop it orbits under fx-loop! as usual; press Enter VR
-;; (the button appears when WebXR answers) and (web xr) swaps the
+;; (the button appears when WebXR answers) and (gfx xr) swaps the
 ;; pump for the session's rAF, takes each eye's projection and view
 ;; from the XRPose, and draws the frame once per eye into the
 ;; session's framebuffer -- the command buffer, the fx layer and
 ;; the shader do not change at all.
-(import (rnrs) (web js) (web dom) (web gl) (web glsl) (web fx)
-        (web mat) (web mesh) (web xr))
+(import (rnrs) (web js) (web dom) (gfx gl) (gfx glsl) (gfx fx)
+        (gfx mat) (gfx mesh) (gfx xr))
 
 (define canvas (get-element-by-id "c"))
 (fx-init! canvas)

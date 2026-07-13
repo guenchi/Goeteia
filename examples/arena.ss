@@ -8,15 +8,15 @@
 ;; floor never move, so the cached map serves every later frame
 ;; (the orbs are lit but don't cast; they're made of light).
 ;;
-;; What is doing the work: (web collide)'s packaged character over
+;; What is doing the work: (gfx collide)'s packaged character over
 ;; the broadphase grid steps at a fixed 120Hz (fx-loop-fixed!), the
-;; shot is one ray-sphere per orb, the HUD is a (web sprite) batch
+;; shot is one ray-sphere per orb, the HUD is a (gfx sprite) batch
 ;; whose glyphs come from the same typeset measurer as the layout,
-;; hits chirp through (web audio), and the scene is raw WebGL
-;; through the (web fx) command buffer.  Needs WebGL 2.
-(import (rnrs) (web js) (web dom) (web gl) (web glsl) (web fx)
-        (web mat) (web mesh) (web collide) (web typeset)
-        (web sprite) (web audio))
+;; hits chirp through (aud sfx), and the scene is raw WebGL
+;; through the (gfx fx) command buffer.  Needs WebGL 2.
+(import (rnrs) (web js) (web dom) (gfx gl) (gfx glsl) (gfx fx)
+        (gfx mat) (gfx mesh) (gfx collide) (web typeset)
+        (gfx sprite) (aud sfx))
 
 (fx-init! (get-element-by-id "c"))
 (fx-init-input!)

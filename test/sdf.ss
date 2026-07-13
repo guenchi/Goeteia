@@ -1,8 +1,8 @@
 ;; expect: #t
-;; (web sdf) against a synthetic canvas: a filled square becomes a
+;; (gfx sdf) against a synthetic canvas: a filled square becomes a
 ;; signed distance field -- deep inside saturates high, far outside
 ;; saturates low, and the boundary crosses 128 within one pixel.
-(import (rnrs) (web js) (web sdf))
+(import (rnrs) (web js) (gfx sdf))
 
 ;; a 16x16 canvas whose alpha is a square over x,y in [4,12)
 (js-eval "

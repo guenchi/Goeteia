@@ -3,8 +3,8 @@
 ;; distortion and a vignette.  Two passes, two draw-call groups, one
 ;; command buffer -- render-to-texture is the door to shadows, bloom
 ;; and every screen-space effect.
-(import (rnrs) (web js) (web dom) (web gl) (web glsl) (web fx)
-        (web mat) (web mesh))
+(import (rnrs) (web js) (web dom) (gfx gl) (gfx glsl) (gfx fx)
+        (gfx mat) (gfx mesh))
 
 (fx-init! (get-element-by-id "c"))
 

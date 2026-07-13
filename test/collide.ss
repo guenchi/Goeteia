@@ -1,7 +1,7 @@
 ;; expect: #t
-;; (web collide): overlaps, raycasts, and the sliding push, all pure
+;; (gfx collide): overlaps, raycasts, and the sliding push, all pure
 ;; and checked against hand-computed distances.
-(import (rnrs) (web mat) (web mesh) (web collide))
+(import (rnrs) (gfx mat) (gfx mesh) (gfx collide))
 
 (define (near? a b)
   (and (fl<? (fl- a b) 0.00001) (fl<? (fl- b a) 0.00001)))

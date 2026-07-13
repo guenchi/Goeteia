@@ -3,8 +3,8 @@
 ;; i_tint, i_scale) advancing once per instance -- the whole forest
 ;; is a single drawElementsInstanced through the command buffer.
 ;; Needs WebGL 2.
-(import (rnrs) (web js) (web dom) (web gl) (web glsl) (web fx)
-        (web mat) (web mesh))
+(import (rnrs) (web js) (web dom) (gfx gl) (gfx glsl) (gfx fx)
+        (gfx mat) (gfx mesh))
 
 (fx-init! (get-element-by-id "c"))
 

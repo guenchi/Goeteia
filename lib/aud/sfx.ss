@@ -17,7 +17,7 @@
 ;; loudly until then.
 ;;
 ;; Copyright (c) 2026 guenchi. MIT license; see LICENSE.
-(library (web audio)
+(library (aud sfx)
   (export audio-init! audio-time
           beep! load-sound! play! loop-sound! stop-sound!)
   (import (rnrs) (web js))

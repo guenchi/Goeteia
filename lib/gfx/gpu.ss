@@ -1,4 +1,4 @@
-;; A WebGPU backend: the (web gl) architecture -- resources in a JS
+;; A WebGPU backend: the (gfx gl) architecture -- resources in a JS
 ;; slot table, ONE bridge call replaying a command region from the
 ;; staging memory each frame -- carried over to the other API.
 ;; What exists: attach (async: the adapter/device handshake calls
@@ -45,11 +45,11 @@
 ;;   still missing          -> textures + samplers, multiple bind
 ;;                             groups per pipeline
 ;;
-;; The command region is the same staging words (web gl) uses; a page
+;; The command region is the same staging words (gfx gl) uses; a page
 ;; drives one backend or the other, not both at once.
 ;;
 ;; Copyright (c) 2026 guenchi. MIT license; see LICENSE.
-(library (web gpu)
+(library (gfx gpu)
   (export gpu-attach! gpu-pipeline! gpu-pipeline2!
           gpu-buffer! gpu-index! gpu-uniforms! gpu-storage!
           gpu-texture! gpu-texture-data! gpu-sampler!
@@ -302,7 +302,7 @@
     (js-method $gpu "texData" slot base w h))
   (define (gpu-sampler! slot)
     (js-method $gpu "sampler" slot))
-  ;; the textured bind group, in the order (web wgsl) declares its
+  ;; the textured bind group, in the order (gfx wgsl) declares its
   ;; bindings: the uniform struct at 0 (pass -1 when the shader has
   ;; no scalar uniforms), then sampler, then texture view
   (define (gpu-texgroup! slot pslot ubslot sslot tslot)

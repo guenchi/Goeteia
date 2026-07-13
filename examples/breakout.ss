@@ -1,10 +1,10 @@
-;; Breakout over (web sprite): paddle, ball, bricks and score in one
+;; Breakout over (gfx sprite): paddle, ball, bricks and score in one
 ;; quad batch -- one buffer upload and one draw call per frame.  The
 ;; score text is typeset by (web typeset) with the atlas's own
 ;; measurer, so layout and rendering agree glyph for glyph.
 ;; Arrows or the mouse move the paddle; click restarts.
-(import (rnrs) (web js) (web dom) (web gl) (web fx) (web sprite)
-        (web typeset) (web audio))
+(import (rnrs) (web js) (web dom) (gfx gl) (gfx fx) (gfx sprite)
+        (web typeset) (aud sfx))
 
 (define W 800.0)
 (define H 600.0)

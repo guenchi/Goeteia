@@ -2,8 +2,8 @@
 ;; gltf-load-textures! (Blob -> createImageBitmap -> texture), the
 ;; primitive arrives with uvs at mesh-tex-vs's 32-byte layout, and
 ;; the same directional light shades the sampled color.
-(import (rnrs) (web js) (web dom) (web gl) (web glsl) (web fx)
-        (web mat) (web mesh) (web gltf))
+(import (rnrs) (web js) (web dom) (gfx gl) (gfx glsl) (gfx fx)
+        (gfx mat) (gfx mesh) (gfx gltf))
 
 (fx-init! (get-element-by-id "c"))
 

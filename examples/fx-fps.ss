@@ -1,12 +1,12 @@
 ;; First-person walking: click to capture the mouse (Esc releases),
 ;; WASD or arrows to move, SPACE to jump, look around freely.  The
-;; player is (web collide)'s packaged character -- gravity, landing
+;; player is (gfx collide)'s packaged character -- gravity, landing
 ;; and the slide all inside character-move! -- stepping at a fixed
 ;; 120Hz through fx-loop-fixed! so the physics ignores the frame
 ;; rate, and each step sweeps only the walls the broadphase grid
 ;; hands back.  Jump onto the low violet box.
-(import (rnrs) (web js) (web dom) (web gl) (web glsl) (web fx)
-        (web mat) (web mesh) (web collide))
+(import (rnrs) (web js) (web dom) (gfx gl) (gfx glsl) (gfx fx)
+        (gfx mat) (gfx mesh) (gfx collide))
 
 (fx-init! (get-element-by-id "c"))
 (fx-init-input!)

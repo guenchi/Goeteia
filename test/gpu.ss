@@ -1,9 +1,9 @@
 ;; expect: #t
-;; (web gpu) against a recording mock: the adapter/device handshake
+;; (gfx gpu) against a recording mock: the adapter/device handshake
 ;; resolves through synchronous thenables (real promises in a real
 ;; browser), resources land in the slot table, and one replay turns
 ;; the staged words into render-pass calls and a single submit.
-(import (rnrs) (web js) (web gpu))
+(import (rnrs) (web js) (gfx gpu))
 
 (js-eval "
 globalThis.__gpulog = [];
@@ -230,7 +230,7 @@ globalThis.__gpulog = [];
        (check 48 "submit:1")))
 
 ;; textures: rgba8 + one writeTexture out of staging, and the
-;; textured bind group in (web wgsl)'s binding order
+;; textured bind group in (gfx wgsl)'s binding order
 (gpu-texture! 12 64 64)
 (%mem-u8-set! 4096 200)
 (gpu-texture-data! 12 4096 64 64)

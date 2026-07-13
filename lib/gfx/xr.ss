@@ -22,7 +22,7 @@
 ;;       (cmd-flush!))
 ;;     (lambda () ...session ended...))
 ;;
-;; xr-eye-vp hands back projection x inverse(view) as a (web mat)
+;; xr-eye-vp hands back projection x inverse(view) as a (gfx mat)
 ;; m4, so everything downstream -- frustum culling included --
 ;; works untouched.  The GL context turns xrCompatible on entry;
 ;; the session's framebuffer lands in an fx slot once.
@@ -32,10 +32,10 @@
 ;; ship one scene with a desktop fallback loop.
 ;;
 ;; Copyright (c) 2026 guenchi. MIT license; see LICENSE.
-(library (web xr)
+(library (gfx xr)
   (export xr-supported? xr-start! xr-end!
           xr-framebuffer xr-eye-count xr-eye-viewport! xr-eye-vp)
-  (import (rnrs) (web js) (web gl) (web fx) (web mat))
+  (import (rnrs) (web js) (gfx gl) (gfx fx) (gfx mat))
 
   (define $xr-base 0)                   ; staging: eye data lands here
   (define $xr-fb -1)
@@ -145,7 +145,7 @@
           (fill (+ k 1))))
       m))
 
-  ;; projection x inverse(view) for eye i, as a (web mat) m4
+  ;; projection x inverse(view) for eye i, as a (gfx mat) m4
   (define (xr-eye-vp i)
     (let ((at (+ $xr-base (* i $xr-stride))))
       (m4-mul ($xr-m4 at) ($xr-m4 (+ at 64)))))

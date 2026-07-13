@@ -1,9 +1,9 @@
-;; A lit 3D scene, raw WebGL: (web mesh) generates the geometry
+;; A lit 3D scene, raw WebGL: (gfx mesh) generates the geometry
 ;; (positions, normals, u16 indices) in pure Scheme, mesh-lit-vs/fs
-;; is the ready-made directional-light program, (web mat) does the
+;; is the ready-made directional-light program, (gfx mat) does the
 ;; matrices.  Three meshes, one program, no Three.js.
-(import (rnrs) (web js) (web dom) (web gl) (web glsl) (web fx)
-        (web mat) (web mesh))
+(import (rnrs) (web js) (web dom) (gfx gl) (gfx glsl) (gfx fx)
+        (gfx mat) (gfx mesh))
 
 (fx-init! (get-element-by-id "c"))
 

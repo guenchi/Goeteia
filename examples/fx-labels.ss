@@ -1,6 +1,6 @@
 ;; 3D text labels: (web typeset) lays the text out (canvas-measurer
 ;; widths, CJK-aware wrapping), a hidden 2d canvas rasterizes each
-;; label once, (web sdf) turns the raster into a signed distance
+;; label once, (gfx sdf) turns the raster into a signed distance
 ;; field, and the GL side draws camera-facing quads -- the
 ;; billboard's corners are u_center +/- the camera's right and up,
 ;; so the quad turns with the view while its anchor stays in the
@@ -8,8 +8,8 @@
 ;; the glyph edges re-sharpen at ANY distance: lean the camera in
 ;; and the text stays crisp, because the texture stores geometry,
 ;; not pixels.
-(import (rnrs) (web js) (web dom) (web gl) (web glsl) (web fx)
-        (web mat) (web mesh) (web sdf) (web typeset)
+(import (rnrs) (web js) (web dom) (gfx gl) (gfx glsl) (gfx fx)
+        (gfx mat) (gfx mesh) (gfx sdf) (web typeset)
         (web typeset canvas))
 
 (fx-init! (get-element-by-id "c"))

@@ -4,8 +4,8 @@
 ;; weighted bones per vertex.  Keys 1 / 2 / 3 are anim-goto! into
 ;; Survey / Walk / Run; the machine crossfades over 0.3s while both
 ;; clips' clocks keep running.
-(import (rnrs) (web js) (web dom) (web gl) (web glsl) (web fx)
-        (web mat) (web mesh) (web gltf))
+(import (rnrs) (web js) (web dom) (gfx gl) (gfx glsl) (gfx fx)
+        (gfx mat) (gfx mesh) (gfx gltf))
 
 (fx-init! (get-element-by-id "c"))
 (fx-init-input!)

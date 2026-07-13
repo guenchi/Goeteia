@@ -1,9 +1,9 @@
 ;; expect: #t
-;; (web wgsl): the same shader forms (web glsl) renders, respelled
+;; (gfx wgsl): the same shader forms (gfx glsl) renders, respelled
 ;; as one WGSL module -- merged uniform struct, VOut varyings,
 ;; entry-point rewrites -- plus the pipeline layout from the same
 ;; attribute declarations.  Pure strings, verified exactly.
-(import (rnrs) (web wgsl))
+(import (rnrs) (gfx wgsl))
 
 (define (t got want)
   (or (string=? got want)

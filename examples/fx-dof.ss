@@ -1,11 +1,11 @@
 ;; Depth of field: the scene renders lit into one target and linear
-;; view depth into another (the fx-ssao pattern), then (web post)'s
+;; view depth into another (the fx-ssao pattern), then (gfx post)'s
 ;; dof mixes each pixel toward a half-resolution blur of the scene
 ;; by its distance from the focal plane.  The focus breathes between
 ;; the near and far rows of spheres, so you watch the plane sweep.
 ;; Needs WebGL 2.
-(import (rnrs) (web js) (web dom) (web gl) (web glsl) (web fx)
-        (web mat) (web mesh) (web post))
+(import (rnrs) (web js) (web dom) (gfx gl) (gfx glsl) (gfx fx)
+        (gfx mat) (gfx mesh) (gfx post))
 
 (fx-init! (get-element-by-id "c"))
 

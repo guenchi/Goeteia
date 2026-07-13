@@ -1,10 +1,10 @@
 ;; Picking: the cursor casts a ray.  m4-inverse turns the
 ;; view-projection inside out, m4-unproject pushes the mouse through
-;; the near and far planes, and (web collide)'s ray-aabb answers
+;; the near and far planes, and (gfx collide)'s ray-aabb answers
 ;; which box the ray meets first.  Hover lifts a box's color; a
 ;; click keeps it lit.
-(import (rnrs) (web js) (web dom) (web gl) (web glsl) (web fx)
-        (web mat) (web mesh) (web collide))
+(import (rnrs) (web js) (web dom) (gfx gl) (gfx glsl) (gfx fx)
+        (gfx mat) (gfx mesh) (gfx collide))
 
 (fx-init! (get-element-by-id "c"))
 (fx-init-input!)

@@ -5,8 +5,8 @@
 ;; falloff so distant geometry does not -- a box blur softens the
 ;; result, and the composite multiplies it under the lit scene.
 ;; Corners, creases and contact points darken.  Needs WebGL 2.
-(import (rnrs) (web js) (web dom) (web gl) (web glsl) (web fx)
-        (web mat) (web mesh))
+(import (rnrs) (web js) (web dom) (gfx gl) (gfx glsl) (gfx fx)
+        (gfx mat) (gfx mesh))
 
 (fx-init! (get-element-by-id "c"))
 

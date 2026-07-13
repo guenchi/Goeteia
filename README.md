@@ -54,7 +54,7 @@ convention, and the milestone-by-milestone build log.
 
 ## Web
 
-A small UI stack over the JS bridge, in `lib/web/`:
+The UI, text and network stack over the JS bridge, in `lib/web/`:
 
 - `(web js)` / `(web dom)` — JavaScript interop and DOM sugar;
   Scheme closures convert to callable JS functions and back
@@ -80,51 +80,12 @@ A small UI stack over the JS bridge, in `lib/web/`:
   list (`(selector (prop value ...) ...)`) to a stylesheet, with
   variable-arity unit forms (`(em 1)` → `"1em"`, `(em 0 92)` →
   `"0.92em"`) that stay exact — no flonums, since the printer isn't
-  bit-exact.  The `(web css)` of shaders is `(web glsl)`; this is the
+  bit-exact.  The `(web css)` of shaders is `(gfx glsl)`; this is the
   `(web css)` of pages
 - `(web react)` — embed Goeteia components into an existing React
   app: `react-component` registers a factory the React side wraps
   in one `useEffect` (`rt/react.mjs`); props flow in as JS objects,
   the dispose thunk flows back as a JS function
-- `(web gl)` — raw WebGL through a command buffer: Scheme encodes a
-  frame of GL commands as words in the shared linear memory and one
-  bridge call replays them; vertex data uploads zero-copy from the
-  same memory (`examples/gl-particles.html`: 10,000 particles,
-  one call per frame); textures upload from a canvas or image,
-  `gl-program!` binds attribute locations before linking, and indexed
-  meshes draw through an element buffer with the depth test on.
-  The context is WebGL 2 (with fallback): offscreen render targets
-  (`examples/fx-post.html`: the scene through a ripple + vignette;
-  `examples/fx-shadow.html`: PCSS soft shadows — blocker search,
-  penumbra width, contact hardening — through a depth-only target; `examples/fx-bloom.html`: a five-pass HDR bloom chain
-  through a half-float target, tonemapped down),
-  instanced draws (`examples/fx-forest.html`: 8,000 trees, one call;
-  `examples/fx-particles.html`: 4,000 sparks integrating in staging
-  memory), cube maps (`examples/fx-skybox.html`: a procedural sky
-  and a mirror ball reflecting it), and mat4-array uniforms for
-  skinning
-- `(web glsl)` — GLSL as s-expressions: `glsl->string` is a pure
-  function from a shader form list to GLSL source (the `(web css)` of
-  shaders), so shaders compose with `append`/`map` and helper
-  functions and verify headlessly; infix `+ - * /`, `(fl 0 50)` float
-  literals (no Scheme flonums, no printer noise), `attribute`/
-  `uniform`/`varying`, `for` loops (kernel sweeps: PCF, blurs), and
-  `define`d functions.  The forms are dialect-neutral: the same
-  shader renders as ESSL 1.00 or, via `glsl300-vs/fs->string`
-  (`fx-program3!`), as `#version 300 es` — where `uniform-block`
-  becomes a std140 block (`examples/fx-ubo.html`: one Env block,
-  three shaders), `(out loc T name)` forms declare multiple pinned
-  fragment outputs (MRT), and transform feedback captures the
-  varyings (`examples/fx-gpu-particles.html`: 100,000 particles
-  whose physics is a vertex shader)
-- `(web wgsl)` — the third dialect, for WebGPU: `wgsl->string`
-  renders the *same* shader forms `(web glsl)` renders into one WGSL
-  module — the two stages' uniforms merge into a struct at
-  `@group(0) @binding(0)`, varyings become the `VOut` struct, and
-  `gl_Position` / `gl_FragColor` / a `sampler2D` (split into a
-  sampler + texture pair) respell themselves — while `wgsl-layout`
-  derives the pipeline's vertex formats from the same attribute
-  declarations.  One shader source, three APIs
 - `(web typeset)` — DOM-free text layout, after
   [pretext](https://www.pretext.cool): `prepare` measures each
   distinct code point once, `layout` is pure arithmetic from the
@@ -137,209 +98,14 @@ A small UI stack over the JS bridge, in `lib/web/`:
   canvas)` is the
   measureText-backed measurer for browsers, and the engine itself
   verifies headlessly (`examples/fx-labels.html`: labels typeset
-  here, rasterized once, distance-fielded by `(web sdf)` and drawn
+  here, rasterized once, distance-fielded by `(gfx sdf)` and drawn
   in 3D as camera-facing quads that stay crisp at any range)
-- `(web fx)` — the effects harness over `(web gl)`: a shader authored
-  as `(web glsl)` forms already declares its interface, so
-  `fx-program!` reads the attribute/uniform declarations back out of
-  the same forms and does the wiring — locations, interleaved
-  offsets, typed uniform dispatch, slot numbers, staging-memory
-  allocation.  Attribute setup rides vertex array objects without
-  being asked: the first `fx-use!` of a (program, buffer) pair
-  records every pointer into a VAO, each later one is a single-word
-  rebind.  Scalar and vector uniforms remember their last value per
-  program and skip the re-send — a steady `u_light` costs one send,
-  ever (matrices change every frame and stay uncached; don't mix
-  raw `cmd-uniform*!` writes with `fx-uniform!` on the same name).  `fx-loop!` frames commands around a t/dt callback
-  (`fx-loop-fixed!` splits it: physics at its own fixed cadence,
-  render once per frame with a blend alpha);
-  `fx-fullscreen!` makes a fragment-shader effect ~15 lines
-  (`examples/fx-plasma.html`); `fx-target-mrt!` is a G-buffer —
-  n half-float attachments one shader fills in one pass
-  (`examples/fx-deferred.html`: deferred shading, 24 point lights
-  for one fullscreen quad).  `fx-ticks!` (the timing pump) and
-  `fx-init-input!` (polled keys/pointer) have no GL dependency, so a
-  Three.js scene uses them directly; `pointer-lock!` adds captured
-  relative mouse for first-person cameras
-  (`examples/fx-fps.html`: click to capture, WASD to walk, SPACE to
-  jump — the packaged character at a fixed 120Hz over the
-  broadphase grid; `examples/arena.html` makes a game of it:
-  waves of drifting orbs, `ray-sphere` shots, a sprite HUD, audio
-  chirps — and shadows for free: the static world's depth map
-  renders once, ever, and every frame just samples it)
-- `(web sprite)` — 2D games over `(web fx)` and `(web typeset)`: a
-  glyph atlas rasterizes each distinct code point once and its
-  measurer doubles as typeset's `measure`, so layout and rendering
-  agree glyph for glyph; sprites, solid rects and text ride one quad
-  batch — one buffer upload, one draw call per frame
-  (`examples/breakout.html`: bricks, ball, paddle and the score text
-  in a single draw); image sprite sheets load premultiplied and draw
-  source rectangles through their own batch
-- `(web sdf)` — signed distance fields from any canvas alpha:
-  `sdf-from-canvas!` grabs the raster into staging memory in one
-  call and runs a two-pass chamfer transform in wasm; sample the
-  result with a smoothstep around 0.5 and text re-sharpens at any
-  magnification (widen it for halos, shift it for outlines — the
-  field carries all of it)
-- `(web stats)` — the performance HUD: frame time, FPS, draw calls
-  and command bytes in the corner, with a 60-frame frame-time strip.
-  The command buffer makes the numbers free — draws are counted as
-  they encode (`cmd-draws`) and the frame's size is the write cursor
-  (`cmd-pos`), so nothing is instrumented; `stats-draw!` goes last
-  in the frame and never counts itself (fx-deferred wears it)
 - `(web scroll)` — a virtual scroller for variable-height text, the
   use case `(web typeset)` was born for: heights are typeset before
   anything mounts (no reflow-forcing measurement), only the visible
   window is in the DOM, appends stick to the bottom, and one
   offsetHeight read per newly mounted item corrects the estimates
   (`examples/chat.html`: an endless streaming feed)
-- `(web scene)` — reactive raw-GL scenes: the `sgl` template is to
-  the GL stack what `sx` is to the DOM — geometry from `(web mesh)`
-  builds and uploads once, each unquoted attribute becomes a
-  signal-driven hole, and a frame is pure arithmetic over current
-  fields.  Groups nest — children inherit the parent transform, so one
-  signal swings a whole assembly.  Meshes with the same literal
-  geometry share one upload and draw as ONE instanced call: each
-  visible instance's model matrix composes in closed form straight
-  into the instance buffer (m4s-trs!/m4s-mul! — SIMD, no boxed
-  matrix anywhere) with its color beside it, and culled instances
-  simply don't join the buffer.  `(lod (@ (switch d ...)) mesh ...)`
-  containers hold detail levels of one thing — the eye's distance
-  picks which child draws, and the mesh generators' own segment
-  parameters make the levels free.  Meshes pick materials
-  declaratively — the lit default,
-  `(texture slot)`, or `(metallic)`/`(roughness)` PBR against the
-  scene's `(probe ...)` — and every frame culls each mesh's bounding
-  sphere against the camera frustum before a single command is
-  encoded (`examples/fx-scene.html`: all three materials and a
-  culled straggler, declaratively)
-- `(web post)` — the post chains, packaged: `make-bloom` /
-  `bloom-run!` / `bloom-composite!` (luminance threshold, ping-ponged
-  separable gaussian, tonemapped add — `'clamp` or `'reinhard`),
-  `make-blur`/`blur-run!` standalone, `make-grade`/`grade-run!`
-  (exposure + `'aces`/`'reinhard` tonemap + gamma: point an HDR
-  target at it), `make-fxaa`/`fxaa-run!` (one-pass anti-aliasing,
-  last in the chain), `make-dof`/`dof-run!` (depth of field: blur
-  by distance from the focal plane, over an fx-ssao-style linear
-  depth target — `examples/fx-dof.html`), and `post-quad!`/`post-pass!` as the floor for
-  custom chains (`examples/fx-bloom.html` is three calls now;
-  fx-deferred ends HDR → ACES → FXAA)
-- `(web mat)` — 3D math for raw-GL scenes: vec3 and column-major mat4
-  over flonum vectors (`m4-mul` runs 3.5× faster through the wasm
-  SIMD primitives once `fx-init!` hands it 128 bytes of scratch —
-  each result column is one f32x4 scale and three axpys).  The
-  `m4s` family refunds the copy tax entirely: a matrix as a staging
-  ADDRESS, `m4s-mul!` chains in pure SIMD with no boxed reads in or
-  vector out, `m4s-trs!` composes a whole T·Ry·Rx·Rz·S in closed
-  form, and `cmd-uniform-matrix4s!` uploads by carrying the address
-  in three words (the replayer reads the floats in place).  With `m4-perspective` / `m4-ortho` /
-  `m4-look-at` / rotations / `m4-inverse` and its own range-reduced
-  trig, so it is pure Scheme all
-  the way down and verifies headlessly; `m4-frustum-planes` +
-  `sphere-in-frustum?` (with `mesh-bounds`) cull what the camera
-  cannot see, and `fx-uniform!` feeds a mat4
-  straight through the command buffer
-  (`examples/fx-cube.html`: an indexed, depth-tested cube, no
-  Three.js; `examples/fx-pick.html`: `m4-unproject` casts the cursor
-  as a ray and `ray-aabb` answers what it hit)
-- `(web mesh)` — parametric geometry in pure Scheme: plane, box,
-  sphere, cylinder, torus — and `mesh-heightmap`, terrain from any
-  pure height function with its own central-difference normals
-  (`examples/fx-terrain.html`: altitude-ramped hills under
-  exponential fog) — as interleaved positions + normals with u16
-  indices, generated headlessly-verifiably and laid into the staging
-  memory by `mesh-write!`; `mesh-lit-vs`/`-fs` ship the standard
-  directional-light program as composable glsl forms
-  (`examples/fx-mesh.html`: a lit scene — ground, torus, sphere —
-  raw WebGL).  Every generator also carries parametric texture
-  coordinates: `mesh-write-uv!` interleaves them and
-  `mesh-tex-vs`/`-fs` sample under the same light
-  (`examples/fx-tex.html`: a checkerboard painted on a 2d canvas,
-  no asset files).  `mesh-tangents` derives a tangent frame from the
-  uv gradients and `mesh-normal-vs`/`-fs` light through a
-  tangent-space normal map (`examples/fx-normalmap.html`: the bumps
-  are procedural bytes fed to `gl-texture-data!`, and an illusion).
-  `mesh-pbr-vs`/`-fs` are Cook-Torrance GGX with Karis' split-sum
-  ambient — a prefiltered environment plus the BRDF lookup table
-  from `(web ibl)` (`examples/fx-pbr.html`: the metallic × roughness
-  calibration grid)
-- `(web ibl)` — the light-probe bake, on the GPU: `ibl-prefilter!`
-  renders a fresh cube map whose mip chain is the source environment
-  convolved with GGX at rising roughness (one pass per face × level,
-  through `gl-cube-face-fb!`), and `ibl-brdf-lut!` bakes the
-  split-sum integration into a 2D scale/bias table — both with
-  Fibonacci-spiral importance sampling, so the shaders stay ESSL 1.00
-- `(web gpu)` — a WebGPU backend: the same command-buffer
-  architecture as `(web gl)` — resources in a slot table, one bridge
-  call per frame replaying staged words, here into a render pass and
-  one `queue.submit` — with pipelines from WGSL source (depth test
-  on, over a depth buffer that comes up with the canvas), vertex /
-  u16-index / uniform buffers, and bind groups: the shader's whole
-  uniform struct is one buffer written by one upload per frame,
-  because WebGPU has no `uniform1f`
-  (`examples/gpu-particles.html`: the fountain, no WebGL;
-  `examples/gpu-torus.html`: lit indexed 3D through a
-  `@group(0) @binding(0)` matrix struct).  The header documents the mapping.  `(web wgsl)`
-  closes the shader gap: `wgsl->string` renders the SAME s-expression
-  forms `(web glsl)` renders — merged uniform struct, VOut varyings,
-  entry-point rewrites — and `wgsl-layout` derives the pipeline's
-  vertex formats from the same attribute declarations, so one shader
-  source now speaks ESSL 1.00, ESSL 3.00 and WGSL — `sampler2D`
-  uniforms included: they split into sampler + texture binding
-  pairs (`gpu-texture!`/`gpu-sampler!`/`gpu-texgroup!` on the other
-  side; `examples/gpu-tex.html`: a checkerboard box, shader from
-  forms, texture from staging bytes).  `gpu-bundle!` freezes
-  encoded draws into a render bundle — recorded once, the browser
-  replays a whole static scene with no decode at all, so a frame is
-  clear + uniforms + `gpu-execute!` (gpu-torus does this).  Compute
-  passes close the loop: `gpu-dispatch!` runs a `@compute` shader
-  over a storage buffer that doubles as the render pass's instance
-  stream
-  (`examples/gpu-compute.html`: 100,000 particles whose physics
-  never touches the CPU — 16 bytes of uniforms per frame)
-- `(web xr)` — WebXR over the same command buffer: `xr-start!`
-  swaps the pump for the session's rAF, each eye's projection and
-  view arrive from the `XRPose` straight into staging memory
-  (`xr-eye-vp` hands them back as `(web mat)` m4s), and the frame
-  draws once per eye into the session's framebuffer — the command
-  buffer and every shader stay untouched
-  (`examples/xr-room.html`: one scene, a desktop orbit and an
-  Enter&nbsp;VR button; the XR path verifies against a mock session
-  headlessly)
-- `(web collide)` — collision tests and raycasts for 3D games:
-  sphere/AABB/capsule overlaps (capsule–capsule rides the classic
-  segment–segment distance), ray against sphere, box, plane,
-  triangle and whole meshes (Möller–Trumbore), and
-  `sphere-aabb-push` — the shortest exit vector, so wall sliding is
-  one add.  `sweep-sphere-aabb` answers where along a motion the
-  first contact lands (Minkowski-inflated slabs, so fast movers
-  cannot tunnel) with the contact normal, and `move-and-slide`
-  packages the character-controller loop over it: advance to
-  contact, shed the into-the-wall component, continue — walls
-  slide, corners stop.  `make-character`/`character-move!` finish
-  the job — gravity, landing and `character-jump!` over the slide —
-  and `make-aabb-grid`/`grid-near` are the broadphase: static boxes
-  hash into xz cells so each step sweeps a handful, not the level.
-  Pure arithmetic, verifies headlessly
-- `(web audio)` — game audio over WebAudio: `beep!` is an oscillator
-  with a click-free fade (no asset files needed), `load-sound!` runs
-  the fetch/decode chain, `play!`/`loop-sound!` wire
-  buffer→gain→destination; breakout's blips are the dogfood
-- `(web gltf)` — real 3D assets: GLB files parse with the binary
-  chunk in staging memory (the wasm f32 loads are the float decoder).
-  Geometry, node transforms, base colors, metallic/roughness
-  factors, embedded textures
-  (`gltf-load-textures!`), skins and animations all load: 
-  `gltf-animate!` samples the channels each frame (looping, nlerp
-  rotations), `gltf-animate-blend!` crossfades two clips,
-  `anim-machine` packages the pattern every character repeats —
-  named states over clips, `anim-goto!` transitions that fade over
-  a per-transition time while both clocks keep running — and
-  `gltf-skin-vs` blends four weighted joints per
-  vertex from one mat4-array upload
-  (`examples/fx-gltf.html`: the lit Box; `fx-gltf-tex.html`: a
-  textured asset; `fx-fox.html`: the rigged Fox — Survey / Walk /
-  Run crossfade on keys 1-3)
 - `(web sexpr)` — the s-expression wire codec, byte-for-byte
   compatible with Igropyr's `(igropyr sexpr)` extended mode:
   `sexpr->string` / `string->sexpr` over a depth- and size-limited
@@ -367,6 +133,252 @@ A small UI stack over the JS bridge, in `lib/web/`:
 `examples/counter.html` is a page scripted entirely in Goeteia;
 `examples/react-embed.html` is a React app with Goeteia widgets
 inside.
+
+## Graphics & Games
+
+The rendering and game stack — raw WebGL/WebGPU through a command
+buffer, shaders as s-expressions, and everything over them — in
+`lib/gfx/`:
+
+- `(gfx gl)` — raw WebGL through a command buffer: Scheme encodes a
+  frame of GL commands as words in the shared linear memory and one
+  bridge call replays them; vertex data uploads zero-copy from the
+  same memory (`examples/gl-particles.html`: 10,000 particles,
+  one call per frame); textures upload from a canvas or image,
+  `gl-program!` binds attribute locations before linking, and indexed
+  meshes draw through an element buffer with the depth test on.
+  The context is WebGL 2 (with fallback): offscreen render targets
+  (`examples/fx-post.html`: the scene through a ripple + vignette;
+  `examples/fx-shadow.html`: PCSS soft shadows — blocker search,
+  penumbra width, contact hardening — through a depth-only target; `examples/fx-bloom.html`: a five-pass HDR bloom chain
+  through a half-float target, tonemapped down),
+  instanced draws (`examples/fx-forest.html`: 8,000 trees, one call;
+  `examples/fx-particles.html`: 4,000 sparks integrating in staging
+  memory), cube maps (`examples/fx-skybox.html`: a procedural sky
+  and a mirror ball reflecting it), and mat4-array uniforms for
+  skinning
+- `(gfx glsl)` — GLSL as s-expressions: `glsl->string` is a pure
+  function from a shader form list to GLSL source (the `(web css)` of
+  shaders), so shaders compose with `append`/`map` and helper
+  functions and verify headlessly; infix `+ - * /`, `(fl 0 50)` float
+  literals (no Scheme flonums, no printer noise), `attribute`/
+  `uniform`/`varying`, `for` loops (kernel sweeps: PCF, blurs), and
+  `define`d functions.  The forms are dialect-neutral: the same
+  shader renders as ESSL 1.00 or, via `glsl300-vs/fs->string`
+  (`fx-program3!`), as `#version 300 es` — where `uniform-block`
+  becomes a std140 block (`examples/fx-ubo.html`: one Env block,
+  three shaders), `(out loc T name)` forms declare multiple pinned
+  fragment outputs (MRT), and transform feedback captures the
+  varyings (`examples/fx-gpu-particles.html`: 100,000 particles
+  whose physics is a vertex shader)
+- `(gfx wgsl)` — the third dialect, for WebGPU: `wgsl->string`
+  renders the *same* shader forms `(gfx glsl)` renders into one WGSL
+  module — the two stages' uniforms merge into a struct at
+  `@group(0) @binding(0)`, varyings become the `VOut` struct, and
+  `gl_Position` / `gl_FragColor` / a `sampler2D` (split into a
+  sampler + texture pair) respell themselves — while `wgsl-layout`
+  derives the pipeline's vertex formats from the same attribute
+  declarations.  One shader source, three APIs
+- `(gfx fx)` — the effects harness over `(gfx gl)`: a shader authored
+  as `(gfx glsl)` forms already declares its interface, so
+  `fx-program!` reads the attribute/uniform declarations back out of
+  the same forms and does the wiring — locations, interleaved
+  offsets, typed uniform dispatch, slot numbers, staging-memory
+  allocation.  Attribute setup rides vertex array objects without
+  being asked: the first `fx-use!` of a (program, buffer) pair
+  records every pointer into a VAO, each later one is a single-word
+  rebind.  Scalar and vector uniforms remember their last value per
+  program and skip the re-send — a steady `u_light` costs one send,
+  ever (matrices change every frame and stay uncached; don't mix
+  raw `cmd-uniform*!` writes with `fx-uniform!` on the same name).  `fx-loop!` frames commands around a t/dt callback
+  (`fx-loop-fixed!` splits it: physics at its own fixed cadence,
+  render once per frame with a blend alpha);
+  `fx-fullscreen!` makes a fragment-shader effect ~15 lines
+  (`examples/fx-plasma.html`); `fx-target-mrt!` is a G-buffer —
+  n half-float attachments one shader fills in one pass
+  (`examples/fx-deferred.html`: deferred shading, 24 point lights
+  for one fullscreen quad).  `fx-ticks!` (the timing pump) and
+  `fx-init-input!` (polled keys/pointer) have no GL dependency, so a
+  Three.js scene uses them directly; `pointer-lock!` adds captured
+  relative mouse for first-person cameras
+  (`examples/fx-fps.html`: click to capture, WASD to walk, SPACE to
+  jump — the packaged character at a fixed 120Hz over the
+  broadphase grid; `examples/arena.html` makes a game of it:
+  waves of drifting orbs, `ray-sphere` shots, a sprite HUD, audio
+  chirps — and shadows for free: the static world's depth map
+  renders once, ever, and every frame just samples it)
+- `(gfx sprite)` — 2D games over `(gfx fx)` and `(web typeset)`: a
+  glyph atlas rasterizes each distinct code point once and its
+  measurer doubles as typeset's `measure`, so layout and rendering
+  agree glyph for glyph; sprites, solid rects and text ride one quad
+  batch — one buffer upload, one draw call per frame
+  (`examples/breakout.html`: bricks, ball, paddle and the score text
+  in a single draw); image sprite sheets load premultiplied and draw
+  source rectangles through their own batch
+- `(gfx sdf)` — signed distance fields from any canvas alpha:
+  `sdf-from-canvas!` grabs the raster into staging memory in one
+  call and runs a two-pass chamfer transform in wasm; sample the
+  result with a smoothstep around 0.5 and text re-sharpens at any
+  magnification (widen it for halos, shift it for outlines — the
+  field carries all of it)
+- `(gfx stats)` — the performance HUD: frame time, FPS, draw calls
+  and command bytes in the corner, with a 60-frame frame-time strip.
+  The command buffer makes the numbers free — draws are counted as
+  they encode (`cmd-draws`) and the frame's size is the write cursor
+  (`cmd-pos`), so nothing is instrumented; `stats-draw!` goes last
+  in the frame and never counts itself (fx-deferred wears it)
+- `(gfx scene)` — reactive raw-GL scenes: the `sgl` template is to
+  the GL stack what `sx` is to the DOM — geometry from `(gfx mesh)`
+  builds and uploads once, each unquoted attribute becomes a
+  signal-driven hole, and a frame is pure arithmetic over current
+  fields.  Groups nest — children inherit the parent transform, so one
+  signal swings a whole assembly.  Meshes with the same literal
+  geometry share one upload and draw as ONE instanced call: each
+  visible instance's model matrix composes in closed form straight
+  into the instance buffer (m4s-trs!/m4s-mul! — SIMD, no boxed
+  matrix anywhere) with its color beside it, and culled instances
+  simply don't join the buffer.  `(lod (@ (switch d ...)) mesh ...)`
+  containers hold detail levels of one thing — the eye's distance
+  picks which child draws, and the mesh generators' own segment
+  parameters make the levels free.  Meshes pick materials
+  declaratively — the lit default,
+  `(texture slot)`, or `(metallic)`/`(roughness)` PBR against the
+  scene's `(probe ...)` — and every frame culls each mesh's bounding
+  sphere against the camera frustum before a single command is
+  encoded (`examples/fx-scene.html`: all three materials and a
+  culled straggler, declaratively)
+- `(gfx post)` — the post chains, packaged: `make-bloom` /
+  `bloom-run!` / `bloom-composite!` (luminance threshold, ping-ponged
+  separable gaussian, tonemapped add — `'clamp` or `'reinhard`),
+  `make-blur`/`blur-run!` standalone, `make-grade`/`grade-run!`
+  (exposure + `'aces`/`'reinhard` tonemap + gamma: point an HDR
+  target at it), `make-fxaa`/`fxaa-run!` (one-pass anti-aliasing,
+  last in the chain), `make-dof`/`dof-run!` (depth of field: blur
+  by distance from the focal plane, over an fx-ssao-style linear
+  depth target — `examples/fx-dof.html`), and `post-quad!`/`post-pass!` as the floor for
+  custom chains (`examples/fx-bloom.html` is three calls now;
+  fx-deferred ends HDR → ACES → FXAA)
+- `(gfx mat)` — 3D math for raw-GL scenes: vec3 and column-major mat4
+  over flonum vectors (`m4-mul` runs 3.5× faster through the wasm
+  SIMD primitives once `fx-init!` hands it 128 bytes of scratch —
+  each result column is one f32x4 scale and three axpys).  The
+  `m4s` family refunds the copy tax entirely: a matrix as a staging
+  ADDRESS, `m4s-mul!` chains in pure SIMD with no boxed reads in or
+  vector out, `m4s-trs!` composes a whole T·Ry·Rx·Rz·S in closed
+  form, and `cmd-uniform-matrix4s!` uploads by carrying the address
+  in three words (the replayer reads the floats in place).  With `m4-perspective` / `m4-ortho` /
+  `m4-look-at` / rotations / `m4-inverse` and its own range-reduced
+  trig, so it is pure Scheme all
+  the way down and verifies headlessly; `m4-frustum-planes` +
+  `sphere-in-frustum?` (with `mesh-bounds`) cull what the camera
+  cannot see, and `fx-uniform!` feeds a mat4
+  straight through the command buffer
+  (`examples/fx-cube.html`: an indexed, depth-tested cube, no
+  Three.js; `examples/fx-pick.html`: `m4-unproject` casts the cursor
+  as a ray and `ray-aabb` answers what it hit)
+- `(gfx mesh)` — parametric geometry in pure Scheme: plane, box,
+  sphere, cylinder, torus — and `mesh-heightmap`, terrain from any
+  pure height function with its own central-difference normals
+  (`examples/fx-terrain.html`: altitude-ramped hills under
+  exponential fog) — as interleaved positions + normals with u16
+  indices, generated headlessly-verifiably and laid into the staging
+  memory by `mesh-write!`; `mesh-lit-vs`/`-fs` ship the standard
+  directional-light program as composable glsl forms
+  (`examples/fx-mesh.html`: a lit scene — ground, torus, sphere —
+  raw WebGL).  Every generator also carries parametric texture
+  coordinates: `mesh-write-uv!` interleaves them and
+  `mesh-tex-vs`/`-fs` sample under the same light
+  (`examples/fx-tex.html`: a checkerboard painted on a 2d canvas,
+  no asset files).  `mesh-tangents` derives a tangent frame from the
+  uv gradients and `mesh-normal-vs`/`-fs` light through a
+  tangent-space normal map (`examples/fx-normalmap.html`: the bumps
+  are procedural bytes fed to `gl-texture-data!`, and an illusion).
+  `mesh-pbr-vs`/`-fs` are Cook-Torrance GGX with Karis' split-sum
+  ambient — a prefiltered environment plus the BRDF lookup table
+  from `(gfx ibl)` (`examples/fx-pbr.html`: the metallic × roughness
+  calibration grid)
+- `(gfx ibl)` — the light-probe bake, on the GPU: `ibl-prefilter!`
+  renders a fresh cube map whose mip chain is the source environment
+  convolved with GGX at rising roughness (one pass per face × level,
+  through `gl-cube-face-fb!`), and `ibl-brdf-lut!` bakes the
+  split-sum integration into a 2D scale/bias table — both with
+  Fibonacci-spiral importance sampling, so the shaders stay ESSL 1.00
+- `(gfx gpu)` — a WebGPU backend: the same command-buffer
+  architecture as `(gfx gl)` — resources in a slot table, one bridge
+  call per frame replaying staged words, here into a render pass and
+  one `queue.submit` — with pipelines from WGSL source (depth test
+  on, over a depth buffer that comes up with the canvas), vertex /
+  u16-index / uniform buffers, and bind groups: the shader's whole
+  uniform struct is one buffer written by one upload per frame,
+  because WebGPU has no `uniform1f`
+  (`examples/gpu-particles.html`: the fountain, no WebGL;
+  `examples/gpu-torus.html`: lit indexed 3D through a
+  `@group(0) @binding(0)` matrix struct).  The header documents the mapping.  `(gfx wgsl)`
+  closes the shader gap: `wgsl->string` renders the SAME s-expression
+  forms `(gfx glsl)` renders — merged uniform struct, VOut varyings,
+  entry-point rewrites — and `wgsl-layout` derives the pipeline's
+  vertex formats from the same attribute declarations, so one shader
+  source now speaks ESSL 1.00, ESSL 3.00 and WGSL — `sampler2D`
+  uniforms included: they split into sampler + texture binding
+  pairs (`gpu-texture!`/`gpu-sampler!`/`gpu-texgroup!` on the other
+  side; `examples/gpu-tex.html`: a checkerboard box, shader from
+  forms, texture from staging bytes).  `gpu-bundle!` freezes
+  encoded draws into a render bundle — recorded once, the browser
+  replays a whole static scene with no decode at all, so a frame is
+  clear + uniforms + `gpu-execute!` (gpu-torus does this).  Compute
+  passes close the loop: `gpu-dispatch!` runs a `@compute` shader
+  over a storage buffer that doubles as the render pass's instance
+  stream
+  (`examples/gpu-compute.html`: 100,000 particles whose physics
+  never touches the CPU — 16 bytes of uniforms per frame)
+- `(gfx xr)` — WebXR over the same command buffer: `xr-start!`
+  swaps the pump for the session's rAF, each eye's projection and
+  view arrive from the `XRPose` straight into staging memory
+  (`xr-eye-vp` hands them back as `(gfx mat)` m4s), and the frame
+  draws once per eye into the session's framebuffer — the command
+  buffer and every shader stay untouched
+  (`examples/xr-room.html`: one scene, a desktop orbit and an
+  Enter&nbsp;VR button; the XR path verifies against a mock session
+  headlessly)
+- `(gfx collide)` — collision tests and raycasts for 3D games:
+  sphere/AABB/capsule overlaps (capsule–capsule rides the classic
+  segment–segment distance), ray against sphere, box, plane,
+  triangle and whole meshes (Möller–Trumbore), and
+  `sphere-aabb-push` — the shortest exit vector, so wall sliding is
+  one add.  `sweep-sphere-aabb` answers where along a motion the
+  first contact lands (Minkowski-inflated slabs, so fast movers
+  cannot tunnel) with the contact normal, and `move-and-slide`
+  packages the character-controller loop over it: advance to
+  contact, shed the into-the-wall component, continue — walls
+  slide, corners stop.  `make-character`/`character-move!` finish
+  the job — gravity, landing and `character-jump!` over the slide —
+  and `make-aabb-grid`/`grid-near` are the broadphase: static boxes
+  hash into xz cells so each step sweeps a handful, not the level.
+  Pure arithmetic, verifies headlessly
+- `(gfx gltf)` — real 3D assets: GLB files parse with the binary
+  chunk in staging memory (the wasm f32 loads are the float decoder).
+  Geometry, node transforms, base colors, metallic/roughness
+  factors, embedded textures
+  (`gltf-load-textures!`), skins and animations all load: 
+  `gltf-animate!` samples the channels each frame (looping, nlerp
+  rotations), `gltf-animate-blend!` crossfades two clips,
+  `anim-machine` packages the pattern every character repeats —
+  named states over clips, `anim-goto!` transitions that fade over
+  a per-transition time while both clocks keep running — and
+  `gltf-skin-vs` blends four weighted joints per
+  vertex from one mat4-array upload
+  (`examples/fx-gltf.html`: the lit Box; `fx-gltf-tex.html`: a
+  textured asset; `fx-fox.html`: the rigged Fox — Survey / Walk /
+  Run crossfade on keys 1-3)
+
+## Audio
+
+In `lib/aud/`:
+
+- `(aud sfx)` — game audio over WebAudio: `beep!` is an oscillator
+  with a click-free fade (no asset files needed), `load-sound!` runs
+  the fetch/decode chain, `play!`/`loop-sound!` wire
+  buffer→gain→destination; breakout's blips are the dogfood
 
 ## Usage
 

@@ -1,11 +1,11 @@
-;; The particle fountain, on WebGPU: (web gpu) carries the command-
+;; The particle fountain, on WebGPU: (gfx gpu) carries the command-
 ;; buffer architecture to the other API -- resources in a slot
 ;; table, one bridge call per frame replaying staged words into a
 ;; render pass, one queue.submit.  Physics runs in Scheme; each
 ;; particle is a small triangle whose 18 floats land in staging
 ;; memory and ride ONE writeBuffer to the GPU.  The pipeline is one
 ;; WGSL module (vs + fs entry points).  Needs a WebGPU browser.
-(import (rnrs) (web js) (web dom) (web fx) (web gpu))
+(import (rnrs) (web js) (web dom) (gfx fx) (gfx gpu))
 
 (define N 1500)
 (define VBYTES (* N 3 24))              ; 3 verts x (vec2 pos + vec4 color)

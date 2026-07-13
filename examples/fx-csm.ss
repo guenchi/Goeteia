@@ -4,8 +4,8 @@
 ;; camera (crisp nearby shadows) and a wide one behind it (soft far
 ;; ones).  Each fragment projects into the near cascade first and
 ;; falls back to the far one when it lands outside.  Needs WebGL 2.
-(import (rnrs) (web js) (web dom) (web gl) (web glsl) (web fx)
-        (web mat) (web mesh))
+(import (rnrs) (web js) (web dom) (gfx gl) (gfx glsl) (gfx fx)
+        (gfx mat) (gfx mesh))
 
 (fx-init! (get-element-by-id "c"))
 

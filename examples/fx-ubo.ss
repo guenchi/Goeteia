@@ -4,8 +4,8 @@
 ;; three programs read it from binding point 0 -- no per-program
 ;; u_vp/u_light/u_time plumbing at all.  Only u_model stays a
 ;; classic uniform, because it changes per object.  Needs WebGL 2.
-(import (rnrs) (web js) (web dom) (web gl) (web glsl) (web fx)
-        (web mat) (web mesh))
+(import (rnrs) (web js) (web dom) (gfx gl) (gfx glsl) (gfx fx)
+        (gfx mat) (gfx mesh))
 
 (fx-init! (get-element-by-id "c"))
 

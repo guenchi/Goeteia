@@ -1,5 +1,5 @@
 ;; Collision tests and raycasts for 3D games: spheres, axis-aligned
-;; boxes, planes, triangles, and (web mesh) meshes, over (web mat)'s
+;; boxes, planes, triangles, and (gfx mesh) meshes, over (gfx mat)'s
 ;; v3.  Pure arithmetic -- no host, verifies headlessly -- and enough
 ;; for the classic game loop: "did I hit a wall" (sphere-aabb-push
 ;; slides the player out), "what did I shoot / click" (ray-mesh),
@@ -39,7 +39,7 @@
 ;; whisker square instead of round -- invisible at game radii.
 ;;
 ;; Copyright (c) 2026 guenchi. MIT license; see LICENSE.
-(library (web collide)
+(library (gfx collide)
   (export sphere-sphere? aabb-aabb? sphere-aabb?
           capsule-sphere? capsule-capsule? capsule-aabb?
           ray-sphere ray-aabb ray-plane ray-triangle ray-mesh
@@ -47,7 +47,7 @@
           make-character character? character-pos character-grounded?
           character-move! character-jump!
           make-aabb-grid grid-near)
-  (import (rnrs) (web mat) (web mesh))
+  (import (rnrs) (gfx mat) (gfx mesh))
 
   (define $col-eps 0.000000001)
 
@@ -146,7 +146,7 @@
                       (let ((t (fl* (v3-dot e2 qv) inv)))
                         (and (fl<? $col-eps t) t)))))))))
 
-  ;; nearest triangle of a (web mesh) mesh; brute force -- picking
+  ;; nearest triangle of a (gfx mesh) mesh; brute force -- picking
   ;; and shot tests over generated geometry, not broadphase physics
   (define (ray-mesh o d m)
     (let ((vs (mesh-verts m))
