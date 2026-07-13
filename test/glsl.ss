@@ -110,7 +110,7 @@
      '((uniform-block Env (mat4 u_vp) (vec4 u_fog))))
     (string-append
      "#version 300 es\n"
-     "layout(std140) uniform Env { mat4 u_vp; vec4 u_fog; }; "))
+     "layout(std140) uniform Env { highp mat4 u_vp; highp vec4 u_fog; }; "))
  ;; extraction still works on the neutral forms
  (equal? (glsl-attributes '((attribute vec3 a_pos) (varying vec3 v_n)))
          '((a_pos vec3 3)))

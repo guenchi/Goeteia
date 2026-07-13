@@ -191,11 +191,15 @@
              (string-append kw " " (symbol->string (cadr f)) " "
                             (symbol->string (caddr f)) "; "))))
       ((uniform-block)
+       ;; members carry explicit highp: the vertex default is highp,
+       ;; a mediump fragment default would otherwise disagree, and
+       ;; block layouts must match exactly across stages
        (string-append
         "layout(std140) uniform " (symbol->string (cadr f)) " { "
         (apply string-append
                (map (lambda (m)
-                      (string-append (symbol->string (car m)) " "
+                      (string-append "highp "
+                                     (symbol->string (car m)) " "
                                      (symbol->string (cadr m)) "; "))
                     (cddr f)))
         "}; "))
