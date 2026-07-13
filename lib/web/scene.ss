@@ -1,4 +1,4 @@
-;; Reactive raw-GL scenes -- the s3d of the self-contained stack.
+;; Reactive raw-GL scenes -- sx for the third dimension.
 ;;
 ;;   (define angle (signal 0.0))
 ;;   (define sc
@@ -14,7 +14,7 @@
 ;;               (signal-set! angle t)
 ;;               (sgl-draw! sc)))
 ;;
-;; The template splits at expansion time, like sx and s3d: geometry
+;; The template splits at expansion time, like sx: geometry
 ;; is built and uploaded once ((web mesh) generates it, the first
 ;; draw ships it), and each unquoted attribute becomes a hole whose
 ;; effect copies the signal's value into the node -- so a frame is
@@ -41,7 +41,7 @@
   (import (rnrs) (web js) (web gl) (web glsl) (web fx) (web mat)
           (web mesh) (web reactive))
 
-  ;; ---- the template macro: the sx/s3d walker, attribute-only ----
+  ;; ---- the template macro: the sx walker, attribute-only ----
   (define-syntax sgl
     (lambda (x)
       (syntax-case x ()
