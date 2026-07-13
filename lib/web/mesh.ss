@@ -32,6 +32,7 @@
           mesh-tangents mesh-vertex-bytes-tan mesh-write-tan!
           mesh-bounds
           mesh-plane mesh-box mesh-sphere mesh-cylinder mesh-torus
+          mesh-heightmap
           mesh-lit-vs mesh-lit-fs mesh-tex-vs mesh-tex-fs
           mesh-normal-vs mesh-normal-fs mesh-pbr-vs mesh-pbr-fs)
   (import (rnrs) (web mat))
@@ -86,6 +87,65 @@
       ($mesh-v! vs 3 hw           0.0 (fl- 0.0 hd) 0.0 1.0 0.0)
       ($make-mesh vs (vector 0 1 2 0 2 3)
                   (vector 0.0 0.0  0.0 1.0  1.0 1.0  1.0 0.0))))
+
+  ;; a heightfield: nx x nz cells over w x d on xz, y = (f x z) at
+  ;; every grid point.  Normals come from central differences of f
+  ;; itself (not the mesh), uvs span [0,1] -- terrain from any pure
+  ;; height function
+  (define (mesh-heightmap w d nx nz f)
+    (let* ((w ($mesh-fl w)) (d ($mesh-fl d))
+           (cols (+ nx 1)) (rows (+ nz 1))
+           (sx (fl/ w (fixnum->flonum nx)))
+           (sz (fl/ d (fixnum->flonum nz)))
+           (vs (make-vector (* cols rows 6) 0.0))
+           (uvs (make-vector (* cols rows 2) 0.0))
+           (ix (make-vector (* nx nz 6) 0)))
+      (when (> (* cols rows) 65536)
+        (error 'mesh-heightmap "u16 indices allow at most 65536 vertices"
+               (* cols rows)))
+      (let row ((j 0))
+        (when (< j rows)
+          (let ((z (fl- (fl* (fixnum->flonum j) sz) (fl/ d 2.0))))
+            (let col ((i 0))
+              (when (< i cols)
+                (let* ((x (fl- (fl* (fixnum->flonum i) sx) (fl/ w 2.0)))
+                       (y ($mesh-fl (f x z)))
+                       (gx (fl/ (fl- ($mesh-fl (f (fl+ x sx) z))
+                                     ($mesh-fl (f (fl- x sx) z)))
+                                (fl* 2.0 sx)))
+                       (gz (fl/ (fl- ($mesh-fl (f x (fl+ z sz)))
+                                     ($mesh-fl (f x (fl- z sz))))
+                                (fl* 2.0 sz)))
+                       (n (v3-normalize
+                           (v3 (fl- 0.0 gx) 1.0 (fl- 0.0 gz))))
+                       (v (+ (* j cols) i)))
+                  ($mesh-v! vs v x y z (v3-x n) (v3-y n) (v3-z n))
+                  (vector-set! uvs (* v 2)
+                               (fl/ (fixnum->flonum i)
+                                    (fixnum->flonum nx)))
+                  (vector-set! uvs (+ (* v 2) 1)
+                               (fl/ (fixnum->flonum j)
+                                    (fixnum->flonum nz))))
+                (col (+ i 1)))))
+          (row (+ j 1))))
+      (let cell ((j 0))
+        (when (< j nz)
+          (let cc ((i 0))
+            (when (< i nx)
+              (let* ((a (+ (* j cols) i))
+                     (b (+ a 1))
+                     (c (+ a cols))
+                     (e (+ c 1))
+                     (at (* 6 (+ (* j nx) i))))
+                (vector-set! ix at a)
+                (vector-set! ix (+ at 1) c)
+                (vector-set! ix (+ at 2) e)
+                (vector-set! ix (+ at 3) a)
+                (vector-set! ix (+ at 4) e)
+                (vector-set! ix (+ at 5) b))
+              (cc (+ i 1))))
+          (cell (+ j 1))))
+      ($make-mesh vs ix uvs)))
 
   ;; face table: normal then four corners, in unit coordinates
   (define $mesh-box-faces
