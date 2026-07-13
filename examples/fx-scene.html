@@ -14,7 +14,11 @@
     <p>The <code>sgl</code> template is to raw GL what <code>sx</code>
     is to the DOM: geometry builds and uploads once, and each unquoted
     attribute is a signal-driven hole.  Two signals animate the torus
-    and the sphere.  No Three.js. See <code>fx-scene.ss</code>.</p>
+    and the sphere; the ground is a <code>(texture ...)</code> mesh,
+    the sphere is <code>(metallic)</code>/<code>(roughness)</code> PBR
+    against a <code>(web ibl)</code> probe, and a fourth mesh parked
+    past the far plane is frustum-culled for free.  No Three.js.
+    See <code>fx-scene.ss</code>.</p>
     <canvas id="c" width="800" height="600"></canvas>
     <script type="module">
       import { loadGoeteia } from '../rt/web.mjs';

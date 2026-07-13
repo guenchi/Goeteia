@@ -150,7 +150,12 @@ A small UI stack over the JS bridge, in `lib/web/`:
   the GL stack what `sx` is to the DOM — geometry from `(web mesh)`
   builds and uploads once, each unquoted attribute becomes a
   signal-driven hole, and a frame is pure arithmetic over current
-  fields (`examples/fx-scene.html`: the lit scene, declaratively)
+  fields.  Meshes pick materials declaratively — the lit default,
+  `(texture slot)`, or `(metallic)`/`(roughness)` PBR against the
+  scene's `(probe ...)` — and every frame culls each mesh's bounding
+  sphere against the camera frustum before a single command is
+  encoded (`examples/fx-scene.html`: all three materials and a
+  culled straggler, declaratively)
 - `(web post)` — the post chains, packaged: `make-bloom` /
   `bloom-run!` / `bloom-composite!` (luminance threshold, ping-ponged
   separable gaussian, tonemapped add — `'clamp` or `'reinhard`),
