@@ -34,16 +34,23 @@ const MIME = {
 // ~6 connections per host, and a pile of background example tabs
 // each pinning one starves every new page into a blank screen.
 const RELOAD_SNIPPET =
-  '<script>(function(){var e=null;' +
+  '<script>(function(){var e=null,b=null;' +
   'function c(){if(e||document.hidden)return;e=new EventSource("/livereload");' +
-  'e.onmessage=function(m){if(m.data==="reload")location.reload()};' +
+  'e.onmessage=function(m){' +
+  'if(m.data==="reload")location.reload();' +
+  'else if(m.data.indexOf("build ")===0){' +
+  'if(b!==null&&m.data!==b)location.reload();b=m.data}};' +
   'e.onerror=function(){if(e){e.close();e=null}setTimeout(c,500)}}' +
   'document.addEventListener("visibilitychange",function(){' +
   'if(document.hidden){if(e){e.close();e=null}}else c()});' +
   'c()})()</script>';
 
 const clients = new Set();
-const notifyReload = () => { for (const r of clients) r.write('data: reload\n\n'); };
+let buildN = 0;                        // so reconnects catch missed reloads
+const notifyReload = () => {
+  buildN++;
+  for (const r of clients) r.write('data: reload\n\n');
+};
 
 function build() {
   if (!HAS_BUILD) { notifyReload(); return; }
@@ -74,6 +81,7 @@ http.createServer((req, res) => {
   if (url === '/livereload') {
     res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive' });
     res.write('retry: 500\n\n');
+    res.write('data: build ' + buildN + '\n\n');
     clients.add(res);
     req.on('close', () => clients.delete(res));
     return;
