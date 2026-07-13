@@ -60,4 +60,18 @@
                   (lambda (acc cp st n) (cons (list cp st n) acc))
                   '() "a汉b"))
         '((97 0 1) (27721 1 3) (98 4 1)))
- (eq? 'seed (string-fold-cp (lambda (acc cp st n) 'other) 'seed "")))
+ (eq? 'seed (string-fold-cp (lambda (acc cp st n) 'other) 'seed ""))
+ ;; kinsoku: closing punctuation never starts a line -- it merges
+ ;; into the box before it and they wrap together
+ (same? (texts (layout (prepare "汉字、排版。" m) 3 10))
+        '("汉字、" "排版。"))
+ (same? (texts (layout (prepare "汉字、排版。" m) 2 10))
+        '("汉" "字、" "排" "版。"))
+ ;; opening brackets never end a line -- they stick to the next box
+ (same? (texts (layout (prepare "看「书」呢" m) 3 10))
+        '("看" "「书」" "呢"))
+ ;; the same rule holds against latin boxes and ellipses
+ (same? (texts (layout (prepare "abc、def" m) 4 10))
+        '("abc、" "def"))
+ (same? (texts (layout (prepare "so… yes" m) 3 10))
+        '("so…" "yes")))
