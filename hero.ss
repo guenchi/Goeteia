@@ -1,5 +1,5 @@
 ;; The Goeteia homepage — rendered by Goeteia, compiled in your browser.
-;; Every word you see is GPU particles: (web typeset) lays the texts
+;; The title and the tagline are GPU particles: (web typeset) lays the texts
 ;; out, their pixels become home positions, and a transform-feedback
 ;; shader — the physics IS the vertex shader, Scheme never touches a
 ;; particle — springs each one home while your cursor scatters them.
@@ -13,10 +13,12 @@
 ;; ---- the page ----
 (sx-mount (get-element-by-id "live")
   (sx (div (@ (class "hero"))
-        (canvas (@ (id "gl-title") (width "720") (height "280")
+        (canvas (@ (id "gl-title") (width "720") (height "230")
                    (role "img")
-                   (aria-label "Γοητεία — The black ars of commanding what lies beneath. A pure-Scheme web toolkit, compiled to WebAssembly.")
+                   (aria-label "Γοητεία — The black ars of commanding what lies beneath.")
                    (style "display:block;width:100%;max-width:40em")))
+        (div (@ (id "sub-flow") (class "sub")
+                (style "position:relative;height:1.6em;font:17px system-ui,sans-serif;max-width:40em")))
         (pre (@ (class "cmd")) "$ npm install goeteia")
         (div (@ (class "links"))
           (a (@ (class "btn primary") (href "#editor")) "Try it now")
@@ -28,11 +30,10 @@
 (define title-font "italic 700 92px Georgia, 'Times New Roman', serif")
 (define lead-font "italic 700 26px Georgia, 'Times New Roman', serif")
 (define tag-font "italic 24px Georgia, 'Times New Roman', serif")
-(define sub-font "17px system-ui, sans-serif")
 
 (define hidden (create-element "canvas"))
 (js-set! hidden "width" 720)
-(js-set! hidden "height" 280)
+(js-set! hidden "height" 230)
 (define hctx (js-method hidden "getContext" "2d"))
 (js-set! (js-global) "__hero_cv" hidden)
 (js-set! hctx "fillStyle" "#fff")
@@ -51,7 +52,7 @@
 (define (draw-at! text font x y)
   (js-set! hctx "font" font)
   (js-method hctx "fillText" text x y))
-(define (clear!) (js-method hctx "clearRect" 0 0 720 280))
+(define (clear!) (js-method hctx "clearRect" 0 0 720 230))
 
 ;; lit pixels -> home positions, written straight into wasm memory
 (js-eval "globalThis.__hero_sample = (base, max, step) => {
@@ -85,7 +86,7 @@
 (define (state! i ax ay bx by block)
   (let ((at (+ state (* i 40))))
     (%mem-f32-set! at (fl* 720.0 (rnd!)))
-    (%mem-f32-set! (+ at 4) (fl* 280.0 (rnd!)))
+    (%mem-f32-set! (+ at 4) (fl* 230.0 (rnd!)))
     (%mem-f32-set! (+ at 8) 0.0)
     (%mem-f32-set! (+ at 12) 0.0)
     (%mem-f32-set! (+ at 16) ax)
@@ -111,9 +112,9 @@
   (when (< i pool)
     (state! i
             (if (< i na) (samp-x samp-a i) (park))
-            (if (< i na) (samp-y samp-a i) (fl* 280.0 (rnd!)))
+            (if (< i na) (samp-y samp-a i) (fl* 230.0 (rnd!)))
             (if (< i nb) (samp-x samp-b i) (park))
-            (if (< i nb) (samp-y samp-b i) (fl* 280.0 (rnd!)))
+            (if (< i nb) (samp-y samp-b i) (fl* 230.0 (rnd!)))
             0)
     (fill (+ i 1))))
 
@@ -138,11 +139,96 @@
     (clear!) (draw-at! lead lead-font x0 160.0)
     (let ((n1 (add! pool 1)))
       (clear!) (draw-at! tag tag-font (fl+ x0 (fl+ w0 12.0)) 163.0)
-      (let ((n2 (add! n1 2)))
-        (clear!)
-        (draw-lines! "A pure-Scheme web toolkit, compiled to WebAssembly."
-                     sub-font 218.0 22.0)
-        (add! n2 2)))))
+      (add! n1 2))))
+
+;; ---- the subtitle: whole characters that dodge the cursor ----
+;; not particles -- each character is one DOM span, placed at the
+;; pen position typeset's code-point walk assigns it, with its own
+;; little spring-and-repulsion life
+(define sub-text "A pure-Scheme web toolkit, compiled to WebAssembly.")
+(define sub-el (get-element-by-id "sub-flow"))
+(define sub-measure (canvas-measurer "17px system-ui, sans-serif"))
+(define sub-total ((canvas-measurer "17px system-ui, sans-serif") sub-text))
+
+(define sub-chars                       ; #(style pen w dx dy vx vy)
+  (let ((acc '()))
+    (string-fold-cp
+     (lambda (pen cp start len)
+       (let* ((g (substring sub-text start (+ start len)))
+              (w (sub-measure g)))
+         (unless (= cp 32)
+           (let ((span (create-element "span")))
+             (set-attribute! span "style" "position:absolute;left:0;top:0")
+             (set-text! span g)
+             (append-child! sub-el span)
+             (set! acc (cons (vector (js-get span "style") pen w
+                                     0.0 0.0 0.0 0.0)
+                             acc))))
+         (fl+ pen w)))
+     0.0 sub-text)
+    (list->vector (reverse acc))))
+
+;; center the pens in the container; again on resize
+(define sub-x0 0.0)
+(define (sub-layout!)
+  (let ((cw ($fl* (js->number (js-get sub-el "clientWidth")))))
+    (set! sub-x0 (fl/ (fl- cw sub-total) 2.0))
+    (let each ((i 0))
+      (when (< i (vector-length sub-chars))
+        (let ((c (vector-ref sub-chars i)))
+          (js-set! (vector-ref c 0) "left"
+                   (string-append
+                    (number->string (fl+ sub-x0 (vector-ref c 1)))
+                    "px")))
+        (each (+ i 1))))))
+(define ($fl* v) (if (flonum? v) v (exact->inexact v)))
+(sub-layout!)
+(add-event-listener! (js-global) "resize"
+  (lambda (e) (sub-layout!) (js-undefined)))
+
+;; the pointer, in page coordinates
+(define pcx -9999.0)
+(define pcy -9999.0)
+(add-event-listener! (js-global) "pointermove"
+  (lambda (e)
+    (set! pcx ($fl* (js->number (js-get e "clientX"))))
+    (set! pcy ($fl* (js->number (js-get e "clientY"))))
+    (js-undefined)))
+
+;; fifty characters of spring physics: light work for Scheme
+(define (sub-step!)
+  (let* ((r (js-method sub-el "getBoundingClientRect"))
+         (mx (fl- pcx ($fl* (js->number (js-get r "left")))))
+         (my (fl- pcy ($fl* (js->number (js-get r "top"))))))
+    (let each ((i 0))
+      (when (< i (vector-length sub-chars))
+        (let* ((c (vector-ref sub-chars i))
+               (hx (fl+ sub-x0 (fl+ (vector-ref c 1)
+                                    (fl/ (vector-ref c 2) 2.0))))
+               (dx (vector-ref c 3)) (dy (vector-ref c 4))
+               (vx (vector-ref c 5)) (vy (vector-ref c 6))
+               (px (fl- (fl+ hx dx) mx))
+               (py (fl- (fl+ 11.0 dy) my))
+               (r2 (fl+ (fl+ (fl* px px) (fl* py py)) 40.0))
+               (inf (let ((v (fl- 1.0 (fl/ r2 12100.0))))
+                      (if (fl<? v 0.0) 0.0 v)))
+               (k (fl* (fl/ 42000.0 r2) inf))
+               (ax (fl- (fl* px k) (fl* dx 30.0)))
+               (ay (fl- (fl* py k) (fl* dy 30.0)))
+               (nvx (fl* (fl+ vx (fl* ax 0.016)) 0.86))
+               (nvy (fl* (fl+ vy (fl* ay 0.016)) 0.86))
+               (ndx (fl+ dx (fl* nvx 0.016)))
+               (ndy (fl+ dy (fl* nvy 0.016))))
+          (vector-set! c 3 ndx) (vector-set! c 4 ndy)
+          (vector-set! c 5 nvx) (vector-set! c 6 nvy)
+          ;; touch the DOM only while it moves
+          (when (fl<? 0.001 (fl+ (fl+ (fl* ndx ndx) (fl* ndy ndy))
+                                 (fl+ (fl* nvx nvx) (fl* nvy nvy))))
+            (js-set! (vector-ref c 0) "transform"
+                     (string-append "translate("
+                                    (number->string ndx) "px,"
+                                    (number->string ndy) "px)"))))
+        (each (+ i 1))))))
 
 ;; ---- the update step: the vertex shader IS the physics ----
 (define update-p
@@ -282,13 +368,14 @@
   (cmd-tf-begin!)
   (cmd-draw-arrays! GL-POINTS 0 count)
   (cmd-tf-end!)
-  (cmd-viewport! 0 0 720 280)
+  (cmd-viewport! 0 0 720 230)
   (cmd-clear! 0.0 0.0 0.0 0.0)         ; transparent: dots on the page
   (cmd-blend! 'alpha)
   (fx-use! draw-p (cdr bufs))
-  (fx-uniform! draw-p 'u_res 720.0 280.0)
+  (fx-uniform! draw-p 'u_res 720.0 230.0)
   (cmd-draw-arrays! GL-POINTS 0 count)
   (cmd-flush!)
+  (sub-step!)
   (set! bufs (cons (cdr bufs) (car bufs))))
 
 ;; re-running this source bumps the generation; the old loop lets go
