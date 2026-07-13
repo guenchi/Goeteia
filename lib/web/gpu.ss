@@ -37,20 +37,27 @@
 ;;                             buffer written by one gpu-buffer-data!
 ;;                             and bound as @group(0) @binding(0)
 ;;   cmd-flush!             -> pass.end() + queue.submit(one encoder)
+;;   transform feedback     -> gpu-dispatch!: a compute pass mutates
+;;                             a storage buffer that doubles as the
+;;                             render pass's vertex stream
+;;                             (gpu-storage!), all in one submit --
+;;                             encode dispatches before the draws
 ;;   still missing          -> textures + samplers, multiple bind
-;;                             groups, compute passes, and WGSL
-;;                             rendered from the (web glsl) forms
+;;                             groups per pipeline
 ;;
 ;; The command region is the same staging words (web gl) uses; a page
 ;; drives one backend or the other, not both at once.
 ;;
 ;; Copyright (c) 2026 guenchi. MIT license; see LICENSE.
 (library (web gpu)
-  (export gpu-attach! gpu-pipeline! gpu-buffer! gpu-index!
-          gpu-uniforms! gpu-bindgroup!
+  (export gpu-attach! gpu-pipeline! gpu-pipeline2!
+          gpu-buffer! gpu-index! gpu-uniforms! gpu-storage!
+          gpu-bindgroup! gpu-compute! gpu-compute-group!
           gpu-begin! gpu-flush!
-          gpu-clear! gpu-use-pipeline! gpu-bind-vbuf! gpu-bind-ibuf!
-          gpu-set-group! gpu-buffer-data! gpu-draw! gpu-draw-indexed!)
+          gpu-clear! gpu-use-pipeline! gpu-bind-vbuf! gpu-bind-vbuf2!
+          gpu-bind-ibuf! gpu-set-group! gpu-buffer-data!
+          gpu-draw! gpu-draw-indexed! gpu-draw-instanced!
+          gpu-dispatch!)
   (import (rnrs) (web js))
 
   (define $gpu #f)
@@ -77,13 +84,16 @@
      "          format: 'depth24plus',"
      "          usage: GT.RENDER_ATTACHMENT });"
      "        cb(); }); },"
-     "  pipeline(slot, code, stride, fmts) {"
-     "    const mod = st.dev.createShaderModule({ code });"
-     "    let off = 0, loc = 0;"
+     "  parseAttrs(fmts, loc) {"
+     "    let off = 0;"
      "    const attrs = String(fmts).split(',').map(f => {"
      "      const a = { format: f, offset: off, shaderLocation: loc++ };"
      "      off += Number(f.replace(/.*x/, '')) * 4;"
      "      return a; });"
+     "    return attrs; },"
+     "  pipeline(slot, code, stride, fmts) {"
+     "    const mod = st.dev.createShaderModule({ code });"
+     "    const attrs = this.parseAttrs(fmts, 0);"
      "    slots[slot] = st.dev.createRenderPipeline({"
      "      layout: 'auto',"
      "      vertex: { module: mod, entryPoint: 'vs',"
@@ -94,18 +104,48 @@
      "                      depthWriteEnabled: true,"
      "                      depthCompare: 'less' },"
      "      primitive: { topology: 'triangle-list' } }); },"
-     "  buffer(slot, bytes, kind) {"       ; 0 vertex, 1 index, 2 uniform
+     "  pipeline2(slot, code, vstride, vfmts, istride, ifmts) {"
+     "    const mod = st.dev.createShaderModule({ code });"
+     "    const va = this.parseAttrs(vfmts, 0);"
+     "    const ia = this.parseAttrs(ifmts, va.length);"
+     "    slots[slot] = st.dev.createRenderPipeline({"
+     "      layout: 'auto',"
+     "      vertex: { module: mod, entryPoint: 'vs', buffers: ["
+     "        { arrayStride: vstride, attributes: va },"
+     "        { arrayStride: istride, stepMode: 'instance',"
+     "          attributes: ia }] },"
+     "      fragment: { module: mod, entryPoint: 'fs',"
+     "                  targets: [{ format: st.fmt }] },"
+     "      depthStencil: { format: 'depth24plus',"
+     "                      depthWriteEnabled: true,"
+     "                      depthCompare: 'less' },"
+     "      primitive: { topology: 'triangle-list' } }); },"
+     "  buffer(slot, bytes, kind) {"  ; 0 vtx, 1 idx, 2 uniform, 3 storage
      "    const GB = globalThis.GPUBufferUsage"
-     "             || { VERTEX: 32, INDEX: 16, UNIFORM: 64, COPY_DST: 8 };"
+     "             || { VERTEX: 32, INDEX: 16, UNIFORM: 64,"
+     "                  STORAGE: 128, COPY_DST: 8 };"
      "    slots[slot] = st.dev.createBuffer({"
      "      size: bytes,"
      "      usage: (kind === 1 ? GB.INDEX : kind === 2 ? GB.UNIFORM"
+     "              : kind === 3 ? (GB.VERTEX | GB.STORAGE)"
      "              : GB.VERTEX) | GB.COPY_DST }); },"
      "  bindgroup(slot, pslot, ubslot) {"
      "    slots[slot] = st.dev.createBindGroup({"
      "      layout: slots[pslot].getBindGroupLayout(0),"
      "      entries: [{ binding: 0,"
      "                  resource: { buffer: slots[ubslot] } }] }); },"
+     "  compute(slot, code) {"
+     "    slots[slot] = st.dev.createComputePipeline({"
+     "      layout: 'auto',"
+     "      compute: { module: st.dev.createShaderModule({ code }),"
+     "                 entryPoint: 'cs' } }); },"
+     "  computeGroup(slot, pslot, sslot, uslot) {"
+     "    slots[slot] = st.dev.createBindGroup({"
+     "      layout: slots[pslot].getBindGroupLayout(0),"
+     "      entries: [{ binding: 0,"
+     "                  resource: { buffer: slots[sslot] } },"
+     "                { binding: 1,"
+     "                  resource: { buffer: slots[uslot] } }] }); },"
      "  replay(count) {"
      "    const dv = new DataView(memory.buffer);"
      "    let p = 0;"
@@ -113,7 +153,7 @@
      "    const f = () => { const v = dv.getFloat32(p, true); p += 4; return v; };"
      "    const enc = st.dev.createCommandEncoder();"
      "    let clear = { r: 0, g: 0, b: 0, a: 1 };"
-     "    let pipeline = null, vbuf = null, ibuf = null;"
+     "    let pipeline = null, vbuf = null, vbuf2 = null, ibuf = null;"
      "    let group = null, pass = null;"
      "    const open = () => {"
      "      if (!pass) pass = enc.beginRenderPass({"
@@ -127,7 +167,8 @@
      "    const ready = () => {"
      "      open(); pass.setPipeline(pipeline);"
      "      if (group) pass.setBindGroup(0, group);"
-     "      pass.setVertexBuffer(0, vbuf); };"
+     "      pass.setVertexBuffer(0, vbuf);"
+     "      if (vbuf2) pass.setVertexBuffer(1, vbuf2); };"
      "    const end = p + count * 4;"
      "    while (p < end) {"
      "      switch (u()) {"
@@ -142,6 +183,16 @@
      "        case 7: ibuf = slots[u()]; break;"
      "        case 8: ready(); pass.setIndexBuffer(ibuf, 'uint16');"
      "                pass.drawIndexed(u()); break;"
+     "        case 9: {"                 ; a compute step: its own pass,
+     "          const cpl = slots[u()];" ; legal only OUTSIDE the render
+     "          const cg = slots[u()];"  ; pass (put dispatches first)
+     "          const n = u();"
+     "          const cp = enc.beginComputePass();"
+     "          cp.setPipeline(cpl); cp.setBindGroup(0, cg);"
+     "          cp.dispatchWorkgroups(n); cp.end(); break; }"
+     "        case 10: vbuf2 = slots[u()]; break;"
+     "        case 11: ready(); { const v = u(); pass.draw(v, u()); }"
+     "                 break;"
      "      }"
      "    }"
      "    open();"                       ; a clear-only frame still clears
@@ -161,6 +212,16 @@
   ;; comma-joined GPUVertexFormat list bound to locations 0,1,...
   (define (gpu-pipeline! slot wgsl stride fmts)
     (js-method $gpu "pipeline" slot wgsl stride fmts))
+  ;; two vertex buffers: slot 0 steps per vertex, slot 1 per
+  ;; instance; locations number straight through both
+  (define (gpu-pipeline2! slot wgsl vstride vfmts istride ifmts)
+    (js-method $gpu "pipeline2" slot wgsl vstride vfmts istride ifmts))
+  ;; a compute pipeline from one WGSL module (entry point cs)
+  (define (gpu-compute! slot wgsl)
+    (js-method $gpu "compute" slot wgsl))
+  ;; its bind group: binding 0 a storage buffer, binding 1 uniforms
+  (define (gpu-compute-group! slot pslot sslot uslot)
+    (js-method $gpu "computeGroup" slot pslot sslot uslot))
   (define (gpu-buffer! slot bytes)
     (js-method $gpu "buffer" slot bytes 0))
   (define (gpu-index! slot bytes)       ; u16 indices
@@ -170,6 +231,10 @@
   ;; rides one gpu-buffer-data! per frame
   (define (gpu-uniforms! slot bytes)
     (js-method $gpu "buffer" slot bytes 2))
+  ;; a storage buffer that doubles as a vertex stream: compute
+  ;; writes it, the render pass reads it back as attributes
+  (define (gpu-storage! slot bytes)
+    (js-method $gpu "buffer" slot bytes 3))
   (define (gpu-bindgroup! slot pslot ubslot)
     (js-method $gpu "bindgroup" slot pslot ubslot))
 
@@ -191,6 +256,13 @@
   (define (gpu-set-group! slot) ($gpu-u! 6) ($gpu-u! slot))
   (define (gpu-bind-ibuf! slot) ($gpu-u! 7) ($gpu-u! slot))
   (define (gpu-draw-indexed! count) ($gpu-u! 8) ($gpu-u! count))
+  ;; one compute step, its own pass: encode dispatches BEFORE the
+  ;; frame's draws -- a render pass cannot be interrupted
+  (define (gpu-dispatch! pslot gslot groups)
+    ($gpu-u! 9) ($gpu-u! pslot) ($gpu-u! gslot) ($gpu-u! groups))
+  (define (gpu-bind-vbuf2! slot) ($gpu-u! 10) ($gpu-u! slot))
+  (define (gpu-draw-instanced! verts insts)
+    ($gpu-u! 11) ($gpu-u! verts) ($gpu-u! insts))
 
   (define (gpu-flush!)
     (js-method $gpu "replay" (quotient $gpu-p 4))))
