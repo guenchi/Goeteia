@@ -20,7 +20,7 @@
           v3-add v3-sub v3-scale v3-dot v3-cross v3-normalize
           m4-identity m4-mul m4-transform
           m4-translate m4-scale m4-rotate-x m4-rotate-y m4-rotate-z
-          m4-perspective m4-look-at)
+          m4-from-quat m4-perspective m4-look-at)
   (import (rnrs))
 
   (define ($mat-fl v) (if (flonum? v) v (exact->inexact v)))
@@ -131,6 +131,25 @@
       (vector c s 0.0 0.0
               (fl- 0.0 s) c 0.0 0.0
               0.0 0.0 1.0 0.0
+              0.0 0.0 0.0 1.0)))
+
+  (define (m4-from-quat x y z w)        ; a unit quaternion's rotation
+    (let* ((x ($mat-fl x)) (y ($mat-fl y)) (z ($mat-fl z)) (w ($mat-fl w))
+           (xx (fl* x x)) (yy (fl* y y)) (zz (fl* z z))
+           (xy (fl* x y)) (xz (fl* x z)) (yz (fl* y z))
+           (wx (fl* w x)) (wy (fl* w y)) (wz (fl* w z)))
+      (vector (fl- 1.0 (fl* 2.0 (fl+ yy zz)))
+              (fl* 2.0 (fl+ xy wz))
+              (fl* 2.0 (fl- xz wy))
+              0.0
+              (fl* 2.0 (fl- xy wz))
+              (fl- 1.0 (fl* 2.0 (fl+ xx zz)))
+              (fl* 2.0 (fl+ yz wx))
+              0.0
+              (fl* 2.0 (fl+ xz wy))
+              (fl* 2.0 (fl- yz wx))
+              (fl- 1.0 (fl* 2.0 (fl+ xx yy)))
+              0.0
               0.0 0.0 0.0 1.0)))
 
   (define (m4-perspective fovy aspect near far)

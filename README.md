@@ -93,8 +93,10 @@ A small UI stack over the JS bridge, in `lib/web/`:
   cached widths to line boxes — no DOM, no reflow, so heights are
   known before anything mounts (virtual scrolls, streaming chat) and
   text can be set in canvas/GL scenes, where there is no layout
-  engine at all.  Hard breaks, space wraps, CJK breaks, code-point
-  splits for over-wide words; `(web typeset canvas)` is the
+  engine at all.  Hard breaks, space wraps, CJK breaks with kinsoku
+  (closing punctuation never starts a line, opening brackets never
+  end one), code-point splits for over-wide words; `(web typeset
+  canvas)` is the
   measureText-backed measurer for browsers, and the engine itself
   verifies headlessly
 - `(web fx)` — the effects harness over `(web gl)`: a shader authored
@@ -139,7 +141,27 @@ A small UI stack over the JS bridge, in `lib/web/`:
   memory by `mesh-write!`; `mesh-lit-vs`/`-fs` ship the standard
   directional-light program as composable glsl forms
   (`examples/fx-mesh.html`: a lit scene — ground, torus, sphere —
-  raw WebGL)
+  raw WebGL).  Every generator also carries parametric texture
+  coordinates: `mesh-write-uv!` interleaves them and
+  `mesh-tex-vs`/`-fs` sample under the same light
+  (`examples/fx-tex.html`: a checkerboard painted on a 2d canvas,
+  no asset files)
+- `(web collide)` — collision tests and raycasts for 3D games:
+  sphere/AABB overlaps, ray against sphere, box, plane, triangle and
+  whole meshes (Möller–Trumbore), and `sphere-aabb-push` — the
+  shortest exit vector, so wall sliding is one add.  Pure arithmetic,
+  verifies headlessly
+- `(web audio)` — game audio over WebAudio: `beep!` is an oscillator
+  with a click-free fade (no asset files needed), `load-sound!` runs
+  the fetch/decode chain, `play!`/`loop-sound!` wire
+  buffer→gain→destination; breakout's blips are the dogfood
+- `(web gltf)` — real 3D assets: GLB static meshes parse with the
+  binary chunk in staging memory (the wasm f32 loads are the float
+  decoder), node transforms accumulate through the scene graph, and
+  the material's base color rides along; primitives come out in
+  mesh-lit's 24-byte layout and upload on first draw
+  (`examples/fx-gltf.html`: the Khronos Box.glb sample, fetched,
+  parsed and lit)
 - `(web rpc)` — s-expression RPC to a Scheme backend (Igropyr's
   `(igropyr sexpr)` is the server half): `write` on one side, a safe
   whitelisted parser on the other, so exact integers and ratios cross
