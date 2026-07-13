@@ -1,74 +1,17 @@
-;; Bloom, the classic post chain: the scene renders offscreen, a
-;; threshold pass keeps only the bright pixels (at half resolution --
-;; blur cost drops 4x and the result only gets softer), a separable
-;; gaussian ping-pongs horizontal/vertical twice, and the composite
-;; adds the glow back over the scene.  Five passes, one command
-;; buffer.  Needs WebGL 2.
+;; Bloom, via (web post): the scene renders offscreen past white
+;; (an HDR target), and the packaged chain does the rest -- a
+;; luminance threshold at half resolution, a separable gaussian
+;; ping-ponged twice, and a tonemapped composite.  What used to be
+;; three hand-written shader passes is now three calls.
+;; Needs WebGL 2.
 (import (rnrs) (web js) (web dom) (web gl) (web glsl) (web fx)
-        (web mat) (web mesh))
+        (web post) (web mat) (web mesh))
 
 (fx-init! (get-element-by-id "c"))
 
 (define scene-prog (fx-program! mesh-lit-vs mesh-lit-fs))
 (define scene (fx-target-hdr! 800 600))  ; half-float: >1 survives
-(define bright (fx-target! 400 300))
-(define blur-a (fx-target! 400 300))
-(define blur-b (fx-target! 400 300))
-
-;; pass 2: keep what shines.  smoothstep over luminance, so the
-;; cutoff has no hard edge of its own
-(define bright-q
-  (fx-fullscreen!
-   '((precision mediump float)
-     (uniform sampler2D u_scene)
-     (uniform vec2 u_texel)              ; 1/target-size
-     (define (main) void
-       (local vec2 uv (* gl_FragCoord.xy u_texel))
-       (local vec4 c (texture2D u_scene uv))
-       (local float l (dot c.rgb (vec3 "0.2126" "0.7152" "0.0722")))
-       ;; a true HDR threshold: only what shines past white blooms
-       (set! gl_FragColor
-             (vec4 (* c.rgb (smoothstep "1.02" "1.9" l)) (fl 1)))))))
-
-;; passes 3+4 (twice): one gaussian shader, the axis in u_dir
-(define blur-q
-  (fx-fullscreen!
-   '((precision mediump float)
-     (uniform sampler2D u_src)
-     (uniform vec2 u_texel)
-     (uniform vec2 u_dir)                ; (1,0) or (0,1)
-     (define (tap (vec2 uv) (float o) (float w)) vec3
-       (local vec4 c (texture2D u_src (+ uv (* (* u_dir u_texel) o))))
-       (return (* c.rgb w)))
-     (define (main) void
-       (local vec2 uv (* gl_FragCoord.xy u_texel))
-       (local vec3 acc (tap uv (fl 0) "0.227027"))
-       (set! acc (+ acc (tap uv (fl 1) "0.1945946")))
-       (set! acc (+ acc (tap uv (- (fl 1)) "0.1945946")))
-       (set! acc (+ acc (tap uv (fl 2) "0.1216216")))
-       (set! acc (+ acc (tap uv (- (fl 2)) "0.1216216")))
-       (set! acc (+ acc (tap uv (fl 3) "0.054054")))
-       (set! acc (+ acc (tap uv (- (fl 3)) "0.054054")))
-       (set! acc (+ acc (tap uv (fl 4) "0.016216")))
-       (set! acc (+ acc (tap uv (- (fl 4)) "0.016216")))
-       (set! gl_FragColor (vec4 acc (fl 1)))))))
-
-;; pass 5: the scene plus its glow
-(define comp-q
-  (fx-fullscreen!
-   '((precision mediump float)
-     (uniform sampler2D u_scene)
-     (uniform sampler2D u_bloom)
-     (uniform vec2 u_texel)
-     (define (main) void
-       (local vec2 uv (* gl_FragCoord.xy u_texel))
-       (local vec4 c (texture2D u_scene uv))
-       (local vec4 b (texture2D u_bloom uv))
-       (local vec3 one (vec3 (fl 1) (fl 1) (fl 1)))
-       (local vec3 sum (+ c.rgb (* b.rgb "1.1")))
-       ;; extended Reinhard: lows pass, highs roll off toward white
-       (set! sum (* sum (/ (+ one (/ sum "9.0")) (+ one sum))))
-       (set! gl_FragColor (vec4 sum (fl 1)))))))
+(define bloom (make-bloom 400 300))      ; threshold + blur + composite
 
 ;; a dim scene around one hot object
 (define (upload m)
@@ -95,16 +38,6 @@
   (fx-uniform! scene-prog 'u_model model)
   (fx-uniform! scene-prog 'u_color r g b 1.0)
   (cmd-draw-elements! GL-TRIANGLES (vector-ref obj 6)))
-
-(define (blur! src dst dx dy)
-  (fx-bind-target! dst)
-  (fx-fullscreen-use! blur-q 0.0)
-  (cmd-bind-texture! 0 (fx-target-texture src))
-  (let ((p (fx-quad-program blur-q)))
-    (fx-uniform! p 'u_src 0)
-    (fx-uniform! p 'u_texel (fl/ 1.0 400.0) (fl/ 1.0 300.0))
-    (fx-uniform! p 'u_dir dx dy))
-  (fx-fullscreen-draw! blur-q))
 
 (define proj (m4-perspective 0.9 (/ 800.0 600.0) 0.1 100.0))
 (define view (m4-look-at (v3 0.0 3.0 8.0) (v3 0.0 0.5 0.0) (v3 0 1 0)))
@@ -134,26 +67,6 @@
                   (m4-mul (m4-rotate-y t) (m4-rotate-x (fl* 0.6 t))))
           3.2 2.2 1.1 vp)
    (cmd-depth! #f)
-   ;; pass 2: threshold, at half resolution
-   (fx-bind-target! bright)
-   (fx-fullscreen-use! bright-q t)
-   (cmd-bind-texture! 0 (fx-target-texture scene))
-   (fx-uniform! (fx-quad-program bright-q) 'u_scene 0)
-   (fx-uniform! (fx-quad-program bright-q) 'u_texel
-                (fl/ 1.0 400.0) (fl/ 1.0 300.0))
-   (fx-fullscreen-draw! bright-q)
-   ;; passes 3+4, twice: the gaussian ping-pong
-   (blur! bright blur-a 1.0 0.0)
-   (blur! blur-a blur-b 0.0 1.0)
-   (blur! blur-b blur-a 1.0 0.0)
-   (blur! blur-a blur-b 0.0 1.0)
-   ;; pass 5: composite to the canvas
-   (fx-bind-canvas!)
-   (fx-fullscreen-use! comp-q t)
-   (cmd-bind-texture! 0 (fx-target-texture scene))
-   (cmd-bind-texture! 1 (fx-target-texture blur-b))
-   (let ((p (fx-quad-program comp-q)))
-     (fx-uniform! p 'u_scene 0)
-     (fx-uniform! p 'u_bloom 1)
-     (fx-uniform! p 'u_texel (fl/ 1.0 800.0) (fl/ 1.0 600.0)))
-   (fx-fullscreen-draw! comp-q)))
+   ;; the whole chain: threshold past white, blur, tonemapped add
+   (bloom-run! bloom (fx-target-texture scene) 1.02 1.9)
+   (bloom-composite! bloom (fx-target-texture scene) #f 'reinhard 1.1)))

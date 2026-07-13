@@ -144,6 +144,12 @@ A small UI stack over the JS bridge, in `lib/web/`:
   builds and uploads once, each unquoted attribute becomes a
   signal-driven hole, and a frame is pure arithmetic over current
   fields (`examples/fx-scene.html`: the lit scene, declaratively)
+- `(web post)` — the post chains, packaged: `make-bloom` /
+  `bloom-run!` / `bloom-composite!` (luminance threshold, ping-ponged
+  separable gaussian, tonemapped add — `'clamp` or `'reinhard`),
+  `make-blur`/`blur-run!` standalone, and `post-quad!`/`post-pass!`
+  as the floor for custom chains (`examples/fx-bloom.html` is three
+  calls now)
 - `(web mat)` — 3D math for raw-GL scenes: vec3 and column-major mat4
   over flonum vectors, with `m4-perspective` / `m4-ortho` /
   `m4-look-at` / rotations / `m4-inverse` and its own range-reduced
