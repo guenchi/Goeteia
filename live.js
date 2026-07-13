@@ -23,6 +23,7 @@ const LIB_FILES = [
     'lib/web/mesh.ss',
     'lib/web/fx.ss',
     'lib/web/post.ss',
+    'lib/web/gpu.ss',
 ];
 
 const enc = new TextEncoder();

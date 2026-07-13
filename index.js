@@ -69,7 +69,7 @@ import { boot, render } from './live.js';
         { label: 'hero.ss', file: 'hero.ss' },
         { label: 'skybox.ss', file: 'demos/fx-skybox.ss' },
         { label: 'pointlight.ss', file: 'demos/fx-pointlight.ss' },
-        { label: 'particles.ss', file: 'demos/fx-gpu-particles.ss' },
+        { label: 'particles.ss', file: 'demos/gpu-compute.ss' },
         { label: 'deferred.ss', file: 'demos/fx-deferred.ss' },
       ];
       const sources = [];
