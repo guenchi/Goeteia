@@ -54,14 +54,18 @@
           "not to be believed; it has to be " (em "proven") ". Scheme makes the proof "
           "cheap and automatic.")
        (ul (@ (class "points"))
-         (li (b "Differential testing as the acceptance test.") " One harness "
-             "drives the original and the port through identical inputs and compares "
-             "outputs. The model never " (em "claims") " correctness — it is forced to "
-             "demonstrate it. (That's the web-porter contract.)")
-         (li (b "The self-hosting fixpoint as bedrock.") " The compiler recompiles "
-             "itself and " (code "stage1 == stage2") " must hold byte-for-byte, on "
-             "every change. An oracle that automatically rejects a wrong edit is worth "
-             "more than any amount of \"well-written.\"")
+         (li (b "Differential testing as the acceptance test.") " Values serialize "
+             "with " (code "write") " and compare with " (code "equal?") ", so one "
+             "harness can drive two implementations through identical inputs and check "
+             "them against each other exactly. The model never " (em "claims") " "
+             "correctness — it is forced to demonstrate it (porting one codebase to "
+             "another is just this contract).")
+         (li (b "An automatic oracle beats \"well-written.\"") " A check that "
+             "mechanically rejects a wrong edit — a fixpoint, an invariant, a golden "
+             "comparison — holds on every change with no human in the loop, and is "
+             "worth more than any amount of prose polish. (A self-hosting compiler is "
+             "the limit case: recompile itself and the output must match "
+             "byte-for-byte.)")
          (li (b "read/write round-trip is a free property test.") " For any value, "
              (code "(equal? x (read (open-input-string (write" ,(raw "&#8209;") ">string x))))")
              " is a correctness check the model gets for nothing."))))
