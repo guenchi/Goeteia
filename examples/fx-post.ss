@@ -9,7 +9,7 @@
 (fx-init! (get-element-by-id "c"))
 
 (define scene-prog (fx-program! mesh-lit-vs mesh-lit-fs))
-(define scene (fx-target! 800 600))      ; the offscreen surface
+(define scene (fx-target-msaa! 800 600 4)) ; offscreen, antialiased
 
 ;; the screen pass: sample the scene with a ripple and darken edges
 (define post
@@ -75,6 +75,7 @@
                   (m4-mul (m4-rotate-y t) (m4-rotate-x (fl* 0.6 t))))
           0.95 0.45 0.35 vp)
    ;; pass 2: back to the canvas, through the post shader
+   (fx-resolve! scene)                   ; blit the samples down
    (fx-bind-canvas!)
    (cmd-depth! #f)
    (fx-fullscreen-use! post t)
