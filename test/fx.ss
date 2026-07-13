@@ -5,7 +5,7 @@
 ;; input state follows fired events.
 (import (rnrs) (web js) (web gl) (web glsl) (web fx))
 
-(js-eval "globalThis.__gllog = []; globalThis.__ls = {}; globalThis.addEventListener = (k,f) => { globalThis.__ls[k] = f }; globalThis.__frames = []; globalThis.requestAnimationFrame = f => { globalThis.__frames.push(f); return globalThis.__frames.length }; globalThis.__el2 = { addEventListener(k,f){ globalThis.__ls['el2-'+k] = f } }; globalThis.__mockcanvas = { width:640, height:480, addEventListener(k,f){ globalThis.__ls[k] = f }, getContext(kind) { const log = globalThis.__gllog; const push = (...a) => log.push(a.join(':')); return { VERTEX_SHADER:'VS', FRAGMENT_SHADER:'FS', COMPILE_STATUS:'CS', LINK_STATUS:'LS', COLOR_BUFFER_BIT:16384, DEPTH_BUFFER_BIT:256, ARRAY_BUFFER:'AB', DYNAMIC_DRAW:'DD', FLOAT:'F', POINTS:'PTS', LINES:'LNS', TRIANGLES:'TRI', TRIANGLE_STRIP:'STRIP', TEXTURE_2D:'T2D', TEXTURE0:33984, TEXTURE_MIN_FILTER:'MIN', TEXTURE_MAG_FILTER:'MAG', TEXTURE_WRAP_S:'WS', TEXTURE_WRAP_T:'WT', LINEAR:'LIN', CLAMP_TO_EDGE:'CL', RGBA:'RGBA', UNSIGNED_BYTE:'UB', BLEND:'BL', SRC_ALPHA:'SA', ONE:'ONE', ONE_MINUS_SRC_ALPHA:'OMSA', createShader(k){ return {kind:k} }, shaderSource(s,src){}, compileShader(s){}, getShaderParameter(){ return true }, createProgram(){ return {id:'P'+(this._p=(this._p||0)+1)} }, attachShader(p,s){}, linkProgram(p){}, getProgramParameter(){ return true }, bindAttribLocation(p,i,n){ push('bindAttrib', i, n) }, createBuffer(){ return {id:'B'+(this._b=(this._b||0)+1)} }, getUniformLocation(p,n){ return {id:'U:'+n} }, createFramebuffer(){ return {id:'F'+(this._fb=(this._fb||0)+1)} }, bindFramebuffer(t,fb){ push('bindFB', fb ? fb.id : 'null') }, framebufferTexture2D(t,a,tt,tex,l){ push('fbTex', a, tex.id) }, createRenderbuffer(){ return {id:'R'+(this._rb=(this._rb||0)+1)} }, bindRenderbuffer(t,rb){ push('bindRB', rb.id) }, renderbufferStorage(t,f,w,h){ push('rbStore', f, w, h) }, framebufferRenderbuffer(t,a,rt,rb){ push('fbRB', a, rb.id) }, drawBuffers(arr){ push('drawBuffers', arr.join(',')) }, DEPTH_COMPONENT24:'D24', DEPTH_COMPONENT:'DC', UNSIGNED_INT:'UI', NEAREST:'NEA', FRAMEBUFFER:'FB', DEPTH_ATTACHMENT:'DA', COLOR_ATTACHMENT0:'CA0', RENDERBUFFER:'RB', DEPTH_COMPONENT16:'D16', NONE:'NONE', createTexture(){ return {id:'T'+(this._t=(this._t||0)+1)} }, bindTexture(t,tex){ push('bindTexture', tex.id) }, texParameteri(t,k,v){ push('texParam', k, v) }, texImage2D(...a){ const d = a[a.length-1]; push('texImage', d ? d.id : 'null') }, activeTexture(u){ push('activeTexture', u) }, enable(c){ push('gEnable', c) }, disable(c){ push('gDisable', c) }, blendFunc(a,b){ push('blendFunc', a, b) }, clearColor(...a){ push('clearColor', ...a.map(x=>x.toFixed(2))) }, clear(bits){ push('clear', bits) }, useProgram(p){ push('useProgram', p.id) }, bindBuffer(t,b){ push('bindBuffer', b.id) }, bufferData(t,arr,u){ push('bufferData', Array.from(arr).map(x=>x.toFixed(2)).join(',')) }, enableVertexAttribArray(l){ push('enable', l) }, vertexAttribPointer(...a){ push('attrib', a.join(',')) }, uniform1f(loc,x){ push('uniform1f', loc.id, x.toFixed(2)) }, uniform2f(loc,x,y){ push('uniform2f', loc.id, x.toFixed(2), y.toFixed(2)) }, uniform4f(loc,...a){ push('uniform4f', loc.id, a.map(x=>x.toFixed(1)).join(',')) }, uniform1i(loc,v){ push('uniform1i', loc.id, v) }, uniformMatrix4fv(loc,tr,arr){ push('uniformMat4', loc.id, arr.length, arr[0].toFixed(2), arr[12].toFixed(2)) }, drawArrays(m,f,c){ push('draw', m, f, c) }, viewport(...a){ push('viewport', a.join(',')) } } } }")
+(js-eval "globalThis.__gllog = []; globalThis.__ls = {}; globalThis.addEventListener = (k,f) => { globalThis.__ls[k] = f }; globalThis.__frames = []; globalThis.requestAnimationFrame = f => { globalThis.__frames.push(f); return globalThis.__frames.length }; globalThis.__el2 = { addEventListener(k,f){ globalThis.__ls['el2-'+k] = f } }; globalThis.__mockcanvas = { width:640, height:480, addEventListener(k,f){ globalThis.__ls[k] = f }, getContext(kind) { const log = globalThis.__gllog; const push = (...a) => log.push(a.join(':')); return { VERTEX_SHADER:'VS', FRAGMENT_SHADER:'FS', COMPILE_STATUS:'CS', LINK_STATUS:'LS', COLOR_BUFFER_BIT:16384, DEPTH_BUFFER_BIT:256, ARRAY_BUFFER:'AB', DYNAMIC_DRAW:'DD', FLOAT:'F', POINTS:'PTS', LINES:'LNS', TRIANGLES:'TRI', TRIANGLE_STRIP:'STRIP', TEXTURE_2D:'T2D', TEXTURE0:33984, TEXTURE_MIN_FILTER:'MIN', TEXTURE_MAG_FILTER:'MAG', TEXTURE_WRAP_S:'WS', TEXTURE_WRAP_T:'WT', LINEAR:'LIN', CLAMP_TO_EDGE:'CL', RGBA:'RGBA', UNSIGNED_BYTE:'UB', BLEND:'BL', SRC_ALPHA:'SA', ONE:'ONE', ONE_MINUS_SRC_ALPHA:'OMSA', createShader(k){ return {kind:k} }, shaderSource(s,src){}, compileShader(s){}, getShaderParameter(){ return true }, createProgram(){ return {id:'P'+(this._p=(this._p||0)+1)} }, attachShader(p,s){}, linkProgram(p){}, getProgramParameter(){ return true }, bindAttribLocation(p,i,n){ push('bindAttrib', i, n) }, createBuffer(){ return {id:'B'+(this._b=(this._b||0)+1)} }, getUniformLocation(p,n){ return {id:'U:'+n} }, vertexAttribDivisor(l,d){ if (d > 0) push('divisor', l, d) }, drawElementsInstanced(m,c,t,o,n){ push('drawInst', m, c, n) }, createFramebuffer(){ return {id:'F'+(this._fb=(this._fb||0)+1)} }, bindFramebuffer(t,fb){ push('bindFB', fb ? fb.id : 'null') }, framebufferTexture2D(t,a,tt,tex,l){ push('fbTex', a, tex.id) }, createRenderbuffer(){ return {id:'R'+(this._rb=(this._rb||0)+1)} }, bindRenderbuffer(t,rb){ push('bindRB', rb.id) }, renderbufferStorage(t,f,w,h){ push('rbStore', f, w, h) }, framebufferRenderbuffer(t,a,rt,rb){ push('fbRB', a, rb.id) }, drawBuffers(arr){ push('drawBuffers', arr.join(',')) }, DEPTH_COMPONENT24:'D24', DEPTH_COMPONENT:'DC', UNSIGNED_INT:'UI', NEAREST:'NEA', FRAMEBUFFER:'FB', DEPTH_ATTACHMENT:'DA', COLOR_ATTACHMENT0:'CA0', RENDERBUFFER:'RB', DEPTH_COMPONENT16:'D16', NONE:'NONE', createTexture(){ return {id:'T'+(this._t=(this._t||0)+1)} }, bindTexture(t,tex){ push('bindTexture', tex.id) }, texParameteri(t,k,v){ push('texParam', k, v) }, texImage2D(...a){ const d = a[a.length-1]; push('texImage', d ? d.id : 'null') }, activeTexture(u){ push('activeTexture', u) }, enable(c){ push('gEnable', c) }, disable(c){ push('gDisable', c) }, blendFunc(a,b){ push('blendFunc', a, b) }, clearColor(...a){ push('clearColor', ...a.map(x=>x.toFixed(2))) }, clear(bits){ push('clear', bits) }, useProgram(p){ push('useProgram', p.id) }, bindBuffer(t,b){ push('bindBuffer', b.id) }, bufferData(t,arr,u){ push('bufferData', Array.from(arr).map(x=>x.toFixed(2)).join(',')) }, enableVertexAttribArray(l){ push('enable', l) }, vertexAttribPointer(...a){ push('attrib', a.join(',')) }, uniform1f(loc,x){ push('uniform1f', loc.id, x.toFixed(2)) }, uniform2f(loc,x,y){ push('uniform2f', loc.id, x.toFixed(2), y.toFixed(2)) }, uniform4f(loc,...a){ push('uniform4f', loc.id, a.map(x=>x.toFixed(1)).join(',')) }, uniform1i(loc,v){ push('uniform1i', loc.id, v) }, uniformMatrix4fv(loc,tr,arr){ push('uniformMat4', loc.id, arr.length, arr[0].toFixed(2), arr[12].toFixed(2)) }, drawArrays(m,f,c){ push('draw', m, f, c) }, viewport(...a){ push('viewport', a.join(',')) } } } }")
 
 (define log (js-get (js-global) "__gllog"))
 (define (entry i) (js->string (js-index log i)))
@@ -158,6 +158,36 @@
   (begin (fire! "el2-pointermove" (js-eval "({offsetX:7, offsetY:9})"))
          (and (fl=? (pointer-x) 7.0) (fl=? (pointer-y) 9.0))))
 
+;; ---- instancing: i_* attributes split into their own layout ----
+(define pi2
+  (fx-program!
+   '((attribute vec3 a_pos) (attribute vec3 i_offset)
+     (attribute vec3 i_tint) (uniform mat4 u_vp)
+     (define (main) void
+       (set! gl_Position (* u_vp (vec4 (+ a_pos i_offset) (fl 1))))))
+   '((precision mediump float)
+     (define (main) void
+       (set! gl_FragColor (vec4 (fl 1) (fl 1) (fl 1) (fl 1)))))))
+(define vb2 (fx-buffer!))
+(define ib2 (fx-buffer!))
+(define base-i (log-len))
+(cmd-begin!)
+(fx-use-instanced! pi2 vb2 ib2)
+(cmd-draw-elements-instanced! GL-TRIANGLES 36 1000)
+(cmd-flush!)
+(define inst-ok
+  (and (= (fx-program-stride pi2) 12)      ; a_pos only
+       (= (fx-program-istride pi2) 24)     ; two instance vec3s
+       (check-from base-i
+                   '("useProgram:P4" "bindBuffer:B3"
+                     "enable:0" "attrib:0,3,F,false,12,0"
+                     "bindBuffer:B4"
+                     "enable:1" "attrib:1,3,F,false,24,0"
+                     "divisor:1:1"
+                     "enable:2" "attrib:2,3,F,false,24,12"
+                     "divisor:2:1"
+                     "drawInst:TRI:36:1000"))))
+
 ;; ---- offscreen targets: binding sets the matching viewport ----
 (define base-t (log-len))
 (define tgt (fx-target! 320 240))
@@ -201,4 +231,4 @@
                      (and (fl=? (car d) 0.0) (fl=? (cdr d) 0.0)))))))
 
 (and alloc-ok prog-ok use-ok ticks-ok loop-ok quad-ok mat-ok
-     input-ok input2-ok target-ok lock-ok)
+     input-ok input2-ok inst-ok target-ok lock-ok)

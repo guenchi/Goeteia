@@ -38,6 +38,7 @@
           cmd-uniform1i! cmd-uniform2f! cmd-uniform3f! cmd-uniform-matrix4!
           cmd-bind-texture! cmd-depth!
           cmd-bind-index! cmd-index-data! cmd-draw-elements!
+          cmd-attrib-divisor! cmd-draw-elements-instanced!
           cmd-draw-arrays! cmd-viewport! cmd-blend!
           GL-POINTS GL-LINES GL-TRIANGLES GL-TRIANGLE-STRIP)
   (import (rnrs) (web js))
@@ -133,6 +134,7 @@
      "               gl.DYNAMIC_DRAW); p += 2; break;"
      "     case 5: gl.enableVertexAttribArray(u[p]);"
      "             gl.vertexAttribPointer(u[p], u[p+1], gl.FLOAT, false, u[p+2], u[p+3]);"
+     "             if (gl.vertexAttribDivisor) gl.vertexAttribDivisor(u[p], 0);"
      "             p += 4; break;"
      "     case 6: gl.uniform1f(slots[u[p]], f[p+1]); p += 2; break;"
      "     case 7: gl.uniform4f(slots[u[p]], f[p+1], f[p+2], f[p+3], f[p+4]); p += 5; break;"
@@ -167,6 +169,12 @@
      "     case 20: gl.bindFramebuffer(gl.FRAMEBUFFER, slots[u[p]]);"
      "              p += 1; break;"
      "     case 21: gl.bindFramebuffer(gl.FRAMEBUFFER, null); break;"
+     "     case 22: gl.vertexAttribDivisor(u[p], u[p+1]); p += 2; break;"
+     "     case 23: { const m = u[p] === 0 ? gl.POINTS : u[p] === 1 ? gl.LINES"
+     "                : u[p] === 5 ? gl.TRIANGLE_STRIP : gl.TRIANGLES;"
+     "                gl.drawElementsInstanced(m, u[p+1], gl.UNSIGNED_SHORT,"
+     "                                         0, u[p+2]);"
+     "                p += 3; break; }"
      "     default: throw new Error('bad gl opcode');"
      "    } } }; };"))
 
@@ -247,6 +255,11 @@
   ;; render into an offscreen target, or back to the canvas
   (define (cmd-bind-target! slot) (u! 20) (u! slot))
   (define (cmd-bind-canvas!) (u! 21))
+  ;; instancing (webgl2): per-instance attributes advance once per
+  ;; instance; one draw carries them all
+  (define (cmd-attrib-divisor! loc div) (u! 22) (u! loc) (u! div))
+  (define (cmd-draw-elements-instanced! mode count n)
+    (u! 23) (u! mode) (u! count) (u! n))
   (define (cmd-pos) $p)                 ; for overflow checks by callers
   (define (cmd-viewport! x y w h) (u! 9) (u! x) (u! y) (u! w) (u! h))
   ;; blending for translucent draws: (cmd-blend! 'alpha) src-over,
