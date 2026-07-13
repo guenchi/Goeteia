@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <title>Goeteia — 8,000 instances, one draw call</title>
+    <style>
+      body { font-family: system-ui; text-align: center; margin-top: 2em; background: #f2f4fa; color: #14203a; }
+      canvas { border-radius: 12px; box-shadow: 0 4px 20px rgba(16,20,42,.2); }
+      code { font-family: ui-monospace, Menlo, monospace; color: #1550c4; }
+    </style>
+  </head>
+  <body>
+    <h1>8,000 trees, one draw call</h1>
+    <p>The mesh uploads once; every tree is three per-instance
+    attributes (<code>i_offset</code>, <code>i_tint</code>,
+    <code>i_scale</code>) advancing once per instance.  The whole
+    forest is a single <code>drawElementsInstanced</code>.
+    Needs WebGL&nbsp;2. See <code>fx-forest.ss</code>.</p>
+    <canvas id="c" width="800" height="600"></canvas>
+    <script type="module">
+      import { loadGoeteia } from '../rt/web.mjs';
+      loadGoeteia('fx-forest.wasm');
+    </script>
+  </body>
+</html>

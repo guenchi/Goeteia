@@ -34,7 +34,8 @@
           fx-target-width fx-target-height
           fx-bind-target! fx-bind-canvas!
           fx-program! fx-program? fx-program-slot fx-program-stride
-          fx-use! fx-uniform!
+          fx-program-istride
+          fx-use! fx-use-instanced! fx-uniform!
           fx-ticks! fx-loop!
           fx-init-input! key-down? pointer-x pointer-y pointer-down?
           pointer-lock! pointer-locked? pointer-motion!
@@ -101,11 +102,21 @@
   (define (fx-height) (js->number (js-get $fx-canvas "height")))
 
   ;; ---- programs wired from their own glsl forms ----
+  ;; attributes named i_* are PER-INSTANCE: they get their own buffer,
+  ;; stride and divisor through fx-use-instanced!
   (define-record-type (fx-program $make-fx-program fx-program?)
     (fields (immutable slot fx-program-slot)
-            (immutable stride fx-program-stride)      ; bytes per vertex
+            (immutable stride fx-program-stride)      ; per-vertex bytes
             (immutable attribs $fx-program-attribs)   ; ((loc size offset) ...)
+            (immutable istride fx-program-istride)    ; per-instance bytes
+            (immutable iattribs $fx-program-iattribs)
             (immutable uniforms $fx-program-uniforms))) ; name -> (slot . type)
+
+  (define ($fx-instance-name? n)        ; i_offset, i_tint, ...
+    (let ((s (symbol->string n)))
+      (and (>= (string-length s) 2)
+           (char=? (string-ref s 0) #\i)
+           (char=? (string-ref s 1) #\_))))
 
   (define ($fx-attr-names as)           ; "a_pos,a_uv,..." for binding
     (if (null? as)
@@ -120,8 +131,7 @@
            (as (glsl-attributes vs-forms)))
       (gl-program! pslot (glsl->string vs-forms) (glsl->string fs-forms)
                    ($fx-attr-names as))
-      (let ((stride (* 4 (fold-left (lambda (n a) (+ n (caddr a))) 0 as)))
-            (uniforms (make-eq-hashtable)))
+      (let ((uniforms (make-eq-hashtable)))
         (for-each (lambda (u)
                     (unless (hashtable-contains? uniforms (car u))
                       (let ((s (fx-slot!)))
@@ -129,11 +139,18 @@
                         (hashtable-set! uniforms (car u)
                                         (cons s (cadr u))))))
                   (append (glsl-uniforms vs-forms) (glsl-uniforms fs-forms)))
-        (let loop ((as as) (loc 0) (off 0) (acc '()))
+        ;; locations follow declaration order; vertex and instance
+        ;; attributes each get their own interleaved layout
+        (let loop ((as as) (loc 0) (voff 0) (ioff 0) (vacc '()) (iacc '()))
           (if (null? as)
-              ($make-fx-program pslot stride (reverse acc) uniforms)
-              (loop (cdr as) (+ loc 1) (+ off (* 4 (caddr (car as))))
-                    (cons (list loc (caddr (car as)) off) acc)))))))
+              ($make-fx-program pslot voff (reverse vacc)
+                                ioff (reverse iacc) uniforms)
+              (let ((n (caar as)) (size (caddr (car as))))
+                (if ($fx-instance-name? n)
+                    (loop (cdr as) (+ loc 1) voff (+ ioff (* 4 size))
+                          vacc (cons (list loc size ioff) iacc))
+                    (loop (cdr as) (+ loc 1) (+ voff (* 4 size)) ioff
+                          (cons (list loc size voff) vacc) iacc))))))))
 
   ;; use-program, bind the buffer, then the attribs: the pointer
   ;; captures the buffer bound at that moment
@@ -144,6 +161,18 @@
                 (cmd-vertex-attrib! (car a) (cadr a)
                                     (fx-program-stride prog) (caddr a)))
               ($fx-program-attribs prog)))
+
+  ;; the instanced variant: vertex attributes from one buffer,
+  ;; i_* attributes from another with divisor 1 (webgl2); draw with
+  ;; cmd-draw-elements-instanced!
+  (define (fx-use-instanced! prog buf-slot inst-slot)
+    (fx-use! prog buf-slot)
+    (cmd-bind-buffer! inst-slot)
+    (for-each (lambda (a)
+                (cmd-vertex-attrib! (car a) (cadr a)
+                                    (fx-program-istride prog) (caddr a))
+                (cmd-attrib-divisor! (car a) 1))
+              ($fx-program-iattribs prog)))
 
   ;; dispatch on the declared type; sampler values are texture units
   (define (fx-uniform! prog name . vs)
