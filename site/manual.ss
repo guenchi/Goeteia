@@ -63,8 +63,9 @@
   (render-page "Manual — Goeteia"
                (string-append "The Goeteia developer manual: toolchain and "
                               "self-hosting fixpoint, the library system, the numeric "
-                              "tower, call/cc, and the reactive web stack -- rendered "
-                              "in your browser from Markdown.")
+                              "tower, call/cc, the reactive web stack, and the 3D / "
+                              "WebGL graphics stack -- rendered in your browser from "
+                              "Markdown.")
                (string-append (css->string (base-styles 52))
                               (css->string doc-styles)
                               (css->string (footer-styles)))

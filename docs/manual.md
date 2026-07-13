@@ -40,11 +40,12 @@ A `*`-prefixed name is a *pointer to a host object*: `*jsObject` (a Wasm
 10. [HTML and CSS as Data](#html-and-css-as-data)
 11. [React Interop](#react-interop)
 12. [3D and WebGL](#3d-and-webgl)
-13. [Networking](#networking)
-14. [Running in the Browser](#running-in-the-browser)
-15. [Testing](#testing)
-16. [Porting from JavaScript/TypeScript](#porting-from-javascripttypescript)
-17. [Current Limits and Planned Work](#current-limits-and-planned-work)
+13. [Text Layout and Audio](#text-layout-and-audio)
+14. [Networking](#networking)
+15. [Running in the Browser](#running-in-the-browser)
+16. [Testing](#testing)
+17. [Porting from JavaScript/TypeScript](#porting-from-javascripttypescript)
+18. [Current Limits and Planned Work](#current-limits-and-planned-work)
 
 ## Toolchain and Workflow
 
@@ -1264,7 +1265,7 @@ export default function App() {
 
 ## 3D and WebGL
 
-Two graphics libraries, from high to low. `(web gl)` shares `sx`'s principle: the frame is described as data, built once, and the rendering surface is write-only—bridge traffic is O(changes), never O(frames).
+A layered graphics stack. At the base, `(web gl)` speaks WebGL 2 through a command buffer and `(web glsl)` writes shaders as s-expressions; `(web mat)` and `(web mesh)` add math and geometry; `(web fx)` ties them into a self-wiring harness (the practical entry point); `(web scene)` makes scenes declarative; `(web gltf)` loads assets and `(web collide)` handles game collision. Throughout, the frame is described as data, built once, and the rendering surface is write-only — bridge traffic is O(changes), never O(frames).
 
 ### Linear Staging Memory
 
@@ -1441,6 +1442,174 @@ Integer enums for the `mode` argument of `cmd-draw-arrays!`:
 `GL-POINTS` (0), `GL-LINES` (1), `GL-TRIANGLES` (4),
 `GL-TRIANGLE-STRIP` (5).
 
+#### WebGL 2 and more resources
+
+The context is WebGL 2 with a WebGL 1 fallback (`getContext('webgl2') ||
+getContext('webgl')`). Beyond `gl-buffer!`, the slot table holds textures,
+render targets, vertex arrays, uniform buffers, and transform-feedback
+programs — each created once and referred to by slot.
+
+```
+procedure: (gl-texture! slot)
+
+func -> int -> void
+```
+Create a 2D texture (LINEAR-mipmap sampling, clamp-to-edge) in `slot`.
+
+```
+procedure: (gl-texture-upload! slot src [premul])
+
+func -> int -> *jsObject -> boolean -> void
+```
+Upload an image/canvas/bitmap `src` into the texture in `slot` and
+generate mipmaps. A true `premul` premultiplies alpha (for sprite sheets).
+
+```
+procedure: (gl-texture-data! slot base w h)
+
+func -> int -> int -> int -> int -> void
+```
+Upload `w`×`h` raw RGBA bytes from staging memory at `base` into the
+texture — a texture computed in Scheme (a procedural normal map, a
+lookup table).
+
+```
+procedure: (gl-cubemap! slot base dim)
+
+func -> int -> int -> int -> void
+```
+Build a cube map from six `dim`×`dim` RGBA faces laid out consecutively at
+`base` (order +x −x +y −y +z −z).
+
+#### Indexed and instanced drawing
+
+An element buffer draws indexed meshes; a divisor plus
+`drawElementsInstanced` draws thousands of copies in one call.
+
+```
+procedure: (cmd-bind-index! slot)
+
+func -> int -> void
+```
+Encode `bindBuffer(ELEMENT_ARRAY_BUFFER, …)` of the buffer in `slot`.
+
+```
+procedure: (cmd-index-data! offset bytes)
+
+func -> int -> int -> void
+```
+Encode `bufferData` uploading `bytes` of `u16` indices from staging
+memory at `offset`.
+
+```
+procedure: (cmd-draw-elements! mode count)
+
+func -> int -> int -> void
+```
+Encode `drawElements(mode, count, UNSIGNED_SHORT, 0)`.
+
+```
+procedure: (cmd-attrib-divisor! loc n)
+
+func -> int -> int -> void
+```
+Encode `vertexAttribDivisor(loc, n)` — `n=1` advances attribute `loc`
+once per instance instead of per vertex.
+
+```
+procedure: (cmd-draw-elements-instanced! mode count instances)
+
+func -> int -> int -> int -> void
+```
+Encode `drawElementsInstanced` — one draw for `instances` copies. See
+`examples/fx-forest.html`: 8,000 trees, one call.
+
+#### More uniforms
+
+Beyond `cmd-uniform1f!`/`cmd-uniform4f!`: `cmd-uniform1i!` (samplers,
+integers), `cmd-uniform2f!`, `cmd-uniform3f!` for vectors, and matrices:
+
+```
+procedure: (cmd-uniform-matrix4! slot m)
+
+func -> int -> vector -> void
+```
+Encode `uniformMatrix4fv` writing the 16-element column-major mat4 `m`
+(from `(web mat)`) to the location in `slot`.
+
+```
+procedure: (cmd-uniform-matrices! slot ms)
+
+func -> int -> vector -> void
+```
+Encode `uniformMatrix4fv` for an array of mat4s — a `mat4[N]` uniform,
+e.g. skinning joint matrices.
+
+#### Render targets
+
+A framebuffer renders into a texture instead of the canvas — the door to
+shadows, post-processing, reflections.
+
+```
+procedure: (gl-target! slot tslot w h [depth-only?])
+
+func -> int -> int -> int -> int -> boolean -> void
+```
+Create an offscreen target: a framebuffer in `slot` whose color texture
+lands in `tslot`. A true `depth-only?` makes a depth texture with no color
+buffer — a shadow map. Also `gl-target-hdr!` (RGBA16F, values past 1.0
+survive, for bloom), `gl-target-msaa!` (multisampled; `cmd-resolve!` blits
+it down), and `gl-cube-target!` (six faces around a point, for point-light
+shadows).
+
+```
+procedure: (cmd-bind-target! slot)   /   (cmd-bind-canvas!)
+
+func -> int -> void   /   func -> void
+```
+Direct subsequent draws into the target in `slot`, or back to the canvas.
+
+#### Textures, depth, and blending in the frame
+
+```
+procedure: (cmd-bind-texture! unit slot)
+
+func -> int -> int -> void
+```
+Bind the texture in `slot` to sampler `unit` (0, 1, …). `cmd-bind-cubemap!`
+binds a cube map; `cmd-unbind-texture!` / `cmd-unbind-cubemap!` clear a
+unit — needed before rendering *into* a target you also sample, or strict
+drivers reject the feedback loop.
+
+```
+procedure: (cmd-depth! on?)
+
+func -> boolean -> void
+```
+Enable or disable the depth test.
+
+```
+procedure: (cmd-blend! mode)
+
+func -> symbol -> void
+```
+Set blending: `'alpha` (src-over), `'add` (additive glow), `'premul`
+(premultiplied src-over), `'off` (opaque).
+
+#### VAOs, uniform buffers, transform feedback (WebGL 2)
+
+Three WebGL-2 facilities for scale. A **vertex array object** records an
+attribute setup once and rebinds it with one command (`gl-vao!`,
+`cmd-bind-vao!`, `cmd-unbind-vao!`). A **uniform buffer** shares per-frame
+state across programs from one upload (`gl-ubo!`, `gl-uniform-block!`,
+`cmd-bind-ubo!`, `cmd-ubo-data!`) — it needs the ESSL 3.00 dialect (see
+below). A **transform-feedback program** captures a vertex shader's
+outputs back into a buffer (`gl-tf-program!`, `cmd-tf-buffer!`,
+`cmd-tf-begin!`, `cmd-tf-end!`): the GPU updates particle state with no
+CPU in the loop (`examples/fx-gpu-particles.html`, 100,000 particles). All
+three are wrapped by `(web fx)` below — most code never calls them
+directly.
+
 ### `(web glsl)`: Shaders as S-Expressions
 
 `glsl->string` renders a form list to GLSL source—the `(web css)` of shaders. Shaders are lists, so they compose with `append` and abstract with functions.
@@ -1462,6 +1631,417 @@ Render a list of GLSL forms to a GLSL source string.
 ```
 
 Top-level forms: `attribute`/`uniform`/`varying`, `precision`, and `define` for functions. Statements: `local`, `set!`, `return`, `if`/`if-else`, `discard`. Expressions: `+ - * /` are infix, comparisons `< > <= >= ==`, anything else is a call; symbols pass through verbatim, so swizzles like `p.x` just work. Float literals use the whole-plus-hundredths convention—`(fl 2)` → `2.0`, `(fl 0 50)` → `0.5`, `(fl 1 25)` → `1.25`—so no Scheme flonum (and no printer noise) ever reaches the source.
+
+#### More glsl: loops, arrays, and interface extraction
+
+Beyond the core forms, `for` writes a counted loop — the shape kernel
+sweeps (PCF shadows, blurs) need:
+
+```scheme
+(for (int i 0 (< i 3) (+ i 1))
+  (set! acc (+ acc (texture2D u_src (+ uv (* i step))))))
+=> "for (int i = 0; (i < 3); i = (i + 1)) { ... } "
+```
+
+Array uniforms declare a size — `(uniform (array mat4 32) u_joints)` —
+and `(at u_joints i)` indexes them, for skinning.
+
+The declarations are data, so the interface a program wires up comes from
+the same list that rendered its source:
+
+```
+procedure: (glsl-attributes forms)   (glsl-uniforms forms)   (glsl-varyings forms)
+
+func -> list -> alist
+```
+Extract the `attribute` / `uniform` / `varying` declarations in order —
+`glsl-attributes` returns `(name type component-count)` triples,
+`glsl-uniforms` `(name type)` pairs, `glsl-varyings` names. `(web fx)`
+uses these to wire attribute locations, uniform slots, and
+transform-feedback capture lists automatically.
+
+#### The ESSL 3.00 dialect
+
+The form language is dialect-neutral. `glsl->string` renders ESSL 1.00
+(WebGL 1 style); `glsl300-vs->string` / `glsl300-fs->string` render the
+*same forms* as `#version 300 es` — `attribute`→`in`, `varying`→`out`
+(vertex) / `in` (fragment), `gl_FragColor`→a declared output,
+`texture2D`/`textureCube`→the unified `texture()`. A new form,
+`(uniform-block Name (T field) …)`, becomes a `std140` uniform block —
+the syntax uniform buffers require, which 1.00 lacks. `fx-program3!` and
+`fx-tf-program!` (below) compile through these.
+
+### `(web mat)`: 3D Math
+
+`vec3` and column-major `mat4` over plain flonum vectors — pure Scheme,
+verified headlessly, its own range-reduced trig so both compiler hosts
+emit identical bytes. A `mat4` is a 16-element vector, exactly what
+`uniformMatrix4fv` (and `fx-uniform!`'s mat4 case) wants.
+
+```
+procedure: (v3 x y z)
+
+func -> number -> number -> number -> vector
+```
+A 3-vector. Accessors `v3-x`/`v3-y`/`v3-z`; operations `v3-add`,
+`v3-sub`, `v3-scale`, `v3-dot`, `v3-cross`, `v3-normalize`.
+
+```
+procedure: (m4-mul a b)
+
+func -> vector -> vector -> vector
+```
+Multiply two mat4s — `(m4-mul a b)` transforms as `a` after `b`.
+`m4-identity`, `m4-transform` (point through a matrix, w-divided).
+
+```
+procedure: (m4-perspective fovy aspect near far)   (m4-ortho l r b t near far)
+
+func -> number -> number -> number -> number -> vector
+```
+Projection matrices. `m4-look-at eye center up` builds a view;
+`m4-translate`, `m4-scale`, `m4-rotate-x/-y/-z`, `m4-from-quat` build
+model transforms; `flsin`/`flcos`/`fltan` are the library's own trig.
+
+```
+procedure: (m4-inverse m)
+
+func -> vector -> vector
+```
+General 4×4 inverse (or `#f` if singular). With `m4-unproject inv-vp x y
+z` it turns a cursor into a world-space ray — the basis of picking, with
+`(web collide)`.
+
+```
+procedure: (m4-frustum-planes vp)   (sphere-in-frustum? planes c r)
+
+func -> vector -> vector   /   func -> vector -> vector -> number -> boolean
+```
+Extract the six view-frustum planes from a view-projection, and test a
+bounding sphere against them — conservative frustum culling. Pair with
+`mesh-bounds`.
+
+### `(web mesh)`: Parametric Geometry
+
+Positions, normals, indices generated in pure Scheme — a framework's
+geometry classes without the framework. A mesh holds interleaved
+`(x y z nx ny nz)` flonums (24 bytes/vertex, `mesh-lit-vs`'s layout) and
+u16 indices.
+
+```
+procedure: (mesh-plane w d)   (mesh-box w h d)   (mesh-sphere r [segs rings])
+           (mesh-cylinder r h [segs])   (mesh-torus R r [segs rings])
+
+func -> number … -> *mesh
+```
+The generators. `mesh-heightmap w d nx nz f` builds terrain from any pure
+height function `f`, with central-difference normals.
+
+```
+procedure: (mesh-write! m vbase ibase)
+
+func -> *mesh -> int -> int -> void
+```
+Lay the vertices at `vbase` and indices at `ibase` in staging memory.
+`mesh-vertex-bytes`/`mesh-index-bytes`/`mesh-index-count` size the buffers.
+`mesh-write-uv!` (32-byte, adds uvs) and `mesh-write-tan!` (48-byte, adds
+a tangent frame for normal mapping) are the wider layouts; `mesh-tangents`
+and `mesh-bounds` (a bounding sphere) are the derived data.
+
+**Ready-made programs.** `mesh-lit-vs`/`-fs` are glsl forms for one
+directional light plus an ambient floor (uniforms `u_mvp`, `u_model`,
+`u_light`, `u_color`, `u_ambient`). `mesh-tex-vs`/`-fs` add a texture,
+`mesh-normal-vs`/`-fs` a tangent-space normal map, `mesh-pbr-vs`/`-fs`
+Cook-Torrance PBR with the sky as an image-based light probe. They are
+just data — compose or replace them.
+
+### `(web fx)`: The Effects Harness
+
+The practical entry point. A shader authored as `(web glsl)` forms
+already declares its interface, so `fx` reads it back and does the
+bookkeeping raw `(web gl)` leaves to you — attribute locations,
+interleaved offsets, uniform slots, resource slot numbers,
+staging-memory layout, the render loop. Slot numbers and staging memory
+are owned by `fx` from `fx-init!` on.
+
+```
+procedure: (fx-init! canvas)
+
+func -> *domElement -> void
+```
+Attach to `canvas` and reset the slot counter and staging heap (the
+command region is bytes [0, 64KiB); `fx-alloc!` hands out what lies
+above). Call once before any `fx-*` resource.
+
+```
+procedure: (fx-program! vs-forms fs-forms)
+
+func -> list -> list -> *fx-program
+```
+Compile and link a program from vertex and fragment *forms*, binding
+attribute locations from the vertex declarations and allocating a uniform
+slot per declared uniform. `fx-program3!` compiles the ESSL 3.00 dialect
+(for uniform blocks); `fx-tf-program!` makes a transform-feedback program,
+capturing the vertex shader's varyings.
+
+```
+procedure: (fx-buffer!)   (fx-texture!)   (fx-ubo! bytes)   (fx-alloc! bytes)
+
+func -> int   /   func -> int -> int
+```
+Allocate a resource slot (buffer, texture, uniform buffer) or a
+byte range of staging memory. `fx-target!` / `fx-target-hdr!` /
+`fx-target-msaa!` / `fx-cube-target!` create render targets as records
+(`fx-target-texture` samples one; `fx-bind-target!` / `fx-bind-canvas!` /
+`fx-bind-cube-face!` / `fx-resolve!` drive them).
+
+```
+procedure: (fx-use! prog buf-slot)
+
+func -> *fx-program -> int -> void
+```
+Use `prog` and bind `buf-slot` as its vertex source, replaying each
+declared attribute's pointer. `fx-use-instanced! prog buf inst` adds a
+per-instance stream (attributes named `i_*`).
+
+```
+procedure: (fx-uniform! prog name . values)
+
+func -> *fx-program -> symbol -> number … -> void
+```
+Set a uniform by name, dispatched on its declared type — `float`,
+`vec2`/`3`/`4`, `sampler2D`/`samplerCube` (an integer unit), `mat4` (a
+`(web mat)` matrix), or `(array mat4 N)` (a vector of matrices). Floats
+may be fixnums; they are coerced.
+
+```
+procedure: (fx-loop! proc)
+
+func -> procedure -> void
+```
+Run `proc` every animation frame with `(t dt)` in seconds, wrapped in
+`cmd-begin!` … `cmd-flush!` and a canvas-sized viewport. `fx-ticks!` is
+the bare timing pump (no GL); `fx-fullscreen!` / `fx-fullscreen-use!` /
+`fx-fullscreen-draw!` make a full-screen fragment-shader effect (a
+shadertoy) in a dozen lines.
+
+```
+procedure: (fx-init-input! [element])   (key-down? name)   (pointer-x)
+           (pointer-down?)   (pointer-lock! )   (pointer-motion!)
+
+func -> *domElement -> void   /   func -> string -> boolean   /   func -> number
+```
+Polled input, with no GL dependency (usable from any renderer): held keys,
+pointer position and buttons, and pointer-lock for first-person cameras.
+
+### `(web scene)`: Reactive GL Scenes
+
+`sgl` is to the GL stack what `sx` is to the DOM. The template splits at
+expansion time: geometry (from `(web mesh)`) builds and uploads once, and
+each unquoted attribute becomes a signal-driven hole, so a frame is pure
+arithmetic over current fields and only changed values move.
+
+```scheme
+(define angle (signal 0.0))
+(define sc
+  (sgl (camera (@ (fov 0.9) (position 0.0 3.5 9.0) (look-at 0.0 0.5 0.0)))
+       (light  (@ (direction 0.5 0.8 0.4) (ambient 0.25)))
+       (mesh   (@ (geometry (torus 1.6 0.55))
+                  (position -1.8 0.6 0.0)
+                  (rotation-y ,(signal-ref angle))
+                  (color 0.95 0.45 0.35)))))
+(fx-loop! (lambda (t dt)
+            (cmd-clear! 0.05 0.06 0.10 1.0)
+            (signal-set! angle t)
+            (sgl-draw! sc)))
+```
+
+Tags: `camera` (`fov`, `near`, `far`, `position`, `look-at`), `light`
+(`direction`, `ambient`), `mesh` (`geometry`, `position`, `rotation`,
+`color`). Geometry specs mirror `(web mesh)` — `(plane w d)`, `(box …)`,
+`(sphere r …)`, `(cylinder …)`, `(torus …)`, or an unquoted mesh injected
+once. Everything renders through `mesh-lit-vs`/`-fs`.
+
+### `(web gltf)`: Loading 3D Assets
+
+GLB (binary glTF 2.0): the JSON chunk parses through `(web json)`, the
+binary chunk sits in staging memory and accessors read f32/u16 straight
+out of it — the wasm loads *are* the float decoder.
+
+```
+procedure: (gltf-fetch! url k)
+
+func -> string -> procedure -> void
+```
+Fetch `url`, copy the bytes into staging memory, parse, and call `k` with
+the `*gltf`. `gltf-parse base len` parses GLB bytes already in memory (so
+parsing verifies headlessly). `gltf-load-textures! g k` decodes the
+embedded images and hands each primitive its texture.
+
+```
+procedure: (gltf-draw! g prog vp [root])
+
+func -> *gltf -> *fx-program -> vector -> void
+```
+Draw every primitive with `prog` and the view-projection `vp` — lit,
+textured, or skinned depending on the program's stride. Loads: positions,
+normals, uvs, node transforms, `baseColorFactor`, metallic/roughness
+(`gprim-metallic`/`-roughness`), embedded textures, skins, animations, and
+morph targets.
+
+```
+procedure: (gltf-animate! g i t)   (gltf-animate-blend! g a ta b tb k)
+
+func -> *gltf -> int -> number -> void
+```
+Sample animation `i` at time `t` (looping), writing every channel's node
+TRS. `gltf-animate-blend!` crossfades two clips by weight `k`.
+`gltf-animation-names` lists them; `gltf-weights!` sets morph weights by
+hand; `gltf-skin-vs` is the four-bone skinning vertex shader (pairs with
+`mesh-tex-fs`). See `examples/fx-fox.html`: a rigged Fox, Survey / Walk /
+Run crossfading on keys 1–3.
+
+### `(web collide)`: Collision and Raycasts
+
+Overlap tests and raycasts over `(web mat)`'s `v3` — pure arithmetic,
+verified headlessly, enough for the classic game loop.
+
+```
+procedure: (ray-aabb origin dir bmin bmax)   (ray-sphere …)   (ray-plane …)
+           (ray-triangle …)   (ray-mesh origin dir mesh)
+
+func -> vector -> vector -> … -> number
+```
+Cast a ray (direction must be a unit vector); return the hit distance in
+world units, or `#f`. `ray-mesh` walks a `(web mesh)`'s triangles — with
+`m4-unproject` it turns a click into a picked object.
+
+```
+procedure: (sphere-aabb-push c r bmin bmax)
+
+func -> vector -> number -> vector -> vector -> vector
+```
+Return the vector that moves a sphere out of a box (or `#f` if not
+overlapping) — the "slide along the wall" of a character controller.
+`sphere-sphere?`, `aabb-aabb?`, `sphere-aabb?` are the boolean overlap
+tests.
+
+## Text Layout and Audio
+
+Three libraries render text without the DOM's layout engine, and one
+plays sound. `(web typeset)` is the shared foundation: layout as a pure
+function, so heights are known before anything mounts and text can be set
+in canvas/GL scenes.
+
+### `(web typeset)`: DOM-Free Text Layout
+
+Two phases, after [pretext](https://www.pretext.cool): `prepare` measures
+each distinct code point once, `layout` is pure arithmetic from the cached
+widths to line boxes — no DOM, no reflow.
+
+```
+procedure: (prepare text measure)
+
+func -> string -> procedure -> *prepared
+```
+Measure `text`, calling `measure` (a one-code-point string → advance
+width) once per distinct code point and caching. `(web typeset canvas)`'s
+`canvas-measurer` supplies a `measure` backed by `measureText`; tests pass
+arithmetic stand-ins.
+
+```
+procedure: (layout p max-width line-height)
+
+func -> *prepared -> number -> number -> *layout
+```
+Lay `p` into line boxes within `max-width` (greedy first-fit): `\newline`
+is a hard break, soft breaks fall at spaces, CJK breaks between ideographs
+with kinsoku (closing punctuation never starts a line, opening brackets
+never end one), over-wide words split by code point. `layout-height`,
+`layout-line-count`, `layout-lines` read the result; each line gives
+`line-text`, `line-width`, `line-y`. `string-fold-cp` folds a procedure
+over the code points (byte offset and length), the hot-path primitive
+sprite text uses.
+
+### `(web sprite)`: 2D Sprites and GL Text
+
+A glyph atlas over `(web fx)` and `(web typeset)`. Each distinct code
+point rasterizes once (hidden 2d canvas), uploads as one texture, and its
+measurer doubles as typeset's `measure` — so layout and rendering agree
+exactly.
+
+```
+procedure: (make-atlas font size [dim])
+
+func -> string -> number -> int -> *atlas
+```
+An atlas for CSS `font`. `atlas-measurer` returns its `measure` for
+`prepare`; `atlas-line-height` its line height.
+
+```
+procedure: (make-batch atlas [cap])   (batch-begin! b)   (batch-draw! b)
+
+func -> *atlas -> int -> *batch
+```
+A quad batch. Per frame: `batch-begin!`, then `rect!` (a tinted solid),
+`sprite!` (an atlas cell), `draw-text!` (a laid-out `*layout` at a pen
+position), then `batch-draw!` — one buffer upload, one draw call.
+Coordinates are pixels, top-left origin.
+
+```
+procedure: (load-image! url k)   (make-sheet img)   (sheet! sb …)   (sheet-draw! sb)
+
+func -> string -> procedure -> void
+```
+Image sprite sheets ride a separate premultiplied path: `load-image!`
+fetches, `make-sheet` uploads, and a sheet-batch (`make-sheet-batch`,
+`sheet!`, `sheet-draw!`) draws source rectangles from it.
+
+### `(web scroll)`: Virtual Scrolling
+
+The use case `(web typeset)` was born for. Chat threads need an item's
+height *before* it mounts; heights come from typeset's pure layout over
+the same font, only the visible window is in the DOM, and one
+`offsetHeight` read per newly mounted item corrects the estimates.
+
+```
+procedure: (make-vscroll parent width height font line-height)
+
+func -> *domElement -> int -> int -> string -> number -> *vscroll
+```
+A scroller inside `parent`. `vscroll-append!` adds an item (sticking to
+the bottom when the user is already there); `vscroll-render!` re-renders
+the visible window. See `examples/chat.html`: an endless streaming feed.
+
+### `(web audio)`: Game Sound
+
+Procedural beeps (no asset files), decoded samples, looping music, over a
+WebAudio bridge.
+
+```
+procedure: (audio-init!)
+
+func -> void
+```
+Start the audio context — call from the first click or keydown, since
+browsers refuse audio before a user gesture. `audio-time` reads the clock.
+
+```
+procedure: (beep! freq dur [vol wave])
+
+func -> number -> number -> number -> string -> void
+```
+A procedural blip: frequency (Hz), duration (s), optional volume and
+waveform (`"sine"`, `"square"`, …).
+
+```
+procedure: (load-sound! url k)   (play! buf [vol rate])   (loop-sound! buf [vol])
+
+func -> string -> procedure -> void   /   func -> *jsObject -> number -> void
+```
+`load-sound!` fetches and decodes a sample, then calls `k` with the
+buffer; `play!` fires it once (optional volume, playback rate);
+`loop-sound!` starts a loop and returns a handle for `stop-sound!`.
 
 ## Networking
 
