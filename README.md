@@ -196,10 +196,16 @@ A small UI stack over the JS bridge, in `lib/web/`:
   split-sum integration into a 2D scale/bias table — both with
   Fibonacci-spiral importance sampling, so the shaders stay ESSL 1.00
 - `(web collide)` — collision tests and raycasts for 3D games:
-  sphere/AABB overlaps, ray against sphere, box, plane, triangle and
-  whole meshes (Möller–Trumbore), and `sphere-aabb-push` — the
-  shortest exit vector, so wall sliding is one add.  Pure arithmetic,
-  verifies headlessly
+  sphere/AABB/capsule overlaps (capsule–capsule rides the classic
+  segment–segment distance), ray against sphere, box, plane,
+  triangle and whole meshes (Möller–Trumbore), and
+  `sphere-aabb-push` — the shortest exit vector, so wall sliding is
+  one add.  `sweep-sphere-aabb` answers where along a motion the
+  first contact lands (Minkowski-inflated slabs, so fast movers
+  cannot tunnel) with the contact normal, and `move-and-slide`
+  packages the character-controller loop over it: advance to
+  contact, shed the into-the-wall component, continue — walls
+  slide, corners stop.  Pure arithmetic, verifies headlessly
 - `(web audio)` — game audio over WebAudio: `beep!` is an oscillator
   with a click-free fade (no asset files needed), `load-sound!` runs
   the fetch/decode chain, `play!`/`loop-sound!` wire
