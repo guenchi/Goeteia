@@ -217,8 +217,12 @@ A small UI stack over the JS bridge, in `lib/web/`:
   (`examples/gpu-particles.html`: the fountain, no WebGL;
   `examples/gpu-torus.html`: lit indexed 3D through a
   `@group(0) @binding(0)` matrix struct).  The header documents the
-  mapping and what remains (textures, compute, WGSL from the same
-  s-expression forms)
+  mapping and what remains (textures, compute).  `(web wgsl)`
+  closes the shader gap: `wgsl->string` renders the SAME s-expression
+  forms `(web glsl)` renders — merged uniform struct, VOut varyings,
+  entry-point rewrites — and `wgsl-layout` derives the pipeline's
+  vertex formats from the same attribute declarations, so one shader
+  source now speaks ESSL 1.00, ESSL 3.00 and WGSL
 - `(web collide)` — collision tests and raycasts for 3D games:
   sphere/AABB/capsule overlaps (capsule–capsule rides the classic
   segment–segment distance), ray against sphere, box, plane,

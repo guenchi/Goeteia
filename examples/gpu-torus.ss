@@ -1,34 +1,39 @@
 ;; A lit, indexed, depth-tested torus on WebGPU -- the 3D milestone
 ;; for (web gpu).  Geometry comes from (web mesh) (positions +
-;; normals, u16 indices), the matrices from (web mat), and the whole
-;; per-frame uniform state (mvp + model) is one 128-byte struct
-;; written into a uniform buffer and bound as @group(0) @binding(0):
-;; WebGPU has no uniform1f, so the struct IS the uniform interface.
-;; Needs a WebGPU browser.
+;; normals, u16 indices), the matrices from (web mat), and the
+;; SHADER from the same s-expression forms (web glsl) renders:
+;; (web wgsl) respells them as one WGSL module, and wgsl-layout
+;; derives the pipeline's vertex formats from the same attribute
+;; declarations.  The whole per-frame uniform state (mvp + model) is
+;; one 128-byte struct written into a uniform buffer and bound as
+;; @group(0) @binding(0): WebGPU has no uniform1f, so the struct IS
+;; the uniform interface.  Needs a WebGPU browser.
 (import (rnrs) (web js) (web dom) (web fx) (web mat) (web mesh)
-        (web gpu))
+        (web wgsl) (web gpu))
 
 (define tor2 (mesh-torus 1.5 0.55 48 24))
 
-(define WGSL
-  (string-append
-   "struct U { mvp : mat4x4f, model : mat4x4f };\n"
-   "@group(0) @binding(0) var<uniform> u : U;\n"
-   "struct VOut { @builtin(position) pos : vec4f,\n"
-   "              @location(0) n : vec3f };\n"
-   "@vertex fn vs(@location(0) p : vec3f, @location(1) n : vec3f)\n"
-   "    -> VOut {\n"
-   "  var o : VOut;\n"
-   "  o.pos = u.mvp * vec4f(p, 1.0);\n"
-   "  o.n = (u.model * vec4f(n, 0.0)).xyz;\n"
-   "  return o;\n"
-   "}\n"
-   "@fragment fn fs(@location(0) n : vec3f) -> @location(0) vec4f {\n"
-   "  let l = normalize(vec3f(0.5, 0.8, 0.4));\n"
-   "  let d = max(dot(normalize(n), l), 0.0);\n"
-   "  let base = vec3f(0.95, 0.45, 0.35);\n"
-   "  return vec4f(base * (0.25 + 0.75 * d), 1.0);\n"
-   "}\n"))
+(define vs-forms
+  '((attribute vec3 a_pos)
+    (attribute vec3 a_normal)
+    (uniform mat4 u_mvp)
+    (uniform mat4 u_model)
+    (varying vec3 v_n)
+    (define (main) void
+      (set! gl_Position (* u_mvp (vec4 a_pos (fl 1))))
+      (local vec4 nw (* u_model (vec4 a_normal (fl 0))))
+      (set! v_n nw.xyz))))
+(define fs-forms
+  '((varying vec3 v_n)
+    (define (main) void
+      (local vec3 l (normalize (vec3 (fl 0 50) (fl 0 80) (fl 0 40))))
+      (local float d (max (dot (normalize v_n) l) (fl 0)))
+      (local vec3 base (vec3 "0.95" "0.45" "0.35"))
+      (set! gl_FragColor
+            (vec4 (* base (+ (fl 0 25) (* (fl 0 75) d))) (fl 1))))))
+
+(define WGSL (wgsl->string vs-forms fs-forms))
+(define LAYOUT (wgsl-layout vs-forms))
 
 ;; ---- memory: commands below 4096, then uniforms, then the mesh ----
 (define UBASE 4096)
@@ -52,7 +57,7 @@
 (define uploaded #f)
 (gpu-attach! (get-element-by-id "c")
              (lambda ()
-               (gpu-pipeline! 0 WGSL 24 "float32x3,float32x3")
+               (gpu-pipeline! 0 WGSL (car LAYOUT) (cdr LAYOUT))
                (gpu-buffer! 1 (mesh-vertex-bytes tor2))
                (gpu-index! 2 (mesh-index-bytes tor2))
                (gpu-uniforms! 3 128)
