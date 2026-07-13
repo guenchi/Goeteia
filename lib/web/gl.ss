@@ -35,7 +35,7 @@
           gl-target! gl-target-hdr! gl-target-msaa! gl-cube-target!
           gl-target-mrt!
           cmd-bind-target! cmd-bind-canvas! cmd-resolve!
-          cmd-region! cmd-begin! cmd-flush! cmd-pos
+          cmd-region! cmd-begin! cmd-flush! cmd-pos cmd-draws
           cmd-clear! cmd-use-program! cmd-bind-buffer! cmd-buffer-data!
           cmd-vertex-attrib! cmd-uniform1f! cmd-uniform4f!
           cmd-uniform1i! cmd-uniform2f! cmd-uniform3f! cmd-uniform-matrix4!
@@ -478,8 +478,10 @@
   ;; ---- the encoder: words into the staging memory ----
   (define $base 0)
   (define $p 0)
+  (define $draw-count 0)                ; draws encoded this frame
   (define (cmd-region! base) (set! $base base))
-  (define (cmd-begin!) (set! $p $base))
+  (define (cmd-begin!) (set! $p $base) (set! $draw-count 0))
+  (define ($draw!) (set! $draw-count (+ $draw-count 1)))
   (define (u! v) (%mem-i32-set! $p v) (set! $p (+ $p 4)))
   (define (f! v) (%mem-f32-set! $p v) (set! $p (+ $p 4)))
 
@@ -493,7 +495,7 @@
   (define (cmd-uniform4f! slot x y z w)
     (u! 7) (u! slot) (f! x) (f! y) (f! z) (f! w))
   (define (cmd-draw-arrays! mode first count)
-    (u! 8) (u! mode) (u! first) (u! count))
+    ($draw!) (u! 8) (u! mode) (u! first) (u! count))
   (define (cmd-bind-texture! unit slot) (u! 11) (u! unit) (u! slot))
   (define (cmd-bind-cubemap! unit slot) (u! 25) (u! unit) (u! slot))
   ;; unbind before rendering into a cube target's faces: a cube map
@@ -532,9 +534,10 @@
   ;; 32-bit indices (webgl2): meshes past 65536 vertices
   (define (cmd-index-data32! base bytes) (u! 36) (u! base) (u! bytes))
   (define (cmd-draw-elements32! mode count)
-    (u! 37) (u! mode) (u! count))
+    ($draw!) (u! 37) (u! mode) (u! count))
   (define (cmd-index-data! offset bytes) (u! 17) (u! offset) (u! bytes))
-  (define (cmd-draw-elements! mode count) (u! 18) (u! mode) (u! count))
+  (define (cmd-draw-elements! mode count)
+    ($draw!) (u! 18) (u! mode) (u! count))
   ;; render into an offscreen target, or back to the canvas
   (define (cmd-bind-target! slot) (u! 20) (u! slot))
   (define (cmd-resolve! slot rslot w h)  ; blit msaa -> its resolve fb
@@ -544,7 +547,7 @@
   ;; instance; one draw carries them all
   (define (cmd-attrib-divisor! loc div) (u! 22) (u! loc) (u! div))
   (define (cmd-draw-elements-instanced! mode count n)
-    (u! 23) (u! mode) (u! count) (u! n))
+    ($draw!) (u! 23) (u! mode) (u! count) (u! n))
   ;; ms: a vector of m4s (16-element flonum vectors) -- one upload
   ;; carries a whole skeleton's joint matrices
   (define (cmd-uniform-matrices! slot ms)
@@ -558,6 +561,7 @@
               (mat (+ i 1)))))
         (each (+ k 1)))))
   (define (cmd-pos) $p)                 ; for overflow checks by callers
+  (define (cmd-draws) $draw-count)      ; and HUDs counting the frame
   (define (cmd-viewport! x y w h) (u! 9) (u! x) (u! y) (u! w) (u! h))
   ;; blending for translucent draws: (cmd-blend! 'alpha) src-over,
   ;; (cmd-blend! 'add) additive glow, (cmd-blend! 'premul) src-over
