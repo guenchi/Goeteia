@@ -79,8 +79,8 @@ A small UI stack over the JS bridge, in `lib/web/`:
   meshes draw through an element buffer with the depth test on.
   The context is WebGL 2 (with fallback): offscreen render targets
   (`examples/fx-post.html`: the scene through a ripple + vignette;
-  `examples/fx-shadow.html`: PCF shadow mapping through a depth-only
-  target; `examples/fx-bloom.html`: a five-pass HDR bloom chain
+  `examples/fx-shadow.html`: PCSS soft shadows — blocker search,
+  penumbra width, contact hardening — through a depth-only target; `examples/fx-bloom.html`: a five-pass HDR bloom chain
   through a half-float target, tonemapped down),
   instanced draws (`examples/fx-forest.html`: 8,000 trees, one call;
   `examples/fx-particles.html`: 4,000 sparks integrating in staging

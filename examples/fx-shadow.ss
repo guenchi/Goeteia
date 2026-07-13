@@ -1,9 +1,13 @@
-;; Shadow mapping in two passes.  Pass 1 renders the casters from the
-;; light's point of view into a depth-only fx-target (no color buffer
-;; at all -- drawBuffers([NONE])).  Pass 2 renders the scene normally;
-;; each fragment reprojects itself into light space, samples the depth
-;; texture, and compares: if something sat closer to the light, the
-;; fragment is in shadow.  Needs WebGL 2.
+;; Shadow mapping in two passes -- soft, the PCSS way.  Pass 1
+;; renders the casters from the light's point of view into a
+;; depth-only fx-target (no color buffer at all).  Pass 2 renders
+;; the scene normally; each fragment reprojects itself into light
+;; space and asks the map in three steps: a blocker search averages
+;; the depths that occlude it, the penumbra width follows from how
+;; far behind them it sits (an area light's similar triangles), and
+;; a PCF whose radius IS that width does the test.  Shadows harden
+;; at contact and melt with distance -- watch the hovering box
+;; against the sitting one.  Needs WebGL 2.
 (import (rnrs) (web js) (web dom) (web gl) (web glsl) (web fx)
         (web mat) (web mesh))
 
@@ -43,21 +47,41 @@
      (uniform vec3 u_light)              ; unit vector toward the light
      (uniform vec4 u_color)
      (uniform vec2 u_texel)              ; 1/shadow-map-size
+     (uniform float u_lightsize)         ; the area light, in map depth
      (varying vec3 v_normal)
      (varying vec4 v_shadow)
      (define (main) void
        ;; light-space NDC -> [0,1] texture/depth coordinates
        (local vec3 sp (+ (* (/ v_shadow.xyz v_shadow.w) (fl 0 50))
                          (vec3 (fl 0 50) (fl 0 50) (fl 0 50))))
-       ;; PCF: average the depth test over a 3x3 texel neighborhood
-       ;; for soft edges; the small bias absorbs depth quantization
-       (local float lit (fl 0))
-       (for (int x -1 (< x 2) (+ x 1))
-         (for (int y -1 (< y 2) (+ y 1))
+       (local float lit (fl 1))
+       ;; 1. blocker search: what occludes this fragment, on average?
+       (local float bsum (fl 0))
+       (local float bcnt (fl 0))
+       (for (int x -2 (< x 3) (+ x 1))
+         (for (int y -2 (< y 3) (+ y 1))
            (local vec4 sv (texture2D u_shadow
-                                     (+ sp.xy (* (vec2 x y) u_texel))))
-           (set! lit (+ lit (step (- sp.z "0.002") sv.r)))))
-       (set! lit (/ lit (fl 9)))
+                                     (+ sp.xy (* (vec2 x y)
+                                                 (* u_texel "3.0")))))
+           (local float isb (step sv.r (- sp.z "0.002")))
+           (set! bsum (+ bsum (* sv.r isb)))
+           (set! bcnt (+ bcnt isb))))
+       (if (> bcnt (fl 0 50))
+           ;; 2. similar triangles: penumbra grows with the gap
+           ;; between receiver and average blocker (in texels)...
+           (local float zb (/ bsum bcnt))
+           (local float rad (clamp (* (/ (- sp.z zb) zb) u_lightsize)
+                                   "1.0" "9.0"))
+           ;; 3. ...and a PCF that wide does the actual test
+           (local float acc (fl 0))
+           (for (int x -2 (< x 3) (+ x 1))
+             (for (int y -2 (< y 3) (+ y 1))
+               (local vec4 s2 (texture2D u_shadow
+                                         (+ sp.xy (* (vec2 x y)
+                                                     (* u_texel
+                                                        (* rad (fl 0 50)))))))
+               (set! acc (+ acc (step (- sp.z "0.002") s2.r)))))
+           (set! lit (/ acc "25.0")))
        (local float d (max (dot (normalize v_normal) u_light) (fl 0)))
        (set! gl_FragColor
              (vec4 (* u_color.rgb (+ (fl 0 25) (* (fl 0 75) (* d lit))))
@@ -93,7 +117,7 @@
 ;; the casters move; their model matrices rebuild each frame
 (define (box-models t)
   (list (m4-translate -4.0 1.0 -2.0)                       ; sitting
-        (m4-mul (m4-translate 3.5 2.6 1.0) (m4-rotate-y t)) ; hovering
+        (m4-mul (m4-translate 3.5 5.0 1.0) (m4-rotate-y t)) ; hovering high
         (m4-mul (m4-translate (fl* 7.0 (flsin (fl* 0.6 t)))
                               1.0
                               (fl* 7.0 (flcos (fl* 0.6 t))))
@@ -146,6 +170,7 @@
        (fx-uniform! lit-p 'u_shadow 0)
        (fx-uniform! lit-p 'u_light (v3-x light) (v3-y light) (v3-z light))
        (fx-uniform! lit-p 'u_texel (fl/ 1.0 1024.0) (fl/ 1.0 1024.0))
+       (fx-uniform! lit-p 'u_lightsize 400.0)
        (unis! (m4-identity) 0.35 0.4 0.45)
        (cmd-draw-elements! GL-TRIANGLES (mesh-index-count ground))
        ;; the boxes, shadowing each other too
