@@ -57,8 +57,8 @@
             (border-bottom (px 1) solid (var line)))
      '(.nav-inner (display flex) (align-items center) (justify-content space-between)
                   (height (em 3 40)))
-     ;; Metal Mania: the gothic display face, echoing "the black arts"
-     '(.brand (font-family "\"Metal Mania\", \"Hoefler Text\", Georgia, serif")
+     ;; UnifrakturMaguntia: a blackletter Fraktur, echoing "the black arts"
+     '(.brand (font-family "\"UnifrakturMaguntia\", \"Hoefler Text\", Georgia, serif")
               (font-weight 400) (font-size (em 1 45)) (color (var lapis))
               (letter-spacing (em 0 02)))
      '(".brand:hover" (text-decoration none))
@@ -164,10 +164,10 @@
            (meta (@ (name "description") (content ,desc)))
            ;; css is either a raw CSS string or a (web css) rule list;
            ;; <style> is raw-text, emitted unescaped.  The font @import
-           ;; leads (imports must precede every other rule): Metal Mania
-           ;; for the nav brand, on every page.
+           ;; leads (imports must precede every other rule):
+           ;; UnifrakturMaguntia for the nav brand, on every page.
            (style ,(string-append
-                    "@import url('https://fonts.googleapis.com/css2?family=Metal+Mania&display=swap');\n"
+                    "@import url('https://fonts.googleapis.com/css2?family=UnifrakturMaguntia&display=swap');\n"
                     (if (string? css) css (css->string css))
                     "\n" badge-css)))
           (body

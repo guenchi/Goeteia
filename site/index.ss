@@ -104,7 +104,7 @@ $ node rt/run.mjs fact.wasm
                               "source is compiled to WebAssembly in your browser and "
                               "mounted live. Edit the source, press Run, and the page "
                               "below re-renders.")
-               (string-append          ; the Metal Mania @import now
+               (string-append          ; the brand-font @import now
                  (css->string (base-styles 60))   ; leads every page from
                  (read-file "site/index.css")     ; render-page (chrome.ss)
                  (css->string (footer-styles)))
