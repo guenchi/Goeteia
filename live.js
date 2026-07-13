@@ -22,6 +22,7 @@ const LIB_FILES = [
     'lib/web/mat.ss',
     'lib/web/mesh.ss',
     'lib/web/fx.ss',
+    'lib/web/post.ss',
 ];
 
 const enc = new TextEncoder();
