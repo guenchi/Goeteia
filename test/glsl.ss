@@ -113,4 +113,8 @@
      "layout(std140) uniform Env { mat4 u_vp; vec4 u_fog; }; "))
  ;; extraction still works on the neutral forms
  (equal? (glsl-attributes '((attribute vec3 a_pos) (varying vec3 v_n)))
-         '((a_pos vec3 3))))
+         '((a_pos vec3 3)))
+ ;; varyings in order: the transform-feedback capture list
+ (equal? (glsl-varyings '((attribute vec3 a_pos) (varying vec3 v_pos)
+                          (uniform float u_dt) (varying float v_life)))
+         '(v_pos v_life)))

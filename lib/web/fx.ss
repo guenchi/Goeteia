@@ -35,7 +35,7 @@
           fx-target? fx-target-texture
           fx-target-width fx-target-height
           fx-bind-target! fx-bind-canvas!
-          fx-program! fx-program3! fx-ubo!
+          fx-program! fx-program3! fx-tf-program! fx-ubo!
           fx-program? fx-program-slot fx-program-stride
           fx-program-istride
           fx-use! fx-use-instanced! fx-uniform!
@@ -177,11 +177,29 @@
                       (glsl300-vs->string vs-forms)
                       (glsl300-fs->string fs-forms)))
 
+  ;; a transform-feedback program: ESSL 3.00, and every varying the
+  ;; vertex shader declares is captured, interleaved, into the bound
+  ;; buffer -- the GPU-side particle update step
+  (define (fx-tf-program! vs-forms fs-forms)
+    ($fx-program-mk! vs-forms fs-forms
+                     (glsl300-vs->string vs-forms)
+                     (glsl300-fs->string fs-forms)
+                     (fold-left (lambda (acc v)
+                                  (if (string=? acc "")
+                                      (symbol->string v)
+                                      (string-append
+                                       acc "," (symbol->string v))))
+                                "" (glsl-varyings vs-forms))))
+
   (define ($fx-program-src! vs-forms fs-forms vs-src fs-src)
+    ($fx-program-mk! vs-forms fs-forms vs-src fs-src #f))
+
+  (define ($fx-program-mk! vs-forms fs-forms vs-src fs-src tf)
     (let* ((pslot (fx-slot!))
            (as (glsl-attributes vs-forms)))
-      (gl-program! pslot vs-src fs-src
-                   ($fx-attr-names as))
+      (if tf
+          (gl-tf-program! pslot vs-src fs-src ($fx-attr-names as) tf)
+          (gl-program! pslot vs-src fs-src ($fx-attr-names as)))
       (let ((uniforms (make-eq-hashtable)))
         (for-each (lambda (u)
                     (unless (hashtable-contains? uniforms (car u))

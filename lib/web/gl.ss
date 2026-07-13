@@ -42,6 +42,7 @@
           cmd-depth!
           gl-vao! cmd-bind-vao! cmd-unbind-vao!
           gl-ubo! gl-uniform-block! cmd-bind-ubo! cmd-ubo-data!
+          gl-tf-program! cmd-tf-buffer! cmd-tf-begin! cmd-tf-end!
           cmd-bind-index! cmd-index-data! cmd-draw-elements!
           cmd-attrib-divisor! cmd-draw-elements-instanced!
           cmd-uniform-matrices!
@@ -191,6 +192,18 @@
      "                               gl.RENDERBUFFER, db);"
      "    gl.bindFramebuffer(gl.FRAMEBUFFER, null);"
      "    slots[slot] = fb; },"
+     "  tfProgram(slot, vs, fs, attribs, varyings) {"
+     "    const p = gl.createProgram();"
+     "    gl.attachShader(p, compile(gl.VERTEX_SHADER, vs));"
+     "    gl.attachShader(p, compile(gl.FRAGMENT_SHADER, fs));"
+     "    if (attribs) String(attribs).split(',').forEach((n, i) => {"
+     "      if (n) gl.bindAttribLocation(p, i, n); });"
+     "    gl.transformFeedbackVaryings(p, String(varyings).split(','),"
+     "                                 gl.INTERLEAVED_ATTRIBS);"
+     "    gl.linkProgram(p);"
+     "    if (!gl.getProgramParameter(p, gl.LINK_STATUS))"
+     "      throw new Error(gl.getProgramInfoLog(p));"
+     "    slots[slot] = p; },"
      "  textureUpload(slot, src, premul) {"
      "    if (premul) gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, true);"
      "    gl.bindTexture(gl.TEXTURE_2D, slots[slot]);"
@@ -291,6 +304,14 @@
      "              p += 1; break;"
      "     case 31: gl.bindBufferBase(gl.UNIFORM_BUFFER, u[p],"
      "                                slots[u[p+1]]); p += 2; break;"
+     "     case 33: gl.bindBufferBase(gl.TRANSFORM_FEEDBACK_BUFFER, 0,"
+     "                                slots[u[p]]); p += 1; break;"
+     "     case 34: gl.enable(gl.RASTERIZER_DISCARD);"
+     "              gl.beginTransformFeedback(gl.POINTS); break;"
+     "     case 35: gl.endTransformFeedback();"
+     "              gl.disable(gl.RASTERIZER_DISCARD);"
+     "              gl.bindBufferBase(gl.TRANSFORM_FEEDBACK_BUFFER, 0,"
+     "                                null); break;"
      "     case 32: gl.bindBuffer(gl.UNIFORM_BUFFER, slots[u[p]]);"
      "              gl.bufferSubData(gl.UNIFORM_BUFFER, 0,"
      "                new Uint8Array(memory.buffer, u[p+1], u[p+2]));"
@@ -359,6 +380,10 @@
   ;; a uniform buffer (webgl2 + ESSL 300 uniform blocks): shared
   ;; per-frame state every program reads from one upload
   (define (gl-ubo! slot bytes) (js-method $gl "ubo" slot bytes))
+  ;; a program whose vertex outputs land in a buffer (interleaved):
+  ;; the GPU-side update step of transform-feedback particles
+  (define (gl-tf-program! slot vs fs attribs varyings)
+    (js-method $gl "tfProgram" slot vs fs attribs varyings))
   ;; wire a program's named block to a binding point
   (define (gl-uniform-block! pslot name binding)
     (js-method $gl "uniformBlock" pslot name binding))
@@ -404,6 +429,11 @@
   (define (cmd-bind-ubo! binding slot) (u! 31) (u! binding) (u! slot))
   (define (cmd-ubo-data! slot base bytes)  ; staging -> uniform buffer
     (u! 32) (u! slot) (u! base) (u! bytes))
+  ;; transform feedback: aim the capture at a buffer, then bracket
+  ;; the update draw (rasterizer discard on/off rides along)
+  (define (cmd-tf-buffer! slot) (u! 33) (u! slot))
+  (define (cmd-tf-begin!) (u! 34))
+  (define (cmd-tf-end!) (u! 35))
   (define (cmd-uniform1i! slot v) (u! 12) (u! slot) (u! v))
   (define (cmd-uniform2f! slot x y) (u! 13) (u! slot) (f! x) (f! y))
   (define (cmd-uniform3f! slot x y z)
