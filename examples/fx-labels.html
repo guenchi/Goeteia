@@ -14,9 +14,10 @@
     <p><code>(web typeset)</code> lays each label out (canvas-measured
     widths, CJK-aware wrapping), a hidden 2d canvas rasterizes it once,
     and the GL side draws camera-facing quads — corners are
-    <code>u_center</code> ± the camera's right and up vectors, and the
-    fragment shader uses the texture as an alpha mask so there is no
-    premultiplication fringe.  Needs WebGL&nbsp;2.
+    <code>u_center</code> ± the camera's right and up vectors, <code>(web sdf)</code> turns the
+    raster into a signed distance field, and the fragment shader
+    smoothsteps it around 0.5 — so the edges re-sharpen at any
+    distance: the texture stores geometry, not pixels.  Needs WebGL&nbsp;2.
     See <code>fx-labels.ss</code>.</p>
     <canvas id="c" width="800" height="600"></canvas>
     <script type="module">

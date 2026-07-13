@@ -1,13 +1,16 @@
 ;; 3D text labels: (web typeset) lays the text out (canvas-measurer
 ;; widths, CJK-aware wrapping), a hidden 2d canvas rasterizes each
-;; label once, and the GL side draws camera-facing quads -- the
+;; label once, (web sdf) turns the raster into a signed distance
+;; field, and the GL side draws camera-facing quads -- the
 ;; billboard's corners are u_center +/- the camera's right and up,
 ;; so the quad turns with the view while its anchor stays in the
-;; world.  The fragment shader reads only the texture's alpha (the
-;; canvas is premultiplied; using it as a mask sidesteps the dark
-;; fringe entirely) and tints from a uniform.
+;; world.  The fragment shader smoothsteps the field around 0.5, so
+;; the glyph edges re-sharpen at ANY distance: lean the camera in
+;; and the text stays crisp, because the texture stores geometry,
+;; not pixels.
 (import (rnrs) (web js) (web dom) (web gl) (web glsl) (web fx)
-        (web mat) (web mesh) (web typeset) (web typeset canvas))
+        (web mat) (web mesh) (web sdf) (web typeset)
+        (web typeset canvas))
 
 (fx-init! (get-element-by-id "c"))
 
@@ -40,7 +43,11 @@
                              (fl/ (fl- w (line-width ln)) 2.0)
                              (fl+ (line-y ln) 1.0)))
                 (layout-lines lay)))
-    (gl-texture-upload! tex cv)
+    ;; raster -> signed distance field -> texture, all in staging
+    (let* ((base (fx-alloc! (* (%fl->fx (fl+ w 2.0))
+                               (%fl->fx (fl+ h 2.0)) 4)))
+           (wh (sdf-from-canvas! cv base 6.0)))
+      (gl-texture-data! tex base (car wh) (cdr wh)))
     ;; 64 canvas px = one world unit
     (vector tex (fl/ (fl+ w 2.0) 64.0) (fl/ (fl+ h 2.0) 64.0))))
 
@@ -66,7 +73,9 @@
      (varying vec2 v_uv)
      (define (main) void
        (local vec4 t (texture2D u_tex v_uv))
-       (set! gl_FragColor (vec4 u_color.rgb (* u_color.a t.a)))))))
+       ;; the distance field re-sharpens under magnification
+       (local float a (smoothstep (fl 0 44) (fl 0 56) t.a))
+       (set! gl_FragColor (vec4 u_color.rgb (* u_color.a a)))))))
 
 (define quad-buf (fx-buffer!))
 (define quad-base (fx-alloc! 32))

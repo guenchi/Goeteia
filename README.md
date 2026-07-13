@@ -113,7 +113,8 @@ A small UI stack over the JS bridge, in `lib/web/`:
   canvas)` is the
   measureText-backed measurer for browsers, and the engine itself
   verifies headlessly (`examples/fx-labels.html`: labels typeset
-  here, rasterized once, and drawn in 3D as camera-facing quads)
+  here, rasterized once, distance-fielded by `(web sdf)` and drawn
+  in 3D as camera-facing quads that stay crisp at any range)
 - `(web fx)` — the effects harness over `(web gl)`: a shader authored
   as `(web glsl)` forms already declares its interface, so
   `fx-program!` reads the attribute/uniform declarations back out of
@@ -144,6 +145,12 @@ A small UI stack over the JS bridge, in `lib/web/`:
   (`examples/breakout.html`: bricks, ball, paddle and the score text
   in a single draw); image sprite sheets load premultiplied and draw
   source rectangles through their own batch
+- `(web sdf)` — signed distance fields from any canvas alpha:
+  `sdf-from-canvas!` grabs the raster into staging memory in one
+  call and runs a two-pass chamfer transform in wasm; sample the
+  result with a smoothstep around 0.5 and text re-sharpens at any
+  magnification (widen it for halos, shift it for outlines — the
+  field carries all of it)
 - `(web scroll)` — a virtual scroller for variable-height text, the
   use case `(web typeset)` was born for: heights are typeset before
   anything mounts (no reflow-forcing measurement), only the visible
