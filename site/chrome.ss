@@ -4,7 +4,8 @@
 ;; are the same on every page. Rendered to a string by Goeteia.
 (library (chrome)
   (export render-page read-file write-file base-styles footer-styles palette
-          card feat section* soft-box inline-code)
+          card feat section* soft-box inline-code
+          styled styled-css)
   (import (rnrs) (web html) (web css))
 
   ;; ---- reusable (web css) declaration helpers ----
@@ -15,10 +16,81 @@
   (define (inline-code)
     '((font-family (var mono)) (color (var lapis))))
 
+  ;; ---- styled: css attached at the element, compiled to classes ----
+  ;; The React lesson, taken at build time: the AUTHOR writes styles
+  ;; on the element (values are ordinary bindings -- change one and
+  ;; every use follows); the COMPILER interns each distinct style set
+  ;; to one generated class, so nine identical cards cost one rule.
+  ;;
+  ;;   (styled 'button 'run
+  ;;     `((background ,lapis)
+  ;;       (:hover (filter "brightness(1.1)"))   ; pseudo-class
+  ;;       ("h3" (margin 0))                     ; descendant
+  ;;       (@media 42 (padding (em 1))))         ; max-width breakpoint
+  ;;     '(@ (id "run")) "Run")
+  ;;
+  ;; Discipline: these classes are self-contained -- runtime-dynamic
+  ;; styling goes through signals/CSS variables, never through here.
+  (define $styled '())                  ; ((style-set . class) ...), newest first
+  (define (intern-style! name sty)
+    (let ((hit (assoc sty $styled)))    ; equal? style set -> same class
+      (if hit
+          (cdr hit)
+          (let ((cls (string-append (symbol->string name) "-"
+                                    (number->string (length $styled)))))
+            (set! $styled (cons (cons sty cls) $styled))
+            cls))))
+  (define (styled tag name sty . kids)
+    (let ((cls (intern-style! name sty)))
+      (if (and (pair? kids) (pair? (car kids)) (eq? (car (car kids)) '@))
+          `(,tag (@ (class ,cls) ,@(cdr (car kids))) ,@(cdr kids))
+          `(,tag (@ (class ,cls)) ,@kids))))
+
+  ;; every interned rule, in registration order, ready for css->string
+  (define (styled-css)
+    (apply append
+           (map (lambda (e) ($styled-rules (cdr e) (car e)))
+                (reverse $styled))))
+  (define ($styled-rules cls sty)
+    (let ((base (string-append "." cls)))
+      (let loop ((ds sty) (plain '()) (extra '()))
+        (if (null? ds)
+            (cons (cons base (reverse plain)) (reverse extra))
+            (let ((d (car ds)))
+              (cond
+               ((string? (car d))       ; ("h3" decls...): descendant
+                (loop (cdr ds) plain
+                      (cons (cons (string-append base " " (car d)) (cdr d))
+                            extra)))
+               ((eq? (car d) '@media)   ; (@media 42 decls...): max-width em
+                (loop (cdr ds) plain
+                      (cons `(@media ,(string-append "(max-width: "
+                                                     (number->string (cadr d))
+                                                     "em)")
+                              ,(cons base (cddr d)))
+                            extra)))
+               ((and (symbol? (car d))  ; (:hover decls...): pseudo
+                     (char=? (string-ref (symbol->string (car d)) 0) #\:))
+                (loop (cdr ds) plain
+                      (cons (cons (string-append base (symbol->string (car d)))
+                                  (cdr d))
+                            extra)))
+               (else (loop (cdr ds) (cons d plain) extra))))))))
+
   ;; ---- reusable content helpers (SXML-returning) ----
-  ;; a titled box: (card "Title" "body " (code "x") " ...")
+  ;; a titled box: markup and its css in ONE place; every card on a
+  ;; page interns to the same generated class
   (define (card title . body)
-    `(div (@ (class "card")) (h3 ,title) (p ,@body)))
+    (styled 'div 'card
+      `((background (var bg2)) (border (px 1) solid (var line))
+        (border-radius (px 10)) (padding (em 1 10) (em 1 20))
+        (box-shadow "0 1px 3px rgba(16,20,42,.06)")
+        ("h3" (margin 0 0 (em 0 40)) (font-size (em 1))
+              (color (var lapis)) (font-weight 600))
+        ("p" (margin 0) (color (var dim)) (font-size (em 0 92)))
+        ("code" (font-family (var mono)) (color (var lapis))
+                (font-size (em 0 90))))
+      `(h3 ,title) `(p ,@body)))
   (define (feat title . body)
     `(div (@ (class "feat")) (h4 ,title) (p ,@body)))
   ;; a section with a heading: (section* "What's inside" node ...)

@@ -109,7 +109,16 @@
           (textarea (@ (id "src") (rows "18") (spellcheck "false")
                        (autocapitalize "off") (autocorrect "off")) "loading…"))
         (div (@ (class "bar"))
-          (button (@ (id "run") (disabled #t)) "Run")
+          ;; styled: the button carries its css, pseudo-classes included
+          ,(styled 'button 'run
+             `((font-size (px 15)) (padding (em 0 45) (em 2))
+               (border-radius (px 6)) (background (var lapis))
+               (color "#fff") (border none) (font-weight 600)
+               (cursor pointer) (min-width (em 7))
+               (:hover (filter "brightness(1.1)"))
+               (:disabled (opacity (dec 0 50)) (cursor default)))
+             '(@ (id "run") (disabled #t))
+             "Run")
           (span (@ (id "status") (class "status")) "booting the compiler…"))
         (p (@ (class "hint"))
            "No server compiles this — the page carries the whole compiler ("
@@ -289,6 +298,7 @@ $ node rt/run.mjs fact.wasm
                (string-append
                  (css->string (base-styles 60))
                  (read-file "site/index.css")
+                 (css->string (styled-css))   ; the element-attached styles
                  (css->string (footer-styles)))
                'index "site/index.ss" body
                (list '(script (@ (type "module") (src "index.js"))))))

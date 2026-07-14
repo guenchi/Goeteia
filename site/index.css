@@ -73,13 +73,8 @@
       .hl .tok-l { color: #8a5cf5; }                       /* #t #f #\ */
       .hl .tok-p { color: var(--dim); }                    /* parens  */
       .bar { display: flex; gap: .9em; align-items: center; margin: .9em 0 0; flex-wrap: wrap; }
-      /* scoped to #run so it can't leak into the source-overlay/badge buttons */
-      #run {
-        font-size: 15px; padding: .45em 2em; border-radius: 6px;
-        background: var(--lapis); color: #fff; border: none; font-weight: 600; cursor: pointer; min-width: 7em;
-      }
-      #run:hover { filter: brightness(1.1); }
-      #run:disabled { opacity: .5; cursor: default; }
+      /* the Run button's rules moved into site/index.ss: it is a
+         (styled ...) element now, pseudo-classes included */
       .status { font-family: var(--mono); font-size: .82em; color: var(--dim); }
       .status.err { color: #b0483f; }
       .hint { color: var(--dim); font-size: .85em; margin-top: .5em; }
@@ -114,10 +109,8 @@
       h2 { font-size: 1.5em; font-weight: 600; }
       .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(16em, 1fr)); gap: 1em; margin-top: 1.4em; }
       @media (min-width: 64em) { .grid { grid-template-columns: repeat(3, 1fr); } }
-      .card { background: var(--bg2); border: 1px solid var(--line); border-radius: 10px; padding: 1.1em 1.2em; box-shadow: 0 1px 3px rgba(16,20,42,.06); }
-      .card h3 { margin: 0 0 .4em; font-size: 1em; color: var(--lapis); font-weight: 600; }
-      .card p { margin: 0; color: var(--dim); font-size: .92em; }
-      .card code, #quickstart p code { font-family: var(--mono); color: var(--lapis); font-size: .9em; }
+      /* the card's rules live beside its markup in site/chrome.ss now */
+      #quickstart p code { font-family: var(--mono); color: var(--lapis); font-size: .9em; }
       #quickstart pre {
         background: #eef1f9; border: 1px solid var(--line); padding: .9em;
         border-radius: 8px; white-space: pre-wrap; font-family: var(--mono);
