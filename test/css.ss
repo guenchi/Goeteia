@@ -40,4 +40,7 @@
     "@media (max-width: 42em){.nav-links{gap:1em;font-size:0.88em;}}")
  ;; composition: a stylesheet is just a list -- append shared + page
  (let ((base '((body (margin 0)))) (page '((h1 (font-size (em 3))))))
-   (t (css->string (append base page)) "body{margin:0;}h1{font-size:3em;}")))
+   (t (css->string (append base page)) "body{margin:0;}h1{font-size:3em;}"))
+ ;; a palette alist becomes the :root custom-property rule
+ (t (css->string (list (palette->root '((ink "#14203a") (bg "#f2f4fa")))))
+    ":root{--ink:#14203a;--bg:#f2f4fa;}"))
