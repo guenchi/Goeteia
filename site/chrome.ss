@@ -4,8 +4,7 @@
 ;; are the same on every page. Rendered to a string by Goeteia.
 (library (chrome)
   (export render-page read-file write-file base-styles footer-styles palette
-          feat section* soft-box inline-code
-          styled styled-css define-component)
+          feat section* soft-box inline-code)
   (import (rnrs) (web html) (web css))
 
   ;; ---- reusable (web css) declaration helpers ----
@@ -15,88 +14,6 @@
   ;; monospace + accent colour for inline code
   (define (inline-code)
     '((font-family (var mono)) (color (var lapis))))
-
-  ;; ---- styled: css attached at the element, compiled to classes ----
-  ;; The React lesson, taken at build time: the AUTHOR writes styles
-  ;; on the element (values are ordinary bindings -- change one and
-  ;; every use follows); the COMPILER interns each distinct style set
-  ;; to one generated class, so nine identical cards cost one rule.
-  ;;
-  ;;   (styled 'button 'run
-  ;;     `((background ,lapis)
-  ;;       (:hover (filter "brightness(1.1)"))   ; pseudo-class
-  ;;       ("h3" (margin 0))                     ; descendant
-  ;;       (@media 42 (padding (em 1))))         ; max-width breakpoint
-  ;;     '(@ (id "run")) "Run")
-  ;;
-  ;; Discipline: these classes are self-contained -- runtime-dynamic
-  ;; styling goes through signals/CSS variables, never through here.
-  (define $styled '())                  ; ((style-set . class) ...), newest first
-  (define (intern-style! name sty)
-    (cond
-     ((assoc sty $styled) => cdr)       ; equal? style set -> same class
-     (else
-      (let ((cls (string-append (symbol->string name) "-"
-                                (number->string (length $styled)))))
-        (set! $styled (cons (cons sty cls) $styled))
-        cls))))
-  (define (styled tag name sty . kids)
-    (let ((cls (intern-style! name sty)))
-      (if (and (pair? kids) (pair? (car kids)) (eq? (car (car kids)) '@))
-          `(,tag (@ (class ,cls) ,@(cdr (car kids))) ,@(cdr kids))
-          `(,tag (@ (class ,cls)) ,@kids))))
-
-  ;; every interned rule, in registration order, ready for css->string
-  (define (styled-css)
-    (apply append
-           (map (lambda (e) ($styled-rules (cdr e) (car e)))
-                (reverse $styled))))
-  (define ($styled-rules cls sty)
-    (let ((base (string-append "." cls)))
-      (let loop ((ds sty) (plain '()) (extra '()))
-        (if (null? ds)
-            (cons (cons base (reverse plain)) (reverse extra))
-            (let ((d (car ds)))
-              (cond
-               ((string? (car d))       ; ("h3" decls...): descendant
-                (loop (cdr ds) plain
-                      (cons (cons (string-append base " " (car d)) (cdr d))
-                            extra)))
-               ((eq? (car d) '@media)   ; (@media 42 decls...): max-width em
-                (loop (cdr ds) plain
-                      (cons `(@media ,(string-append "(max-width: "
-                                                     (number->string (cadr d))
-                                                     "em)")
-                              ,(cons base (cddr d)))
-                            extra)))
-               ((and (symbol? (car d))  ; (:hover decls...): pseudo
-                     (char=? (string-ref (symbol->string (car d)) 0) #\:))
-                (loop (cdr ds) plain
-                      (cons (cons (string-append base (symbol->string (car d)))
-                                  (cdr d))
-                            extra)))
-               (else (loop (cdr ds) (cons d plain) extra))))))))
-
-  ;; ---- define-component: the function and its css, one form ----
-  ;; The component's name doubles as the class prefix, the tag is
-  ;; read off the template's head, the style clause interns through
-  ;; styled, and the template is implicitly quasiquoted -- an unquote
-  ;; is a hole:
-  ;;
-  ;;   (define-component (chip label)
-  ;;     (style (background "#eef1f9") (:hover (color (var lapis))))
-  ;;     (span "· " ,label))
-  ;;
-  ;; NOTE: define it here, use it in a page PROGRAM -- the current
-  ;; compiler miscompiles a syntax-rules macro that is both defined
-  ;; and used inside one library ("illegal cast").
-  (define-syntax define-component
-    (syntax-rules (style)
-      ((_ (name . args) (style decl ...) (tag kid ...))
-       (define (name . args)
-         (styled 'tag 'name
-                 (quasiquote (decl ...))
-                 (quasiquote kid) ...)))))
 
   ;; ---- reusable content helpers (SXML-returning) ----
   (define (feat title . body)

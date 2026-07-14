@@ -1,7 +1,7 @@
 ;; index.html — the homepage shell, authored in Scheme, rendered by
 ;; Goeteia. The hero inside #live is compiled and mounted live in the
 ;; browser from hero.ss (see index.js); everything else is static.
-(import (web html) (web css) (chrome))   ; card / section* come from chrome
+(import (web html) (web css) (web component) (chrome))
 
 ;; a titled box: markup and its css in ONE form; every card on the
 ;; page interns to the same generated class
