@@ -329,7 +329,11 @@
       (unless u (error 'fx-uniform! "undeclared uniform" name))
       (let ((slot (car u)) (ty (cdr u)))
         (if (pair? ty)                  ; (array mat4 N): joint matrices
-            (cmd-uniform-matrices! slot (car vs))
+            ;; a vector of m4s streams through the buffer; a staging
+            ;; ADDRESS plus a count uploads in place, three words
+            (if (fixnum? (car vs))
+                (cmd-uniform-matrices4s! slot (car vs) (cadr vs))
+                (cmd-uniform-matrices! slot (car vs)))
             (case ty
           ((float)
            (let ((x ($fx-fl (car vs))))

@@ -32,7 +32,8 @@
           gltf-anims gltf-animation-names gltf-animate!
           gltf-animate-blend! gltf-weights! gprim-morph
           anim-machine anim-machine? anim-state anim-goto! anim-update!
-          gltf-joint-matrices gltf-skin-vs
+          gltf-joint-matrices gltf-joint-palette! gltf-joint-count
+          gltf-skin-vs
           gprim-vbase gprim-vbytes gprim-ibase gprim-ibytes
           gprim-icount gprim-index-u32? gprim-color
           gprim-metallic gprim-roughness
@@ -47,7 +48,13 @@
             (immutable images gltf-images)
             (immutable nodes gltf-nodes)      ; runtime TRS, animatable
             (immutable skins gltf-skins)      ; #(joint-nodes ibms)
-            (immutable anims gltf-anims)))    ; #(name channels duration)
+            (immutable anims gltf-anims)      ; #(name channels duration)
+            ;; the resident joint arena, #f when there are no skins:
+            ;; #(globals-base scratch-base topo-order per-skin) where
+            ;; per-skin[k] = #(ibms-base palette-base njoints) -- the
+            ;; whole palette composes and uploads without a boxed
+            ;; matrix anywhere
+            (immutable pal $gltf-pal)))
 
   ;; primitives are open records: custom renderers can reach the
   ;; staging offsets and draw with their own shaders
@@ -572,6 +579,107 @@
           (loop (+ k 1))))
       out))
 
+  ;; ---- the resident palette: the same matrices, zero boxes ----
+  ;; built at parse time when the asset has skins: staging room for
+  ;; every node's global matrix, a local-matrix scratch, the
+  ;; inverse-bind matrices (written once), and each skin's palette;
+  ;; plus a topological order so globals fill parents-first with no
+  ;; recursion
+  (define ($gltf-pal-arena nodes skins)
+    (and (> (vector-length skins) 0)
+         (let* ((nn (vector-length nodes))
+                (globals (fx-alloc! (* nn 64)))
+                (scratch (fx-alloc! 64))
+                (order (make-vector nn 0))
+                (done (make-vector nn #f)))
+           ;; parents before children; roots (parent -1) lead
+           (let fill ((emitted 0))
+             (when (< emitted nn)
+               (let scan ((i 0) (now emitted))
+                 (if (= i nn)
+                     (if (= now emitted)
+                         (error 'gltf "node parent cycle")
+                         (fill now))
+                     (let ((p (vector-ref (vector-ref nodes i) 11)))
+                       (if (and (not (vector-ref done i))
+                                (or (< p 0) (vector-ref done p)))
+                           (begin (vector-set! order now i)
+                                  (vector-set! done i #t)
+                                  (scan (+ i 1) (+ now 1)))
+                           (scan (+ i 1) now)))))))
+           (vector
+            globals scratch order
+            (let ((per (make-vector (vector-length skins) #f)))
+              (let skin ((k 0))
+                (when (< k (vector-length skins))
+                  (let* ((joints (vector-ref (vector-ref skins k) 0))
+                         (ibms (vector-ref (vector-ref skins k) 1))
+                         (n (vector-length joints))
+                         (ib (fx-alloc! (* n 64)))
+                         (pb (fx-alloc! (* n 64))))
+                    (let put ((i 0))    ; inverse binds ship once
+                      (when (< i n)
+                        (m4s-write! (+ ib (* i 64)) (vector-ref ibms i))
+                        (put (+ i 1))))
+                    (vector-set! per k (vector ib pb n)))
+                  (skin (+ k 1))))
+              per)))))
+
+  (define (gltf-joint-count g si)
+    (vector-length (vector-ref (vector-ref (gltf-skins g) si) 0)))
+
+  ;; refresh every node's global matrix (locals in closed form from
+  ;; the animated TRS fields, chains in SIMD, parents first), then
+  ;; compose one skin's palette: palette[k] = global(joint k) x ibm.
+  ;; Returns the palette's staging address --
+  ;;   (fx-uniform! p 'u_joints (gltf-joint-palette! g 0)
+  ;;                            (gltf-joint-count g 0))
+  ;; uploads the whole skeleton in three command words
+  (define (gltf-joint-palette! g si)
+    (let* ((pal ($gltf-pal g))
+           (nodes (gltf-nodes g))
+           (nn (vector-length nodes))
+           (globals (vector-ref pal 0))
+           (scratch (vector-ref pal 1))
+           (order (vector-ref pal 2)))
+      (let each ((j 0))
+        (when (< j nn)
+          (let* ((i (vector-ref order j))
+                 (v (vector-ref nodes i))
+                 (p (vector-ref v 11))
+                 (dst (+ globals (* i 64)))
+                 (mx (vector-ref v 10)))
+            (if (< p 0)
+                (if mx
+                    (m4s-write! dst mx)
+                    (m4s-tqs! dst (vector-ref v 0) (vector-ref v 1)
+                              (vector-ref v 2) (vector-ref v 3)
+                              (vector-ref v 4) (vector-ref v 5)
+                              (vector-ref v 6) (vector-ref v 7)
+                              (vector-ref v 8) (vector-ref v 9)))
+                (begin
+                  (if mx
+                      (m4s-write! scratch mx)
+                      (m4s-tqs! scratch (vector-ref v 0) (vector-ref v 1)
+                                (vector-ref v 2) (vector-ref v 3)
+                                (vector-ref v 4) (vector-ref v 5)
+                                (vector-ref v 6) (vector-ref v 7)
+                                (vector-ref v 8) (vector-ref v 9)))
+                  (m4s-mul! dst (+ globals (* p 64)) scratch))))
+          (each (+ j 1))))
+      (let* ((per (vector-ref (vector-ref pal 3) si))
+             (ib (vector-ref per 0))
+             (pb (vector-ref per 1))
+             (n (vector-ref per 2))
+             (joints (vector-ref (vector-ref (gltf-skins g) si) 0)))
+        (let comp ((k 0))
+          (when (< k n)
+            (m4s-mul! (+ pb (* k 64))
+                      (+ globals (* (vector-ref joints k) 64))
+                      (+ ib (* k 64)))
+            (comp (+ k 1))))
+        pb)))
+
   ;; the skinning vertex shader: 4 joints x 4 weights per vertex,
   ;; pair with mesh-tex-fs (or mesh-lit-fs won't match the varyings)
   (define gltf-skin-vs
@@ -797,11 +905,13 @@
                 (when (< k (vector-length roots))
                   (walk-node (vector-ref roots k) (m4-identity))
                   (root (+ k 1)))))
-            ($make-gltf (reverse prims)
-                        ($gltf-image-table json bin)
-                        ($gltf-node-table json)
-                        ($gltf-skin-table json bin)
-                        ($gltf-anim-table json bin))))))
+            (let* ((nodes ($gltf-node-table json))
+                   (skins ($gltf-skin-table json bin)))
+              ($make-gltf (reverse prims)
+                          ($gltf-image-table json bin)
+                          nodes skins
+                          ($gltf-anim-table json bin)
+                          ($gltf-pal-arena nodes skins)))))))
 
   ;; browser loader: fetch, one bulk copy into staging, parse, k
   (define (gltf-fetch! url k)
@@ -926,11 +1036,13 @@
                (cmd-index-data! (gprim-ibase p) (gprim-ibytes p))))
          (let ((c (gprim-color p)))
            (if (= (gprim-stride p) 64)
-               ;; skinned: the joint matrices carry the pose; the
+               ;; skinned: the resident palette carries the pose --
+               ;; composed in SIMD, uploaded in three words; the
                ;; optional root still frames the whole asset
                (begin
                  (fx-uniform! prog 'u_joints
-                              (gltf-joint-matrices g ($gprim-skin p)))
+                              (gltf-joint-palette! g ($gprim-skin p))
+                              (gltf-joint-count g ($gprim-skin p)))
                  (fx-uniform! prog 'u_mvp
                               (if (null? root) vp (m4-mul vp (car root)))))
                (let ((world (if (null? root)

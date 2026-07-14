@@ -198,4 +198,16 @@
          (not (sphere-in-frustum-xyz? planes 0.0 0.0 100.0 1.0))
          (not (sphere-in-frustum-xyz? planes 200.0 0.0 0.0 1.0)))))
 
-(and main-ok simd-ok m4s-ok m4s-trs-ok v3!-ok frustum-xyz-ok)
+;; the closed-form T x R(quat) x S matches the constructor chain
+(define m4s-tqs-ok
+  (let* ((n (flsqrt 30.0))
+         (qx (fl/ 1.0 n)) (qy (fl/ 2.0 n))
+         (qz (fl/ 3.0 n)) (qw (fl/ 4.0 n))
+         (want (m4-mul (m4-translate 1.0 -2.0 0.5)
+                       (m4-mul (m4-from-quat qx qy qz qw)
+                               (m4-scale 1.5 2.0 0.5)))))
+    (m4s-tqs! 4352 1.0 -2.0 0.5 qx qy qz qw 1.5 2.0 0.5)
+    (m4~32 (m4s-read 4352) want)))
+
+(and main-ok simd-ok m4s-ok m4s-trs-ok v3!-ok frustum-xyz-ok
+     m4s-tqs-ok)

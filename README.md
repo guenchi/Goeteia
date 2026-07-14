@@ -376,7 +376,12 @@ buffer, shaders as s-expressions, and everything over them — in
   named states over clips, `anim-goto!` transitions that fade over
   a per-transition time while both clocks keep running — and
   `gltf-skin-vs` blends four weighted joints per
-  vertex from one mat4-array upload
+  vertex from one mat4-array upload.  The skeleton composes without
+  a boxed matrix anywhere: every node's local is `m4s-tqs!` in
+  closed form, parent chains multiply in SIMD parents-first into a
+  resident staging arena, the inverse binds were staged once at
+  parse, and `gltf-joint-palette!` hands back the palette's address
+  — three command words upload the whole skeleton, read in place
   (`examples/fx-gltf.html`: the lit Box; `fx-gltf-tex.html`: a
   textured asset; `fx-fox.html`: the rigged Fox — Survey / Walk /
   Run crossfade on keys 1-3)
