@@ -150,6 +150,10 @@
   (let loop ((fs pairs) (acc '()))
     (cond
      ((null? fs) (reverse acc))
+     ((and (pair? (cdar fs)) (eq? (car (cdar fs)) '%opt))
+      ;; (%opt 0) -- script mode: skip the optimization passes
+      (set! *opt-level* (cadr (cdar fs)))
+      (loop (cdr fs) acc))
      ((and (pair? (cdar fs)) (eq? (car (cdar fs)) 'import))
       (loop (cdr fs)
             (append (reverse (load-specs (cdr (cdar fs)) dirs)) acc)))
