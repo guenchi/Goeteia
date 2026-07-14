@@ -1093,10 +1093,11 @@
 ;;;; ------------------------------------------------------------------
 ;;;; program state (one program per compiler run)
 
-;; 0 is script mode: the optimization passes that trade compile time
-;; for output speed -- inlining, flonum function specialization,
-;; named-let loop lowering -- switch off, for callers who compile on
-;; every keystroke.  The drivers set it from a (%opt 0) stream
+;; 0 is script mode: the passes whose ANALYSIS is what makes compiles
+;; slow -- flonum function specialization and named-let loop lowering
+;; (the post-optimizer-batch-2 additions) -- switch off, for callers
+;; who compile on every keystroke.  The cheap old passes (inlining,
+;; DCE) always run.  The drivers set this from a (%opt 0) stream
 ;; directive or a --script flag; the default is everything on.
 (define *opt-level* 2)
 
@@ -3473,9 +3474,7 @@
                      (filter (lambda (f)
                                (not (and (pair? f) (symbol? (car f))
                                          (eq? (unmark (car f)) 'export))))
-                             (if (> *opt-level* 0)
-                                 (inline-forms expanded)
-                                 expanded)))
+                             (inline-forms expanded)))
                  export-names))
          (fn-defs (filter fn-define? forms))
          (var-defs (filter var-define? forms))

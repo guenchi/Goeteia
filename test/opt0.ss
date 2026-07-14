@@ -1,5 +1,5 @@
 ;; expect: (3628800 2.5 55)
-;; (%opt 0) -- script mode: inlining, flonum function specialization
+;; (%opt 0) -- script mode: flonum function specialization
 ;; and named-let loop lowering stand down; results must not change
 (%opt 0)
 (import (rnrs))
