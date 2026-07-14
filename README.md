@@ -94,11 +94,15 @@ The UI, text and network stack over the JS bridge, in `lib/web/`:
   text can be set in canvas/GL scenes, where there is no layout
   engine at all.  Hard breaks, space wraps, CJK breaks with kinsoku
   (closing punctuation never starts a line, opening brackets never
-  end one), code-point splits for over-wide words; `(web canvas)` is the
-  measureText-backed measurer for browsers, and the engine itself
+  end one), code-point splits for over-wide words; `(web canvas)`
+  supplies the browser measurer, and the engine itself
   verifies headlessly (`examples/fx-labels.html`: labels typeset
   here, rasterized once, distance-fielded by `(gfx sdf)` and drawn
   in 3D as camera-facing quads that stay crisp at any range)
+- `(web canvas)` — the browser's canvas, wrapped: today the
+  measureText-backed measurer that feeds `(web typeset)`'s
+  `prepare` (the one place a host appears in the text stack), and
+  the home for Canvas 2D drawing sugar as it grows
 - `(web scroll)` — a virtual scroller for variable-height text, the
   use case `(web typeset)` was born for: heights are typeset before
   anything mounts (no reflow-forcing measurement), only the visible
