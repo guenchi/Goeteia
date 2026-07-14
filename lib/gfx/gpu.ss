@@ -50,10 +50,11 @@
 ;;
 ;; Copyright (c) 2026 guenchi. MIT license; see LICENSE.
 (library (gfx gpu)
-  (export gpu-attach! gpu-pipeline! gpu-pipeline2!
+  (export gpu-attach! gpu-pipeline! gpu-pipeline2! gpu-pipeline2-blend!
           gpu-buffer! gpu-index! gpu-uniforms! gpu-storage!
           gpu-indirect! gpu-compute-group*!
           gpu-draw-indexed-indirect! gpu-draw-indirect!
+          gpu-hzb-init! gpu-end-pass! gpu-hzb! gpu-compute-groupx!
           gpu-texture! gpu-texture-data! gpu-sampler!
           gpu-bindgroup! gpu-texgroup!
           gpu-compute! gpu-compute-group!
@@ -86,11 +87,11 @@
      "        st.ctx.configure({ device: dev, format: st.fmt,"
      "                           alphaMode: 'opaque' });"
      "        const GT = globalThis.GPUTextureUsage"
-     "                 || { RENDER_ATTACHMENT: 16 };"
+     "                 || { RENDER_ATTACHMENT: 16, TEXTURE_BINDING: 4 };"
      "        st.depth = dev.createTexture({"
      "          size: [canvas.width, canvas.height],"
      "          format: 'depth24plus',"
-     "          usage: GT.RENDER_ATTACHMENT });"
+     "          usage: GT.RENDER_ATTACHMENT | (GT.TEXTURE_BINDING || 4) });"
      "        cb(); }); },"
      "  parseAttrs(fmts, loc) {"
      "    let off = 0;"
@@ -113,9 +114,18 @@
      "                      depthCompare: 'less' },"
      "      primitive: { topology: 'triangle-list' } }); },"
      "  pipeline2(slot, code, vstride, vfmts, istride, ifmts) {"
+     "    this.pipeline2b(slot, code, vstride, vfmts, istride, ifmts, 0); },"
+     "  pipeline2b(slot, code, vstride, vfmts, istride, ifmts, blend) {"
      "    const mod = st.dev.createShaderModule({ code });"
      "    const va = this.parseAttrs(vfmts, 0);"
      "    const ia = this.parseAttrs(ifmts, va.length);"
+     "    const target = blend"
+     "      ? { format: st.fmt, blend: {"
+     "            color: { srcFactor: 'src-alpha',"
+     "                     dstFactor: 'one-minus-src-alpha' },"
+     "            alpha: { srcFactor: 'one',"
+     "                     dstFactor: 'one-minus-src-alpha' } } }"
+     "      : { format: st.fmt };"
      "    slots[slot] = st.dev.createRenderPipeline({"
      "      layout: 'auto',"
      "      vertex: { module: mod, entryPoint: 'vs', buffers: ["
@@ -123,9 +133,9 @@
      "        { arrayStride: istride, stepMode: 'instance',"
      "          attributes: ia }] },"
      "      fragment: { module: mod, entryPoint: 'fs',"
-     "                  targets: [{ format: st.fmt }] },"
+     "                  targets: [target] },"
      "      depthStencil: { format: 'depth24plus',"
-     "                      depthWriteEnabled: true,"
+     "                      depthWriteEnabled: !blend,"
      "                      depthCompare: 'less' },"
      "      primitive: { topology: 'triangle-list' } }); },"
      "  buffer(slot, bytes, kind) {"  ; 0 vtx, 1 idx, 2 uniform,
@@ -211,6 +221,62 @@
      "                  resource: { buffer: slots[sslot] } },"
      "                { binding: 1,"
      "                  resource: { buffer: slots[uslot] } }] }); },"
+     "  hzbInit(slot, w, h) {"
+     "    const GT = globalThis.GPUTextureUsage"
+     "             || { TEXTURE_BINDING: 4, STORAGE_BINDING: 8 };"
+     "    let levels = 1, m = Math.max(w, h);"
+     "    while (m > 1) { m >>= 1; levels++; }"
+     "    const tex = st.dev.createTexture({"
+     "      size: [w, h], format: 'r32float', mipLevelCount: levels,"
+     "      usage: (GT.TEXTURE_BINDING || 4) | (GT.STORAGE_BINDING || 8) });"
+     "    const view = (l) => tex.createView({ baseMipLevel: l,"
+     "                                         mipLevelCount: 1 });"
+     "    const copy = st.dev.createComputePipeline({ layout: 'auto',"
+     "      compute: { entryPoint: 'cs', module: st.dev.createShaderModule({ code:"
+     "        '@group(0) @binding(0) var src: texture_depth_2d;' +"
+     "        '@group(0) @binding(1) var dst: texture_storage_2d<r32float, write>;' +"
+     "        '@compute @workgroup_size(8,8)' +"
+     "        'fn cs(@builtin(global_invocation_id) g: vec3u) {' +"
+     "        '  let d = textureDimensions(dst);' +"
+     "        '  if (g.x >= d.x || g.y >= d.y) { return; }' +"
+     "        '  textureStore(dst, vec2i(g.xy),' +"
+     "        '    vec4f(textureLoad(src, vec2i(g.xy), 0), 0, 0, 0)); }' }) } });"
+     "    const red = st.dev.createComputePipeline({ layout: 'auto',"
+     "      compute: { entryPoint: 'cs', module: st.dev.createShaderModule({ code:"
+     "        '@group(0) @binding(0) var src: texture_2d<f32>;' +"
+     "        '@group(0) @binding(1) var dst: texture_storage_2d<r32float, write>;' +"
+     "        '@compute @workgroup_size(8,8)' +"
+     "        'fn cs(@builtin(global_invocation_id) g: vec3u) {' +"
+     "        '  let d = textureDimensions(dst);' +"
+     "        '  if (g.x >= d.x || g.y >= d.y) { return; }' +"
+     "        '  let sd = vec2i(textureDimensions(src)) - vec2i(1);' +"
+     "        '  let c = vec2i(g.xy) * 2;' +"
+     "        '  let a = textureLoad(src, min(c, sd), 0).x;' +"
+     "        '  let b = textureLoad(src, min(c + vec2i(1,0), sd), 0).x;' +"
+     "        '  let e = textureLoad(src, min(c + vec2i(0,1), sd), 0).x;' +"
+     "        '  let f = textureLoad(src, min(c + vec2i(1,1), sd), 0).x;' +"
+     "        '  textureStore(dst, vec2i(g.xy),' +"
+     "        '    vec4f(max(max(a,b), max(e,f)), 0, 0, 0)); }' }) } });"
+     "    const groups = [st.dev.createBindGroup({"
+     "      layout: copy.getBindGroupLayout(0),"
+     "      entries: [{ binding: 0, resource: st.depth.createView() },"
+     "                { binding: 1, resource: view(0) }] })];"
+     "    for (let l = 1; l < levels; l++)"
+     "      groups.push(st.dev.createBindGroup({"
+     "        layout: red.getBindGroupLayout(0),"
+     "        entries: [{ binding: 0, resource: view(l - 1) },"
+     "                  { binding: 1, resource: view(l) }] }));"
+     "    st.hzb = { tex, copy, red, groups, w, h, levels };"
+     "    slots[slot] = tex; },"
+     "  computeGroupX(slot, pslot, list) {"
+     "    slots[slot] = st.dev.createBindGroup({"
+     "      layout: slots[pslot].getBindGroupLayout(0),"
+     "      entries: String(list).split(',').map((sp, i) =>"
+     "        sp[0] === 't'"
+     "          ? ({ binding: i,"
+     "               resource: slots[Number(sp.slice(1))].createView() })"
+     "          : ({ binding: i,"
+     "               resource: { buffer: slots[Number(sp)] } })) }); },"
      "  computeGroupN(slot, pslot, list) {"
      "    slots[slot] = st.dev.createBindGroup({"
      "      layout: slots[pslot].getBindGroupLayout(0),"
@@ -238,17 +304,17 @@
      "    const enc = st.dev.createCommandEncoder();"
      "    let clear = { r: 0, g: 0, b: 0, a: 1 };"
      "    let pipeline = null, vbuf = null, vbuf2 = null, ibuf = null;"
-     "    let group = null, pass = null;"
+     "    let group = null, pass = null, loadMode = 'clear';"
      "    const open = () => {"
      "      if (!pass) pass = enc.beginRenderPass({"
      "        colorAttachments: [{"
      "          view: st.ctx.getCurrentTexture().createView(),"
-     "          loadOp: 'clear', clearValue: clear, storeOp: 'store' }],"
+     "          loadOp: loadMode, clearValue: clear, storeOp: 'store' }],"
      "        depthStencilAttachment: {"
      "          view: st.depth.createView(),"
      "          depthClearValue: 1.0,"
-     "          depthLoadOp: 'clear', depthStoreOp: 'store' },"
-     "        timestampWrites: st.tq ? {"
+     "          depthLoadOp: loadMode, depthStoreOp: 'store' },"
+     "        timestampWrites: (st.tq && loadMode === 'clear') ? {"
      "          querySet: st.tq,"
      "          beginningOfPassWriteIndex: 0,"
      "          endOfPassWriteIndex: 1 } : undefined }); };"
@@ -288,6 +354,22 @@
      "                   pass.drawIndexedIndirect(b, u()); } break;"
      "        case 14: ready(); { const b = slots[u()];"
      "                   pass.drawIndirect(b, u()); } break;"
+     "        case 15: if (pass) { pass.end(); pass = null; }"
+     "                 loadMode = 'load'; break;"
+     "        case 16: {"
+     "          const hz = st.hzb;"
+     "          const cp = enc.beginComputePass();"
+     "          cp.setPipeline(hz.copy); cp.setBindGroup(0, hz.groups[0]);"
+     "          cp.dispatchWorkgroups(Math.ceil(hz.w / 8),"
+     "                                Math.ceil(hz.h / 8));"
+     "          let lw = hz.w, lh = hz.h;"
+     "          for (let l = 1; l < hz.levels; l++) {"
+     "            lw = Math.max(1, lw >> 1); lh = Math.max(1, lh >> 1);"
+     "            cp.setPipeline(hz.red); cp.setBindGroup(0, hz.groups[l]);"
+     "            cp.dispatchWorkgroups(Math.ceil(lw / 8),"
+     "                                  Math.ceil(lh / 8));"
+     "          }"
+     "          cp.end(); break; }"
      "      }"
      "    }"
      "    open();"                       ; a clear-only frame still clears
@@ -334,6 +416,10 @@
   ;; instance; locations number straight through both
   (define (gpu-pipeline2! slot wgsl vstride vfmts istride ifmts)
     (js-method $gpu "pipeline2" slot wgsl vstride vfmts istride ifmts))
+  ;; the same, with src-over alpha blending and depth writes off --
+  ;; the translucent-pass pipeline
+  (define (gpu-pipeline2-blend! slot wgsl vstride vfmts istride ifmts)
+    (js-method $gpu "pipeline2b" slot wgsl vstride vfmts istride ifmts 1))
   ;; a compute pipeline from one WGSL module (entry point cs)
   (define (gpu-compute! slot wgsl)
     (js-method $gpu "compute" slot wgsl))
@@ -402,6 +488,20 @@
   (define (gpu-bind-vbuf2! slot) ($gpu-u! 10) ($gpu-u! slot))
   (define (gpu-draw-instanced! verts insts)
     ($gpu-u! 11) ($gpu-u! verts) ($gpu-u! insts))
+  ;; occlusion: gpu-hzb-init! builds the depth pyramid resources
+  ;; once; per frame, gpu-end-pass! closes the occluder pass (later
+  ;; draws load instead of clear), gpu-hzb! reduces the depth buffer
+  ;; into the pyramid, and a cull kernel bound via
+  ;; gpu-compute-groupx! with a t-prefixed slot samples it
+  (define (gpu-hzb-init! slot w h)
+    (js-method $gpu "hzbInit" slot w h))
+  (define (gpu-end-pass!) ($gpu-u! 15))
+  (define (gpu-hzb!) ($gpu-u! 16))
+  ;; like gpu-compute-group*! but entries may be textures: "3,4,t7"
+  ;; binds buffers 3,4 and texture 7's full view
+  (define (gpu-compute-groupx! slot pslot spec)
+    (js-method $gpu "computeGroupX" slot pslot spec))
+
   ;; the GPU-driven draw: the argument buffer (gpu-indirect!) holds
   ;; [indexCount instanceCount firstIndex baseVertex firstInstance],
   ;; written by a compute pass -- a cull that never touches the CPU

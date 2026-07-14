@@ -33,13 +33,13 @@
   ;; styling goes through signals/CSS variables, never through here.
   (define $styled '())                  ; ((style-set . class) ...), newest first
   (define (intern-style! name sty)
-    (let ((hit (assoc sty $styled)))    ; equal? style set -> same class
-      (if hit
-          (cdr hit)
-          (let ((cls (string-append (symbol->string name) "-"
-                                    (number->string (length $styled)))))
-            (set! $styled (cons (cons sty cls) $styled))
-            cls))))
+    (cond
+     ((assoc sty $styled) => cdr)       ; equal? style set -> same class
+     (else
+      (let ((cls (string-append (symbol->string name) "-"
+                                (number->string (length $styled)))))
+        (set! $styled (cons (cons sty cls) $styled))
+        cls))))
   (define (styled tag name sty . kids)
     (let ((cls (intern-style! name sty)))
       (if (and (pair? kids) (pair? (car kids)) (eq? (car (car kids)) '@))
