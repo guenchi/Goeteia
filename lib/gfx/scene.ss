@@ -718,9 +718,13 @@
                             ($sgl-nd-cbase! nd (fx-alloc! 80)))
                           mine)
                 (outer (cdr ns) (cons g grouped)
+                       ;; slots 5-7 cache the last frame's camera
+                       ;; signature, transform generation and visible
+                       ;; count, so a static group under a still camera
+                       ;; redraws without re-culling or re-uploading
                        (cons (vector g mine (fx-buffer!)
                                      (fx-alloc! (* (length mine) 80))
-                                     (length mine))
+                                     (length mine) -1.0 -1 -1)
                              groups)
                        singles))))))))
 
@@ -868,7 +872,7 @@
   ;; one group: compose every instance into candidate slots four at
   ;; a time, batch-cull them in SIMD, pack the visible down (a chunk
   ;; with nothing culled moves nothing), one upload, one draw
-  (define ($sgl-draw-igroup! prog ig planes scratch)
+  (define ($sgl-draw-igroup! prog ig planes scratch camsig)
     (let* ((geo (vector-ref ig 0))
            (ibuf (vector-ref ig 2))
            (ibase (vector-ref ig 3))
@@ -876,16 +880,37 @@
            (ctr (+ scratch 320))
            (ones (+ scratch 336))
            (res (+ scratch 352))
-           (flush!
-            (lambda (n)
+           ;; the group's transform generation: the sum moves iff any
+           ;; instance's own or ancestor transform did
+           (gen (fold-left (lambda (a nd) (+ a ($sgl-node-gen nd)))
+                           0 (vector-ref ig 1)))
+           ;; issue the draw; upload the packed instances only when the
+           ;; set was recomputed (up? = #t), else the buffer still holds
+           ;; last frame's identical data
+           (draw!
+            (lambda (n up?)
+              (when up? (vector-set! ig 7 n))
               (when (> n 0)
                 (fx-use-instanced! prog ($sgl-geo-vbuf geo) ibuf)
                 ($sgl-geo-upload! geo)
                 (cmd-bind-index! ($sgl-geo-ibuf geo))
                 (cmd-bind-buffer! ibuf)
-                (cmd-buffer-data! ibase (* n 80))
+                (when up? (cmd-buffer-data! ibase (* n 80)))
                 (cmd-draw-elements-instanced!
                  GL-TRIANGLES ($sgl-geo-icount geo) n)))))
+      (if (and (fl=? camsig (vector-ref ig 5))
+               (= gen (vector-ref ig 6))
+               (>= (vector-ref ig 7) 0))
+          ;; nothing moved and the frustum held: redraw the cached set
+          (draw! (vector-ref ig 7) #f)
+          (begin
+            (vector-set! ig 5 camsig)
+            (vector-set! ig 6 gen)
+            (%sgl-igroup-fill! ig planes scratch soa ctr ones res draw!))))
+    #t)
+
+  (define (%sgl-igroup-fill! ig planes scratch soa ctr ones res flush!)
+    (let ((ibase (vector-ref ig 3)))
       (let fill ((ns (vector-ref ig 1)) (n 0))
         (let gather ((ns ns) (m 0))     ; next four lod-active nodes
           (if (and (pair? ns) (< m 4))
@@ -894,7 +919,7 @@
                          (gather (cdr ns) (+ m 1)))
                   (gather (cdr ns) m))
               (if (= m 0)
-                  (flush! n)
+                  (flush! n #t)
                   (begin
                     ;; refresh each node's cache when its generation
                     ;; moved (matrix, then the center as the cached
@@ -943,7 +968,7 @@
                       (if (= k m)
                           (if (pair? ns)
                               (fill ns n2)
-                              (flush! n2))
+                              (flush! n2 #t))
                           (if (vector-ref $sgl-vis k)
                               (let* ((nd (vector-ref $sgl-chunk k))
                                      (f ($sgl-nd-f nd))
@@ -965,6 +990,15 @@
     (let* ((cam ($sgl-cam sc))
            (light ($sgl-light sc))
            (aspect (fl/ ($sgl-fl (fx-width)) ($sgl-fl (fx-height))))
+           ;; a cheap frustum signature: the camera fields and aspect
+           ;; weighted-summed.  Unchanged frame to frame => the frustum
+           ;; held, so static instanced groups need no re-cull/upload
+           (camsig (let loop ((i 0) (acc (fl* aspect 1000003.0)))
+                     (if (= i 9) acc
+                         (loop (+ i 1)
+                               (fl+ acc (fl* ($sgl-fl (vector-ref cam i))
+                                             (fixnum->flonum
+                                              (+ 3 (* i 7)))))))))
            (eye (v3 (vector-ref cam 3) (vector-ref cam 4)
                     (vector-ref cam 5)))
            (vp (m4-mul
@@ -1018,7 +1052,7 @@
           (cmd-use-program! (fx-program-slot p))
           (for-each (lambda (ig)
                       ($sgl-draw-igroup! p ig planes
-                                         ($sgl-iscratch sc)))
+                                         ($sgl-iscratch sc) camsig))
                     ($sgl-igroups sc))))
       ;; opaque singles first (front to back), collecting any
       ;; translucent ones (color alpha < 1) into tr for the blended
