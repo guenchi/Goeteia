@@ -1674,17 +1674,34 @@
 ;; value on the wasm stack, then set the parameter locals in
 ;; reverse -- parallel binding for free
 ;; every self-call's argument list within the (already verified)
-;; loop body -- quote skipped, shadowed regions contain none
+;; loop body.  Structural walk: binding lists are not applications,
+;; and a binder that shadows the name closes its region (loop-ok?
+;; proved lambdas mention nothing)
 (define (loop-sites name e acc)
+  (define (walk* es acc)
+    (if (pair? es)
+        (walk* (cdr es) (loop-sites name (car es) acc))
+        acc))
   (cond
    ((not (pair? e)) acc)
-   ((and (symbol? (car e)) (eq? (resolve-tag (car e)) 'quote)) acc)
    (else
-    (let ((acc (if (eq? (car e) name) (cons (cdr e) acc) acc)))
-      (let walk ((es e) (acc acc))
-        (if (pair? es)
-            (walk (cdr es) (loop-sites name (car es) acc))
-            acc))))))
+    (case (and (symbol? (car e)) (resolve-tag (car e)))
+      ((quote) acc)
+      ((lambda) acc)
+      ((let)
+       (let ((acc (fold-left (lambda (a b)
+                               (loop-sites name (cadr b) a))
+                             acc (cadr e))))
+         (if (memq name (map (lambda (b) (car b)) (cadr e)))
+             acc
+             (walk* (cddr e) acc))))
+      ((%loop)
+       (let ((acc (walk* (cadddr e) acc)))
+         (if (or (eq? (cadr e) name) (memq name (caddr e)))
+             acc
+             (walk* (cdr (cdddr e)) acc))))
+      (else
+       (walk* e (if (eq? (car e) name) (cons (cdr e) acc) acc)))))))
 
 (define (compile-%loop e locals cell tail?)
   (let* ((name (cadr e))
