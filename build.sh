@@ -9,3 +9,6 @@ for p in index why agent manual; do
     node rt/run.mjs "/tmp/$p.wasm"
     echo "built $p.html ($(wc -c < "$p.html" | tr -d ' ') bytes)"
 done
+# the Why page's browser-side typeset effect, precompiled
+node rt/compile.mjs goeteia.wasm why-fx.ss why-fx.wasm
+echo "built why-fx.wasm ($(wc -c < why-fx.wasm | tr -d ' ') bytes)"

@@ -168,4 +168,7 @@
                               "become verifiable data, and a generate–verify loop forces correctness "
                               "instead of assuming it.")
                page-css
-               'why "site/why.ss" body))
+               'why "site/why.ss" body
+               ;; the typeset effect: heading glyphs that dodge the
+               ;; cursor (why-fx.ss, precompiled to why-fx.wasm)
+               (list '(script (@ (type "module") (src "why-fx.js"))))))
