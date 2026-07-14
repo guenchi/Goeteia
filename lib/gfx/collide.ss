@@ -274,39 +274,37 @@
       (if (sphere-aabb? c r bmin bmax)
           (let ((push (sphere-aabb-push c r bmin bmax)))
             (cons 0.0 (if push (v3-normalize push) (v3 0.0 1.0 0.0))))
-          (let ((os (vector (v3-x c) (v3-y c) (v3-z c)))
-                (ds (vector (v3-x motion) (v3-y motion) (v3-z motion)))
-                (los (vector (fl- (v3-x bmin) r) (fl- (v3-y bmin) r)
-                             (fl- (v3-z bmin) r)))
-                (his (vector (fl+ (v3-x bmax) r) (fl+ (v3-y bmax) r)
-                             (fl+ (v3-z bmax) r))))
-            (let loop ((i 0) (tmin -1000000000.0) (tmax 1000000000.0)
-                       (axis 0) (sign 0.0))
-              (if (= i 3)
-                  (and (fl<? tmin tmax) (fl<? 0.0 tmax) (fl<? tmin 1.0)
-                       (if (fl<? tmin 0.0)
-                           ;; inside the inflated corner shell only:
-                           ;; touching for the sweep's purposes
-                           (cons 0.0 (v3-normalize
-                                      (v3-sub c ($col-closest c bmin bmax))))
-                           (cons tmin
-                                 (v3 (if (= axis 0) sign 0.0)
-                                     (if (= axis 1) sign 0.0)
-                                     (if (= axis 2) sign 0.0)))))
-                  (let ((o (vector-ref os i)) (d (vector-ref ds i))
-                        (lo (vector-ref los i)) (hi (vector-ref his i)))
-                    (if (fl<? ($col-abs d) $col-eps)
-                        (and (fl<? lo o) (fl<? o hi)
-                             (loop (+ i 1) tmin tmax axis sign))
-                        (let* ((t1 (fl/ (fl- lo o) d))
-                               (t2 (fl/ (fl- hi o) d))
-                               (ta ($col-min t1 t2))
-                               (tb ($col-max t1 t2)))
-                          (if (fl<? tmin ta)
-                              (loop (+ i 1) ta ($col-min tmax tb)
-                                    i (if (fl<? 0.0 d) -1.0 1.0))
-                              (loop (+ i 1) tmin ($col-min tmax tb)
-                                    axis sign)))))))))))
+          ;; the slab walk, unrolled by axis: the per-box inner loop
+          ;; of every character step, so no temporary vectors -- each
+          ;; axis reads its scalars straight off the arguments
+          (let loop ((i 0) (tmin -1000000000.0) (tmax 1000000000.0)
+                     (axis 0) (sign 0.0))
+            (if (= i 3)
+                (and (fl<? tmin tmax) (fl<? 0.0 tmax) (fl<? tmin 1.0)
+                     (if (fl<? tmin 0.0)
+                         ;; inside the inflated corner shell only:
+                         ;; touching for the sweep's purposes
+                         (cons 0.0 (v3-normalize
+                                    (v3-sub c ($col-closest c bmin bmax))))
+                         (cons tmin
+                               (v3 (if (= axis 0) sign 0.0)
+                                   (if (= axis 1) sign 0.0)
+                                   (if (= axis 2) sign 0.0)))))
+                (let ((o (vector-ref c i)) (d (vector-ref motion i))
+                      (lo (fl- (vector-ref bmin i) r))
+                      (hi (fl+ (vector-ref bmax i) r)))
+                  (if (fl<? ($col-abs d) $col-eps)
+                      (and (fl<? lo o) (fl<? o hi)
+                           (loop (+ i 1) tmin tmax axis sign))
+                      (let* ((t1 (fl/ (fl- lo o) d))
+                             (t2 (fl/ (fl- hi o) d))
+                             (ta ($col-min t1 t2))
+                             (tb ($col-max t1 t2)))
+                        (if (fl<? tmin ta)
+                            (loop (+ i 1) ta ($col-min tmax tb)
+                                  i (if (fl<? 0.0 d) -1.0 1.0))
+                            (loop (+ i 1) tmin ($col-min tmax tb)
+                                  axis sign))))))))))
 
   ;; ---- the character controller loop, packaged ----
   ;; boxes is a list of (bmin . bmax) pairs.  Advance to the first
@@ -314,6 +312,12 @@
   ;; into-the-wall component, and continue with what remains: walls
   ;; slide, corners stop.  Three passes bound the worst corner.
   (define $col-skin 0.001)
+  ;; per-iteration scratch: the remaining motion lives here across
+  ;; the (at most three) slide passes instead of three fresh vectors
+  ;; a pass.  The caller's motion is never written; positions that
+  ;; escape (the return, each pass's contact point) stay fresh
+  (define $col-rem (v3 0.0 0.0 0.0))
+  (define $col-tmp (v3 0.0 0.0 0.0))
   (define (move-and-slide pos r motion boxes)
     (let go ((pos pos) (m motion) (k 0))
       (if (or (= k 3) (fl<? (v3-dot m m) $col-eps))
@@ -331,10 +335,16 @@
              (else
               (let* ((t (car best))
                      (n (cdr best))
-                     (at (v3-add (v3-add pos (v3-scale m t))
-                                 (v3-scale n $col-skin)))
-                     (rem (v3-scale m (fl- 1.0 t)))
-                     (slide (v3-sub rem (v3-scale n (v3-dot rem n)))))
+                     (at (v3 (fl+ (fl+ (v3-x pos) (fl* (v3-x m) t))
+                                  (fl* (v3-x n) $col-skin))
+                             (fl+ (fl+ (v3-y pos) (fl* (v3-y m) t))
+                                  (fl* (v3-y n) $col-skin))
+                             (fl+ (fl+ (v3-z pos) (fl* (v3-z m) t))
+                                  (fl* (v3-z n) $col-skin))))
+                     (rem (v3-scale! $col-rem m (fl- 1.0 t)))
+                     (slide (v3-sub! $col-rem rem
+                                     (v3-scale! $col-tmp n
+                                                (v3-dot rem n)))))
                 (go at slide (+ k 1)))))))))
 
   ;; ---- the character, packaged: gravity, landing, jumping ----
@@ -363,19 +373,21 @@
   ;; vx / vz are the wished horizontal velocity, world units per
   ;; second; dt and the box list as for move-and-slide.  Returns the
   ;; new position (also stored in the character).
+  (define $col-motion (v3 0.0 0.0 0.0)) ; move-and-slide never keeps it
+  (define $col-probe (v3 0.0 -0.08 0.0))
   (define (character-move! ch vx vz dt boxes)
     (let* ((dt ($col-fl dt))
            (vy (fl- ($char-vy ch) (fl* $char-gravity dt)))
-           (motion (v3 (fl* ($col-fl vx) dt)
-                       (fl* vy dt)
-                       (fl* ($col-fl vz) dt)))
+           (motion (v3-set! $col-motion (fl* ($col-fl vx) dt)
+                            (fl* vy dt)
+                            (fl* ($col-fl vz) dt)))
            (pos (move-and-slide (character-pos ch) ($char-r ch)
                                 motion boxes))
            (standing
             (let scan ((bs boxes))
               (cond ((null? bs) #f)
                     ((sweep-sphere-aabb pos ($char-r ch)
-                                        (v3 0.0 -0.08 0.0)
+                                        $col-probe
                                         (car (car bs)) (cdr (car bs)))
                      #t)
                     (else (scan (cdr bs)))))))

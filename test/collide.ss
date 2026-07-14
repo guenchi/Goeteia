@@ -120,6 +120,15 @@
         (fl<? (v3-x p) 0.51)))
  ;; nothing in the way: the full step lands
  (v3~ (move-and-slide (v3 0 0 0) 0.5 (v3 1.0 2.0 3.0) '()) 1.0 2.0 3.0)
+ ;; the caller's motion vector survives the slide untouched, and a
+ ;; second identical call answers identically (scratch stays inside)
+ (let ((box (list (cons (v3 2.0 -1.0 -1.0) (v3 3.0 1.0 1.0))))
+       (m (v3 4.0 0.0 0.1)))
+   (let ((p1 (move-and-slide (v3 0 0 0) 0.5 m box))
+         (p2 (move-and-slide (v3 0 0 0) 0.5 m box)))
+     (and (v3~ m 4.0 0.0 0.1)
+          (v3~ p2 (v3-x p1) (v3-y p1) (v3-z p1))
+          (fl<? (v3-x p1) 1.51))))
 
  ;; ---- the character: fall, land, walk, wall, jump ----
  (let* ((ground (cons (v3 -20.0 -1.0 -20.0) (v3 20.0 0.0 20.0)))

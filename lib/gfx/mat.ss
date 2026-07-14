@@ -18,12 +18,14 @@
   (export flsin flcos fltan
           v3 v3-x v3-y v3-z
           v3-add v3-sub v3-scale v3-dot v3-cross v3-normalize
+          v3-set! v3-copy! v3-add! v3-sub! v3-scale! v3-cross!
+          v3-normalize!
           m4-identity m4-mul m4-scratch! m4-transform
           m4s-write! m4s-read m4s-identity! m4s-mul! m4s-trs!
           m4-translate m4-scale m4-rotate-x m4-rotate-y m4-rotate-z
           m4-from-quat m4-perspective m4-ortho m4-look-at
           m4-inverse m4-unproject
-          m4-frustum-planes sphere-in-frustum?)
+          m4-frustum-planes sphere-in-frustum? sphere-in-frustum-xyz?)
   (import (rnrs))
 
   (define ($mat-fl v) (if (flonum? v) v (exact->inexact v)))
@@ -78,6 +80,50 @@
   (define (v3-normalize a)
     (let ((n (flsqrt (v3-dot a a))))
       (vector (fl/ (v3-x a) n) (fl/ (v3-y a) n) (fl/ (v3-z a) n))))
+
+  ;; destructive variants for per-frame loops: same math, the result
+  ;; lands in dst (which may alias an operand) and dst returns, so
+  ;; chains read as before but a hot path allocates its vectors once.
+  ;; Arguments are assumed flonums -- these are the inner loop
+  (define (v3-set! dst x y z)
+    (vector-set! dst 0 ($mat-fl x))
+    (vector-set! dst 1 ($mat-fl y))
+    (vector-set! dst 2 ($mat-fl z))
+    dst)
+  (define (v3-copy! dst a)
+    (vector-set! dst 0 (v3-x a))
+    (vector-set! dst 1 (v3-y a))
+    (vector-set! dst 2 (v3-z a))
+    dst)
+  (define (v3-add! dst a b)
+    (vector-set! dst 0 (fl+ (v3-x a) (v3-x b)))
+    (vector-set! dst 1 (fl+ (v3-y a) (v3-y b)))
+    (vector-set! dst 2 (fl+ (v3-z a) (v3-z b)))
+    dst)
+  (define (v3-sub! dst a b)
+    (vector-set! dst 0 (fl- (v3-x a) (v3-x b)))
+    (vector-set! dst 1 (fl- (v3-y a) (v3-y b)))
+    (vector-set! dst 2 (fl- (v3-z a) (v3-z b)))
+    dst)
+  (define (v3-scale! dst a s)
+    (let ((s ($mat-fl s)))
+      (vector-set! dst 0 (fl* (v3-x a) s))
+      (vector-set! dst 1 (fl* (v3-y a) s))
+      (vector-set! dst 2 (fl* (v3-z a) s))
+      dst))
+  (define (v3-cross! dst a b)           ; dst must not alias a or b
+    (let ((ax (v3-x a)) (ay (v3-y a)) (az (v3-z a))
+          (bx (v3-x b)) (by (v3-y b)) (bz (v3-z b)))
+      (vector-set! dst 0 (fl- (fl* ay bz) (fl* az by)))
+      (vector-set! dst 1 (fl- (fl* az bx) (fl* ax bz)))
+      (vector-set! dst 2 (fl- (fl* ax by) (fl* ay bx)))
+      dst))
+  (define (v3-normalize! dst a)
+    (let ((n (flsqrt (v3-dot a a))))
+      (vector-set! dst 0 (fl/ (v3-x a) n))
+      (vector-set! dst 1 (fl/ (v3-y a) n))
+      (vector-set! dst 2 (fl/ (v3-z a) n))
+      dst))
 
   ;; ---- mat4, column-major: m[col*4 + row] ----
   (define (m4-identity)
@@ -363,17 +409,22 @@
             ($mat-plane vp 2 1.0) ($mat-plane vp 2 -1.0))) ; near far
 
   ;; #f only when the sphere is entirely outside some plane, so a
-  ;; #t is conservative -- exactly what a cull wants
-  (define (sphere-in-frustum? planes c r)
+  ;; #t is conservative -- exactly what a cull wants.  The -xyz
+  ;; spelling takes the center unboxed -- per-frame culls compute
+  ;; those scalars anyway and skip making a v3 of them
+  (define (sphere-in-frustum-xyz? planes x y z r)
     (let ((r (fl- 0.0 ($mat-fl r))))
       (let each ((i 0))
         (or (= i 6)
             (let ((p (vector-ref planes i)))
-              (and (fl<? r (fl+ (fl+ (fl+ (fl* (vector-ref p 0) (v3-x c))
-                                          (fl* (vector-ref p 1) (v3-y c)))
-                                     (fl* (vector-ref p 2) (v3-z c)))
+              (and (fl<? r (fl+ (fl+ (fl+ (fl* (vector-ref p 0) x)
+                                          (fl* (vector-ref p 1) y))
+                                     (fl* (vector-ref p 2) z))
                                 (vector-ref p 3)))
                    (each (+ i 1))))))))
+
+  (define (sphere-in-frustum? planes c r)
+    (sphere-in-frustum-xyz? planes (v3-x c) (v3-y c) (v3-z c) r))
 
   (define (m4-look-at eye center up)
     (let* ((z (v3-normalize (v3-sub eye center)))
