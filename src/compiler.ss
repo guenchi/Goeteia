@@ -1673,6 +1673,19 @@
 ;; fall-through is the loop's value.  Self-calls push every new
 ;; value on the wasm stack, then set the parameter locals in
 ;; reverse -- parallel binding for free
+;; every self-call's argument list within the (already verified)
+;; loop body -- quote skipped, shadowed regions contain none
+(define (loop-sites name e acc)
+  (cond
+   ((not (pair? e)) acc)
+   ((and (symbol? (car e)) (eq? (resolve-tag (car e)) 'quote)) acc)
+   (else
+    (let ((acc (if (eq? (car e) name) (cons (cdr e) acc) acc)))
+      (let walk ((es e) (acc acc))
+        (if (pair? es)
+            (walk (cdr es) (loop-sites name (car es) acc))
+            acc))))))
+
 (define (compile-%loop e locals cell tail?)
   (let* ((name (cadr e))
          (params (caddr e))
@@ -1680,11 +1693,70 @@
          (body (cdr (cdddr e)))
          (slots (map-in-order (lambda (p) (fresh-local! cell)) params))
          (scope (append (map cons params slots) locals))
-         (init-code (map-in-order
-                     (lambda (i) (compile-exp i locals cell #f))
-                     inits)))
+         (sites (loop-sites name (cons 'begin body) '()))
+         (base-f64s *f64-slots*)
+         (encode (lambda (cls slot)
+                   (case cls
+                     ((f64) slot)
+                     ((i32) (- -100000 slot))
+                     (else #f))))
+         ;; loop variables earn typed slots when the init AND every
+         ;; iteration's argument stay in one context -- decided by a
+         ;; demote-only fixpoint (params may depend on each other)
+         (classes
+          (let seed ((is inits) (cs '()))
+            (if (pair? is)
+                (seed (cdr is)
+                      (cons (cond ((fl-expr? (car is) locals) 'f64)
+                                  ((i32-expr? (car is) locals) 'i32)
+                                  (else 'eq))
+                            cs))
+                (let settle ((classes (reverse cs)))
+                  (set! *f64-slots*
+                        (let reg ((cs classes) (ss slots)
+                                  (acc base-f64s))
+                          (if (pair? cs)
+                              (reg (cdr cs) (cdr ss)
+                                   (let ((en (encode (car cs)
+                                                     (car ss))))
+                                     (if en (cons en acc) acc)))
+                              acc)))
+                  (let ((demoted
+                         (let per-site ((st sites) (cs classes)
+                                        (hit #f))
+                           (if (null? st)
+                               (and hit cs)
+                               (let per-arg ((as (car st))
+                                             (cs2 cs) (out '())
+                                             (hit hit))
+                                 (if (null? as)
+                                     (per-site (cdr st)
+                                               (reverse out) hit)
+                                     (let* ((cls (car cs2))
+                                            (ok (case cls
+                                                  ((f64)
+                                                   (fl-expr? (car as)
+                                                             scope))
+                                                  ((i32)
+                                                   (i32-expr? (car as)
+                                                              scope))
+                                                  (else #t))))
+                                       (per-arg (cdr as) (cdr cs2)
+                                                (cons (if ok cls 'eq)
+                                                      out)
+                                                (or hit
+                                                    (not ok))))))))))
+                    (if demoted
+                        (settle demoted)
+                        classes))))))
+         (init-code (map2* (lambda (i cls)
+                             (case cls
+                               ((f64) (compile-f64 i locals cell))
+                               ((i32) (compile-i32 i locals cell))
+                               (else (compile-exp i locals cell #f))))
+                           inits classes)))
     (set! *blocks* (+ *blocks* 1))      ; the loop's own label
-    (set! *loops* (cons (list name slots *blocks*) *loops*))
+    (set! *loops* (cons (list name slots *blocks* classes) *loops*))
     (let ((body-code (compile-body body scope cell tail?)))
       (set! *loops* (cdr *loops*))
       (set! *blocks* (- *blocks* 1))
@@ -1839,9 +1911,13 @@
       (let* ((entry (assq op *loops*))
              (slots (cadr entry))
              (base (caddr entry))
-             (acode (map-in-order
-                     (lambda (a) (compile-exp a locals cell #f))
-                     args)))
+             (classes (cadddr entry))
+             (acode (map2* (lambda (a cls)
+                             (case cls
+                               ((f64) (compile-f64 a locals cell))
+                               ((i32) (compile-i32 a locals cell))
+                               (else (compile-exp a locals cell #f))))
+                           args classes)))
         (list acode
               (map (lambda (slot) (local-set slot)) (reverse slots))
               #x0C (uleb (- *blocks* base)))))
