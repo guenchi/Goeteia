@@ -19,9 +19,12 @@
 ;;       (gpu-begin!) (gpu-clear! ...)
 ;;       (sgpu-draw! sc) (gpu-flush!)))))
 ;;
-;; Not here yet (the GL backend has them): textures, PBR probes,
-;; lod containers, static welding.  Lit solid color is the whole of
-;; v1.
+;; Materials: lit solid color, and (texture slot) -- a textured
+;; group samples through its own pipeline and bind group (grouping
+;; keys on geometry AND texture, so a shared texture instances
+;; together).  Not here yet (the GL backend has them): PBR probes,
+;; lod containers, static welding, and the HZB occlusion the raw
+;; gpu-cull example wires by hand.
 ;;
 ;; Copyright (c) 2026 guenchi. MIT license; see LICENSE.
 (library (gfx sgpu)
@@ -162,12 +165,17 @@
                   (walk kids (append chain (list gf)))))
                ((mesh)
                 (let ((gspec #f)
+                      (tex #f)
                       (f (vector 0.0 0.0 0.0 0.0 0.0 0.0 1.0
                                  0.8 0.8 0.8 1.0 0.0 0.5 0)))
                   (for-each
                    (lambda (a)
                      (case (car a)
                        ((geometry) (set! gspec (cadr a)))
+                       ((texture)
+                        (set! tex (if ($sgpu-d? (cadr a))
+                                      ((list-ref ds (cdr (cadr a))))
+                                      (cadr a))))
                        ((position) ($sgpu-set3! f 0 (cdr a)))
                        ((rotation) ($sgpu-set3! f 3 (cdr a)))
                        ((color) ($sgpu-set3! f 7 (cdr a))
@@ -189,17 +197,22 @@
                                     (car a)))))
                    attrs)
                   (unless gspec (error 'sgl-gpu "mesh needs a geometry"))
-                  (set! meshes (cons (cons gspec (vector f chain #f #f))
-                                     meshes))))
+                  ;; the group key is geometry AND texture: same
+                  ;; shape, same texture instances together
+                  (set! meshes
+                        (cons (cons (cons gspec tex)
+                                    (vector f chain #f #f))
+                              meshes))))
                (else (error 'sgl-gpu "unsupported tag on gpu backend"
                             (car f))))))
          forms))
-      ;; group by geometry spec (equal), building meshes once
+      ;; group by (geometry . texture), building meshes once; an
+      ;; injected (unquote) geometry stays its own group
       (let group ((ms (reverse meshes)) (groups '()))
         (if (pair? ms)
             (let* ((key (car (car ms)))
                    (nd (cdr (car ms)))
-                   (hit (and (not ($sgpu-d? key))
+                   (hit (and (not ($sgpu-d? (car key)))
                              (assoc key groups))))
               (if hit
                   (begin (set-cdr! hit (cons nd (cdr hit)))
@@ -208,17 +221,20 @@
             ($make-sgpu
              cam light
              (map (lambda (g)
-                    (let* ((m ($sgpu-geometry (car g) ds))
+                    (let* ((key (car g))
+                           (m ($sgpu-geometry (car key) ds))
+                           (tex (cdr key))
                            (bounds (mesh-bounds m))
                            (nodes (reverse (cdr g))))
                       (for-each (lambda (nd)
                                   (vector-set! nd 2 (car bounds))
                                   (vector-set! nd 3 (cdr bounds)))
                                 nodes)
+                      ;; +texture slot (13), +tex render group (14)
                       (vector m nodes 0 0 0 0 0 0
                               (mesh-index-count m)
                               (length nodes)
-                              -1 0 0)))
+                              -1 0 0 tex 0)))
                   (reverse groups))
              0 1.333 #f)))))
 
@@ -276,8 +292,41 @@
      "  return c;\n"
      "}\n"))
 
-  ;; fixed slots: 0 env, 1 cull pipeline, 2 render pipeline, 3 env
-  ;; bind group; groups take 6 slots each from 8 up
+  ;; the textured variant: a uv vertex attribute (per-vertex stride
+  ;; 32), a sampler + texture at bindings 1/2, colour multiplies the
+  ;; sample.  Instance attributes shift up by one location
+  (define $sgpu-render-tex
+    (string-append
+     "struct Env { vp : mat4x4f, planes : array<vec4f, 6>,\n"
+     "             light : vec4f, ambient : vec4f }\n"
+     "@group(0) @binding(0) var<uniform> env : Env;\n"
+     "@group(0) @binding(1) var samp : sampler;\n"
+     "@group(0) @binding(2) var tex : texture_2d<f32>;\n"
+     "struct VOut { @builtin(position) pos : vec4f,\n"
+     "              @location(0) c : vec4f, @location(1) uv : vec2f }\n"
+     "@vertex fn vs(@location(0) p : vec3f, @location(1) n : vec3f,\n"
+     "              @location(2) uv : vec2f,\n"
+     "              @location(3) m0 : vec4f, @location(4) m1 : vec4f,\n"
+     "              @location(5) m2 : vec4f, @location(6) m3 : vec4f,\n"
+     "              @location(7) color : vec4f) -> VOut {\n"
+     "  var o : VOut;\n"
+     "  let m = mat4x4f(m0, m1, m2, m3);\n"
+     "  o.pos = env.vp * (m * vec4f(p, 1.0));\n"
+     "  let wn = normalize((m * vec4f(n, 0.0)).xyz);\n"
+     "  let d = max(dot(wn, normalize(env.light.xyz)), 0.0);\n"
+     "  let a = env.ambient.x;\n"
+     "  o.c = vec4f(color.rgb * (a + d * (1.0 - a)), color.a);\n"
+     "  o.uv = uv;\n"
+     "  return o;\n"
+     "}\n"
+     "@fragment fn fs(@location(0) c : vec4f, @location(1) uv : vec2f)\n"
+     "    -> @location(0) vec4f {\n"
+     "  return c * textureSample(tex, samp, uv);\n"
+     "}\n"))
+
+  ;; fixed slots: 0 env, 1 cull pipeline, 2 lit pipeline, 3 env bind
+  ;; group, 4 textured pipeline, 5 shared sampler; groups take 7
+  ;; slots each from 8 up (the 7th is a per-group texture bind group)
   (define (sgpu-init! sc canvas)
     ($sg-aspect! sc (fl/ ($sgpu-fl (js->number (js-get canvas "width")))
                          ($sgpu-fl (js->number (js-get canvas "height")))))
@@ -287,19 +336,26 @@
                     24 "float32x3,float32x3"
                     80 "float32x4,float32x4,float32x4,float32x4,float32x4")
     (gpu-bindgroup! 3 2 0)
+    (gpu-pipeline2! 4 $sgpu-render-tex
+                    32 "float32x3,float32x3,float32x2"
+                    80 "float32x4,float32x4,float32x4,float32x4,float32x4")
+    (gpu-sampler! 5)
     ($sg-envat! sc (fx-alloc! 192))
     (let init ((gs ($sg-groups sc)) (slot 8))
       (when (pair? gs)
         (let* ((g (car gs))
                (m (vector-ref g 0))
+               (tex (vector-ref g 13))
                (cap (vector-ref g 9))
-               (vbytes (mesh-vertex-bytes m))
+               (vbytes (if tex (mesh-vertex-bytes-uv m)
+                           (mesh-vertex-bytes m)))
                (ibytes (mesh-index-bytes m))
                (vbase (fx-alloc! vbytes))
                (ibase (fx-alloc! ibytes))
                (srcbase (fx-alloc! (* cap 128)))
                (argbase (fx-alloc! 20)))
-          (mesh-write! m vbase ibase)
+          (if tex (mesh-write-uv! m vbase ibase)
+              (mesh-write! m vbase ibase))
           (gpu-buffer! slot vbytes)
           (gpu-index! (+ slot 1) ibytes)
           (gpu-storage! (+ slot 2) (* cap 128))     ; src instances
@@ -317,6 +373,11 @@
           (vector-set! g 5 (+ slot 3))
           (vector-set! g 6 (+ slot 4))
           (vector-set! g 7 (+ slot 5))
+          ;; textured groups need a render bind group (env, sampler,
+          ;; the group's texture); lit groups reuse the shared one
+          (when tex
+            (gpu-texgroup! (+ slot 6) 4 0 5 tex)
+            (vector-set! g 14 (+ slot 6)))
           (vector-set! g 11 srcbase)
           (vector-set! g 12 argbase)
           (%mem-i32-set! argbase (vector-ref g 8))
@@ -329,7 +390,7 @@
           (gpu-buffer-data! slot vbase vbytes)
           (gpu-buffer-data! (+ slot 1) ibase ibytes)
           (gpu-flush!))
-        (init (cdr gs) (+ slot 6))))
+        (init (cdr gs) (+ slot 7))))
     ($sg-ready! sc #t))
 
   (define ($sgpu-gen nodes)
@@ -459,11 +520,15 @@
            (gpu-dispatch! 1 (vector-ref g 7)
                           (quotient (+ (vector-ref g 9) 63) 64)))
          ($sg-groups sc))
-        ;; then the draws
+        ;; then the draws -- textured groups on the textured
+        ;; pipeline with their own bind group, lit ones on the shared
         (for-each
          (lambda (g)
-           (gpu-use-pipeline! 2)
-           (gpu-set-group! 3)
+           (if (vector-ref g 13)
+               (begin (gpu-use-pipeline! 4)
+                      (gpu-set-group! (vector-ref g 14)))
+               (begin (gpu-use-pipeline! 2)
+                      (gpu-set-group! 3)))
            (gpu-bind-vbuf! (vector-ref g 2))
            (gpu-bind-vbuf2! (vector-ref g 5))
            (gpu-bind-ibuf! (vector-ref g 3))
