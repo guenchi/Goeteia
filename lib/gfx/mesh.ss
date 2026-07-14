@@ -26,6 +26,7 @@
 ;; Copyright (c) 2026 guenchi. MIT license; see LICENSE.
 (library (gfx mesh)
   (export mesh? mesh-verts mesh-indices mesh-uvs
+          mesh-optimize! mesh-acmr
           mesh-vert-count mesh-index-count
           mesh-vertex-bytes mesh-index-bytes mesh-index-u32? mesh-write!
           mesh-vertex-bytes-f16 mesh-write-f16!
@@ -338,6 +339,197 @@
                   ($mesh-quad! ix k (+ (* i cols) j) (+ (* (+ i 1) cols) j))
                   (inner (+ j 1) (+ k 6)))))))
       ($make-mesh vs ix uvs)))
+
+  ;; ---- vertex cache optimization (Forsyth 2006) ----
+  ;; Reorders the triangles in place so vertices revisit while still
+  ;; warm in the GPU's post-transform cache: a simulated 32-entry
+  ;; LRU scores each vertex (recently-used high, with a bonus for
+  ;; the last three; low-valence vertices boosted so stragglers
+  ;; don't strand), each unemitted triangle scores as its vertices'
+  ;; sum, and the best triangle emits next -- searched among the
+  ;; cache's own triangles, falling back to a global scan.  Pure
+  ;; arithmetic; mesh-acmr measures the result headlessly
+  (define $vc-size 32)
+
+  (define ($vc-vscore pos active)
+    (if (= active 0)
+        -1.0
+        (fl+ (cond
+              ((< pos 0) 0.0)
+              ((< pos 3) 0.75)
+              (else
+               (let ((p (fl- 1.0 (fl/ (fixnum->flonum (- pos 3))
+                                      (fixnum->flonum (- $vc-size 3))))))
+                 (fl* p (flsqrt p)))))
+             (fl* 2.0 (fl/ 1.0 (flsqrt (fixnum->flonum active)))))))
+
+  (define (mesh-optimize! m)
+    (let* ((ix (mesh-indices m))
+           (nt (quotient (vector-length ix) 3))
+           (nv (mesh-vert-count m))
+           (adj (make-vector nv '()))
+           (active (make-vector nv 0))
+           (cpos (make-vector nv -1))
+           (vscore (make-vector nv 0.0))
+           (tscore (make-vector nt 0.0))
+           (emitted (make-vector nt #f))
+           (cache (make-vector (+ $vc-size 3) -1))
+           (out (make-vector (vector-length ix) 0)))
+      ;; adjacency and valences
+      (let build ((t 0))
+        (when (< t nt)
+          (let each ((k 0))
+            (when (< k 3)
+              (let ((v (vector-ref ix (+ (* t 3) k))))
+                (vector-set! adj v (cons t (vector-ref adj v)))
+                (vector-set! active v (+ 1 (vector-ref active v))))
+              (each (+ k 1))))
+          (build (+ t 1))))
+      (let seed ((v 0))
+        (when (< v nv)
+          (vector-set! vscore v ($vc-vscore -1 (vector-ref active v)))
+          (seed (+ v 1))))
+      (let seedt ((t 0))
+        (when (< t nt)
+          (vector-set! tscore t
+                       (fl+ (vector-ref vscore
+                                        (vector-ref ix (* t 3)))
+                            (fl+ (vector-ref
+                                  vscore
+                                  (vector-ref ix (+ (* t 3) 1)))
+                                 (vector-ref
+                                  vscore
+                                  (vector-ref ix (+ (* t 3) 2))))))
+          (seedt (+ t 1))))
+      ;; emit nt triangles
+      (let emit ((n 0))
+        (when (< n nt)
+          ;; the candidate: best triangle among the cache's verts,
+          ;; else the best anywhere
+          (let* ((best
+                  (let scan-cache ((k 0) (bt -1) (bs -1000000000.0))
+                    (if (= k (+ $vc-size 3))
+                        (if (>= bt 0)
+                            bt
+                            (let scan-all ((t 0) (bt -1) (bs -1000000000.0))
+                              (cond
+                               ((= t nt) bt)
+                               ((and (not (vector-ref emitted t))
+                                     (fl<? bs (vector-ref tscore t)))
+                                (scan-all (+ t 1) t
+                                          (vector-ref tscore t)))
+                               (else (scan-all (+ t 1) bt bs)))))
+                        (let ((v (vector-ref cache k)))
+                          (if (< v 0)
+                              (scan-cache (+ k 1) bt bs)
+                              (let tris ((ts (vector-ref adj v))
+                                         (bt bt) (bs bs))
+                                (if (null? ts)
+                                    (scan-cache (+ k 1) bt bs)
+                                    (let ((t (car ts)))
+                                      (if (and (not (vector-ref
+                                                     emitted t))
+                                               (fl<? bs
+                                                     (vector-ref
+                                                      tscore t)))
+                                          (tris (cdr ts) t
+                                                (vector-ref tscore t))
+                                          (tris (cdr ts) bt
+                                                bs)))))))))))
+            (vector-set! emitted best #t)
+            (let ((a (vector-ref ix (* best 3)))
+                  (b (vector-ref ix (+ (* best 3) 1)))
+                  (c (vector-ref ix (+ (* best 3) 2))))
+              (vector-set! out (* n 3) a)
+              (vector-set! out (+ (* n 3) 1) b)
+              (vector-set! out (+ (* n 3) 2) c)
+              (vector-set! active a (- (vector-ref active a) 1))
+              (vector-set! active b (- (vector-ref active b) 1))
+              (vector-set! active c (- (vector-ref active c) 1))
+              ;; LRU update: the triangle's verts move to the front
+              (let ((old (make-vector (+ $vc-size 3) -1)))
+                (let cp ((k 0))
+                  (when (< k (+ $vc-size 3))
+                    (vector-set! old k (vector-ref cache k))
+                    (cp (+ k 1))))
+                (vector-set! cache 0 a)
+                (vector-set! cache 1 b)
+                (vector-set! cache 2 c)
+                (let fill ((k 0) (w 3))
+                  (when (and (< k (+ $vc-size 3))
+                             (< w (+ $vc-size 3)))
+                    (let ((v (vector-ref old k)))
+                      (if (or (< v 0) (= v a) (= v b) (= v c))
+                          (fill (+ k 1) w)
+                          (begin
+                            (vector-set! cache w v)
+                            (fill (+ k 1) (+ w 1)))))))
+                ;; rescore everything in (or just out of) the cache,
+                ;; and every unemitted triangle it touches
+                (let pos ((k 0))
+                  (when (< k (+ $vc-size 3))
+                    (let ((v (vector-ref cache k)))
+                      (when (>= v 0)
+                        (vector-set! cpos v (if (< k $vc-size) k -1))
+                        (vector-set!
+                         vscore v
+                         ($vc-vscore (if (< k $vc-size) k -1)
+                                     (vector-ref active v)))))
+                    (pos (+ k 1))))
+                (let ret ((k 0))
+                  (when (< k (+ $vc-size 3))
+                    (let ((v (vector-ref cache k)))
+                      (when (>= v 0)
+                        (let tris ((ts (vector-ref adj v)))
+                          (when (pair? ts)
+                            (let ((t (car ts)))
+                              (unless (vector-ref emitted t)
+                                (vector-set!
+                                 tscore t
+                                 (fl+ (vector-ref
+                                       vscore
+                                       (vector-ref ix (* t 3)))
+                                      (fl+ (vector-ref
+                                            vscore
+                                            (vector-ref
+                                             ix (+ (* t 3) 1)))
+                                           (vector-ref
+                                            vscore
+                                            (vector-ref
+                                             ix (+ (* t 3) 2))))))))
+                            (tris (cdr ts))))))
+                    (ret (+ k 1)))))))
+          (emit (+ n 1))))
+      ;; the new order lands back in the mesh
+      (let put ((i 0))
+        (when (< i (vector-length ix))
+          (vector-set! ix i (vector-ref out i))
+          (put (+ i 1))))
+      m))
+
+  ;; average cache miss ratio under a FIFO cache: misses per
+  ;; triangle, the classic figure of merit (1.0 or so is unoptimized
+  ;; soup, ~0.6 is good for a 32-entry cache)
+  (define (mesh-acmr m size)
+    (let* ((ix (mesh-indices m))
+           (n (vector-length ix))
+           (fifo (make-vector size -1)))
+      (let walk ((i 0) (head 0) (misses 0))
+        (if (= i n)
+            (fl/ (fixnum->flonum misses)
+                 (fixnum->flonum (quotient n 3)))
+            (let* ((v (vector-ref ix i))
+                   (hit (let look ((k 0))
+                          (and (< k size)
+                               (or (= (vector-ref fifo k) v)
+                                   (look (+ k 1)))))))
+              (if hit
+                  (walk (+ i 1) head misses)
+                  (begin
+                    (vector-set! fifo head v)
+                    (walk (+ i 1)
+                          (remainder (+ head 1) size)
+                          (+ misses 1)))))))))
 
   ;; ---- into the staging memory: f32 verts, u16 index pairs ----
   ;; each u16 lands as two byte stores: packing a pair into one i32

@@ -289,4 +289,47 @@
            (= (probe 100000.0) 31744)             ; overflow -> +inf
            (= (probe 0.000030517578125) 512)      ; 2^-15, subnormal
            (= (probe 0.0000000298023223876953125) 1) ; 2^-25 rounds up
-           (= (probe 0.3333333333333333) 13653))))))  ; 1/3 -> 0x3555
+           (= (probe 0.3333333333333333) 13653))))  ; 1/3 -> 0x3555
+
+ ;; ---- the vertex cache optimizer ----
+ ;; shuffle a sphere's triangles into soup, optimize, and the
+ ;; simulated cache goes from thrashing back to strip-like reuse --
+ ;; with the triangle multiset intact
+ (let* ((m (mesh-sphere 1.0 24 16))
+        (ix (mesh-indices m))
+        (nt (quotient (vector-length ix) 3))
+        (tri-key (lambda (a b c)
+                   ;; order-independent triangle fingerprint
+                   (+ (* (+ a b c) 1000003)
+                      (* a b) (* b c) (* a c))))
+        (sum-keys (lambda ()
+                    (let loop ((t 0) (acc 0))
+                      (if (= t nt)
+                          acc
+                          (loop (+ t 1)
+                                (+ acc (tri-key
+                                        (vector-ref ix (* t 3))
+                                        (vector-ref ix (+ (* t 3) 1))
+                                        (vector-ref ix (+ (* t 3) 2)))))))))
+        (before-keys (sum-keys)))
+   ;; a deterministic shuffle: swap triangle t with (t*2654435761
+   ;; mod nt) -- soup
+   (let shuffle ((t 0))
+     (when (< t nt)
+       (let* ((u (remainder (* t 48271) nt)))
+         (let swap ((k 0))
+           (when (< k 3)
+             (let ((a (vector-ref ix (+ (* t 3) k)))
+                   (b (vector-ref ix (+ (* u 3) k))))
+               (vector-set! ix (+ (* t 3) k) b)
+               (vector-set! ix (+ (* u 3) k) a))
+             (swap (+ k 1)))))
+       (shuffle (+ t 1))))
+   (let ((soup (mesh-acmr m 16)))
+     (mesh-optimize! m)
+     (let ((opt (mesh-acmr m 16)))
+       (and (= (sum-keys) before-keys)         ; same triangles
+            (fl<? opt soup)                    ; strictly better
+            (fl<? opt 0.75)                    ; and objectively good
+            (fl<? 1.0 soup))))))               ; the soup really thrashed
+)
