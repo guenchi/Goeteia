@@ -17,12 +17,32 @@
 ;; Copyright (c) 2026 guenchi. MIT license; see LICENSE.
 (library (web sexpr)
   (export sexpr->string string->sexpr)
-  (import (rnrs))
+  (import (rnrs) (web js))
 
   (define max-depth 64)
   (define max-token 65536)
 
   (define (sfail msg pos) (raise (list 'sexpr-error msg pos)))
+
+  ;; ---- flonum <-> IEEE-754 base64, via a JS DataView --------------------
+  ;; The full round trip lives in JS (hardware IEEE, little-endian fixed
+  ;; there so no Scheme boolean crosses the FFI): flonum -> 8 LE bytes ->
+  ;; base64, and back. Bit-exact for every double, inf and nan included,
+  ;; and byte-identical to Chez's bytevector-ieee-double-* on the igropyr
+  ;; side. (-0.0 reads back as 0.0 -- this runtime's floats carry no
+  ;; signed zero.)
+  (define _ig-f2b
+    (js-eval "globalThis.__igf2b=(x)=>{const dv=new DataView(new ArrayBuffer(8));dv.setFloat64(0,x,true);let s='';const u=new Uint8Array(dv.buffer);for(let i=0;i<8;i++)s+=String.fromCharCode(u[i]);return btoa(s);}"))
+  (define _ig-b2f
+    (js-eval "globalThis.__igb2f=(s)=>{const b=atob(s);const dv=new DataView(new ArrayBuffer(8));for(let i=0;i<8;i++)dv.setUint8(i,b.charCodeAt(i));return dv.getFloat64(0,true);}"))
+  (define __igf2b (js-get (js-global) "__igf2b"))
+  (define __igb2f (js-get (js-global) "__igb2f"))
+  (define (flonum->b64 x) (js->string (js-call __igf2b (js-undefined) x)))
+  ;; getFloat64 hands an integer-valued double (1.0) back as a JS integer,
+  ;; which js->number makes a fixnum -- force it back to a flonum so #f8
+  ;; always decodes to a flonum, never an integer.
+  (define (b64->flonum s)
+    (exact->inexact (js->number (js-call __igb2f (js-undefined) s))))
 
   ;; ---- base64 (RFC 4648) -------------------------------------------------
   ;; Same bytes as Igropyr's; integer arithmetic in place of bit ops.
@@ -164,6 +184,8 @@
        (write-char #\)))
       ((bytevector? x)
        (put-str "#vu8\"") (put-str (base64-encode x)) (write-char #\"))
+      ((flonum? x)
+       (put-str "#f8\"") (put-str (flonum->b64 x)) (write-char #\"))
       (else (sfail "datum not in the wire whitelist" 0))))
 
   (define (put-str s)
@@ -237,6 +259,12 @@
         (when (>= i n) (sfail "dangling #" i))
         (let ((c (string-ref s i)))
           (cond
+            ;; #f8"..." (a flonum) vs the #f boolean: lookahead decides
+            ((and (char=? c #\f)
+                  (< (+ i 2) n)
+                  (char=? (string-ref s (+ i 1)) #\8)
+                  (char=? (string-ref s (+ i 2)) #\"))
+             (parse-flonum-b64 (+ i 3)))
             ((or (char=? c #\t) (char=? c #\f))
              (unless (or (>= (+ i 1) n) (delim? (string-ref s (+ i 1))))
                (sfail "bad # literal" i))
@@ -263,14 +291,24 @@
               (else
                (let-values (((v j) (parse-value i (+ depth 1))))
                  (loop j (cons v acc))))))))
-      (define (parse-bytevector-b64 start)
+      (define (scan-b64 start what)         ; -> (values bytevector next-i)
         (let loop ((j start))
           (cond
-            ((>= j n) (sfail "unterminated bytevector" start))
+            ((>= j n) (sfail (string-append "unterminated " what) start))
             ((char=? (string-ref s j) #\")
              (values (base64-decode (substring s start j)) (+ j 1)))
             ((b64-char? (string-ref s j)) (loop (+ j 1)))
-            (else (sfail "bad base64 in bytevector" j)))))
+            (else (sfail (string-append "bad base64 in " what) j)))))
+      (define (parse-bytevector-b64 start) (scan-b64 start "bytevector"))
+      (define (parse-flonum-b64 start)      ; 8 IEEE bytes = 12 base64 chars
+        (let loop ((j start))
+          (cond
+            ((>= j n) (sfail "unterminated flonum" start))
+            ((char=? (string-ref s j) #\")
+             (unless (= (- j start) 12) (sfail "flonum wants 8 bytes" start))
+             (values (b64->flonum (substring s start j)) (+ j 1)))
+            ((b64-char? (string-ref s j)) (loop (+ j 1)))
+            (else (sfail "bad base64 in flonum" j)))))
       (define (digits? str a b)
         (and (< a b)
              (let lp ((i a))
