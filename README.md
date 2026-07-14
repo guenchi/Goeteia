@@ -546,6 +546,7 @@ Without installing, the same steps run straight from a checkout:
 
 ```
 $ node rt/compile.mjs goeteia.wasm program.ss program.wasm
+$ node rt/compile.mjs --script program.ss program.wasm   # -O0: skip the slow opt passes, faster compile
 $ node rt/run.mjs program.wasm
 ```
 
