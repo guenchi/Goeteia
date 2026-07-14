@@ -237,7 +237,9 @@ buffer, shaders as s-expressions, and everything over them — in
   visible instance's model matrix composes in closed form straight
   into the instance buffer (m4s-trs!/m4s-mul! — SIMD, no boxed
   matrix anywhere) with its color beside it, and culled instances
-  simply don't join the buffer.  `(lod (@ (switch d ...)) mesh ...)`
+  simply don't join the buffer — the cull itself runs four spheres
+  at a time: centers and radii lie SoA in staging and each frustum
+  plane tests all four in five SIMD instructions.  `(lod (@ (switch d ...)) mesh ...)`
   containers hold detail levels of one thing — the eye's distance
   picks which child draws, and the mesh generators' own segment
   parameters make the levels free.  Meshes pick materials

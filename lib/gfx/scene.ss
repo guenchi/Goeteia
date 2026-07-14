@@ -411,9 +411,18 @@
                  singles (reverse texs) (reverse pbrs)
                  groups
                  (reverse lgroups)
-                 (if (or (pair? groups) (pair? lgroups))
-                     (fx-alloc! 256)
-                     0))))))))
+                 ;; 0..192 model-into work area, 192..256 lod probe,
+                 ;; 256..320 cull SoA (xs ys zs rs), 320 center quad,
+                 ;; 336 the ones quad (set once here), 352 plane quad
+                 (let ((scr (if (or (pair? groups) (pair? lgroups))
+                                (fx-alloc! 384)
+                                0)))
+                   (when (> scr 0)
+                     (%mem-f32-set! (+ scr 336) 1.0)
+                     (%mem-f32-set! (+ scr 340) 1.0)
+                     (%mem-f32-set! (+ scr 344) 1.0)
+                     (%mem-f32-set! (+ scr 348) 1.0))
+                   scr))))))))
 
   ;; lit nodes sharing a geometry, two or more, become an instanced
   ;; group -- one buffer of matrix+color per instance, one draw
@@ -530,60 +539,130 @@
             (fl+ (fl* (vector-ref m 10) z) (vector-ref m 14)))
        r)))
 
-  (define ($sgl-in-frustum-m4s? planes at bc r) ; at: staged mat4
-    (let ((x (v3-x bc)) (y (v3-y bc)) (z (v3-z bc)))
-      (sphere-in-frustum-xyz?
-       planes
-       (fl+ (fl+ (fl* (%mem-f32-ref at) x)
-                 (fl* (%mem-f32-ref (+ at 16)) y))
-            (fl+ (fl* (%mem-f32-ref (+ at 32)) z)
-                 (%mem-f32-ref (+ at 48))))
-       (fl+ (fl+ (fl* (%mem-f32-ref (+ at 4)) x)
-                 (fl* (%mem-f32-ref (+ at 20)) y))
-            (fl+ (fl* (%mem-f32-ref (+ at 36)) z)
-                 (%mem-f32-ref (+ at 52))))
-       (fl+ (fl+ (fl* (%mem-f32-ref (+ at 8)) x)
-                 (fl* (%mem-f32-ref (+ at 24)) y))
-            (fl+ (fl* (%mem-f32-ref (+ at 40)) z)
-                 (%mem-f32-ref (+ at 56))))
-       r)))
+  ;; ---- the batched cull: four spheres a pop ----
+  ;; centers and radii lay out SoA -- xs ys zs rs, one f32x4 each --
+  ;; and every plane tests all four in five SIMD instructions:
+  ;; xs*nx + ys*ny + zs*nz + rs + d, positive lanes still visible.
+  ;; A lane that dies stops being read; a plane that kills all four
+  ;; stops the walk
+  (define $sgl-vis (make-vector 4 #f))
+  (define $sgl-chunk (make-vector 4 #f))
 
-  ;; one group: compose every visible instance into the buffer, one
-  ;; upload, one instanced draw
+  (define ($sgl-cull4! planes soa ones res m)
+    (let init ((k 0))
+      (when (< k 4)
+        (vector-set! $sgl-vis k (< k m))
+        (init (+ k 1))))
+    (let plane ((i 0))
+      (when (< i 6)
+        (let ((p (vector-ref planes i)))
+          (%f32x4-scale! res soa (vector-ref p 0))
+          (%f32x4-axpy! res res (+ soa 16) (vector-ref p 1))
+          (%f32x4-axpy! res res (+ soa 32) (vector-ref p 2))
+          (%f32x4-axpy! res res (+ soa 48) 1.0)
+          (%f32x4-axpy! res res ones (vector-ref p 3))
+          (let lane ((k 0) (any #f))
+            (if (= k 4)
+                (when any (plane (+ i 1)))
+                (lane (+ k 1)
+                      (or (and (vector-ref $sgl-vis k)
+                               (if (fl<? 0.0 (%mem-f32-ref
+                                              (+ res (* k 4))))
+                                   #t
+                                   (begin (vector-set! $sgl-vis k #f)
+                                          #f)))
+                          any))))))))
+
+  (define ($sgl-m4s-copy! dst src)      ; scale by one: 4 lanes a pop
+    (%f32x4-scale! dst src 1.0)
+    (%f32x4-scale! (+ dst 16) (+ src 16) 1.0)
+    (%f32x4-scale! (+ dst 32) (+ src 32) 1.0)
+    (%f32x4-scale! (+ dst 48) (+ src 48) 1.0))
+
+  ;; one group: compose every instance into candidate slots four at
+  ;; a time, batch-cull them in SIMD, pack the visible down (a chunk
+  ;; with nothing culled moves nothing), one upload, one draw
   (define ($sgl-draw-igroup! prog ig planes scratch)
-    (let ((geo (vector-ref ig 0))
-          (ibuf (vector-ref ig 2))
-          (ibase (vector-ref ig 3)))
+    (let* ((geo (vector-ref ig 0))
+           (ibuf (vector-ref ig 2))
+           (ibase (vector-ref ig 3))
+           (soa (+ scratch 256))
+           (ctr (+ scratch 320))
+           (ones (+ scratch 336))
+           (res (+ scratch 352))
+           (flush!
+            (lambda (n)
+              (when (> n 0)
+                (fx-use-instanced! prog ($sgl-geo-vbuf geo) ibuf)
+                ($sgl-geo-upload! geo)
+                (cmd-bind-index! ($sgl-geo-ibuf geo))
+                (cmd-bind-buffer! ibuf)
+                (cmd-buffer-data! ibase (* n 80))
+                (cmd-draw-elements-instanced!
+                 GL-TRIANGLES ($sgl-geo-icount geo) n)))))
       (let fill ((ns (vector-ref ig 1)) (n 0))
-        (if (pair? ns)
-            (if (not ($sgl-lod-active? (car ns)))
-                (fill (cdr ns) n)
-                (let* ((nd (car ns))
-                   (f ($sgl-nd-f nd))
-                   (slot (+ ibase (* n 80))))
-              ($sgl-model-into! nd slot scratch)
-              (if ($sgl-in-frustum-m4s?
-                   planes slot ($sgl-nd-bc nd)
-                   (fl* (fold-left (lambda (acc gf)
-                                     (fl* acc (vector-ref gf 6)))
-                                   (vector-ref f 6)
-                                   ($sgl-nd-chain nd))
-                        ($sgl-nd-br nd)))
-                  (begin                ; visible: color joins the slot
-                    (%mem-f32-set! (+ slot 64) (vector-ref f 7))
-                    (%mem-f32-set! (+ slot 68) (vector-ref f 8))
-                    (%mem-f32-set! (+ slot 72) (vector-ref f 9))
-                    (%mem-f32-set! (+ slot 76) (vector-ref f 10))
-                    (fill (cdr ns) (+ n 1)))
-                  (fill (cdr ns) n))))  ; culled: the slot is reused
-            (when (> n 0)
-              (fx-use-instanced! prog ($sgl-geo-vbuf geo) ibuf)
-              ($sgl-geo-upload! geo)
-              (cmd-bind-index! ($sgl-geo-ibuf geo))
-              (cmd-bind-buffer! ibuf)
-              (cmd-buffer-data! ibase (* n 80))
-              (cmd-draw-elements-instanced!
-               GL-TRIANGLES ($sgl-geo-icount geo) n))))))
+        (let gather ((ns ns) (m 0))     ; next four lod-active nodes
+          (if (and (pair? ns) (< m 4))
+              (if ($sgl-lod-active? (car ns))
+                  (begin (vector-set! $sgl-chunk m (car ns))
+                         (gather (cdr ns) (+ m 1)))
+                  (gather (cdr ns) m))
+              (if (= m 0)
+                  (flush! n)
+                  (begin
+                    ;; compose into candidate slots n..n+m-1; the
+                    ;; center is the slot's columns recombined in
+                    ;; SIMD (M.c0*bx + M.c1*by + M.c2*bz + M.c3)
+                    (let comp ((k 0))
+                      (when (< k m)
+                        (let* ((nd (vector-ref $sgl-chunk k))
+                               (f ($sgl-nd-f nd))
+                               (bc ($sgl-nd-bc nd))
+                               (slot (+ ibase (* (+ n k) 80))))
+                          ($sgl-model-into! nd slot scratch)
+                          (%f32x4-scale! ctr slot (v3-x bc))
+                          (%f32x4-axpy! ctr ctr (+ slot 16) (v3-y bc))
+                          (%f32x4-axpy! ctr ctr (+ slot 32) (v3-z bc))
+                          (%f32x4-axpy! ctr ctr (+ slot 48) 1.0)
+                          (%mem-f32-set! (+ soa (* k 4))
+                                         (%mem-f32-ref ctr))
+                          (%mem-f32-set! (+ (+ soa 16) (* k 4))
+                                         (%mem-f32-ref (+ ctr 4)))
+                          (%mem-f32-set! (+ (+ soa 32) (* k 4))
+                                         (%mem-f32-ref (+ ctr 8)))
+                          (%mem-f32-set!
+                           (+ (+ soa 48) (* k 4))
+                           (fl* (fold-left
+                                 (lambda (acc gf)
+                                   (fl* acc (vector-ref gf 6)))
+                                 (vector-ref f 6)
+                                 ($sgl-nd-chain nd))
+                                ($sgl-nd-br nd))))
+                        (comp (+ k 1))))
+                    ($sgl-cull4! planes soa ones res m)
+                    ;; pack visible ones down; dst never passes src
+                    (let pack ((k 0) (n2 n))
+                      (if (= k m)
+                          (if (pair? ns)
+                              (fill ns n2)
+                              (flush! n2))
+                          (if (vector-ref $sgl-vis k)
+                              (let* ((nd (vector-ref $sgl-chunk k))
+                                     (f ($sgl-nd-f nd))
+                                     (src (+ ibase (* (+ n k) 80)))
+                                     (dst (+ ibase (* n2 80))))
+                                (unless (= src dst)
+                                  ($sgl-m4s-copy! dst src))
+                                (%mem-f32-set! (+ dst 64)
+                                               (vector-ref f 7))
+                                (%mem-f32-set! (+ dst 68)
+                                               (vector-ref f 8))
+                                (%mem-f32-set! (+ dst 72)
+                                               (vector-ref f 9))
+                                (%mem-f32-set! (+ dst 76)
+                                               (vector-ref f 10))
+                                (pack (+ k 1) (+ n2 1)))
+                              (pack (+ k 1) n2)))))))))))
 
   (define (sgl-draw! sc)
     (let* ((cam ($sgl-cam sc))
