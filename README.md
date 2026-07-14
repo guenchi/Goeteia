@@ -4,7 +4,7 @@
 
 **[goeteia.dev](https://goeteia.dev)**
 
-A pure-Scheme web toolkit, compiled to WebAssembly.
+A graphics-optimized Scheme-to-WASM compiler and pure-Scheme web programming toolkit.
 
 Goeteia is a Scheme-to-WebAssembly compiler built on the WebAssembly
 GC extension (Wasm 3.0).  It is an independent implementation written
