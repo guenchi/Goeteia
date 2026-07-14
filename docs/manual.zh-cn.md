@@ -54,6 +54,29 @@ node rt/run.mjs program.wasm
 (fact 20)  ; prints 2432902008176640000
 ```
 
+### 脚本模式（-O0）
+
+对于一次性脚本、CI 迭代，以及 REPL 或 playground 片段——凡是编译延迟比运行速度更重要的场合——Goeteia 可以在 `-O0` 下编译，用略大的产出换取明显更快的编译。有三种方式启用它，对应三个层级：
+
+1. **命令行**：给 `rt/compile.mjs` 传 `--script`（别名 `-O0`）：
+
+   ```bash
+   node rt/compile.mjs --script program.ss program.wasm
+   ```
+
+2. **API**：给 `rt/compile.mjs` 中的 `compileToBytes` 或 `compileSource` 传 `{ script: true }`：
+
+   ```javascript
+   await compileToBytes('program.ss', { script: true });
+   await compileSource(text, { script: true });
+   ```
+
+3. **流指令**：在输入流开头放一个 `(%opt 0)` 形式——一条像 `(%loc ...)` 那样的指令，被读取但从不写入产出。这是最底层的方式，任何驱动器（包括浏览器内的编译器）都遵守它，而命令行标志与 API 选项正是替你设置了它。
+
+`-O0` 关闭的恰好是两项开销主导编译时间的、位于 optimizer-batch-2 之后的全程序分析：**浮点函数特化**（对每个调用点的单调降级不动点）与 **named-let 循环下降**。其余一切——内联、死代码消除，以及既有流水线的其余部分——都保持开启，因此产出质量的下限即 optimizer-batch-2 的水平。
+
+在代表性站点页面上，效果大约是编译快 35–40%（168ms→100ms，123ms→71ms），产出约大 5%。语义完全一致：`test/opt0.ss` 是一个差分预言机，在 CI 中同时跑过两个编译器阶段，检验同一程序在 `-O0` 与完整优化下计算出相同结果。长时间运行或热点代码（渲染器、仿真）应保留完整优化；脚本模式面向的是编译延迟压过运行速度的场合。
+
 ### Chez 路径（可选）
 
 装有 [Chez Scheme](https://cisco.github.io/ChezScheme/) 时，可用 `./bin/schwasmc` 编译，本地可能更快：

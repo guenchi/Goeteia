@@ -68,6 +68,29 @@ A program consists of top-level definitions followed by expressions. The value o
 (fact 20)  ; prints 2432902008176640000
 ```
 
+### Script Mode (-O0)
+
+For one-shot scripts, CI iteration, and REPL or playground snippets—anywhere compile latency matters more than runtime speed—Goeteia can compile at `-O0`, trading a little output size for a markedly faster compile. There are three ways to engage it, at three levels:
+
+1. **CLI**: pass `--script` (alias `-O0`) to `rt/compile.mjs`:
+
+   ```bash
+   node rt/compile.mjs --script program.ss program.wasm
+   ```
+
+2. **API**: pass `{ script: true }` to `compileToBytes` or `compileSource` in `rt/compile.mjs`:
+
+   ```javascript
+   await compileToBytes('program.ss', { script: true });
+   await compileSource(text, { script: true });
+   ```
+
+3. **Stream directive**: a `(%opt 0)` form at the head of the input stream—a directive like `(%loc ...)`, read but never emitted. This is the lowest level, honored by any driver including the in-browser compiler, and it is what the CLI flag and API option set for you.
+
+What `-O0` turns off is exactly the two post-optimizer-batch-2 whole-program analyses whose cost dominates compile time: **flonum function specialization** (a monotonic-demotion fixpoint over every call site) and **named-let loop lowering**. Everything else—inlining, dead-code elimination, and the rest of the established pipeline—stays on, so the output-quality floor is the optimizer-batch-2 level.
+
+The effect on representative site pages is roughly a 35–40% faster compile (168ms→100ms, 123ms→71ms), for output about 5% larger. Semantics are identical: `test/opt0.ss` is a differential oracle run through both compiler stages in CI, checking that the same program computes the same results at `-O0` and at full optimization. Long-running or hot code (renderers, simulations) should keep full optimization; script mode is for when compile latency outweighs runtime speed.
+
 ### The Chez Path (Optional)
 
 With [Chez Scheme](https://cisco.github.io/ChezScheme/) installed, you can compile via `./bin/schwasmc`, which may be faster locally:
