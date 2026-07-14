@@ -116,7 +116,12 @@
             (immutable igroups $sgl-igroups)
             ;; lod containers: #(chosen-cell switches probe-node)
             (immutable lgroups $sgl-lgroups)
-            (immutable iscratch $sgl-iscratch)))  ; m4s work area
+            (immutable iscratch $sgl-iscratch)   ; m4s work area
+            ;; the Env uniform block: every program reads the frame
+            ;; globals (vp, light, ambient, eye) from binding 0 --
+            ;; one 96-byte upload a frame instead of per-program sends
+            (immutable env $sgl-env)             ; ubo slot
+            (immutable envat $sgl-envat)))       ; staging base
 
   ;; geometry, shared: nodes with the SAME literal spec point at one
   ;; of these -- one upload, and the key instancing groups by.
@@ -145,6 +150,27 @@
             ;; (chosen-cell . my-level) | #f: a lod alternative draws
             ;; only while its level is the chosen one
             (immutable lod $sgl-nd-lod)))
+
+  ;; ---- the Env block: frame globals, uploaded once ----
+  ;; std140: mat4 at 0, vec3 u_light at 64 with u_ambient packed in
+  ;; its fourth float (76), vec3 u_eye at 80 -- 96 bytes.  Shaders
+  ;; keep their variable names, so envify is a pure declaration swap:
+  ;; drop the classic uniform forms the block now carries, put the
+  ;; block first
+  (define $sgl-env-block
+    '(uniform-block Env
+                    (mat4 u_vp)
+                    (vec3 u_light)
+                    (float u_ambient)
+                    (vec3 u_eye)))
+
+  (define ($sgl-envify forms)
+    (cons $sgl-env-block
+          (filter (lambda (f)
+                    (not (and (pair? f) (eq? (car f) 'uniform)
+                              (memq (caddr f)
+                                    '(u_vp u_light u_ambient u_eye)))))
+                  forms)))
 
   ;; the instanced flavor of the lit program: the model matrix rides
   ;; four vec4 instance attributes, the color a fifth -- so a whole
@@ -400,13 +426,29 @@
                 (error 'sgl "pbr meshes need a probe tag"))
               (let-values (((groups singles)
                             ($sgl-igroups! (reverse lits))))
+                (let* ((env! (lambda (p)     ; wire Env to binding 0
+                               (when p
+                                 (gl-uniform-block!
+                                  (fx-program-slot p) "Env" 0))
+                               p))
+                       (prog (env! (and (pair? singles)
+                                        (fx-program3!
+                                         ($sgl-envify mesh-lit-vs)
+                                         ($sgl-envify mesh-lit-fs)))))
+                       (tprog (env! (and (pair? texs)
+                                         (fx-program3!
+                                          ($sgl-envify mesh-tex-vs)
+                                          ($sgl-envify mesh-tex-fs)))))
+                       (pprog (env! (and (pair? pbrs)
+                                         (fx-program3!
+                                          ($sgl-envify mesh-pbr-vs)
+                                          ($sgl-envify mesh-pbr-fs)))))
+                       (iprog (env! (and (pair? groups)
+                                         (fx-program3!
+                                          ($sgl-envify $sgl-inst-vs)
+                                          ($sgl-envify $sgl-inst-fs))))))
                 ($make-sgl
-                 (and (pair? singles)
-                      (fx-program! mesh-lit-vs mesh-lit-fs))
-                 (and (pair? texs) (fx-program! mesh-tex-vs mesh-tex-fs))
-                 (and (pair? pbrs) (fx-program! mesh-pbr-vs mesh-pbr-fs))
-                 (and (pair? groups)
-                      (fx-program! $sgl-inst-vs $sgl-inst-fs))
+                 prog tprog pprog iprog
                  probe cam light
                  singles (reverse texs) (reverse pbrs)
                  groups
@@ -422,7 +464,9 @@
                      (%mem-f32-set! (+ scr 340) 1.0)
                      (%mem-f32-set! (+ scr 344) 1.0)
                      (%mem-f32-set! (+ scr 348) 1.0))
-                   scr))))))))
+                   scr)
+                 (fx-ubo! 96)
+                 (fx-alloc! 96)))))))))
 
   ;; lit nodes sharing a geometry, two or more, become an instanced
   ;; group -- one buffer of matrix+color per instance, one draw
@@ -681,6 +725,20 @@
            (ld (v3-normalize (v3 (vector-ref light 0) (vector-ref light 1)
                                  (vector-ref light 2)))))
       (cmd-depth! #t)
+      ;; the frame globals ship once: vp, light direction, ambient
+      ;; and eye lay out std140 in staging and one cmd-ubo-data!
+      ;; carries them; every program reads binding 0
+      (let ((ea ($sgl-envat sc)))
+        (m4s-write! ea vp)
+        (%mem-f32-set! (+ ea 64) (v3-x ld))
+        (%mem-f32-set! (+ ea 68) (v3-y ld))
+        (%mem-f32-set! (+ ea 72) (v3-z ld))
+        (%mem-f32-set! (+ ea 76) (vector-ref light 3))
+        (%mem-f32-set! (+ ea 80) (v3-x eye))
+        (%mem-f32-set! (+ ea 84) (v3-y eye))
+        (%mem-f32-set! (+ ea 88) (v3-z eye))
+        (cmd-ubo-data! ($sgl-env sc) ea 96)
+        (cmd-bind-ubo! 0 ($sgl-env sc)))
       ;; lod containers pick their level: the probe node's staged
       ;; matrix places the thing, and its distance to the eye walks
       ;; the switch list
@@ -700,40 +758,33 @@
                                   ((fl<? d (car sw)) i)
                                   (else (walk (cdr sw) (+ i 1)))))))))
        ($sgl-lgroups sc))
-      ;; instanced groups first: one draw per shared geometry
+      ;; instanced groups first: one draw per shared geometry.
+      ;; the light, ambient and vp all ride the Env block now
       (when ($sgl-iprog sc)
         (let ((p ($sgl-iprog sc)))
           (cmd-use-program! (fx-program-slot p))
-          (fx-uniform! p 'u_light (v3-x ld) (v3-y ld) (v3-z ld))
-          (fx-uniform! p 'u_ambient (vector-ref light 3))
-          (fx-uniform! p 'u_vp vp)
           (for-each (lambda (ig)
                       ($sgl-draw-igroup! p ig planes
                                          ($sgl-iscratch sc)))
                     ($sgl-igroups sc))))
-      ($sgl-group! ($sgl-prog sc) ($sgl-lits sc) vp planes ld
+      ($sgl-group! ($sgl-prog sc) ($sgl-lits sc) vp planes
+                   (lambda (p) #f))
+      ($sgl-group! ($sgl-tprog sc) ($sgl-texs sc) vp planes
                    (lambda (p)
-                     (fx-uniform! p 'u_ambient (vector-ref light 3))))
-      ($sgl-group! ($sgl-tprog sc) ($sgl-texs sc) vp planes ld
-                   (lambda (p)
-                     (fx-uniform! p 'u_ambient (vector-ref light 3))
                      (fx-uniform! p 'u_tex 0)))
-      ($sgl-group! ($sgl-pprog sc) ($sgl-pbrs sc) vp planes ld
+      ($sgl-group! ($sgl-pprog sc) ($sgl-pbrs sc) vp planes
                    (lambda (p)
                      (let ((probe ($sgl-probe sc)))
                        (cmd-bind-cubemap! 0 (vector-ref probe 0))
                        (cmd-bind-texture! 1 (vector-ref probe 1))
                        (fx-uniform! p 'u_sky 0)
                        (fx-uniform! p 'u_lut 1)
-                       (fx-uniform! p 'u_mips (vector-ref probe 2))
-                       (fx-uniform! p 'u_eye (v3-x eye) (v3-y eye)
-                                    (v3-z eye)))))))
+                       (fx-uniform! p 'u_mips (vector-ref probe 2)))))))
 
   ;; one material's pass: the shared uniforms once, then each node
-  (define ($sgl-group! prog nodes vp planes ld setup!)
+  (define ($sgl-group! prog nodes vp planes setup!)
     (when (pair? nodes)
       (cmd-use-program! (fx-program-slot prog))
-      (fx-uniform! prog 'u_light (v3-x ld) (v3-y ld) (v3-z ld))
       (setup! prog)
       (for-each (lambda (nd) ($sgl-draw-node! prog vp planes nd))
                 nodes))))
