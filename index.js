@@ -70,7 +70,7 @@ import { boot, render } from './live.js';
         { label: 'skybox.ss', file: 'demos/fx-skybox.ss' },
         { label: 'deferred.ss', file: 'demos/fx-deferred.ss' },
         { label: 'pointlight.ss', file: 'demos/fx-pointlight.ss' },
-        { label: 'particles.ss', file: 'demos/gpu-compute.ss' },
+        { label: 'particles.ss', file: 'demos/gpu-particles.ss' },
       ];
       const sources = [];
       let cur = 0;

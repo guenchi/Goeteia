@@ -173,7 +173,9 @@
                       acc))))))
 
 (define cube-t (fx-cube-target! 512))
-(define refl (fx-target! 360 200))      ; the room, as the floor sees it
+;; the room, as the floor sees it -- full resolution and 4x MSAA,
+;; or the mirrored pillars come out in staircase edges
+(define refl (fx-target-msaa! 720 400 4))
 
 ;; the six views out of the light, GL cube-face conventions
 (define face-proj (m4-perspective 1.5707963267948966 1.0 0.1 FAR))
@@ -254,6 +256,7 @@
      (fx-bind-target! refl)
      (cmd-clear! 0.03 0.03 0.05 1.0)
      (draw-scene! rvp lp)
+     (fx-resolve! refl)                 ; msaa samples -> the texture
      ;; the room itself, standing on its own reflection
      (fx-bind-canvas!)
      (cmd-clear! 0.03 0.03 0.05 1.0)
