@@ -5,7 +5,7 @@
 ;; Edit anything and press Run: the words, the fonts, the forces, the palette.
 (import (web sx) (web dom) (web reactive) (web js)
         (gfx gl) (gfx glsl) (gfx fx)
-        (web typeset) (web canvas))
+        (web typeset) (web canvas) (web glyphs))
 
 ;; ---- the page ----
 (sx-mount (get-element-by-id "live")
@@ -142,106 +142,13 @@
       (add! n1 2))))
 
 ;; ---- the subtitle: whole characters that dodge the cursor ----
-;; not particles -- each character is one DOM span, placed at the
-;; pen position typeset's code-point walk assigns it, with its own
-;; little spring-and-repulsion life
-(define sub-text "A pure-Scheme web toolkit, compiled to WebAssembly.")
+;; (web glyphs) explodes the text into per-glyph spans and owns the
+;; pointer/scroll/resize listeners; the GL loop drives the steps
 (define sub-el (get-element-by-id "sub-flow"))
-(define sub-measure (canvas-measurer "17px system-ui, sans-serif"))
-(define sub-total ((canvas-measurer "17px system-ui, sans-serif") sub-text))
-
-(define sub-chars                       ; #(style pen w dx dy vx vy)
-  (let ((acc '()))
-    (string-fold-cp
-     (lambda (pen cp start len)
-       (let* ((g (substring sub-text start (+ start len)))
-              (w (sub-measure g)))
-         (unless (= cp 32)
-           (let ((span (create-element "span")))
-             (set-attribute! span "style" "position:absolute;left:0;top:0")
-             (set-text! span g)
-             (append-child! sub-el span)
-             (set! acc (cons (vector (js-get span "style") pen w
-                                     0.0 0.0 0.0 0.0)
-                             acc))))
-         (fl+ pen w)))
-     0.0 sub-text)
-    (list->vector (reverse acc))))
-
-;; center the pens in the container; again on resize
-(define sub-x0 0.0)
-(define (sub-layout!)
-  (let ((cw ($fl* (js->number (js-get sub-el "clientWidth")))))
-    (set! sub-x0 (fl/ (fl- cw sub-total) 2.0))
-    (let each ((i 0))
-      (when (< i (vector-length sub-chars))
-        (let ((c (vector-ref sub-chars i)))
-          (js-set! (vector-ref c 0) "left"
-                   (string-append
-                    (number->string (fl+ sub-x0 (vector-ref c 1)))
-                    "px")))
-        (each (+ i 1))))))
-(define ($fl* v) (if (flonum? v) v (exact->inexact v)))
-
-;; the container's viewport position, cached: reading
-;; getBoundingClientRect every frame forces a layout pass -- the
-;; rect only moves on resize and scroll, so ask again only then
-(define sub-left 0.0)
-(define sub-top 0.0)
-(define (sub-rect!)
-  (let ((r (js-method sub-el "getBoundingClientRect")))
-    (set! sub-left ($fl* (js->number (js-get r "left"))))
-    (set! sub-top ($fl* (js->number (js-get r "top"))))))
-
-(sub-layout!)
-(sub-rect!)
-(add-event-listener! (js-global) "resize"
-  (lambda (e) (sub-layout!) (sub-rect!) (js-undefined)))
-(add-event-listener! (js-global) "scroll"
-  (lambda (e) (sub-rect!) (js-undefined)))
-
-;; the pointer, in page coordinates
-(define pcx -9999.0)
-(define pcy -9999.0)
-(add-event-listener! (js-global) "pointermove"
-  (lambda (e)
-    (set! pcx ($fl* (js->number (js-get e "clientX"))))
-    (set! pcy ($fl* (js->number (js-get e "clientY"))))
-    (js-undefined)))
-
-;; fifty characters of spring physics: light work for Scheme
-(define (sub-step!)
-  (let* ((mx (fl- pcx sub-left))
-         (my (fl- pcy sub-top)))
-    (let each ((i 0))
-      (when (< i (vector-length sub-chars))
-        (let* ((c (vector-ref sub-chars i))
-               (hx (fl+ sub-x0 (fl+ (vector-ref c 1)
-                                    (fl/ (vector-ref c 2) 2.0))))
-               (dx (vector-ref c 3)) (dy (vector-ref c 4))
-               (vx (vector-ref c 5)) (vy (vector-ref c 6))
-               (px (fl- (fl+ hx dx) mx))
-               (py (fl- (fl+ 11.0 dy) my))
-               (r2 (fl+ (fl+ (fl* px px) (fl* py py)) 40.0))
-               (inf (let ((v (fl- 1.0 (fl/ r2 12100.0))))
-                      (if (fl<? v 0.0) 0.0 v)))
-               (k (fl* (fl/ 42000.0 r2) inf))
-               (ax (fl- (fl* px k) (fl* dx 30.0)))
-               (ay (fl- (fl* py k) (fl* dy 30.0)))
-               (nvx (fl* (fl+ vx (fl* ax 0.016)) 0.86))
-               (nvy (fl* (fl+ vy (fl* ay 0.016)) 0.86))
-               (ndx (fl+ dx (fl* nvx 0.016)))
-               (ndy (fl+ dy (fl* nvy 0.016))))
-          (vector-set! c 3 ndx) (vector-set! c 4 ndy)
-          (vector-set! c 5 nvx) (vector-set! c 6 nvy)
-          ;; touch the DOM only while it moves
-          (when (fl<? 0.001 (fl+ (fl+ (fl* ndx ndx) (fl* ndy ndy))
-                                 (fl+ (fl* nvx nvx) (fl* nvy nvy))))
-            (js-set! (vector-ref c 0) "transform"
-                     (string-append "translate("
-                                    (number->string ndx) "px,"
-                                    (number->string ndy) "px)"))))
-        (each (+ i 1))))))
+(set-style! sub-el "textAlign" "center")
+(set-text! sub-el "A pure-Scheme web toolkit, compiled to WebAssembly.")
+(define sub-glyphs (glyphs! sub-el))
+(glyphs-track! (list sub-glyphs))
 
 ;; ---- the update step: the vertex shader IS the physics ----
 (define update-p
@@ -393,7 +300,7 @@
   (fx-uniform! draw-p 'u_res 720.0 230.0)
   (cmd-draw-arrays! GL-POINTS 0 count)
   (cmd-flush!)
-  (sub-step!)
+  (glyphs-step! sub-glyphs)
   (let ((tmp front)) (set! front back) (set! back tmp)))
 
 ;; re-running this source bumps the generation; the old loop lets go

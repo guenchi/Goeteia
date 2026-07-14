@@ -30,6 +30,7 @@
 (library (gfx fx)
   (export fx-init! fx-slot! fx-alloc! fx-buffer! fx-texture!
           fx-texture-array!
+          fx-mesh! fx-mesh? fx-mesh-use! fx-mesh-draw! fx-mesh-count
           fx-width fx-height
           fx-target! fx-target-hdr! fx-target-msaa! fx-resolve!
           fx-target-mrt! fx-mrt-texture
@@ -46,7 +47,7 @@
           pointer-lock! pointer-locked? pointer-motion!
           fx-fullscreen! fx-quad-program
           fx-fullscreen-use! fx-fullscreen-draw!)
-  (import (rnrs) (web js) (gfx gl) (gfx glsl) (gfx mat))
+  (import (rnrs) (web js) (gfx gl) (gfx glsl) (gfx mat) (gfx mesh))
 
   (define ($fx-fl v) (if (flonum? v) v (exact->inexact v)))
 
@@ -97,6 +98,36 @@
   ;; gl-texture-layer!/-data!, sample with sampler2DArray
   (define (fx-texture-array! w h layers)
     (let ((s (fx-slot!))) (gl-texture-array! s w h layers) s))
+
+  ;; ---- mesh handles: the upload dance every demo used to repeat ----
+  ;; (fx-mesh! m) takes a (gfx mesh) mesh, allocates its buffers and
+  ;; stages the data; (fx-mesh-use! prog h) binds it for drawing --
+  ;; the upload itself happens once, lazily, inside the first frame;
+  ;; (fx-mesh-draw! h) issues the indexed triangles.  Bind once, set
+  ;; uniforms and draw as many times as the scene needs.
+  (define-record-type ($fx-mesh $make-fx-mesh fx-mesh?)
+    (fields (immutable vbuf $fx-mesh-vbuf) (immutable ibuf $fx-mesh-ibuf)
+            (immutable vbase $fx-mesh-vbase) (immutable ibase $fx-mesh-ibase)
+            (immutable vbytes $fx-mesh-vbytes) (immutable ibytes $fx-mesh-ibytes)
+            (immutable count fx-mesh-count)
+            (mutable up $fx-mesh-up $fx-mesh-up!)))
+
+  (define (fx-mesh! m)
+    (let* ((vbuf (fx-buffer!)) (ibuf (fx-buffer!))
+           (vbase (fx-alloc! (mesh-vertex-bytes m)))
+           (ibase (fx-alloc! (mesh-index-bytes m))))
+      (mesh-write! m vbase ibase)
+      ($make-fx-mesh vbuf ibuf vbase ibase (mesh-vertex-bytes m)
+                     (mesh-index-bytes m) (mesh-index-count m) #f)))
+  (define (fx-mesh-use! prog h)
+    (fx-use! prog ($fx-mesh-vbuf h))
+    (cmd-bind-index! ($fx-mesh-ibuf h))
+    (unless ($fx-mesh-up h)
+      (cmd-buffer-data! ($fx-mesh-vbase h) ($fx-mesh-vbytes h))
+      (cmd-index-data! ($fx-mesh-ibase h) ($fx-mesh-ibytes h))
+      ($fx-mesh-up! h #t)))
+  (define (fx-mesh-draw! h)
+    (cmd-draw-elements! GL-TRIANGLES (fx-mesh-count h)))
 
   ;; ---- offscreen render targets (webgl2) ----
   (define-record-type (fx-target $make-fx-target fx-target?)

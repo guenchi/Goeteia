@@ -143,24 +143,10 @@
        (set! gl_FragColor (vec4 (mix fc refl.rgb f) (fl 1)))))))
 
 ;; ---- geometry ----
-(define (upload m)
-  (let* ((vbuf (fx-buffer!)) (ibuf (fx-buffer!))
-         (vbase (fx-alloc! (mesh-vertex-bytes m)))
-         (ibase (fx-alloc! (mesh-index-bytes m))))
-    (mesh-write! m vbase ibase)
-    (vector vbuf ibuf vbase ibase (mesh-vertex-bytes m)
-            (mesh-index-bytes m) (mesh-index-count m) #f)))
-(define (bind-upload! prog obj)
-  (fx-use! prog (vector-ref obj 0))
-  (cmd-bind-index! (vector-ref obj 1))
-  (unless (vector-ref obj 7)
-    (cmd-buffer-data! (vector-ref obj 2) (vector-ref obj 4))
-    (cmd-index-data! (vector-ref obj 3) (vector-ref obj 5))
-    (vector-set! obj 7 #t)))
 
-(define floor-obj (upload (mesh-plane 70.0 70.0)))
-(define pillar (upload (mesh-box 1.4 7.0 1.4)))
-(define bulb (upload (mesh-sphere 0.5 16 8)))
+(define floor-obj (fx-mesh! (mesh-plane 70.0 70.0)))
+(define pillar (fx-mesh! (mesh-box 1.4 7.0 1.4)))
+(define bulb (fx-mesh! (mesh-sphere 0.5 16 8)))
 
 (define pillar-models
   (let ring ((k 0) (acc '()))
@@ -194,16 +180,16 @@
 (define proj (m4-perspective 0.9 (/ 720.0 400.0) 0.5 200.0))
 
 (define (draw-pillars! prog each)
-  (bind-upload! prog pillar)
+  (fx-mesh-use! prog pillar)
   (for-each (lambda (m)
               (each m)
-              (cmd-draw-elements! GL-TRIANGLES (vector-ref pillar 6)))
+              (fx-mesh-draw! pillar))
             pillar-models))
 
 ;; the pillars and the bulb, from any camera -- once upside down into
 ;; the reflection target, once onto the canvas
 (define (draw-scene! vp lp)
-  (bind-upload! lit-p pillar)
+  (fx-mesh-use! lit-p pillar)
   (cmd-bind-cubemap! 0 (fx-target-texture cube-t))
   (fx-uniform! lit-p 'u_shadow 0)
   (fx-uniform! lit-p 'u_lpos (v3-x lp) (v3-y lp) (v3-z lp))
@@ -214,11 +200,11 @@
                    (fx-uniform! lit-p 'u_model m)
                    (fx-uniform! lit-p 'u_color 0.7 0.55 0.4 1.0)))
   ;; the bulb, small and hot
-  (bind-upload! glow-p bulb)
+  (fx-mesh-use! glow-p bulb)
   (fx-uniform! glow-p 'u_mvp
                (m4-mul vp (m4-translate (v3-x lp) (v3-y lp)
                                         (v3-z lp))))
-  (cmd-draw-elements! GL-TRIANGLES (vector-ref bulb 6)))
+  (fx-mesh-draw! bulb))
 
 (fx-loop!
  (lambda (t dt)
@@ -260,7 +246,7 @@
      ;; the room itself, standing on its own reflection
      (fx-bind-canvas!)
      (cmd-clear! 0.03 0.03 0.05 1.0)
-     (bind-upload! floor-p floor-obj)
+     (fx-mesh-use! floor-p floor-obj)
      (cmd-bind-cubemap! 0 (fx-target-texture cube-t))
      (cmd-bind-texture! 1 (fx-target-texture refl))
      (fx-uniform! floor-p 'u_shadow 0)
@@ -270,5 +256,5 @@
      (fx-uniform! floor-p 'u_eye (v3-x eye) (v3-y eye) (v3-z eye))
      (fx-uniform! floor-p 'u_mvp vp)
      (fx-uniform! floor-p 'u_rvp rvp)
-     (cmd-draw-elements! GL-TRIANGLES (vector-ref floor-obj 6))
+     (fx-mesh-draw! floor-obj)
      (draw-scene! vp lp))))

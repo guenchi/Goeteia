@@ -29,17 +29,11 @@
     '((bg "#f2f4fa") (bg2 "#ffffff") (ink "#14203a") (dim "#566080")
       (lapis "#1550c4") (azure "#4788ee") (green "#1e7d34") (line "#dbe2ee")
       (mono "ui-monospace, \"SF Mono\", Menlo, Consolas, monospace")))
-  (define (root-rule)
-    (cons ':root
-          (map (lambda (p)
-                 (list (string->symbol (string-append "--" (symbol->string (car p))))
-                       (cadr p)))
-               palette)))
   ;; reset + body + links + wrap + the sticky nav, shared by every page.
   ;; wrap-width is the page's content max-width in em.
   (define (base-styles wrap-width)
     (list
-     (root-rule)
+     (palette->root palette)
      '("*" (box-sizing border-box))
      `(body (margin 0) (background (var bg)) (color (var ink))
             (font-family "-apple-system, system-ui, \"Segoe UI\", sans-serif")
