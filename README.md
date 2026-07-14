@@ -405,8 +405,10 @@ buffer, shaders as s-expressions, and everything over them — in
   per group draws exactly the visible count.  The CPU recomposes
   only matrices whose signals moved and never inspects an instance
   (`examples/sgpu-scene.html`: a swinging assembly over a textured
-  floor).  Lit solid color and `(texture slot)` for now — probes,
-  lod and welding remain the GL backend's
+  floor behind a pane of glass).  Lit solid color, `(texture slot)`
+  and translucency (alpha below one draws last on a src-over blend
+  pipeline, depth writes off) — probes, lod and welding remain the
+  GL backend's
 - `(gfx xr)` — WebXR over the same command buffer: `xr-start!`
   swaps the pump for the session's rAF, each eye's projection and
   view arrive from the `XRPose` straight into staging memory

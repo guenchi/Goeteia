@@ -39,7 +39,11 @@
      (mesh (@ (geometry (box 1.2 1.2 1.2))
               (position 4.0 1.5 0.0) (color 0.4 0.7 0.9))))
    (mesh (@ (geometry (plane 40.0 40.0))
-            (color 1.0 1.0 1.0) (texture 40)))))
+            (color 1.0 1.0 1.0) (texture 40)))
+   ;; a pane of glass in front: alpha < 1 routes it to the blended
+   ;; pass, drawn after the opaque scene with depth writes off
+   (mesh (@ (geometry (box 6.0 4.0 0.2))
+            (position 0.0 3.0 6.0) (color 0.5 0.75 0.95 0.35)))))
 
 (gpu-attach!
  (get-element-by-id "c")

@@ -50,7 +50,7 @@
 ;;
 ;; Copyright (c) 2026 guenchi. MIT license; see LICENSE.
 (library (gfx gpu)
-  (export gpu-attach! gpu-pipeline! gpu-pipeline2!
+  (export gpu-attach! gpu-pipeline! gpu-pipeline2! gpu-pipeline2-blend!
           gpu-buffer! gpu-index! gpu-uniforms! gpu-storage!
           gpu-indirect! gpu-compute-group*!
           gpu-draw-indexed-indirect! gpu-draw-indirect!
@@ -114,9 +114,18 @@
      "                      depthCompare: 'less' },"
      "      primitive: { topology: 'triangle-list' } }); },"
      "  pipeline2(slot, code, vstride, vfmts, istride, ifmts) {"
+     "    this.pipeline2b(slot, code, vstride, vfmts, istride, ifmts, 0); },"
+     "  pipeline2b(slot, code, vstride, vfmts, istride, ifmts, blend) {"
      "    const mod = st.dev.createShaderModule({ code });"
      "    const va = this.parseAttrs(vfmts, 0);"
      "    const ia = this.parseAttrs(ifmts, va.length);"
+     "    const target = blend"
+     "      ? { format: st.fmt, blend: {"
+     "            color: { srcFactor: 'src-alpha',"
+     "                     dstFactor: 'one-minus-src-alpha' },"
+     "            alpha: { srcFactor: 'one',"
+     "                     dstFactor: 'one-minus-src-alpha' } } }"
+     "      : { format: st.fmt };"
      "    slots[slot] = st.dev.createRenderPipeline({"
      "      layout: 'auto',"
      "      vertex: { module: mod, entryPoint: 'vs', buffers: ["
@@ -124,9 +133,9 @@
      "        { arrayStride: istride, stepMode: 'instance',"
      "          attributes: ia }] },"
      "      fragment: { module: mod, entryPoint: 'fs',"
-     "                  targets: [{ format: st.fmt }] },"
+     "                  targets: [target] },"
      "      depthStencil: { format: 'depth24plus',"
-     "                      depthWriteEnabled: true,"
+     "                      depthWriteEnabled: !blend,"
      "                      depthCompare: 'less' },"
      "      primitive: { topology: 'triangle-list' } }); },"
      "  buffer(slot, bytes, kind) {"  ; 0 vtx, 1 idx, 2 uniform,
@@ -407,6 +416,10 @@
   ;; instance; locations number straight through both
   (define (gpu-pipeline2! slot wgsl vstride vfmts istride ifmts)
     (js-method $gpu "pipeline2" slot wgsl vstride vfmts istride ifmts))
+  ;; the same, with src-over alpha blending and depth writes off --
+  ;; the translucent-pass pipeline
+  (define (gpu-pipeline2-blend! slot wgsl vstride vfmts istride ifmts)
+    (js-method $gpu "pipeline2b" slot wgsl vstride vfmts istride ifmts 1))
   ;; a compute pipeline from one WGSL module (entry point cs)
   (define (gpu-compute! slot wgsl)
     (js-method $gpu "compute" slot wgsl))
