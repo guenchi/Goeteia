@@ -27,37 +27,37 @@
 
    (section* "features" "What's inside"
       `(div (@ (class "grid"))
-        ,(card "∞" "Self-hosting, to the byte"
+        ,(card "Self-hosting, to the byte"
            "The compiler is written in the Scheme subset it compiles. "
            "The self-hosted build recompiles itself and the output is "
            "byte-identical — the fixpoint is checked in CI fashion on "
            "every change, and every test runs through both stages.")
-        ,(card "♻" "Native Wasm GC objects"
+        ,(card "Native Wasm GC objects"
            "Fixnums are unboxed " '(code "i31ref") "s, pairs and records "
            "are GC structs, " '(code "eq?") " is one " '(code "ref.eq") ". "
            "No shadow heap in JavaScript: the host supplies two byte-stream "
            "imports and nothing else.")
-        ,(card "✳" "Hygienic macros"
+        ,(card "Hygienic macros"
            '(code "syntax-rules") " and procedural "
            '(code "syntax-case") " with fenders, nested ellipses and "
            '(code "datum->syntax") ", running in a compile-time "
            "interpreter with hygiene by renaming.")
-        ,(card "λ" "Real closures, real tail calls"
+        ,(card "Real closures, real tail calls"
            "Typed function references with a fast per-arity entry and a "
            "generic entry per closure — variadic procedures and "
            '(code "apply") " are cheap, and every tail call is a "
            '(code "return_call") ". A 100M-iteration loop runs in "
            "constant stack, in ~150ms.")
-        ,(card "↩" "call/cc & dynamic-wind"
+        ,(card "call/cc & dynamic-wind"
            "Escape continuations ride the Wasm exception-handling "
            "proposal: capture is O(1), the normal path costs one try "
            "block, and winders unwind inner-to-outer on the way out.")
-        ,(card "⚡" "A reactive web stack"
+        ,(card "A reactive web stack"
            '(code "(web sx)") " templates over fine-grained "
            '(code "(web reactive)") " signals, an " '(code "(web html)")
            " renderer, and a " '(code "(web js)") " FFI that reaches straight "
            "into the host — this page is built with it.")
-        ,(card "▲" "3D and WebGL"
+        ,(card "3D and WebGL"
            '(code "(gfx gl)") " drives WebGL 2 through a command buffer "
            "with shaders as s-expressions in "
            '(code "(gfx glsl)") ", rendered to either GLSL dialect from "
@@ -66,7 +66,7 @@
            " assets, and transform-feedback particles whose physics "
            '(em "is") " the vertex shader — the title above is twelve "
            "thousand of them dodging your cursor.")
-        ,(card "✉" "Scheme-to-Scheme, no codec"
+        ,(card "Scheme-to-Scheme, no codec"
            "When the backend is also Scheme (" '(code "Igropyr")
            "), requests and replies are s-expressions — "
            '(code "(rpc \"/rpc\" '(add 1 2 1/2))") " comes back "
@@ -74,7 +74,7 @@
            '(code "(web fetch)") " makes it direct-style over Wasm JSPI; "
            '(code "(web ws)") " / " '(code "(web sse)") " push datum streams; "
            '(code "(web json)") " handles everyone else.")
-        ,(card "❖" "Libraries"
+        ,(card "Libraries"
            "R6RS-style " '(code "(library ...)") " files with "
            '(code "(import (math utils))") " resolution, dependencies "
            "first; exports are advisory because unused code is pruned "

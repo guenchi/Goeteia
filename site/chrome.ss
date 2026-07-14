@@ -16,11 +16,9 @@
     '((font-family (var mono)) (color (var lapis))))
 
   ;; ---- reusable content helpers (SXML-returning) ----
-  ;; a titled box with an icon glyph: (card "λ" "Title" "body " ...)
-  (define (card ic title . body)
-    `(div (@ (class "card"))
-       (div (@ (class "ic")) ,ic)
-       (h3 ,title) (p ,@body)))
+  ;; a titled box: (card "Title" "body " (code "x") " ...")
+  (define (card title . body)
+    `(div (@ (class "card")) (h3 ,title) (p ,@body)))
   (define (feat title . body)
     `(div (@ (class "feat")) (h4 ,title) (p ,@body)))
   ;; a section with a heading: (section* "What's inside" node ...)
