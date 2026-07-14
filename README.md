@@ -324,7 +324,9 @@ buffer, shaders as s-expressions, and everything over them — in
   post-transform vertex cache (Forsyth's linear-time greedy: a
   simulated LRU scores recency, low valence boosts stragglers) and
   `mesh-acmr` measures the result headlessly — shuffled soup drops
-  from over 1.0 misses per triangle back under 0.75;
+  from over 1.0 misses per triangle back under 0.75 — and then
+  `mesh-remap!` renumbers the vertices into first-use order so the
+  vertex buffer is fetched front to back;
   `mesh-lit-vs`/`-fs` ship the standard
   directional-light program as composable glsl forms
   (`examples/fx-mesh.html`: a lit scene — ground, torus, sphere —

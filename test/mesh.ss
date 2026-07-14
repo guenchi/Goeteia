@@ -298,10 +298,18 @@
  (let* ((m (mesh-sphere 1.0 24 16))
         (ix (mesh-indices m))
         (nt (quotient (vector-length ix) 3))
+        ;; fingerprint by POSITION, not index -- the remap renumbers
+        ;; vertices, so only the geometry must be invariant
+        (pkey (lambda (v)
+                (let ((b (* v 6)) (vs (mesh-verts m)))
+                  (%fl->fx (fl* 1000000.0
+                               (fl+ (fl+ (fl* (vector-ref vs b) 131.0)
+                                         (fl* (vector-ref vs (+ b 1)) 137.0))
+                                    (fl* (vector-ref vs (+ b 2)) 139.0)))))))
         (tri-key (lambda (a b c)
-                   ;; order-independent triangle fingerprint
-                   (+ (* (+ a b c) 1000003)
-                      (* a b) (* b c) (* a c))))
+                   (let ((x (pkey a)) (y (pkey b)) (z (pkey c)))
+                     (+ (* (+ x y z) 1000003)
+                        (* x y) (* y z) (* x z)))))
         (sum-keys (lambda ()
                     (let loop ((t 0) (acc 0))
                       (if (= t nt)
@@ -328,8 +336,21 @@
    (let ((soup (mesh-acmr m 16)))
      (mesh-optimize! m)
      (let ((opt (mesh-acmr m 16)))
-       (and (= (sum-keys) before-keys)         ; same triangles
+       (and (= (sum-keys) before-keys)         ; same geometry
             (fl<? opt soup)                    ; strictly better
             (fl<? opt 0.75)                    ; and objectively good
-            (fl<? 1.0 soup))))))               ; the soup really thrashed
+            (fl<? 1.0 soup)                    ; the soup really thrashed
+            ;; the remap: each index's first appearance introduces
+            ;; the next vertex number in sequence, so the vertex
+            ;; buffer is a forward-only prefetch stream
+            (let* ((ix2 (mesh-indices m))
+                   (seen (make-vector (mesh-vert-count m) #f)))
+              (let scan ((i 0) (hi -1) (ok #t))
+                (if (or (not ok) (= i (vector-length ix2)))
+                    ok
+                    (let ((v (vector-ref ix2 i)))
+                      (if (vector-ref seen v)
+                          (scan (+ i 1) hi ok)
+                          (begin (vector-set! seen v #t)
+                                 (scan (+ i 1) v (= v (+ hi 1))))))))))))))
 )
