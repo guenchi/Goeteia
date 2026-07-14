@@ -452,8 +452,52 @@ buffer, shaders as s-expressions, and everything over them — in
   reference transcoder's unpack (the RGBA goldens ride in the test),
   a full mip chain transcodes in single-digit milliseconds, and it
   DCEs down to a few KB inside a module — where the official C++
-  transcoder is a 300–700KB wasm all its own
-  (`examples/fx-ktx.html`)
+  transcoder is a 300–700KB wasm all its own.  UASTC LDR 4x4 (DFD
+  color model 166), raw or zstd-supercompressed, decodes too:
+  `ktx-uastc-level!` inflates the zstd frame through `(gfx zstd)` when
+  supercompressionScheme is 2, runs `(gfx uastc)`, and `ktx-upload!`
+  routes UASTC to an RGBA upload — verified end-to-end against basisu's
+  RGBA32 unpack for a raw (scheme 0) and a zstd (scheme 2) file
+  (`examples/fx-ktx.html`, `test/ktx-uastc.ss`)
+- `(gfx zstd)` — Zstandard decompression, from RFC 8878, no libzstd:
+  the frame, all three block types (raw / RLE / compressed), Huffman
+  literals — direct weights and FSE-described weights, single- and
+  four-stream — and the three interleaved FSE sequence streams, over
+  staging memory.  Two bitstreams live in one decoder: FSE table
+  descriptions read forward from a byte, Huffman and FSE payloads read
+  backward from a sentinel bit at the end.  `(zstd-decode! src slen dst
+  scratch)` inflates any single-frame stream; KTX2 wraps its UASTC
+  payload in one (supercompressionScheme 2) and this unwraps it.
+  Verified byte-for-byte against the `zstd` CLI over four inputs — a
+  raw block, RLE literals, Huffman + FSE, and a large four-stream blob
+  with FSE-described weights (`test/zstd.ss`)
+- `(gfx uastc)` — UASTC LDR 4x4 → RGBA, from the Basis Universal
+  transcoder, in pure Scheme.  A UASTC block is 128 bits of ASTC-like
+  data: a 7-bit mode code (19 modes) selects 1/2/3 subsets, one or two
+  weight planes, and RGB / RGBA / LA / solid layout; endpoints and
+  per-texel weights are unpacked and interpolated to 16 texels.  UASTC
+  packs its BISE trits/quints as plain base-3/5 bundles (its
+  simplification over ASTC), so endpoints decode without the ASTC bit
+  interleave; the 2/3-subset partitions come from precomputed pattern
+  tables — the values `astc_hash52` would generate — a lookup with no
+  32-bit hash.  `(uastc-block! src dst)` decodes one block,
+  `(uastc-decode! src dst w h)` a whole level.  Ported via a reference
+  Python decoder validated against basisu's RGBA32 unpack, then to
+  Scheme; the golden covers the 13 modes the basisu encoder emits
+  across solid / gradient / noise / partitioned / dual-plane / LA
+  inputs, byte-for-byte (`test/uastc.ss`)
+- `(gfx meshopt)` — the EXT_meshopt_compression decoder, from the
+  meshoptimizer sources: the vertex codec (SoA byte-plane transpose,
+  2-bit group selectors over {0,2,4,8}/{0,1,2,4,8} bit widths,
+  zigzag-delta with a tail-seeded last vertex), the index codec
+  (edge/vertex FIFOs and the codeaux table, LEB128 zigzag free
+  indices), and the octahedral / quaternion / exponential filters,
+  all in pure Scheme over staging memory.  `(gfx gltf)` reads a
+  compressed bufferView through it as if it were uncompressed.
+  Verified byte-for-byte against the reference `meshopt_decoder` on
+  gltfpack output — a plain Box and a rigged Fox that exercises free
+  indices, the FIFOs, reset, and the exp/quat filters
+  (`test/meshopt.ss`)
 - `(gfx gltf)` — real 3D assets: GLB files parse with the binary
   chunk in staging memory (the wasm f32 loads are the float decoder).
   Geometry, node transforms, base colors, metallic/roughness
@@ -830,6 +874,18 @@ them byte-for-byte across every mip level.
   RGBA8).  Verified byte-for-byte against the reference transcoder's
   unpack, and it DCEs to a few KB where the official transcoder is a
   300–700KB wasm.  See [Compressed textures](#compressed-textures).
+- **M9 (done)**: the rest of the compressed-asset pipeline, each
+  written from spec and golden-verified against its reference C++ tool.
+  `(gfx zstd)` — an RFC 8878 Zstandard decompressor (FSE + Huffman,
+  raw / RLE / compressed blocks), checked against the `zstd` CLI.
+  `(gfx uastc)` — UASTC LDR 4x4 → RGBA (19 modes, base-3/5 endpoint
+  bundles, precomputed partition tables), checked against basisu's
+  RGBA32 unpack.  `(gfx meshopt)` — the EXT_meshopt_compression vertex
+  and index codecs plus filters, checked against `meshopt_decoder`.
+  `(gfx ktx)` now decodes UASTC KTX2 end-to-end (zstd-supercompressed
+  or raw), and `(gfx gltf)` reads meshopt-compressed bufferViews.  Two
+  compiler fixes rode along: `cond`'s `(test => proc)` arrow clause,
+  and `syntax-rules` macros defined and used within one library.
 
 ## License
 
