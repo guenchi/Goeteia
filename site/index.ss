@@ -16,28 +16,35 @@
 
 ;; hand-highlighted code, igropyr-style: the token classes are the
 ;; same ones the live editor's highlighter uses
-(define self-code
-  "<span class=\"tok-c\">$</span> ./build-self.sh
-  <span class=\"tok-c\"># stage1: the Chez-hosted compiler builds compiler.ss</span>
-  <span class=\"tok-c\"># stage2: stage1 rebuilds the very same source</span>
-  goeteia.wasm: 267346 bytes
+(define r6rs-code
+  "(<span class=\"tok-k\">define-syntax</span> while              <span class=\"tok-c\">; syntax-rules</span>
+  (<span class=\"tok-k\">syntax-rules</span> ()
+    ((_ c body ...)
+     (<span class=\"tok-k\">let</span> loop ()
+       (<span class=\"tok-k\">when</span> c body ... (loop))))))
 
-<span class=\"tok-c\">$</span> cmp goeteia.wasm stage2.wasm && echo fixpoint
-fixpoint
-  <span class=\"tok-c\"># byte-identical -- checked on every change,</span>
-  <span class=\"tok-c\"># with the whole test suite run through both stages</span>")
+(<span class=\"tok-k\">define-syntax</span> inc!               <span class=\"tok-c\">; procedural syntax-case</span>
+  (<span class=\"tok-k\">lambda</span> (x)
+    (<span class=\"tok-k\">syntax-case</span> x ()
+      ((_ v)   #'(<span class=\"tok-k\">set!</span> v (+ v <span class=\"tok-n\">1</span>)))
+      ((_ v n) #'(<span class=\"tok-k\">set!</span> v (+ v n))))))
 
-(define reactive-code
-  "(<span class=\"tok-k\">define</span> n (<span class=\"tok-h\">signal</span> <span class=\"tok-n\">0</span>))
+(fact <span class=\"tok-n\">20</span>)  <span class=\"tok-c\">; =&gt; 2432902008176640000 -- exact</span>
+(/ <span class=\"tok-n\">1</span> <span class=\"tok-n\">3</span>)    <span class=\"tok-c\">; =&gt; 1/3 -- a rational, not 0.333…</span>")
 
-(<span class=\"tok-h\">sx-mount</span> (<span class=\"tok-h\">get-element-by-id</span> <span class=\"tok-s\">\"app\"</span>)
-  (<span class=\"tok-k\">sx</span> (button
-        (@ (on-click ,(<span class=\"tok-k\">lambda</span> (e)
-                        (<span class=\"tok-h\">signal-update!</span> n
-                          (<span class=\"tok-k\">lambda</span> (v) (+ v <span class=\"tok-n\">1</span>))))))
-        <span class=\"tok-s\">\"clicked \"</span> ,(<span class=\"tok-h\">signal-ref</span> n) <span class=\"tok-s\">\" times\"</span>)))
+(define webdsl-code
+  "(<span class=\"tok-k\">define</span> (card title . body)       <span class=\"tok-c\">; UI is a function</span>
+  `(div (@ (class <span class=\"tok-s\">\"card\"</span>))
+     (h3 ,title) (p ,@body)))
 
-<span class=\"tok-c\">;; one text node updates; nothing else re-renders</span>")
+(<span class=\"tok-h\">css-&gt;string</span>                       <span class=\"tok-c\">; CSS is a list</span>
+ `((.card (background (var bg2))
+          (border-radius (px <span class=\"tok-n\">12</span>)))))
+<span class=\"tok-c\">;; =&gt; \".card{background:var(--bg2);border-radius:12px}\"</span>
+
+(<span class=\"tok-k\">sx</span> (button (@ (on-click ,bump!))  <span class=\"tok-c\">; a macro: the static</span>
+      <span class=\"tok-s\">\"clicked \"</span> ,(<span class=\"tok-h\">signal-ref</span> n)))  <span class=\"tok-c\">; tree is built ONCE,</span>
+                                    <span class=\"tok-c\">; holes become effects</span>")
 
 (define shader-code
   "(<span class=\"tok-k\">define</span> sky-p
@@ -54,39 +61,6 @@ fixpoint
      (varying vec3 v_dir)
      (<span class=\"tok-k\">define</span> (main) void
        (<span class=\"tok-k\">set!</span> gl_FragColor (textureCube u_sky v_dir))))))")
-
-(define rpc-code
-  "<span class=\"tok-c\">;; the backend is Igropyr: the wire carries a datum</span>
-(<span class=\"tok-h\">rpc</span> <span class=\"tok-s\">\"/rpc\"</span> '(add <span class=\"tok-n\">1</span> <span class=\"tok-n\">2</span> <span class=\"tok-n\">1/2</span>))      <span class=\"tok-c\">; =&gt; (ok 7/2)</span>
-<span class=\"tok-c\">;; the exact ratio survives -- no JSON in between</span>
-
-<span class=\"tok-c\">;; push channels speak datum too</span>
-(<span class=\"tok-h\">ws-connect!</span> <span class=\"tok-s\">\"/live\"</span> (<span class=\"tok-k\">lambda</span> (msg) ...))
-(<span class=\"tok-h\">sse-connect!</span> <span class=\"tok-s\">\"/feed\"</span> (<span class=\"tok-k\">lambda</span> (evt) ...))")
-
-(define macro-code
-  "(<span class=\"tok-k\">define-syntax</span> swap!
-  (<span class=\"tok-k\">syntax-rules</span> ()
-    ((_ a b)
-     (<span class=\"tok-k\">let</span> ((tmp a)) (<span class=\"tok-k\">set!</span> a b) (<span class=\"tok-k\">set!</span> b tmp)))))
-
-(<span class=\"tok-k\">let</span> ((tmp <span class=\"tok-n\">1</span>) (x <span class=\"tok-n\">2</span>))
-  (swap! tmp x)     <span class=\"tok-c\">; hygiene: the macro's tmp and</span>
-  (list tmp x))     <span class=\"tok-c\">; yours never collide</span>
-<span class=\"tok-c\">;; =&gt; (2 1)</span>")
-
-(define contk-code
-  "(<span class=\"tok-k\">define</span> (first-match pred xs)
-  (<span class=\"tok-k\">call/cc</span>
-    (<span class=\"tok-k\">lambda</span> (return)              <span class=\"tok-c\">; capture: O(1)</span>
-      (<span class=\"tok-h\">for-each</span> (<span class=\"tok-k\">lambda</span> (x)
-                  (<span class=\"tok-k\">when</span> (pred x) (return x)))
-                xs)
-      #f)))
-
-(<span class=\"tok-k\">let</span> loop ((n <span class=\"tok-n\">100000000</span>) (acc <span class=\"tok-n\">0</span>))  <span class=\"tok-c\">; every tail call is a</span>
-  (<span class=\"tok-k\">if</span> (zero? n) acc               <span class=\"tok-c\">; return_call: constant</span>
-      (loop (- n <span class=\"tok-n\">1</span>) (+ acc n))))    <span class=\"tok-c\">; stack, ~150 ms</span>")
 
 (define body
   (list
@@ -111,83 +85,55 @@ fixpoint
            "and each Run recompiles the source above in ~15 ms.")))
 
    `(section (@ (id "showcase"))
-      ,(show "01" "Self-hosting" "The compiler compiles itself"
-         '("The " (code "goeteia.wasm") " on this page was emitted by the very "
-           "Scheme it compiles. Correctness isn't argued in a README — it's a "
-           "fixpoint you can check with " (code "cmp") ".")
+      ,(show "01" "The language" "R6RS and syntax-case, complete — in the page"
+         '("Not a toy subset: hygienic " (code "syntax-rules") " and "
+           "procedural " (code "syntax-case") " with fenders, nested "
+           "ellipses and " (code "datum->syntax") ", compiled to Wasm GC "
+           "right here in your browser.")
          #f
-         '((h3 "Byte-identical, every change")
-           (p "stage1 is the Chez-hosted compiler building "
-              (code "compiler.ss") "; stage2 is that output rebuilding the "
-              "same source. Equal bytes are a proof no code review can give — "
-              "and the whole test suite runs through " (b "both") " stages.")
-           (p "The page you are reading carries the same artifact: ~38 KB "
-              "gzipped, recompiling the editor's source in your browser in "
-              "~15 ms."))
-         self-code)
-      ,(show "02" "Reactive UI" "The page is a Scheme value"
-         '("An " (code "(web sx)") " template is split at expansion time: the "
-           "static structure is built once, and each unquote becomes a hole "
-           "wired to a fine-grained signal.")
+         '((h3 "The whole standard, running above")
+           (p "Exact bignums and rationals, " (code "call/cc") " and "
+              (code "dynamic-wind") " on Wasm's own exception handling, "
+              "and every tail call a " (code "return_call") " — a "
+              "hundred-million-iteration loop runs in "
+              (b "constant stack") ".")
+           (p "The expander is a compile-time interpreter with hygiene by "
+              "renaming: a macro's bindings and yours can never collide. "
+              "Paste any of this into the editor above and press Run."))
+         r6rs-code)
+      ,(show "02" "The web as data" "Macros expand into HTML and CSS"
+         '("A document is a tree; a stylesheet is a list of rules — the "
+           "exact shapes s-expressions were made for. " (code "(web html)")
+           " and " (code "(web css)") " are two pure functions over one "
+           "representation, and " (code "(web sx)") " is a macro over it.")
          #t
-         '((h3 "Holes update; trees don't re-render")
-           (p "An " (code "on-*") " hole becomes an event listener; every "
-              "other hole is a thunk rerun inside its own "
-              (code "effect") ", updating just that text node or attribute.")
-           (p "The DOM is a " (b "write-only surface") " — nothing is ever "
-              "read back from it. No virtual DOM, no diffing, no reconciler."))
-         reactive-code)
-      ,(show "03" "Graphics" "Shaders are s-expressions"
-         '((code "(gfx glsl)") " renders the same forms to either GLSL "
-           "dialect, and " (code "(gfx gl)") " drives WebGL 2 through a "
-           "command buffer — shadow maps, PBR, HDR bloom, instancing.")
+         '((h3 "The page you're reading is the proof")
+           (p "Every element and every CSS rule of this site expands from "
+              "Scheme — " (code "site/index.ss") " is the whole page; the "
+              (b "\"Built in pure Scheme\"") " badge shows you the source. "
+              "A colour is one binding shared by styles and code; DRY is "
+              (code "append") ".")
+           (p "The " (code "sx") " template macro splits at expansion "
+              "time: the static tree is built once, each unquote becomes a "
+              "hole wired to a signal — one text node updates, and "
+              (b "nothing re-renders") ". No virtual DOM, no diffing."))
+         webdsl-code)
+      ,(show "03" "Graphics" "3D, from s-expressions"
+         '((code "(gfx gl)") " drives WebGL 2 through a command buffer — "
+           "shadow maps, PBR, HDR bloom, SSAO, instancing, skeletal "
+           "animation from glTF — and " (code "(gfx glsl)") " renders "
+           "shaders written as s-expressions to either GLSL dialect.")
          #f
          '((h3 "This exact program runs above")
            (p "It is the sky of the " (code "skybox.ss") " tab in the live "
-              "editor — switch to it, edit a form, press Run.")
+              "editor — switch to it, edit a form, press Run. The mirror "
+              "floor of " (code "pointlight.ss") " and the WebGPU fire of "
+              (code "particles.ss") " — a hundred thousand particles whose "
+              "physics is a compute shader — are tabs beside it.")
            (p "Because a shader is a datum, " (b "macros can write shaders")
-              ": the hero's twelve thousand particles run their physics in a "
-              "vertex shader assembled by Scheme."))
-         shader-code)
-      ,(show "04" "Networking" "Scheme to Scheme, nothing between"
-         '("When the backend is also Scheme (" (code "Igropyr") "), requests "
-           "and replies are s-expressions. There is no protocol to design — "
-           (code "read") " and " (code "write") " are the codec.")
-         #t
-         '((h3 "Datum in, datum out")
-           (p "Exact rationals cross the wire intact — " (code "(ok 7/2)")
-              " means seven halves, not " (code "3.5") ". "
-              (code "(web fetch)") " makes calls direct-style over Wasm "
-              "JSPI; " (code "(web json)") " covers every other backend.")
-           (p "For the thing a program is most likely to get wrong — the "
-              "codec — the best move is to " (b "delete it") "."))
-         rpc-code)
-      ,(show "05" "Macros" "Hygiene, industrial strength"
-         '((code "syntax-rules") " and procedural " (code "syntax-case")
-           " with fenders, nested ellipses and " (code "datum->syntax")
-           ", running in a compile-time interpreter with hygiene by renaming.")
-         #f
-         '((h3 "The expander writes the code")
-           (p "A macro's bindings and yours can never collide — "
-              (code "swap!") "'s " (code "tmp") " is renamed away from the "
-              "one you already had.")
-           (p "This is how the reactive templates, the GLSL forms and the "
-              "page you're reading are built: " (b "short declarations in, "
-              "correct implementations out") "."))
-         macro-code)
-      ,(show "06" "Control flow" "call/cc on Wasm's own exceptions"
-         '("Escape continuations ride the Wasm exception-handling proposal: "
-           "capture is O(1), the normal path costs one try block, and "
-           (code "dynamic-wind") " winders unwind inner-to-outer.")
-         #t
-         '((h3 "Tail calls are return_call")
-           (p "Every tail call compiles to the engine's own "
-              (code "return_call") " — variadic procedures and "
-              (code "apply") " included — so a hundred-million-iteration "
-              "loop runs in " (b "constant stack") ", in about 150 ms.")
-           (p "No trampolines, no CPS transform, no stack simulation in "
-              "JavaScript. The engine does it."))
-         contk-code))
+              ": the hero's twelve thousand particles run their physics in "
+              "a vertex shader assembled by Scheme."))
+         shader-code))
 
    (section* "features" "What's inside"
       `(div (@ (class "grid"))
