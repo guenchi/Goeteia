@@ -2419,23 +2419,20 @@
              (global-get G-VOID))))
     ((%f32x4-axpy!)
      ;; (%f32x4-axpy! dst a b s): [dst] = [a] + [b] * splat(s) --
-     ;; one column of a matrix product per call, fused into a single
-     ;; f32x4.relaxed_madd (every Wasm GC engine has relaxed SIMD;
-     ;; the fused rounding is at worst more accurate).  a's address
-     ;; parks in an i32 local so the operands can stack in madd
-     ;; order while still evaluating in source order
+     ;; one column of a matrix product per call, as an explicit
+     ;; mul then add.  (A fused relaxed_madd is ~3% faster on V8 but
+     ;; fails to validate on engines without relaxed SIMD -- this
+     ;; kernel is memory bound, so the portable spelling wins)
      (let* ((d (compile-exp (car args) locals cell #f))
             (a (compile-exp (cadr args) locals cell #f))
-            (ta (fresh-local! cell))
             (b (compile-exp (caddr args) locals cell #f))
             (s (compile-f64 (cadddr args) locals cell)))
-       (set! *f64-slots* (cons (- -100000 ta) *f64-slots*))
        (list d (unwrap-int)
-             a (unwrap-int) (local-set ta)
+             a (unwrap-int) #xFD (uleb 0) (uleb 0) (uleb 0)
              b (unwrap-int) #xFD (uleb 0) (uleb 0) (uleb 0)
              s #xB6 #xFD (uleb 19)
-             (local-get ta) #xFD (uleb 0) (uleb 0) (uleb 0)
-             #xFD (uleb 261)                        ; relaxed_madd
+             #xFD (uleb 230)                        ; f32x4.mul
+             #xFD (uleb 228)                        ; f32x4.add
              #xFD (uleb 11) (uleb 0) (uleb 0)
              (global-get G-VOID))))))
 
