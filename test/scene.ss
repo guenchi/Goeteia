@@ -230,5 +230,27 @@
   (and (= (- (count-log "drawInst:TRI:36:2") dirty2-before) 1)
        (= (- (count-log "drawInst:TRI:36:1") dirty1-before) 1)))
 
+;; ---- draw order: nearest first, whatever the declaration says ----
+;; the far box is declared first; different geometries keep them
+;; singles, and the sort hands the near one to the encoder first
+(define (find-log p from)
+  (let ((n (log-len)))
+    (let loop ((i from))
+      (cond ((= i n) -1)
+            ((prefix? p (entry i)) i)
+            (else (loop (+ i 1)))))))
+(define order-base (log-len))
+(define sc-order
+  (sgl (camera (@ (fov 0.9) (position 0.0 0.0 8.0) (look-at 0.0 0.0 0.0)
+                  (near 0.1) (far 60.0)))
+       (light (@ (direction 0.0 1.0 0.0) (ambient 0.25)))
+       (mesh (@ (geometry (box 1 1 1)) (position 2.0 0.0 -6.0)))  ; far
+       (mesh (@ (geometry (box 2 2 2)) (position 1.0 0.0 4.0))))) ; near
+(cmd-begin!) (sgl-draw! sc-order) (cmd-flush!)
+(define near-at (find-log "uniformMat4:U:u_model:16:1.00:1.00" order-base))
+(define far-at (find-log "uniformMat4:U:u_model:16:1.00:2.00" order-base))
+(define order-ok
+  (and (> near-at -1) (> far-at -1) (< near-at far-at)))
+
 (and frame1-ok frame2-ok mat-ok cull-ok group1-ok group2-ok
-     lod-near-ok lod-far-ok chunk-ok dirty-ok)
+     lod-near-ok lod-far-ok chunk-ok dirty-ok order-ok)

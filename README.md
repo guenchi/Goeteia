@@ -248,7 +248,9 @@ buffer, shaders as s-expressions, and everything over them — in
   signal swings a whole assembly — and matrices cache against a
   transform generation the signals bump: a static mesh composes its
   model matrix, world center and radius exactly once, ever; a frame
-  recomputes only what actually moved.  Meshes with the same literal
+  recomputes only what actually moved.  Singles draw sorted nearest
+  first (early z pays the occluded-fragment bill), textured ones
+  grouped by texture first so equal textures bind once.  Meshes with the same literal
   geometry share one upload and draw as ONE instanced call: each
   visible instance's model matrix composes in closed form straight
   into the instance buffer (m4s-trs!/m4s-mul! — SIMD, no boxed
