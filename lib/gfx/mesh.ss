@@ -28,6 +28,7 @@
   (export mesh? mesh-verts mesh-indices mesh-uvs
           mesh-vert-count mesh-index-count
           mesh-vertex-bytes mesh-index-bytes mesh-index-u32? mesh-write!
+          mesh-vertex-bytes-f16 mesh-write-f16!
           mesh-vertex-bytes-uv mesh-write-uv!
           mesh-tangents mesh-vertex-bytes-tan mesh-write-tan!
           mesh-bounds
@@ -370,6 +371,49 @@
           (%mem-f32-set! at (vector-ref vs i))
           (loop (+ i 1) (+ at 4)))))
     ($mesh-write-ix! m ibase))
+
+  ;; ---- half-precision: the same interleaved stream, two bytes a
+  ;; component.  IEEE f16 from the f32 bit pattern (a value bounces
+  ;; through 4 scratch bytes of staging to expose its bits), with
+  ;; round-to-nearest and inf on overflow; vertex coordinates and
+  ;; unit normals lose nothing a screen shows.  Pair the layout with
+  ;; cmd-vertex-attrib-h! -- stride 12, positions at 0, normals at 6
+  (define ($mesh-f16 v scratch)         ; flonum -> f16 bits (fixnum)
+    (%mem-f32-set! scratch v)
+    (let* ((b0 (%mem-u8-ref scratch))
+           (b1 (%mem-u8-ref (+ scratch 1)))
+           (b2 (%mem-u8-ref (+ scratch 2)))
+           (b3 (%mem-u8-ref (+ scratch 3)))
+           (sign (* (quotient b3 128) 32768))
+           (exp (+ (* (remainder b3 128) 2) (quotient b2 128)))
+           (man (+ (* (remainder b2 128) 65536) (* b1 256) b0))
+           (e (- exp 112)))              ; 127 - 15
+      (cond
+       ((= exp 255) (+ sign 31744 (if (> man 0) 512 0))) ; inf / nan
+       ((>= e 31) (+ sign 31744))                        ; overflow
+       ((<= e 0)                                         ; subnormal
+        (if (< e -10)
+            sign
+            (let* ((m (+ man 8388608))                   ; hidden bit
+                   (sh (- 14 e))                         ; 14..24
+                   (d (let pow ((k 0) (p 1))
+                        (if (= k sh) p (pow (+ k 1) (* p 2)))))
+                   (q (quotient m d))
+                   (r (remainder m d)))
+              (+ sign q (if (>= (* r 2) d) 1 0)))))
+       (else
+        (let ((q (quotient man 8192))                    ; man >> 13
+              (r (remainder man 8192)))
+          (+ sign (* e 1024) q (if (>= r 4096) 1 0)))))))
+
+  (define (mesh-write-f16! m vbase ibase scratch)
+    (let ((vs (mesh-verts m)))
+      (let loop ((i 0) (at vbase))
+        (when (< i (vector-length vs))
+          ($mesh-u16! at ($mesh-f16 (vector-ref vs i) scratch))
+          (loop (+ i 1) (+ at 2)))))
+    ($mesh-write-ix! m ibase))
+  (define (mesh-vertex-bytes-f16 m) (* 12 (mesh-vert-count m)))
 
   ;; interleaved x y z nx ny nz u v -- 32 bytes per vertex, matching
   ;; mesh-tex-vs's a_pos/a_normal/a_uv layout

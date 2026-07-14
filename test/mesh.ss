@@ -243,4 +243,50 @@
            (u_metallic float) (u_roughness float)
            (u_sky samplerCube) (u_lut sampler2D) (u_mips float)))
  ;; and it renders to source without incident
- (< 0 (string-length (glsl->string mesh-pbr-fs))))
+ (< 0 (string-length (glsl->string mesh-pbr-fs)))
+
+ ;; ---- the half-precision writer ----
+ ;; an independent decoder: f16 bits back to a flonum
+ (let* ((u16 (lambda (at) (+ (%mem-u8-ref at)
+                             (* 256 (%mem-u8-ref (+ at 1))))))
+        (pow2 (lambda (n)                ; 2^n for n in [-24, 15]
+                (let loop ((k 0) (p 1.0))
+                  (if (= k (abs n)) (if (< n 0) (fl/ 1.0 p) p)
+                      (loop (+ k 1) (fl* p 2.0))))))
+        (f16->fl
+         (lambda (bits)
+           (let* ((s (if (>= bits 32768) -1.0 1.0))
+                  (b (remainder bits 32768))
+                  (e (quotient b 1024))
+                  (man (remainder b 1024)))
+             (fl* s (if (= e 0)
+                        (fl* (pow2 -14)
+                             (fl/ (exact->inexact man) 1024.0))
+                        (fl* (pow2 (- e 15))
+                             (fl+ 1.0 (fl/ (exact->inexact man)
+                                           1024.0)))))))))
+   (and
+    ;; the box's 144 components survive the roundtrip exactly
+    ;; (coordinates are +/-1 and 0 -- exact in f16)
+    (let ((m (mesh-box 2 2 2)))
+      (mesh-write-f16! m 8192 9800 8000)
+      (and (= (mesh-vertex-bytes-f16 m) (* 12 24))
+           (let ((vs (mesh-verts m)))
+             (let loop ((i 0))
+               (or (= i (vector-length vs))
+                   (and (near? (f16->fl (u16 (+ 8192 (* i 2))))
+                               (vector-ref vs i))
+                        (loop (+ i 1))))))))
+    ;; the encoder: rounding, max, overflow, subnormals
+    (let* ((m (mesh-plane 1 1))
+           (probe (lambda (v)
+                    (vector-set! (mesh-verts m) 0 v)
+                    (mesh-write-f16! m 8192 9800 8000)
+                    (u16 8192))))
+      (and (= (probe 0.5) 14336)                  ; 0x3800
+           (= (probe -2.0) 49152)                 ; 0xC000
+           (= (probe 65504.0) 31743)              ; f16 max 0x7BFF
+           (= (probe 100000.0) 31744)             ; overflow -> +inf
+           (= (probe 0.000030517578125) 512)      ; 2^-15, subnormal
+           (= (probe 0.0000000298023223876953125) 1) ; 2^-25 rounds up
+           (= (probe 0.3333333333333333) 13653))))))  ; 1/3 -> 0x3555
