@@ -48,7 +48,7 @@
           gl-gpu-timer! gl-gpu-ms
           gl-compressed-family gl-texture-compressed!
           gl-compressed-level! gl-texture-base-level!
-          cmd-depth!
+          cmd-depth! cmd-depth-write!
           gl-vao! cmd-bind-vao! cmd-unbind-vao!
           gl-ubo! gl-uniform-block! cmd-bind-ubo! cmd-ubo-data!
           gl-tf-program! cmd-tf-buffer! cmd-tf-begin! cmd-tf-end!
@@ -387,6 +387,7 @@
      "                f.subarray(p + 1, p + 17)); p += 17; break;"
      "     case 15: if (u[p] === 1) gl.enable(gl.DEPTH_TEST);"
      "              else gl.disable(gl.DEPTH_TEST); p += 1; break;"
+     "     case 42: gl.depthMask(u[p] === 1); p += 1; break;"
      "     case 16: gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, slots[u[p]]);"
      "              p += 1; break;"
      "     case 17: gl.bufferData(gl.ELEMENT_ARRAY_BUFFER,"
@@ -665,6 +666,10 @@
   (define (cmd-uniform-matrix4s! slot at)
     (u! 38) (u! slot) (u! at))
   (define (cmd-depth! on?) (u! 15) (u! (if on? 1 0)))
+  ;; the depth WRITE mask, independent of the test: translucent
+  ;; passes keep the test (occluded by opaque) but stop writing (so
+  ;; blended fragments don't occlude each other)
+  (define (cmd-depth-write! on?) (u! 42) (u! (if on? 1 0)))
   ;; indexed meshes: a buffer slot bound as the element array, u16
   ;; indices uploaded from the staging memory, one drawElements
   (define (cmd-bind-index! slot) (u! 16) (u! slot))
