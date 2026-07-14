@@ -225,7 +225,11 @@ buffer, shaders as s-expressions, and everything over them — in
   magnification (widen it for halos, shift it for outlines — the
   field carries all of it)
 - `(gfx stats)` — the performance HUD: frame time, FPS, draw calls
-  and command bytes in the corner, with a 60-frame frame-time strip.
+  and command bytes in the corner, with a 60-frame frame-time strip —
+  and the GPU's own frame time beside them when the browser exposes
+  the timer-query extension: every replay wraps itself in a
+  TIME_ELAPSED query (`gl-gpu-timer!`/`gl-gpu-ms`), results
+  surfacing a few frames behind, hidden where unsupported.
   The command buffer makes the numbers free — draws are counted as
   they encode (`cmd-draws`) and the frame's size is the write cursor
   (`cmd-pos`), so nothing is instrumented; `stats-draw!` goes last

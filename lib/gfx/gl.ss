@@ -45,6 +45,7 @@
           cmd-bind-cubemap! cmd-unbind-cubemap!
           gl-texture-array! gl-texture-layer! gl-texture-layer-data!
           cmd-bind-texture-array!
+          gl-gpu-timer! gl-gpu-ms
           cmd-depth!
           gl-vao! cmd-bind-vao! cmd-unbind-vao!
           gl-ubo! gl-uniform-block! cmd-bind-ubo! cmd-ubo-data!
@@ -310,9 +311,19 @@
      "    gl.texParameteri(gl.TEXTURE_CUBE_MAP, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);"
      "    gl.texParameteri(gl.TEXTURE_CUBE_MAP, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);"
      "    slots[slot] = t; },"
+     "  gpuTimer() {"
+     "    this.__tq = gl.getExtension('EXT_disjoint_timer_query_webgl2');"
+     "    this.__tqPool = []; this.__tqPending = []; this.__tqMs = -1;"
+     "    return this.__tq ? 1 : 0; },"
+     "  gpuMs() { return this.__tqMs === undefined ? -1 : this.__tqMs; },"
      "  replay(base, end) {"
      "    const u = new Uint32Array(memory.buffer);"
      "    const f = new Float32Array(memory.buffer);"
+     "    const tq = this.__tq; let tquery = null;"
+     "    if (tq) {"
+     "      tquery = this.__tqPool.pop() || gl.createQuery();"
+     "      gl.beginQuery(tq.TIME_ELAPSED_EXT, tquery);"
+     "    }"
      "    let p = base >> 2; const stop = end >> 2;"
      "    while (p < stop) switch (u[p++]) {"
      "     case 1: gl.clearColor(f[p], f[p+1], f[p+2], f[p+3]); p += 4;"
@@ -422,6 +433,16 @@
      "              gl.bindFramebuffer(gl.FRAMEBUFFER, null);"
      "              p += 4; break;"
      "     default: throw new Error('bad gl opcode');"
+     "    }"
+     "    if (tquery) {"
+     "      gl.endQuery(tq.TIME_ELAPSED_EXT);"
+     "      this.__tqPending.push(tquery);"
+     "      const h = this.__tqPending[0];"
+     "      if (gl.getQueryParameter(h, gl.QUERY_RESULT_AVAILABLE)) {"
+     "        if (!gl.getParameter(tq.GPU_DISJOINT_EXT))"
+     "          this.__tqMs = gl.getQueryParameter(h, gl.QUERY_RESULT) / 1e6;"
+     "        this.__tqPool.push(this.__tqPending.shift());"
+     "      }"
      "    } } }; };"))
 
   (define $gl #f)                       ; the replayer handle
@@ -496,6 +517,16 @@
   ;; raw RGBA bytes out of the staging memory -- procedural textures
   (define (gl-texture-data! slot base w h)
     (js-method $gl "textureData" slot base w h))
+  ;; GPU frame time (webgl2 + EXT_disjoint_timer_query_webgl2): turn
+  ;; the timer on once and every replay wraps itself in a TIME_ELAPSED
+  ;; query; results surface a few frames later through gl-gpu-ms
+  ;; (-1.0 until the first result, and gl-gpu-timer! answers #f when
+  ;; the extension is missing -- hide the readout then)
+  (define (gl-gpu-timer!)
+    (= 1 (js->number (js-method $gl "gpuTimer"))))
+  (define (gl-gpu-ms)
+    (let ((v (js->number (js-method $gl "gpuMs"))))
+      (if (flonum? v) v (exact->inexact v))))
   ;; a texture array (webgl2): many same-size images behind ONE bind,
   ;; the shader picks a layer -- sampler2DArray + texture(u, vec3(uv,
   ;; layer)), and a layer index rides an instance attribute for free
