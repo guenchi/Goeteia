@@ -1911,7 +1911,7 @@ func -> string -> procedure -> void   /   func -> *jsObject -> number -> void
 
 ## 网络
 
-当线的两端都说 Scheme 时，没有编解码器：一端 `write`，另一端 `read`。面向异构后端则有一个安全的 JSON 编解码器。二者都跑在 `(web fetch)` 之上，后者把 HTTP 变成直接风格的调用。
+当线的两端都说 Scheme 时，编解码器是 `(web sexpr)`——与 Igropyr 的扩展 s-表达式格式逐字节相同，二进制与 IEEE 浮点都逐位精确穿过线。面向异构后端则有一个安全的 JSON 编解码器。二者都跑在 `(web fetch)` 之上，后者把 HTTP 变成直接风格的调用。
 
 ### `(web fetch)`：经 JSPI 的直接风格 HTTP
 
@@ -1988,7 +1988,7 @@ JSPI 需要支持它的引擎（Chrome 稳定版；Node 带 `--experimental-wasm
 
 ### `(web rpc)`：面向 Scheme 后端的 S-表达式 RPC
 
-对端是 [Igropyr](https://github.com/guenchi/Igropyr)，一个 Scheme 应用服务器。两端都说 Scheme，所以请求与回复都是 s-表达式——精确整数与有理数完好穿过线，中间没有 JSON。下文的 `datum` 是任何线路安全的 s-表达式（列表、符号、字符串、精确整数与有理数、布尔）。
+对端是 [Igropyr](https://github.com/guenchi/Igropyr)，一个 Scheme 应用服务器。两端都说 Scheme，所以请求与回复都是 s-表达式——精确整数与有理数完好穿过线，二进制与 IEEE 浮点逐位精确，中间没有 JSON。下文的 `datum` 是任何线路安全的 s-表达式：列表、符号、字符串、精确整数与有理数、布尔、vector、bytevector（`#vu8"…"`，base64）与浮点（`#f8"…"`，8 个 IEEE-754 字节——含 `inf`/`nan`）。编解码器是 `(web sexpr)`，与 Igropyr 的扩展模式逐字节相同。
 
 ```
 procedure: (rpc url datum)
@@ -2016,14 +2016,14 @@ procedure: (rpc-serialize datum)
 
 func -> datum -> string
 ```
-把一个 datum 序列化为线路文本（`write`，限制在 Igropyr 接受的安全白名单内）。
+经 `(web sexpr)` 把一个 datum 序列化为线路文本（不是宿主 `write`）——限制在 Igropyr 扩展模式接受的深度受限白名单内。
 
 ```
 procedure: (rpc-parse text)
 
 func -> string -> datum
 ```
-把线路文本解析回一个 datum（`read`，同一安全白名单）。
+经 `(web sexpr)` 把线路文本解析回一个 datum（不是宿主 `read`）——同一白名单。
 
 ```scheme
 (import (web rpc))
@@ -2056,7 +2056,7 @@ Igropyr 侧是对称的——一个标签分派端点，其处理器返回回复
                          'not-found))))))
 ```
 
-`rpc-serialize` / `rpc-parse` 直接暴露线路编解码（它们是 `write` / `read`，限制在 Igropyr 解析器接受的安全白名单内：列表、符号、字符串、精确整数与有理数、布尔）。
+`rpc-serialize` / `rpc-parse` 直接暴露线路编解码——是 `(web sexpr)`，不是宿主 `write` / `read`——覆盖 Igropyr 扩展模式接受的深度受限白名单：列表、符号、字符串、精确整数与有理数、布尔、vector、bytevector 与浮点。
 
 对于推送流，有两个轻量伴生库，对应服务器上 Igropyr 的 `ws-send-sexpr!` / `sse-send-sexpr!`——每条消息就是一个 datum。`*ws` 是一个 WebSocket 句柄，`*sse` 是一个 EventSource 句柄。
 

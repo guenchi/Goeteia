@@ -2045,7 +2045,7 @@ buffer; `play!` fires it once (optional volume, playback rate);
 
 ## Networking
 
-When both ends of the wire speak Scheme, there is no codec: `write` on one side, `read` on the other. For a heterogeneous backend there is a safe JSON codec. Both run over `(web fetch)`, which turns HTTP into direct-style calls.
+When both ends of the wire speak Scheme, the codec is `(web sexpr)`—byte-for-byte Igropyr's extended s-expression format, so binary and IEEE floats cross bit-exact. For a heterogeneous backend there is a safe JSON codec. Both run over `(web fetch)`, which turns HTTP into direct-style calls.
 
 ### `(web fetch)`: Direct-Style HTTP over JSPI
 
@@ -2125,7 +2125,7 @@ JSPI needs an engine that supports it (Chrome stable; Node with `--experimental-
 
 ### `(web rpc)`: S-Expression RPC to a Scheme Backend
 
-The peer is [Igropyr](https://github.com/guenchi/Igropyr), a Scheme application server. Both ends speak Scheme, so requests and replies are s-expressions—exact integers and ratios cross the wire intact, and there is no JSON in between. A `datum` below is any wire-safe s-expression (lists, symbols, strings, exact integers and ratios, booleans).
+The peer is [Igropyr](https://github.com/guenchi/Igropyr), a Scheme application server. Both ends speak Scheme, so requests and replies are s-expressions—exact integers and ratios cross intact, binary and IEEE floats bit-exact, and there is no JSON in between. A `datum` below is any wire-safe s-expression: lists, symbols, strings, exact integers and ratios, booleans, vectors, bytevectors (`#vu8"…"`, base64) and flonums (`#f8"…"`, the 8 IEEE-754 bytes—`inf` and `nan` included). The codec is `(web sexpr)`, byte-for-byte Igropyr's extended mode.
 
 ```
 procedure: (rpc url datum)
@@ -2155,15 +2155,15 @@ procedure: (rpc-serialize datum)
 
 func -> datum -> string
 ```
-Serialize a datum to the wire text (`write`, restricted to the safe
-whitelist Igropyr accepts).
+Serialize a datum to the wire text via `(web sexpr)`—not the host
+`write`—the depth-limited whitelist Igropyr's extended mode accepts.
 
 ```
 procedure: (rpc-parse text)
 
 func -> string -> datum
 ```
-Parse wire text back to a datum (`read`, same safe whitelist).
+Parse wire text back to a datum via `(web sexpr)`—not the host `read`—same whitelist.
 
 ```scheme
 (import (web rpc))
@@ -2196,7 +2196,7 @@ The Igropyr side is symmetric—a tagged-dispatch endpoint whose handlers return
                          'not-found))))))
 ```
 
-`rpc-serialize` / `rpc-parse` expose the wire codec directly (they are `write` / `read` restricted to the safe whitelist Igropyr's parser accepts: lists, symbols, strings, exact integers and ratios, booleans).
+`rpc-serialize` / `rpc-parse` expose the wire codec directly—`(web sexpr)`, not the host `write` / `read`—over the depth-limited whitelist Igropyr's extended mode accepts: lists, symbols, strings, exact integers and ratios, booleans, vectors, bytevectors and flonums.
 
 For pushed streams there are two thin companions, matching Igropyr's `ws-send-sexpr!` / `sse-send-sexpr!` on the server—each message is one datum. A `*ws` is a WebSocket handle, a `*sse` an EventSource handle.
 
