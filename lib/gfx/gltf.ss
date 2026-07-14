@@ -38,7 +38,8 @@
           gprim-icount gprim-index-u32? gprim-color
           gprim-metallic gprim-roughness
           gprim-world gprim-stride gprim-tex)
-  (import (rnrs) (web js) (gfx gl) (gfx fx) (gfx mat) (web json))
+  (import (rnrs) (web js) (gfx gl) (gfx fx) (gfx mat) (web json)
+          (gfx meshopt))
 
   (define ($gltf-fl v) (if (flonum? v) v (exact->inexact v)))
 
@@ -102,15 +103,66 @@
   ;; ---- the JSON side ----
   (define ($or0 v) (if v v 0))
 
+  ;; EXT_meshopt_compression: a compressed bufferView's bytes decode
+  ;; once into fresh staging, and accessors read the decoded data.
+  ;; $mo-bases[bvidx] = decoded staging base, or #f (uncompressed)
+  (define $mo-bases (list #f))          ; boxed so parse can set it
+
+  (define ($mo-mode m)
+    (cond ((string=? m "ATTRIBUTES") 'attr)
+          ((string=? m "TRIANGLES") 'tri)
+          ((string=? m "INDICES") 'seq)
+          (else (error 'gltf "meshopt mode" m))))
+
+  (define ($gltf-meshopt! json bin)
+    (let* ((bvs (json-ref json "bufferViews"))
+           (n (if bvs (vector-length bvs) 0))
+           (bases (make-vector n #f)))
+      (let bv ((i 0))
+        (when (< i n)
+          (let ((ext (json-ref (vector-ref bvs i)
+                               "extensions" "EXT_meshopt_compression")))
+            (when ext
+              (let* ((count (json-ref ext "count"))
+                     (stride (json-ref ext "byteStride"))
+                     (mode ($mo-mode (json-ref ext "mode")))
+                     (filt (let ((f (json-ref ext "filter"))) (if f f "NONE")))
+                     (src (+ bin ($or0 (json-ref ext "byteOffset"))))
+                     (slen (json-ref ext "byteLength"))
+                     (dst (fx-alloc! (* count stride))))
+                (case mode
+                  ((attr) (meshopt-vertex! src slen dst count stride))
+                  ((tri) (meshopt-index! src slen dst count stride))
+                  ((seq) (meshopt-index-sequence! src slen dst count
+                                                  stride)))
+                (cond
+                 ((string=? filt "OCTAHEDRAL")
+                  (meshopt-filter-oct! dst count stride))
+                 ((string=? filt "QUATERNION")
+                  (meshopt-filter-quat! dst count stride))
+                 ((string=? filt "EXPONENTIAL")
+                  (meshopt-filter-exp! dst count stride)))
+                (vector-set! bases i dst))))
+          (bv (+ i 1))))
+      (set-car! $mo-bases bases)))
+
+  ;; the staging base of bufferView bvidx: decoded when compressed
+  (define ($mo-base bvidx)
+    (let ((b (car $mo-bases)))
+      (and b (< bvidx (vector-length b)) (vector-ref b bvidx))))
+
   ;; accessor index -> (abs-offset stride count comp-type)
   (define ($acc-info json bin idx tight)
     (let* ((acc (vector-ref (json-ref json "accessors") idx))
-           (bv (vector-ref (json-ref json "bufferViews")
-                           (json-ref acc "bufferView")))
+           (bvidx (json-ref acc "bufferView"))
+           (bv (vector-ref (json-ref json "bufferViews") bvidx))
            (stride (let ((s (json-ref bv "byteStride")))
-                     (if s s tight))))
-      (list (+ bin ($or0 (json-ref bv "byteOffset"))
-               ($or0 (json-ref acc "byteOffset")))
+                     (if s s tight)))
+           (mob ($mo-base bvidx)))
+      (list (if mob
+                (+ mob ($or0 (json-ref acc "byteOffset")))
+                (+ bin ($or0 (json-ref bv "byteOffset"))
+                   ($or0 (json-ref acc "byteOffset"))))
             stride
             (json-ref acc "count")
             (json-ref acc "componentType"))))
@@ -946,6 +998,9 @@
                       (when (< k (vector-length kids))
                         (walk-node (vector-ref kids k) world)
                         (kid (+ k 1))))))))
+            ;; decode any EXT_meshopt_compression bufferViews first,
+            ;; so every accessor read below finds decoded data
+            ($gltf-meshopt! json bin)
             (let* ((roots (json-ref
                            (vector-ref (json-ref json "scenes")
                                        ($or0 (json-ref json "scene")))
