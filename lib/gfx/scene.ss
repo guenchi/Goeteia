@@ -149,7 +149,23 @@
             (immutable chain $sgl-nd-chain)
             ;; (chosen-cell . my-level) | #f: a lod alternative draws
             ;; only while its level is the chosen one
-            (immutable lod $sgl-nd-lod)))
+            (immutable lod $sgl-nd-lod)
+            ;; the matrix cache: cgen is the chain+own generation sum
+            ;; it was built against (-1 = never); a static node
+            ;; composes once, ever.  Instanced nodes cache in staging
+            ;; at cbase (matrix, world center, world radius -- 80
+            ;; bytes); singles cache the boxed model and scale
+            (mutable cgen $sgl-nd-cgen $sgl-nd-cgen!)
+            (mutable cbase $sgl-nd-cbase $sgl-nd-cbase!)
+            (mutable cmodel $sgl-nd-cmodel $sgl-nd-cmodel!)
+            (mutable cscale $sgl-nd-cscale $sgl-nd-cscale!)))
+
+  ;; the generation a node's model matrix depends on: its own
+  ;; transform fields' plus every enclosing group's
+  (define ($sgl-node-gen nd)
+    (fold-left (lambda (g gf) (+ g (vector-ref gf 7)))
+               (vector-ref ($sgl-nd-f nd) 13)
+               ($sgl-nd-chain nd)))
 
   ;; ---- the Env block: frame globals, uploaded once ----
   ;; std140: mat4 at 0, vec3 u_light at 64 with u_ambient packed in
@@ -206,10 +222,17 @@
         (set! gl_FragColor (vec4 c v_color.a)))))
 
   ;; a single-valued slot: a hole gets an effect, a value sets once
-  (define ($sgl-set1! vec idx v ds)
+  ;; gen: the vector's generation slot, bumped when a hole rewrites
+  ;; a transform field -- consumers cache matrices against it.
+  ;; #f for fields (camera, light, colors) no matrix depends on
+  (define ($sgl-set1! vec idx v ds gen)
     (if ($sgl-d? v)
         (let ((th (list-ref ds (cdr v))))
-          (effect (lambda () (vector-set! vec idx ($sgl-fl (th))))))
+          (effect (lambda ()
+                    (vector-set! vec idx ($sgl-fl (th)))
+                    (when gen
+                      (vector-set! vec gen
+                                   (+ 1 (vector-ref vec gen)))))))
         (vector-set! vec idx ($sgl-fl v))))
 
   (define ($sgl-set3! vec idx vals)     ; static triples
@@ -221,9 +244,9 @@
     (for-each
      (lambda (a)
        (case (car a)
-         ((fov) ($sgl-set1! cam 0 (cadr a) ds))
-         ((near) ($sgl-set1! cam 1 (cadr a) ds))
-         ((far) ($sgl-set1! cam 2 (cadr a) ds))
+         ((fov) ($sgl-set1! cam 0 (cadr a) ds #f))
+         ((near) ($sgl-set1! cam 1 (cadr a) ds #f))
+         ((far) ($sgl-set1! cam 2 (cadr a) ds #f))
          ((position) ($sgl-set3! cam 3 (cdr a)))
          ((look-at) ($sgl-set3! cam 6 (cdr a)))
          (else (error 'sgl "unknown camera attribute" (car a)))))
@@ -234,7 +257,7 @@
      (lambda (a)
        (case (car a)
          ((direction) ($sgl-set3! light 0 (cdr a)))
-         ((ambient) ($sgl-set1! light 3 (cadr a) ds))
+         ((ambient) ($sgl-set1! light 3 (cadr a) ds #f))
          (else (error 'sgl "unknown light attribute" (car a)))))
      attrs))
 
@@ -260,8 +283,9 @@
 
   (define ($sgl-mesh attrs ds chain cache lod)
     (let ((gspec #f) (mat 'lit) (tex #f)
+          ;; last slot: the transform generation matrix caches watch
           (f (vector 0.0 0.0 0.0 0.0 0.0 0.0 1.0
-                     0.8 0.8 0.8 1.0 0.0 0.5)))
+                     0.8 0.8 0.8 1.0 0.0 0.5 0)))
       (for-each
        (lambda (a)
          (case (car a)
@@ -269,32 +293,33 @@
            ((texture) (set! mat ($sgl-mat! mat 'tex))
                       (set! tex ($sgl-once (cadr a) ds)))
            ((metallic) (set! mat ($sgl-mat! mat 'pbr))
-                       ($sgl-set1! f 11 (cadr a) ds))
+                       ($sgl-set1! f 11 (cadr a) ds #f))
            ((roughness) (set! mat ($sgl-mat! mat 'pbr))
-                        ($sgl-set1! f 12 (cadr a) ds))
+                        ($sgl-set1! f 12 (cadr a) ds #f))
            ((position) ($sgl-set3! f 0 (cdr a)))
            ((rotation) ($sgl-set3! f 3 (cdr a)))
            ((color) ($sgl-set3! f 7 (cdr a))
                     (unless (null? (cdddr (cdr a)))
                       (vector-set! f 10 ($sgl-fl (car (cdddr (cdr a)))))))
-           ((position-x) ($sgl-set1! f 0 (cadr a) ds))
-           ((position-y) ($sgl-set1! f 1 (cadr a) ds))
-           ((position-z) ($sgl-set1! f 2 (cadr a) ds))
-           ((rotation-x) ($sgl-set1! f 3 (cadr a) ds))
-           ((rotation-y) ($sgl-set1! f 4 (cadr a) ds))
-           ((rotation-z) ($sgl-set1! f 5 (cadr a) ds))
-           ((scale) ($sgl-set1! f 6 (cadr a) ds))
-           ((color-r) ($sgl-set1! f 7 (cadr a) ds))
-           ((color-g) ($sgl-set1! f 8 (cadr a) ds))
-           ((color-b) ($sgl-set1! f 9 (cadr a) ds))
-           ((color-a) ($sgl-set1! f 10 (cadr a) ds))
+           ((position-x) ($sgl-set1! f 0 (cadr a) ds 13))
+           ((position-y) ($sgl-set1! f 1 (cadr a) ds 13))
+           ((position-z) ($sgl-set1! f 2 (cadr a) ds 13))
+           ((rotation-x) ($sgl-set1! f 3 (cadr a) ds 13))
+           ((rotation-y) ($sgl-set1! f 4 (cadr a) ds 13))
+           ((rotation-z) ($sgl-set1! f 5 (cadr a) ds 13))
+           ((scale) ($sgl-set1! f 6 (cadr a) ds 13))
+           ((color-r) ($sgl-set1! f 7 (cadr a) ds #f))
+           ((color-g) ($sgl-set1! f 8 (cadr a) ds #f))
+           ((color-b) ($sgl-set1! f 9 (cadr a) ds #f))
+           ((color-a) ($sgl-set1! f 10 (cadr a) ds #f))
            (else (error 'sgl "unknown mesh attribute" (car a)))))
        attrs)
       (unless gspec (error 'sgl "mesh needs a geometry"))
       (let* ((geo ($sgl-geo! gspec (eq? mat 'tex) ds cache))
              (bounds (vector-ref geo 8)))
         ($make-sgl-node geo f mat tex
-                        (car bounds) (cdr bounds) chain lod))))
+                        (car bounds) (cdr bounds) chain lod
+                        -1 0 #f 1.0))))
 
   ;; build (or find) the shared geometry for a literal spec: equal
   ;; specs with the same layout come back as the SAME vector, so
@@ -328,19 +353,20 @@
   ;; a group's transform fields: px py pz rx ry rz scale, holes
   ;; welcome in the single-valued ones
   (define ($sgl-group-f attrs ds)
-    (let ((f (vector 0.0 0.0 0.0 0.0 0.0 0.0 1.0)))
+    ;; last slot: the transform generation
+    (let ((f (vector 0.0 0.0 0.0 0.0 0.0 0.0 1.0 0)))
       (for-each
        (lambda (a)
          (case (car a)
            ((position) ($sgl-set3! f 0 (cdr a)))
            ((rotation) ($sgl-set3! f 3 (cdr a)))
-           ((position-x) ($sgl-set1! f 0 (cadr a) ds))
-           ((position-y) ($sgl-set1! f 1 (cadr a) ds))
-           ((position-z) ($sgl-set1! f 2 (cadr a) ds))
-           ((rotation-x) ($sgl-set1! f 3 (cadr a) ds))
-           ((rotation-y) ($sgl-set1! f 4 (cadr a) ds))
-           ((rotation-z) ($sgl-set1! f 5 (cadr a) ds))
-           ((scale) ($sgl-set1! f 6 (cadr a) ds))
+           ((position-x) ($sgl-set1! f 0 (cadr a) ds 7))
+           ((position-y) ($sgl-set1! f 1 (cadr a) ds 7))
+           ((position-z) ($sgl-set1! f 2 (cadr a) ds 7))
+           ((rotation-x) ($sgl-set1! f 3 (cadr a) ds 7))
+           ((rotation-y) ($sgl-set1! f 4 (cadr a) ds 7))
+           ((rotation-z) ($sgl-set1! f 5 (cadr a) ds 7))
+           ((scale) ($sgl-set1! f 6 (cadr a) ds 7))
            (else (error 'sgl "unknown group attribute" (car a)))))
        attrs)
       f))
@@ -485,12 +511,17 @@
                              (else (pick (cdr k) acc))))))
           (if (null? (cdr mine))
               (outer (cdr ns) grouped groups (cons (car ns) singles))
-              (outer (cdr ns) (cons g grouped)
-                     (cons (vector g mine (fx-buffer!)
-                                   (fx-alloc! (* (length mine) 80))
-                                   (length mine))
-                           groups)
-                     singles)))))))
+              (begin
+                ;; every grouped node gets its staging cache home
+                (for-each (lambda (nd)
+                            ($sgl-nd-cbase! nd (fx-alloc! 80)))
+                          mine)
+                (outer (cdr ns) (cons g grouped)
+                       (cons (vector g mine (fx-buffer!)
+                                     (fx-alloc! (* (length mine) 80))
+                                     (length mine))
+                             groups)
+                       singles))))))))
 
   ;; ---- a frame: pure arithmetic over the current fields ----
   ;; the TRS matrix any 7-field transform vector describes
@@ -518,11 +549,23 @@
   (define ($sgl-draw-node*! prog vp planes nd)
     (let* ((f ($sgl-nd-f nd))
            (geo ($sgl-nd-geo nd))
-           (model (fold-left (lambda (acc gf) (m4-mul acc ($sgl-trs gf)))
-                             (m4-identity) ($sgl-nd-chain nd)))
-           (model (m4-mul model ($sgl-trs f)))
-           (s (fold-left (lambda (acc gf) (fl* acc (vector-ref gf 6)))
-                         (vector-ref f 6) ($sgl-nd-chain nd))))
+           (gen ($sgl-node-gen nd)))
+      ;; the chain fold and TRS rebuild happen only when a signal
+      ;; moved something -- a static node composes exactly once
+      (unless (and (= gen ($sgl-nd-cgen nd)) ($sgl-nd-cmodel nd))
+        ($sgl-nd-cmodel!
+         nd (m4-mul (fold-left (lambda (acc gf)
+                                 (m4-mul acc ($sgl-trs gf)))
+                               (m4-identity) ($sgl-nd-chain nd))
+                    ($sgl-trs f)))
+        ($sgl-nd-cscale!
+         nd (fold-left (lambda (acc gf) (fl* acc (vector-ref gf 6)))
+                       (vector-ref f 6) ($sgl-nd-chain nd)))
+        ($sgl-nd-cgen! nd gen)))
+    (let ((f ($sgl-nd-f nd))
+          (geo ($sgl-nd-geo nd))
+          (model ($sgl-nd-cmodel nd))
+          (s ($sgl-nd-cscale nd)))
       (when ($sgl-in-frustum-m4? planes model ($sgl-nd-bc nd)
                                  (fl* s ($sgl-nd-br nd)))
         (fx-use! prog ($sgl-geo-vbuf geo))
@@ -654,37 +697,49 @@
               (if (= m 0)
                   (flush! n)
                   (begin
-                    ;; compose into candidate slots n..n+m-1; the
-                    ;; center is the slot's columns recombined in
-                    ;; SIMD (M.c0*bx + M.c1*by + M.c2*bz + M.c3)
+                    ;; refresh each node's cache when its generation
+                    ;; moved (matrix, then the center as the cached
+                    ;; columns recombined in SIMD, then the radius);
+                    ;; a static node did all this exactly once
                     (let comp ((k 0))
                       (when (< k m)
                         (let* ((nd (vector-ref $sgl-chunk k))
                                (f ($sgl-nd-f nd))
                                (bc ($sgl-nd-bc nd))
-                               (slot (+ ibase (* (+ n k) 80))))
-                          ($sgl-model-into! nd slot scratch)
-                          (%f32x4-scale! ctr slot (v3-x bc))
-                          (%f32x4-axpy! ctr ctr (+ slot 16) (v3-y bc))
-                          (%f32x4-axpy! ctr ctr (+ slot 32) (v3-z bc))
-                          (%f32x4-axpy! ctr ctr (+ slot 48) 1.0)
+                               (cb ($sgl-nd-cbase nd))
+                               (gen ($sgl-node-gen nd)))
+                          (unless (= gen ($sgl-nd-cgen nd))
+                            ($sgl-model-into! nd cb scratch)
+                            (%f32x4-scale! ctr cb (v3-x bc))
+                            (%f32x4-axpy! ctr ctr (+ cb 16) (v3-y bc))
+                            (%f32x4-axpy! ctr ctr (+ cb 32) (v3-z bc))
+                            (%f32x4-axpy! ctr ctr (+ cb 48) 1.0)
+                            (%mem-f32-set! (+ cb 64) (%mem-f32-ref ctr))
+                            (%mem-f32-set! (+ cb 68)
+                                           (%mem-f32-ref (+ ctr 4)))
+                            (%mem-f32-set! (+ cb 72)
+                                           (%mem-f32-ref (+ ctr 8)))
+                            (%mem-f32-set!
+                             (+ cb 76)
+                             (fl* (fold-left
+                                   (lambda (acc gf)
+                                     (fl* acc (vector-ref gf 6)))
+                                   (vector-ref f 6)
+                                   ($sgl-nd-chain nd))
+                                  ($sgl-nd-br nd)))
+                            ($sgl-nd-cgen! nd gen))
+                          ;; the cull's SoA reads straight off caches
                           (%mem-f32-set! (+ soa (* k 4))
-                                         (%mem-f32-ref ctr))
+                                         (%mem-f32-ref (+ cb 64)))
                           (%mem-f32-set! (+ (+ soa 16) (* k 4))
-                                         (%mem-f32-ref (+ ctr 4)))
+                                         (%mem-f32-ref (+ cb 68)))
                           (%mem-f32-set! (+ (+ soa 32) (* k 4))
-                                         (%mem-f32-ref (+ ctr 8)))
-                          (%mem-f32-set!
-                           (+ (+ soa 48) (* k 4))
-                           (fl* (fold-left
-                                 (lambda (acc gf)
-                                   (fl* acc (vector-ref gf 6)))
-                                 (vector-ref f 6)
-                                 ($sgl-nd-chain nd))
-                                ($sgl-nd-br nd))))
+                                         (%mem-f32-ref (+ cb 72)))
+                          (%mem-f32-set! (+ (+ soa 48) (* k 4))
+                                         (%mem-f32-ref (+ cb 76))))
                         (comp (+ k 1))))
                     ($sgl-cull4! planes soa ones res m)
-                    ;; pack visible ones down; dst never passes src
+                    ;; visible ones copy cache -> next buffer slot
                     (let pack ((k 0) (n2 n))
                       (if (= k m)
                           (if (pair? ns)
@@ -693,10 +748,9 @@
                           (if (vector-ref $sgl-vis k)
                               (let* ((nd (vector-ref $sgl-chunk k))
                                      (f ($sgl-nd-f nd))
-                                     (src (+ ibase (* (+ n k) 80)))
                                      (dst (+ ibase (* n2 80))))
-                                (unless (= src dst)
-                                  ($sgl-m4s-copy! dst src))
+                                ($sgl-m4s-copy!
+                                 dst ($sgl-nd-cbase nd))
                                 (%mem-f32-set! (+ dst 64)
                                                (vector-ref f 7))
                                 (%mem-f32-set! (+ dst 68)
