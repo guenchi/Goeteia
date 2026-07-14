@@ -24,7 +24,7 @@
           ktx-scheme ktx-etc1s?
           ktx-level-width ktx-level-height
           ktx-transcode! ktx-transcode-bytes
-          ktx-fetch! ktx-upload!)
+          ktx-fetch! ktx-upload! ktx-stream!)
   (import (rnrs) (web js) (gfx gl) (gfx fx))
 
   ;; browser loader: fetch, one bulk copy into staging, parse, k
@@ -42,6 +42,116 @@
                   ab base)
          (k (ktx-parse base len))
          (js-undefined)))))
+
+  ;; ---- streaming: the mip chain arrives smallest-first ----
+  ;; KTX2 stores level data smallest mip at the lowest offset, so a
+  ;; prefix of the file is a usable texture: metadata + codebooks +
+  ;; every level but the biggest.  Three ranged requests -- a 1KB
+  ;; head for the level index, the prefix (everything below level
+  ;; 0's offset), then the rest -- with TEXTURE_BASE_LEVEL walking
+  ;; down as levels land.  cb fires (slot k phase) with phase
+  ;; 'preview when the small mips are up and 'full at the end; a
+  ;; server without Range support answers 200 and the whole thing
+  ;; degrades to one load and a single 'full
+  (define ($ktx-range! url from to k)
+    (js-eval "globalThis.__goeteia_range = globalThis.__goeteia_range || ((url, from, to, cb) => { fetch(url, { headers: { Range: 'bytes=' + from + '-' + to } }).then(r => { const cr = r.headers.get('Content-Range'); const total = cr ? Number(cr.split('/')[1]) : -1; return r.arrayBuffer().then(ab => cb(r.status, total, ab)); }); return 0 })")
+    (js-eval "globalThis.__goeteia_glb = globalThis.__goeteia_glb || ((ab, base) => { new Uint8Array(globalThis.__goeteia_mem.buffer).set(new Uint8Array(ab), base); return 0 })")
+    (js-call (js-get (js-global) "__goeteia_range") (js-undefined)
+             url from to
+             (lambda (status total ab)
+               (k (js->number status) (js->number total) ab)
+               (js-undefined))))
+
+  (define ($ktx-put! ab base)
+    (js-call (js-get (js-global) "__goeteia_glb") (js-undefined)
+             ab base))
+
+  ;; upload levels [from, to) of k into slot, compressed
+  (define ($ktx-upload-range! k slot gfmt fmt tmp from to)
+    (let lvl ((l from))
+      (when (< l to)
+        (ktx-transcode! k l tmp fmt)
+        (gl-compressed-level! slot l gfmt
+                              (ktx-level-width k l)
+                              (ktx-level-height k l)
+                              tmp (ktx-transcode-bytes k l fmt))
+        (lvl (+ l 1)))))
+
+  (define (ktx-stream! url cb)
+    ($ktx-range!
+     url 0 1023
+     (lambda (status total ab)
+       (if (not (= status 206))
+           ;; no ranges: the whole file just arrived
+           (let* ((len (js->number (js-get ab "byteLength")))
+                  (base (fx-alloc! len)))
+             ($ktx-put! ab base)
+             (let* ((k (ktx-parse base len))
+                    (slot (ktx-upload! k)))
+               (cb slot k 'full)))
+           (let* ((base (fx-alloc! total)))
+             ($ktx-put! ab base)
+             (let* ((levels (let ((n ($k-u32 (+ base 40))))
+                              (if (= n 0) 1 n)))
+                    (cut ($k-u64 (+ base 80))))  ; level 0 sits last
+               (if (< levels 2)
+                   ($ktx-range!
+                    url 1024 (- total 1)
+                    (lambda (s2 t2 ab2)
+                      ($ktx-put! ab2 (+ base 1024))
+                      (let* ((k (ktx-parse base total))
+                             (slot (ktx-upload! k)))
+                        (cb slot k 'full))))
+                   ($ktx-range!
+                    url 1024 (- cut 1)
+                    (lambda (s2 t2 ab2)
+                      ($ktx-put! ab2 (+ base 1024))
+                      (let* ((k (ktx-parse base cut))
+                             (fam (gl-compressed-family))
+                             (n (ktx-level-count k)))
+                        (if (= fam 0)
+                            ;; rgba fallback: the smallest usable
+                            ;; level previews, level 0 replaces it
+                            (let* ((bytes (ktx-transcode-bytes
+                                           k 1 'rgba))
+                                   (tmp (fx-alloc! bytes))
+                                   (slot (fx-texture!)))
+                              (ktx-transcode! k 1 tmp 'rgba)
+                              (gl-texture-data!
+                               slot tmp (ktx-level-width k 1)
+                               (ktx-level-height k 1))
+                              (cb slot k 'preview)
+                              ($ktx-range!
+                               url cut (- total 1)
+                               (lambda (s3 t3 ab3)
+                                 ($ktx-put! ab3 (+ base cut))
+                                 (let ((tmp0 (fx-alloc!
+                                              (ktx-transcode-bytes
+                                               k 0 'rgba))))
+                                   (ktx-transcode! k 0 tmp0 'rgba)
+                                   (gl-texture-data!
+                                    slot tmp0 (ktx-level-width k 0)
+                                    (ktx-level-height k 0))
+                                   (cb slot k 'full)))))
+                            (let* ((fmt (if (= fam 2) 'etc1 'bc1))
+                                   (gfmt (if (= fam 2) 0 1))
+                                   (tmp (fx-alloc!
+                                         (ktx-transcode-bytes
+                                          k 0 fmt)))
+                                   (slot (fx-slot!)))
+                              (gl-texture-compressed! slot n)
+                              ($ktx-upload-range! k slot gfmt fmt
+                                                  tmp 1 n)
+                              (gl-texture-base-level! slot 1)
+                              (cb slot k 'preview)
+                              ($ktx-range!
+                               url cut (- total 1)
+                               (lambda (s3 t3 ab3)
+                                 ($ktx-put! ab3 (+ base cut))
+                                 ($ktx-upload-range! k slot gfmt fmt
+                                                     tmp 0 1)
+                                 (gl-texture-base-level! slot 0)
+                                 (cb slot k 'full)))))))))))))))
 
   ;; transcode every level for whatever the context speaks and
   ;; upload the chain; returns the texture slot.  Family 2 keeps the

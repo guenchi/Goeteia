@@ -33,19 +33,18 @@
 
 (define (now) (js->number (js-eval "Date.now()")))
 
-(ktx-fetch!
+(define t0 (now))
+(ktx-stream!
  "assets/pattern.ktx2"
- (lambda (k)
-   (let* ((t0 (now))
-          (slot (ktx-upload! k))
-          (ms (- (now) t0))
-          (fam (gl-compressed-family)))
-     (set! tex slot)
-     (js-set! (js-get (js-global) "document") "title"
-              (string-append
-               "ktx: "
-               (case fam ((2) "ETC1") ((1) "BC1") (else "RGBA"))
-               " in " (number->string ms) "ms")))))
+ (lambda (slot k phase)
+   (set! tex slot)
+   (js-set! (js-get (js-global) "document") "title"
+            (string-append
+             "ktx "
+             (case (gl-compressed-family)
+               ((2) "ETC1") ((1) "BC1") (else "RGBA"))
+             " " (symbol->string phase)
+             " at " (number->string (- (now) t0)) "ms"))))
 
 (define (draw! obj model)
   (fx-use! p (vector-ref obj 0))

@@ -47,7 +47,7 @@
           cmd-bind-texture-array!
           gl-gpu-timer! gl-gpu-ms
           gl-compressed-family gl-texture-compressed!
-          gl-compressed-level!
+          gl-compressed-level! gl-texture-base-level!
           cmd-depth!
           gl-vao! cmd-bind-vao! cmd-unbind-vao!
           gl-ubo! gl-uniform-block! cmd-bind-ubo! cmd-ubo-data!
@@ -126,6 +126,9 @@
      "    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);"
      "    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);"
      "    slots[slot] = t; },"
+     "  baseLevel(slot, l) {"
+     "    gl.bindTexture(gl.TEXTURE_2D, slots[slot]);"
+     "    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_BASE_LEVEL, l); },"
      "  compressedLevel(slot, level, fmt, w, h, base, bytes) {"
      "    gl.bindTexture(gl.TEXTURE_2D, slots[slot]);"
      "    const etc1 = gl.getExtension('WEBGL_compressed_texture_etc1');"
@@ -557,6 +560,11 @@
   ;; fmt: 0 = ETC1 RGB, 1 = BC1 RGB
   (define (gl-compressed-level! slot level fmt w h base bytes)
     (js-method $gl "compressedLevel" slot level fmt w h base bytes))
+  ;; the streaming knob: while only levels >= l have arrived, the
+  ;; texture is complete from base level l -- drop it as bigger
+  ;; mips land
+  (define (gl-texture-base-level! slot l)
+    (js-method $gl "baseLevel" slot l))
 
   ;; GPU frame time (webgl2 + EXT_disjoint_timer_query_webgl2): turn
   ;; the timer on once and every replay wraps itself in a TIME_ELAPSED

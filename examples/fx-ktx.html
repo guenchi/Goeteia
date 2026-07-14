@@ -16,8 +16,12 @@
     bitstream specification, no C++ transcoder — reconstructs the
     Huffman codebooks and slices in staging memory and repacks blocks
     for whatever this GPU speaks: ETC1, BC1, or RGBA where neither
-    extension exists.  The tab title reports which family won and the
-    transcode time.  See <code>fx-ktx.ss</code>.</p>
+    extension exists — and it STREAMS: the container stores small mips
+    first, so the crate is textured from a few hundred bytes while
+    level 0 is still in flight, sharpening when it lands
+    (<code>ktx-stream!</code>, three ranged requests).  The tab title
+    reports the family and both arrival times.
+    See <code>fx-ktx.ss</code>.</p>
     <canvas id="c" width="800" height="600"></canvas>
     <script type="module">
       import { loadGoeteia } from '../rt/web.mjs';
