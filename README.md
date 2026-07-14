@@ -266,11 +266,16 @@ buffer, shaders as s-expressions, and everything over them — in
   ADDRESS, `m4s-mul!` chains in pure SIMD with no boxed reads in or
   vector out, `m4s-trs!` composes a whole T·Ry·Rx·Rz·S in closed
   form, and `cmd-uniform-matrix4s!` uploads by carrying the address
-  in three words (the replayer reads the floats in place).  With `m4-perspective` / `m4-ortho` /
+  in three words (the replayer reads the floats in place).  The v3
+  family has destructive spellings (`v3-add!` ... `v3-normalize!`)
+  whose results land in a caller-owned vector, so per-frame loops
+  allocate their vectors once — `(gfx collide)`'s character step and
+  the scene cull run on them.  With `m4-perspective` / `m4-ortho` /
   `m4-look-at` / rotations / `m4-inverse` and its own range-reduced
   trig, so it is pure Scheme all
   the way down and verifies headlessly; `m4-frustum-planes` +
-  `sphere-in-frustum?` (with `mesh-bounds`) cull what the camera
+  `sphere-in-frustum?` (with the unboxed `sphere-in-frustum-xyz?`
+  and `mesh-bounds`) cull what the camera
   cannot see, and `fx-uniform!` feeds a mat4
   straight through the command buffer
   (`examples/fx-cube.html`: an indexed, depth-tested cube, no

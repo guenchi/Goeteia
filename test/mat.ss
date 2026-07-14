@@ -169,4 +169,33 @@
     (m4s-trs! 4288 1.5 -2.0 3.0 -0.4 0.6 1.1 1.7)
     (m4~32 (m4s-read 4288) want)))
 
-(and main-ok simd-ok m4s-ok m4s-trs-ok)
+;; destructive v3 variants: same numbers, dst returns, aliasing works
+(define v3!-ok
+  (let ((d (v3 0.0 0.0 0.0))
+        (a (v3 1.0 2.0 3.0))
+        (b (v3 0.5 -1.0 2.0)))
+    (and (v3~ (v3-add! d a b) 1.5 1.0 5.0)
+         (eq? d (v3-sub! d a b))
+         (v3~ d 0.5 3.0 1.0)
+         (v3~ (v3-scale! d a 2) 2.0 4.0 6.0)
+         (v3~ (v3-cross! d a b) 7.0 -0.5 -2.0)
+         (v3~ (v3-set! d 4 0 3.0) 4.0 0.0 3.0)
+         (v3~ (v3-normalize! d d) 0.8 0.0 0.6)   ; dst aliases a
+         (v3~ (v3-copy! d a) 1.0 2.0 3.0)
+         (begin (v3-add! a a a)                  ; dst aliases both
+                (v3~ a 2.0 4.0 6.0))
+         (v3~ b 0.5 -1.0 2.0))))                 ; operands untouched
+
+;; the scalar frustum test agrees with the boxed one
+(define frustum-xyz-ok
+  (let* ((vp (m4-mul (m4-perspective 0.9 1.0 0.1 50.0)
+                     (m4-look-at (v3 0.0 0.0 10.0) (v3 0.0 0.0 0.0)
+                                 (v3 0.0 1.0 0.0))))
+         (planes (m4-frustum-planes vp)))
+    (and (eq? (sphere-in-frustum? planes (v3 0.0 0.0 0.0) 1.0)
+              (sphere-in-frustum-xyz? planes 0.0 0.0 0.0 1.0))
+         (sphere-in-frustum-xyz? planes 0.0 0.0 0.0 1.0)
+         (not (sphere-in-frustum-xyz? planes 0.0 0.0 100.0 1.0))
+         (not (sphere-in-frustum-xyz? planes 200.0 0.0 0.0 1.0)))))
+
+(and main-ok simd-ok m4s-ok m4s-trs-ok v3!-ok frustum-xyz-ok)

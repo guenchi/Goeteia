@@ -470,9 +470,8 @@
            (model (m4-mul model ($sgl-trs f)))
            (s (fold-left (lambda (acc gf) (fl* acc (vector-ref gf 6)))
                          (vector-ref f 6) ($sgl-nd-chain nd))))
-      (when (sphere-in-frustum? planes
-                                (m4-transform model ($sgl-nd-bc nd))
-                                (fl* s ($sgl-nd-br nd)))
+      (when ($sgl-in-frustum-m4? planes model ($sgl-nd-bc nd)
+                                 (fl* s ($sgl-nd-br nd)))
         (fx-use! prog ($sgl-geo-vbuf geo))
         ($sgl-geo-upload! geo)
         (cmd-bind-index! ($sgl-geo-ibuf geo))
@@ -517,20 +516,37 @@
                   (m4s-mul! dst sg acc)
                   (fold (cdr gs) (+ i 1) dst))))))))
 
-  (define ($sgl-m4s-center at bc)       ; M x bc, read off staging
+  ;; cull tests without a boxed center: the transformed center's
+  ;; coordinates flow straight into sphere-in-frustum-xyz? as scalars
+  (define ($sgl-in-frustum-m4? planes m bc r) ; m: boxed mat4
     (let ((x (v3-x bc)) (y (v3-y bc)) (z (v3-z bc)))
-      (v3 (fl+ (fl+ (fl* (%mem-f32-ref at) x)
-                    (fl* (%mem-f32-ref (+ at 16)) y))
-               (fl+ (fl* (%mem-f32-ref (+ at 32)) z)
-                    (%mem-f32-ref (+ at 48))))
-          (fl+ (fl+ (fl* (%mem-f32-ref (+ at 4)) x)
-                    (fl* (%mem-f32-ref (+ at 20)) y))
-               (fl+ (fl* (%mem-f32-ref (+ at 36)) z)
-                    (%mem-f32-ref (+ at 52))))
-          (fl+ (fl+ (fl* (%mem-f32-ref (+ at 8)) x)
-                    (fl* (%mem-f32-ref (+ at 24)) y))
-               (fl+ (fl* (%mem-f32-ref (+ at 40)) z)
-                    (%mem-f32-ref (+ at 56)))))))
+      (sphere-in-frustum-xyz?
+       planes
+       (fl+ (fl+ (fl* (vector-ref m 0) x) (fl* (vector-ref m 4) y))
+            (fl+ (fl* (vector-ref m 8) z) (vector-ref m 12)))
+       (fl+ (fl+ (fl* (vector-ref m 1) x) (fl* (vector-ref m 5) y))
+            (fl+ (fl* (vector-ref m 9) z) (vector-ref m 13)))
+       (fl+ (fl+ (fl* (vector-ref m 2) x) (fl* (vector-ref m 6) y))
+            (fl+ (fl* (vector-ref m 10) z) (vector-ref m 14)))
+       r)))
+
+  (define ($sgl-in-frustum-m4s? planes at bc r) ; at: staged mat4
+    (let ((x (v3-x bc)) (y (v3-y bc)) (z (v3-z bc)))
+      (sphere-in-frustum-xyz?
+       planes
+       (fl+ (fl+ (fl* (%mem-f32-ref at) x)
+                 (fl* (%mem-f32-ref (+ at 16)) y))
+            (fl+ (fl* (%mem-f32-ref (+ at 32)) z)
+                 (%mem-f32-ref (+ at 48))))
+       (fl+ (fl+ (fl* (%mem-f32-ref (+ at 4)) x)
+                 (fl* (%mem-f32-ref (+ at 20)) y))
+            (fl+ (fl* (%mem-f32-ref (+ at 36)) z)
+                 (%mem-f32-ref (+ at 52))))
+       (fl+ (fl+ (fl* (%mem-f32-ref (+ at 8)) x)
+                 (fl* (%mem-f32-ref (+ at 24)) y))
+            (fl+ (fl* (%mem-f32-ref (+ at 40)) z)
+                 (%mem-f32-ref (+ at 56))))
+       r)))
 
   ;; one group: compose every visible instance into the buffer, one
   ;; upload, one instanced draw
@@ -546,9 +562,8 @@
                    (f ($sgl-nd-f nd))
                    (slot (+ ibase (* n 80))))
               ($sgl-model-into! nd slot scratch)
-              (if (sphere-in-frustum?
-                   planes
-                   ($sgl-m4s-center slot ($sgl-nd-bc nd))
+              (if ($sgl-in-frustum-m4s?
+                   planes slot ($sgl-nd-bc nd)
                    (fl* (fold-left (lambda (acc gf)
                                      (fl* acc (vector-ref gf 6)))
                                    (vector-ref f 6)
