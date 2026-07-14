@@ -20,6 +20,10 @@
         ;; the next stream line is line (caddr form) of (cadr form)
         (loop acc locs (cadr form)
               (- (+ $reader-line 1) (caddr form))))
+       ((and (pair? form) (eq? (car form) '%opt))
+        ;; (%opt 0) -- script mode: the optimization passes stand down
+        (set! *opt-level* (cadr form))
+        (loop acc locs file offset))
        (else
         (loop (cons form acc)
               (cons (string-append

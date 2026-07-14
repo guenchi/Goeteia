@@ -341,7 +341,8 @@
                     (xinits (map-in-order (lambda (b) (xpand (cadr b)))
                                           bs))
                     (xbody (xpand* (cdddr e))))
-               (if (loop-ok? name (length params) params xbody)
+               (if (and (> *opt-level* 0)
+                        (loop-ok? name (length params) params xbody))
                    `(%loop ,name ,params ,xinits . ,xbody)
                    `((let ((,name (begin)))
                        (set! ,name (lambda ,params . ,xbody))
@@ -1091,6 +1092,13 @@
 
 ;;;; ------------------------------------------------------------------
 ;;;; program state (one program per compiler run)
+
+;; 0 is script mode: the optimization passes that trade compile time
+;; for output speed -- inlining, flonum function specialization,
+;; named-let loop lowering -- switch off, for callers who compile on
+;; every keystroke.  The drivers set it from a (%opt 0) stream
+;; directive or a --script flag; the default is everything on.
+(define *opt-level* 2)
 
 (define *fns* '())        ; name -> (index n-fixed variadic?)
 (define *fn-specs* '())   ; name -> boolean list: which params are f64
@@ -3465,7 +3473,9 @@
                      (filter (lambda (f)
                                (not (and (pair? f) (symbol? (car f))
                                          (eq? (unmark (car f)) 'export))))
-                             (inline-forms expanded)))
+                             (if (> *opt-level* 0)
+                                 (inline-forms expanded)
+                                 expanded)))
                  export-names))
          (fn-defs (filter fn-define? forms))
          (var-defs (filter var-define? forms))
@@ -3501,7 +3511,9 @@
         (number (cdr ds) (+ g 1))))
     (set! *next-global* (+ G-FIRST-VAR (length var-defs)))
     ;; which top-level functions take f64 parameters
-    (compute-fn-specs! fn-defs main-steps)
+    (if (> *opt-level* 0)
+        (compute-fn-specs! fn-defs main-steps)
+        (set! *fn-specs* '()))
     ;; type table
     (let* ((plain-arities (sort-by self-id (fold-left
                                    (lambda (acc d)

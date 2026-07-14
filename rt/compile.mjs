@@ -172,14 +172,18 @@ async function runCompiler(input, compilerWasm) {
 // Compile a source file to wasm bytes.  Resolves (import ...) forms
 // against the source directory, its lib/, and the bundled lib/, then
 // prepends the prelude and feeds the whole stream to the compiler.
-export async function compileToBytes(sourceFile, { compilerWasm = defaultCompiler } = {}) {
+// script: true compiles at -O0 -- the optimization passes stand
+// down, for callers who compile on every keystroke.
+export async function compileToBytes(sourceFile,
+    { compilerWasm = defaultCompiler, script = false } = {}) {
     const inDir = path.dirname(path.resolve(sourceFile));
     const dirs = [inDir, path.join(inDir, 'lib'), path.join(here, '../lib')];
     const preludePath = path.join(here, '../src/prelude.ss');
     const prelude = fs.readFileSync(preludePath, 'latin1');
     const source = resolveImports(fs.readFileSync(sourceFile, 'latin1'),
                                   dirs, new Set(), sourceFile);
-    const input = Buffer.from(locMark(preludePath, 1) + prelude
+    const input = Buffer.from((script ? '(%opt 0)\n' : '')
+                              + locMark(preludePath, 1) + prelude
                               + '\n' + source, 'latin1');
     return runCompiler(input, compilerWasm);
 }
@@ -188,14 +192,15 @@ export async function compileToBytes(sourceFile, { compilerWasm = defaultCompile
 // resolve against baseDir, its lib/, and the bundled lib/.
 export async function compileSource(text,
     { baseDir = process.cwd(), compilerWasm = defaultCompiler,
-      name = 'repl' } = {}) {
+      name = 'repl', script = false } = {}) {
     const dirs = [baseDir, path.join(baseDir, 'lib'), path.join(here, '../lib')];
     const preludePath = path.join(here, '../src/prelude.ss');
     const prelude = fs.readFileSync(preludePath, 'latin1');
     // utf-8 text to one-byte-per-char, matching the byte reader
     const raw = Buffer.from(text, 'utf8').toString('latin1');
     const source = resolveImports(raw, dirs, new Set(), name);
-    const input = Buffer.from(locMark(preludePath, 1) + prelude
+    const input = Buffer.from((script ? '(%opt 0)\n' : '')
+                              + locMark(preludePath, 1) + prelude
                               + '\n' + source, 'latin1');
     return runCompiler(input, compilerWasm);
 }
@@ -206,18 +211,22 @@ export async function compileFile(sourceFile, outFile, opts = {}) {
 }
 
 async function main() {
-    const args = process.argv.slice(2);
+    const argv = process.argv.slice(2);
+    // --script / -O0: compile without the optimization passes
+    const script = argv.some(a => a === '--script' || a === '-O0');
+    const args = argv.filter(a => a !== '--script' && a !== '-O0');
     // legacy form: compile.mjs <compiler.wasm> <input.ss> <output.wasm>
     // new form:    compile.mjs <input.ss> <output.wasm>  (bundled compiler)
     let compilerWasm, sourceFile, outFile;
     if (args.length >= 3) [compilerWasm, sourceFile, outFile] = args;
     else [sourceFile, outFile] = args;
     if (!sourceFile || !outFile) {
-        console.error('usage: node compile.mjs [<compiler.wasm>] <input.ss> <output.wasm>');
+        console.error('usage: node compile.mjs [--script] [<compiler.wasm>] <input.ss> <output.wasm>');
         process.exit(1);
     }
     try {
-        await compileFile(sourceFile, outFile, compilerWasm ? { compilerWasm } : {});
+        await compileFile(sourceFile, outFile,
+                          { ...(compilerWasm ? { compilerWasm } : {}), script });
     } catch (e) {
         if (e.output) process.stderr.write(e.output);
         console.error(`\n${e.message}`);
