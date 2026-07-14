@@ -94,8 +94,7 @@ The UI, text and network stack over the JS bridge, in `lib/web/`:
   text can be set in canvas/GL scenes, where there is no layout
   engine at all.  Hard breaks, space wraps, CJK breaks with kinsoku
   (closing punctuation never starts a line, opening brackets never
-  end one), code-point splits for over-wide words; `(web typeset
-  canvas)` is the
+  end one), code-point splits for over-wide words; `(web canvas)` is the
   measureText-backed measurer for browsers, and the engine itself
   verifies headlessly (`examples/fx-labels.html`: labels typeset
   here, rasterized once, distance-fielded by `(gfx sdf)` and drawn

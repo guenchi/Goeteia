@@ -10,7 +10,7 @@
 ;; not pixels.
 (import (rnrs) (web js) (web dom) (gfx gl) (gfx glsl) (gfx fx)
         (gfx mat) (gfx mesh) (gfx sdf) (web typeset)
-        (web typeset canvas))
+        (web canvas))
 
 (fx-init! (get-element-by-id "c"))
 
