@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <title>Goeteia — compressed textures, our own transcoder</title>
+    <style>
+      body { font-family: system-ui; text-align: center; margin-top: 2em; background: #f2f4fa; color: #14203a; }
+      canvas { border-radius: 12px; box-shadow: 0 4px 20px rgba(16,20,42,.2); }
+      code { font-family: ui-monospace, Menlo, monospace; color: #1550c4; }
+    </style>
+  </head>
+  <body>
+    <h1>Basis Universal, decoded in Scheme</h1>
+    <p>The crate's texture is a 17KB <code>.ktx2</code> (Basis ETC1S,
+    five mips).  <code>(gfx ktx)</code> — written from the Khronos
+    bitstream specification, no C++ transcoder — reconstructs the
+    Huffman codebooks and slices in staging memory and repacks blocks
+    for whatever this GPU speaks: ETC1, BC1, or RGBA where neither
+    extension exists.  The tab title reports which family won and the
+    transcode time.  See <code>fx-ktx.ss</code>.</p>
+    <canvas id="c" width="800" height="600"></canvas>
+    <script type="module">
+      import { loadGoeteia } from '../rt/web.mjs';
+      loadGoeteia('fx-ktx.wasm');
+    </script>
+  </body>
+</html>
