@@ -26,7 +26,7 @@
 ;; Copyright (c) 2026 guenchi. MIT license; see LICENSE.
 (library (gfx mesh)
   (export mesh? mesh-verts mesh-indices mesh-uvs
-          mesh-optimize! mesh-acmr
+          mesh-optimize! mesh-remap! mesh-acmr
           mesh-vert-count mesh-index-count
           mesh-vertex-bytes mesh-index-bytes mesh-index-u32? mesh-write!
           mesh-vertex-bytes-f16 mesh-write-f16!
@@ -504,6 +504,59 @@
       (let put ((i 0))
         (when (< i (vector-length ix))
           (vector-set! ix i (vector-ref out i))
+          (put (+ i 1))))
+      ;; then remap the vertices to first-use order, so the vertex
+      ;; buffer is fetched front to back and the pre-transform cache
+      ;; (a straight prefetch stream) never jumps backward -- the
+      ;; second half of the classic optimization
+      (mesh-remap! m)
+      m))
+
+  ;; reorder the vertex arrays so vertices appear in the order the
+  ;; (already cache-optimized) indices first reference them; every
+  ;; per-vertex stream moves together and the indices renumber
+  (define (mesh-remap! m)
+    (let* ((vs (mesh-verts m))
+           (uvs (mesh-uvs m))
+           (ix (mesh-indices m))
+           (nv (mesh-vert-count m))
+           (n (vector-length ix))
+           (newidx (make-vector nv -1))    ; old vertex -> new slot
+           (nvs (make-vector (vector-length vs) 0.0))
+           (nuvs (and uvs (make-vector (vector-length uvs) 0.0))))
+      (let scan ((i 0) (next 0))
+        (if (= i n)
+            #f
+            (let ((v (vector-ref ix i)))
+              (if (>= (vector-ref newidx v) 0)
+                  (scan (+ i 1) next)
+                  (begin
+                    (vector-set! newidx v next)
+                    ;; copy the six interleaved floats
+                    (let cp ((k 0))
+                      (when (< k 6)
+                        (vector-set! nvs (+ (* next 6) k)
+                                     (vector-ref vs (+ (* v 6) k)))
+                        (cp (+ k 1))))
+                    (when nuvs
+                      (vector-set! nuvs (* next 2)
+                                   (vector-ref uvs (* v 2)))
+                      (vector-set! nuvs (+ (* next 2) 1)
+                                   (vector-ref uvs (+ (* v 2) 1))))
+                    (scan (+ i 1) (+ next 1)))))))
+      ;; the arrays are records' immutable fields, so write in place
+      (let put ((i 0))
+        (when (< i (vector-length vs))
+          (vector-set! vs i (vector-ref nvs i))
+          (put (+ i 1))))
+      (when uvs
+        (let put ((i 0))
+          (when (< i (vector-length uvs))
+            (vector-set! uvs i (vector-ref nuvs i))
+            (put (+ i 1)))))
+      (let put ((i 0))
+        (when (< i n)
+          (vector-set! ix i (vector-ref newidx (vector-ref ix i)))
           (put (+ i 1))))
       m))
 
