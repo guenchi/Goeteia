@@ -553,6 +553,19 @@
 (define (add-macro! f)
   (set! *macros* (cons (cons (unmark (cadr f)) (make-transformer (caddr f)))
                        *macros*)))
+;; register every define-syntax reachable at the top level -- directly,
+;; or spliced through a (begin ...) or a (library ...) body -- so a
+;; macro is live before any sibling form (including its own library
+;; body) is expanded
+(define (collect-macros! f)
+  (cond
+   ((macro-def? f) (add-macro! f))
+   ((and (pair? f) (symbol? (car f)))
+    (case (unmark (car f))
+      ((begin) (for-each collect-macros! (cdr f)))
+      ((library) (for-each collect-macros! (cdr (cdddr f))))
+      (else #f)))
+   (else #f)))
 (define (apply-macro tf form)
   ;; each application gets a fresh rename table; that is what keeps
   ;; separate expansions of the same macro hygienic
@@ -3428,8 +3441,10 @@
   (set! *macros* '())
   (set! *form-locs* '())
   ;; collect explicit macro definitions first so they can be used
-  ;; before their definition
-  (for-each (lambda (f) (when (macro-def? f) (add-macro! f))) forms)
+  ;; before their definition -- descend into libraries and begins,
+  ;; since a library splices globally and a macro it defines must be
+  ;; live before its own body is expanded (382's eager xpand*)
+  (for-each collect-macros! forms)
   (let* ((expanded (expand-forms forms locs))
          ;; top-level (export name ...): keep through DCE, expose as
          ;; wasm exports so the host can call them
