@@ -52,6 +52,8 @@
 (library (gfx gpu)
   (export gpu-attach! gpu-pipeline! gpu-pipeline2!
           gpu-buffer! gpu-index! gpu-uniforms! gpu-storage!
+          gpu-indirect! gpu-compute-group*!
+          gpu-draw-indexed-indirect! gpu-draw-indirect!
           gpu-texture! gpu-texture-data! gpu-sampler!
           gpu-bindgroup! gpu-texgroup!
           gpu-compute! gpu-compute-group!
@@ -122,14 +124,15 @@
      "                      depthWriteEnabled: true,"
      "                      depthCompare: 'less' },"
      "      primitive: { topology: 'triangle-list' } }); },"
-     "  buffer(slot, bytes, kind) {"  ; 0 vtx, 1 idx, 2 uniform, 3 storage
-     "    const GB = globalThis.GPUBufferUsage"
+     "  buffer(slot, bytes, kind) {"  ; 0 vtx, 1 idx, 2 uniform,
+     "    const GB = globalThis.GPUBufferUsage" ; 3 storage, 4 indirect
      "             || { VERTEX: 32, INDEX: 16, UNIFORM: 64,"
-     "                  STORAGE: 128, COPY_DST: 8 };"
+     "                  STORAGE: 128, COPY_DST: 8, INDIRECT: 256 };"
      "    slots[slot] = st.dev.createBuffer({"
      "      size: bytes,"
      "      usage: (kind === 1 ? GB.INDEX : kind === 2 ? GB.UNIFORM"
      "              : kind === 3 ? (GB.VERTEX | GB.STORAGE)"
+     "              : kind === 4 ? (GB.INDIRECT | GB.STORAGE)"
      "              : GB.VERTEX) | GB.COPY_DST }); },"
      "  bindgroup(slot, pslot, ubslot) {"
      "    slots[slot] = st.dev.createBindGroup({"
@@ -204,6 +207,12 @@
      "                  resource: { buffer: slots[sslot] } },"
      "                { binding: 1,"
      "                  resource: { buffer: slots[uslot] } }] }); },"
+     "  computeGroupN(slot, pslot, list) {"
+     "    slots[slot] = st.dev.createBindGroup({"
+     "      layout: slots[pslot].getBindGroupLayout(0),"
+     "      entries: String(list).split(',').map((s, i) =>"
+     "        ({ binding: i,"
+     "           resource: { buffer: slots[Number(s)] } })) }); },"
      "  replay(count) {"
      "    const dv = new DataView(memory.buffer);"
      "    let p = 0;"
@@ -253,6 +262,11 @@
      "                 break;"
      "        case 12: open(); pass.executeBundles([slots[u()]]);"
      "                 break;"
+     "        case 13: ready(); pass.setIndexBuffer(ibuf, 'uint16');"
+     "                 { const b = slots[u()];"
+     "                   pass.drawIndexedIndirect(b, u()); } break;"
+     "        case 14: ready(); { const b = slots[u()];"
+     "                   pass.drawIndirect(b, u()); } break;"
      "      }"
      "    }"
      "    open();"                       ; a clear-only frame still clears
@@ -295,6 +309,15 @@
   ;; writes it, the render pass reads it back as attributes
   (define (gpu-storage! slot bytes)
     (js-method $gpu "buffer" slot bytes 3))
+  ;; an indirect-argument buffer: compute writes the draw call's own
+  ;; arguments (it is also storage), the render pass draws from it
+  (define (gpu-indirect! slot bytes)
+    (js-method $gpu "buffer" slot bytes 4))
+  ;; a compute bind group over any buffer list: "3,5,6,4" binds
+  ;; slots 3,5,6,4 at bindings 0..3 (storage or uniform alike --
+  ;; the auto layout reads the WGSL)
+  (define (gpu-compute-group*! slot pslot buffers)
+    (js-method $gpu "computeGroupN" slot pslot buffers))
   ;; an rgba8 texture, filled straight from staging bytes
   (define (gpu-texture! slot w h)
     (js-method $gpu "texture" slot w h))
@@ -335,6 +358,13 @@
   (define (gpu-bind-vbuf2! slot) ($gpu-u! 10) ($gpu-u! slot))
   (define (gpu-draw-instanced! verts insts)
     ($gpu-u! 11) ($gpu-u! verts) ($gpu-u! insts))
+  ;; the GPU-driven draw: the argument buffer (gpu-indirect!) holds
+  ;; [indexCount instanceCount firstIndex baseVertex firstInstance],
+  ;; written by a compute pass -- a cull that never touches the CPU
+  (define (gpu-draw-indexed-indirect! slot offset)
+    ($gpu-u! 13) ($gpu-u! slot) ($gpu-u! offset))
+  (define (gpu-draw-indirect! slot offset)
+    ($gpu-u! 14) ($gpu-u! slot) ($gpu-u! offset))
 
   ;; freeze the commands encoded since gpu-begin! into a render
   ;; bundle -- draws and their state only.  Recorded once, a whole
