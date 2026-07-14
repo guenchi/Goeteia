@@ -6,7 +6,7 @@
 (import (rnrs) (web js) (gfx gl) (gfx glsl) (gfx fx) (gfx mat)
         (gfx mesh) (web reactive) (gfx scene))
 
-(js-eval "globalThis.__gllog = []; globalThis.__mockcanvas = { width:640, height:480, addEventListener(k,f){}, getContext(kind) { const log = globalThis.__gllog; const push = (...a) => log.push(a.join(':')); return { VERTEX_SHADER:'VS', FRAGMENT_SHADER:'FS', COMPILE_STATUS:'CS', LINK_STATUS:'LS', COLOR_BUFFER_BIT:16384, DEPTH_BUFFER_BIT:256, ARRAY_BUFFER:'AB', DYNAMIC_DRAW:'DD', FLOAT:'F', POINTS:'PTS', LINES:'LNS', TRIANGLES:'TRI', TRIANGLE_STRIP:'STRIP', DEPTH_TEST:'DT', ELEMENT_ARRAY_BUFFER:'EAB', UNSIGNED_SHORT:'US', BLEND:'BL', SRC_ALPHA:'SA', ONE:'ONE', ONE_MINUS_SRC_ALPHA:'OMSA', createShader(k){ return {kind:k} }, shaderSource(s,src){}, compileShader(s){}, getShaderParameter(){ return true }, createProgram(){ return {id:'P'+(this._p=(this._p||0)+1)} }, attachShader(p,s){}, linkProgram(p){}, getProgramParameter(){ return true }, bindAttribLocation(p,i,n){ push('bindAttrib', i, n) }, createVertexArray(){ return {id:'V'+(this._v=(this._v||0)+1)} }, bindVertexArray(){}, createBuffer(){ return {id:'B'+(this._b=(this._b||0)+1)} }, getUniformLocation(p,n){ return {id:'U:'+n} }, enable(c){ push('gEnable', c) }, disable(c){ push('gDisable', c) }, blendFunc(a,b){ push('blendFunc', a, b) }, clearColor(...a){ push('clearColor', ...a.map(x=>x.toFixed(2))) }, clear(bits){ push('clear', bits) }, useProgram(p){ push('useProgram', p.id) }, bindBuffer(t,b){ push(t==='EAB'?'bindIndex':'bindBuffer', b.id) }, bufferData(t,arr,u){ push('bufferData', arr.length) }, enableVertexAttribArray(l){ push('enable', l) }, vertexAttribPointer(...a){ push('attrib', a.join(',')) }, uniform1f(loc,x){ push('uniform1f', loc.id, x.toFixed(2)) }, uniform2f(loc,x,y){ push('uniform2f', loc.id, x.toFixed(2), y.toFixed(2)) }, uniform3f(loc,x,y,z){ push('uniform3f', loc.id, x.toFixed(2), y.toFixed(2), z.toFixed(2)) }, uniform4f(loc,...a){ push('uniform4f', loc.id, a.map(x=>x.toFixed(1)).join(',')) }, uniformMatrix4fv(loc,tr,arr){ push('uniformMat4', loc.id, arr.length, arr[0].toFixed(2), arr[12].toFixed(2)) }, uniform1i(loc,v){ push('uniform1i', loc.id, v) }, activeTexture(u){ push('activeTexture', u) }, bindTexture(t,tex){ push('bindTexture', tex ? tex.id : 'null') }, createTexture(){ return {id:'T'+(this._t=(this._t||0)+1)} }, texParameteri(){}, TEXTURE0:33984, TEXTURE_2D:'T2D', TEXTURE_CUBE_MAP:'TCM', drawArrays(m,f,c){ push('draw', m, f, c) }, drawElements(m,c,t,o){ push('drawElements', m, c, t) }, vertexAttribDivisor(l,d){ if (d > 0) push('divisor', l, d) }, drawElementsInstanced(m,c,t,o,n){ push('drawInst', m, c, n) }, viewport(...a){ push('viewport', a.join(',')) } } } }")
+(js-eval "globalThis.__gllog = []; globalThis.__mockcanvas = { width:640, height:480, addEventListener(k,f){}, getContext(kind) { const log = globalThis.__gllog; const push = (...a) => log.push(a.join(':')); return { VERTEX_SHADER:'VS', FRAGMENT_SHADER:'FS', COMPILE_STATUS:'CS', LINK_STATUS:'LS', COLOR_BUFFER_BIT:16384, DEPTH_BUFFER_BIT:256, ARRAY_BUFFER:'AB', DYNAMIC_DRAW:'DD', FLOAT:'F', POINTS:'PTS', LINES:'LNS', TRIANGLES:'TRI', TRIANGLE_STRIP:'STRIP', DEPTH_TEST:'DT', ELEMENT_ARRAY_BUFFER:'EAB', UNSIGNED_SHORT:'US', BLEND:'BL', SRC_ALPHA:'SA', ONE:'ONE', ONE_MINUS_SRC_ALPHA:'OMSA', createShader(k){ return {kind:k} }, shaderSource(s,src){}, compileShader(s){}, getShaderParameter(){ return true }, createProgram(){ return {id:'P'+(this._p=(this._p||0)+1)} }, attachShader(p,s){}, linkProgram(p){}, getProgramParameter(){ return true }, bindAttribLocation(p,i,n){ push('bindAttrib', i, n) }, createVertexArray(){ return {id:'V'+(this._v=(this._v||0)+1)} }, bindVertexArray(){}, createBuffer(){ return {id:'B'+(this._b=(this._b||0)+1)} }, getUniformLocation(p,n){ return {id:'U:'+n} }, UNIFORM_BUFFER:'UBUF', getUniformBlockIndex(pr,n){ return 'I:' + n }, uniformBlockBinding(pr,i,b){ push('ubb', pr.id, i, b) }, bindBufferBase(t,b,buf){ push('bbb', t, b, buf ? buf.id : 'null') }, bufferSubData(t,o,arr){ push('subData', t, arr.length) }, enable(c){ push('gEnable', c) }, disable(c){ push('gDisable', c) }, blendFunc(a,b){ push('blendFunc', a, b) }, clearColor(...a){ push('clearColor', ...a.map(x=>x.toFixed(2))) }, clear(bits){ push('clear', bits) }, useProgram(p){ push('useProgram', p.id) }, bindBuffer(t,b){ push(t==='EAB'?'bindIndex':'bindBuffer', b.id) }, bufferData(t,arr,u){ push('bufferData', typeof arr === 'number' ? 'size' + arr : arr.length) }, enableVertexAttribArray(l){ push('enable', l) }, vertexAttribPointer(...a){ push('attrib', a.join(',')) }, uniform1f(loc,x){ push('uniform1f', loc.id, x.toFixed(2)) }, uniform2f(loc,x,y){ push('uniform2f', loc.id, x.toFixed(2), y.toFixed(2)) }, uniform3f(loc,x,y,z){ push('uniform3f', loc.id, x.toFixed(2), y.toFixed(2), z.toFixed(2)) }, uniform4f(loc,...a){ push('uniform4f', loc.id, a.map(x=>x.toFixed(1)).join(',')) }, uniformMatrix4fv(loc,tr,arr){ push('uniformMat4', loc.id, arr.length, arr[0].toFixed(2), arr[12].toFixed(2)) }, uniform1i(loc,v){ push('uniform1i', loc.id, v) }, activeTexture(u){ push('activeTexture', u) }, bindTexture(t,tex){ push('bindTexture', tex ? tex.id : 'null') }, createTexture(){ return {id:'T'+(this._t=(this._t||0)+1)} }, texParameteri(){}, TEXTURE0:33984, TEXTURE_2D:'T2D', TEXTURE_CUBE_MAP:'TCM', drawArrays(m,f,c){ push('draw', m, f, c) }, drawElements(m,c,t,o){ push('drawElements', m, c, t) }, vertexAttribDivisor(l,d){ if (d > 0) push('divisor', l, d) }, drawElementsInstanced(m,c,t,o,n){ push('drawInst', m, c, n) }, viewport(...a){ push('viewport', a.join(',')) } } } }")
 
 (define gllog (js-get (js-global) "__gllog"))
 (define (log-len) (js->number (js-get gllog "length")))
@@ -50,10 +50,18 @@
 (cmd-flush!)
 (define frame1-ok
   (and (sgl-scene? sc)
-       (check-from base-1 '("gEnable:DT" "useProgram:P1"
-                            "uniform3f:U:u_light:0.00:1.00:0.00"
-                            "uniform1f:U:u_ambient:0.25"))
-       (= (count-log "bufferData") 4)   ; box + sphere, verts + indices
+       ;; the frame opens with the Env block: 96 std140 bytes of
+       ;; vp + light + ambient + eye subData'd, bound to binding 0
+       (check-from base-1 '("gEnable:DT"
+                            "bindBuffer:B5" "subData:UBUF:96"
+                            "bbb:UBUF:0:B5"
+                            "useProgram:P1"))
+       (= (count-log "ubb:P1:I:Env:0") 1)   ; wired at build
+       (= (count-log "bufferData:size96") 1); the ubo's one allocation
+       (= (count-log "uniform3f:U:u_light") 0)  ; no classic sends
+       (= (count-log "uniform1f:U:u_ambient") 0)
+       (= (count-log "bufferData") 5)   ; box + sphere, verts +
+                                        ; indices, + the ubo itself
        (= (count-log "bufferData:144") 1)
        (= (count-log "bufferData:36") 1)
        (= (count-log "bufferData:270") 1)
@@ -72,7 +80,7 @@
 (sgl-draw! sc)
 (cmd-flush!)
 (define frame2-ok
-  (and (= (count-log "bufferData") 4)   ; still the first frame's four
+  (and (= (count-log "bufferData") 5)   ; still the first frame's five
        (= (count-log "uniformMat4:U:u_model:16:1.00:2.00") 1)
        (= (count-log "drawElements:TRI:36:US") 2)))
 
@@ -118,7 +126,8 @@
        (= (count-log "uniform1i:U:u_sky:0") 1)
        (= (count-log "uniform1i:U:u_lut:1") 1)
        (= (count-log "uniform1f:U:u_mips:5.00") 1)
-       (= (count-log "uniform3f:U:u_eye:0.00:0.00:6.00") 1)
+       ;; the eye rides the Env block now, not a classic uniform
+       (= (count-log "uniform3f:U:u_eye") 0)
        (= (count-log "uniform1f:U:u_metallic:1.00") 1)
        (= (count-log "uniform1f:U:u_roughness:0.30") 1)))
 

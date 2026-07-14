@@ -247,7 +247,10 @@ buffer, shaders as s-expressions, and everything over them — in
   `(texture slot)`, or `(metallic)`/`(roughness)` PBR against the
   scene's `(probe ...)` — and every frame culls each mesh's bounding
   sphere against the camera frustum before a single command is
-  encoded (`examples/fx-scene.html`: all three materials and a
+  encoded.  The frame globals — view-projection, light, ambient,
+  eye — live in one std140 Env block every scene program reads from
+  binding 0: 96 bytes uploaded once per frame, no per-program
+  plumbing (`examples/fx-scene.html`: all three materials and a
   culled straggler, declaratively)
 - `(gfx post)` — the post chains, packaged: `make-bloom` /
   `bloom-run!` / `bloom-composite!` (luminance threshold, ping-ponged
