@@ -1,31 +1,33 @@
-;; KTX2 + Basis Universal ETC1S/BasisLZ, from the specifications --
+;; KTX2 + Basis Universal ETC1S/BasisLZ and UASTC, from the specs --
 ;; no C++ transcoder, no dependency.  A .ktx2 file lands in staging
 ;; memory (fetch or bytes), ktx-parse reads the container, and the
 ;; ETC1S decoder reconstructs the codebooks and slices entirely in
 ;; Scheme; transcoders then repack blocks for whatever the GPU
 ;; speaks: ETC1 (bit-identical repack), BC1, or plain RGBA8 -- the
-;; universal fallback that needs no extension at all.
+;; universal fallback that needs no extension at all.  UASTC blocks
+;; (DFD color model 166), raw or zstd-supercompressed, decode to RGBA
+;; through (gfx zstd) + (gfx uastc); ktx-upload! picks the path.
 ;;
 ;;   (define k (ktx-parse base len))
 ;;   (ktx-width k) (ktx-height k) (ktx-level-count k)
-;;   (ktx-transcode! k level dst 'rgba)   ; | 'etc1 | 'bc1
+;;   (ktx-transcode! k level dst 'rgba)      ; ETC1S | 'etc1 | 'bc1
+;;   (ktx-uastc-level! k level dst)          ; UASTC -> RGBA
 ;;
-;; Verified block-for-block against the reference transcoder's
-;; unpack output (test/ktx.ss carries golden pixels).
+;; Verified block-for-block against the reference transcoder's unpack
+;; output (test/ktx.ss ETC1S, test/ktx-uastc.ss UASTC raw + zstd).
 ;;
-;; What this does NOT do yet: UASTC, the P-frame video codec,
-;; global selector codebooks, and cube/array/3D textures -- ETC1S
-;; (RGB and RGBA: alpha rides its own grayscale slice into the RGBA
-;; target), one 2D image with its mip chain, is the whole of it.
+;; What this does NOT do yet: the P-frame video codec, global selector
+;; codebooks, and cube/array/3D textures -- one 2D image with its mip
+;; chain is the whole of it.
 ;;
 ;; Copyright (c) 2026 guenchi. MIT license; see LICENSE.
 (library (gfx ktx)
   (export ktx-parse ktx? ktx-width ktx-height ktx-level-count
-          ktx-scheme ktx-etc1s?
+          ktx-scheme ktx-etc1s? ktx-uastc?
           ktx-level-width ktx-level-height
-          ktx-transcode! ktx-transcode-bytes
+          ktx-transcode! ktx-transcode-bytes ktx-uastc-level!
           ktx-fetch! ktx-upload! ktx-stream! ktx-alpha?)
-  (import (rnrs) (web js) (gfx gl) (gfx fx))
+  (import (rnrs) (web js) (gfx gl) (gfx fx) (gfx zstd) (gfx uastc))
 
   ;; browser loader: fetch, one bulk copy into staging, parse, k
   (define (ktx-fetch! url k)
@@ -159,6 +161,17 @@
   ;; upload the chain; returns the texture slot.  Family 2 keeps the
   ;; blocks as ETC1, 1 repacks BC1, 0 decodes level 0 to RGBA
   (define (ktx-upload! k)
+    (if (ktx-uastc? k)
+        ;; UASTC decodes to RGBA (level 0) and uploads uncompressed
+        (let* ((w (ktx-level-width k 0)) (h (ktx-level-height k 0))
+               (tmp (fx-alloc! (* w h 4)))
+               (slot (fx-texture!)))
+          (ktx-uastc-level! k 0 tmp)
+          (gl-texture-data! slot tmp w h)
+          slot)
+        (ktx-upload-basis! k)))
+
+  (define (ktx-upload-basis! k)
     (let ((fam (if (ktx-alpha? k) 0 (gl-compressed-family)))
           (n (ktx-level-count k)))
       (if (= fam 0)
@@ -221,6 +234,10 @@
 
   (define (ktx-etc1s? k)
     (and (= (ktx-scheme k) 1) (= ($ktx-dfd-color k) 163)))
+
+  ;; UASTC LDR 4x4 (DFD color model 166), raw or zstd-supercompressed
+  (define (ktx-uastc? k)
+    (= ($ktx-dfd-color k) 166))
 
   (define (ktx-level-width k l)
     (let ((w (ktx-width k)))
@@ -858,4 +875,20 @@
          (+ ($ktx-base k) (vector-ref lv 0) (vector-ref desc 2))
          (vector-ref desc 3)
          nbx nby
-         ($blk-alpha! sgd dst w h))))))
+         ($blk-alpha! sgd dst w h)))))
+
+  ;; decode a UASTC level to RGBA at `dst' (w*h*4 bytes).  A zstd frame
+  ;; (supercompressionScheme 2) is inflated to the raw blocks first.
+  (define (ktx-uastc-level! k l dst)
+    (let* ((lv (vector-ref ($ktx-lindex k) l))
+           (off (+ ($ktx-base k) (vector-ref lv 0)))
+           (clen (vector-ref lv 1))
+           (ulen (vector-ref lv 2))
+           (w (ktx-level-width k l))
+           (h (ktx-level-height k l)))
+      (if (= (ktx-scheme k) 2)
+          (let* ((blocks (fx-alloc! ulen))
+                 (scratch (fx-alloc! (+ ulen 65536))))
+            (zstd-decode! off clen blocks scratch)
+            (uastc-decode! blocks dst w h))
+          (uastc-decode! off dst w h)))))
