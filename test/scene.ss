@@ -209,5 +209,26 @@
 (define chunk-ok
   (= (- (count-log "drawInst:TRI:36:4") chunk-before) 1))
 
+;; ---- the matrix cache invalidates through signals ----
+;; two instanced boxes; a signal drives one's x.  Frame 1 draws
+;; both; the signal then walks it past the far plane and frame 2
+;; draws one -- the cached matrix must follow the signal
+(define slide (signal 0.0))
+(define sc-dirty
+  (sgl (camera (@ (fov 0.9) (position 0.0 0.0 8.0) (look-at 0.0 0.0 0.0)
+                  (near 0.1) (far 50.0)))
+       (light (@ (direction 0.0 1.0 0.0) (ambient 0.25)))
+       (mesh (@ (geometry (box 1 1 1)) (position -1.5 0.0 0.0)))
+       (mesh (@ (geometry (box 1 1 1))
+                (position-x ,(signal-ref slide))))))
+(define dirty2-before (count-log "drawInst:TRI:36:2"))
+(define dirty1-before (count-log "drawInst:TRI:36:1"))
+(cmd-begin!) (sgl-draw! sc-dirty) (cmd-flush!)
+(signal-set! slide 500.0)
+(cmd-begin!) (sgl-draw! sc-dirty) (cmd-flush!)
+(define dirty-ok
+  (and (= (- (count-log "drawInst:TRI:36:2") dirty2-before) 1)
+       (= (- (count-log "drawInst:TRI:36:1") dirty1-before) 1)))
+
 (and frame1-ok frame2-ok mat-ok cull-ok group1-ok group2-ok
-     lod-near-ok lod-far-ok chunk-ok)
+     lod-near-ok lod-far-ok chunk-ok dirty-ok)
