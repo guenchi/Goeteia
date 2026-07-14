@@ -61,7 +61,8 @@
           gpu-clear! gpu-use-pipeline! gpu-bind-vbuf! gpu-bind-vbuf2!
           gpu-bind-ibuf! gpu-set-group! gpu-buffer-data!
           gpu-draw! gpu-draw-indexed! gpu-draw-instanced!
-          gpu-dispatch! gpu-bundle! gpu-execute!)
+          gpu-dispatch! gpu-bundle! gpu-execute!
+          gpu-gpu-timer! gpu-gpu-ms)
   (import (rnrs) (web js))
 
   (define $gpu #f)
@@ -74,7 +75,10 @@
      " return {"
      "  attach(cb) {"
      "    navigator.gpu.requestAdapter()"
-     "      .then(ad => ad.requestDevice())"
+     "      .then(ad => {"
+     "        st.ts = ad.features && ad.features.has('timestamp-query');"
+     "        return ad.requestDevice(st.ts"
+     "          ? { requiredFeatures: ['timestamp-query'] } : {}); })"
      "      .then(dev => {"
      "        st.dev = dev; st.q = dev.queue;"
      "        st.ctx = canvas.getContext('webgpu');"
@@ -213,6 +217,19 @@
      "      entries: String(list).split(',').map((s, i) =>"
      "        ({ binding: i,"
      "           resource: { buffer: slots[Number(s)] } })) }); },"
+     "  gpuTimer() {"
+     "    if (!st.ts) return 0;"
+     "    const GB = globalThis.GPUBufferUsage"
+     "             || { QUERY_RESOLVE: 512, COPY_SRC: 4,"
+     "                  COPY_DST: 8, MAP_READ: 1 };"
+     "    st.tq = st.dev.createQuerySet({ type: 'timestamp', count: 2 });"
+     "    st.tqResolve = st.dev.createBuffer({"
+     "      size: 16, usage: GB.QUERY_RESOLVE | GB.COPY_SRC });"
+     "    st.tqRead = st.dev.createBuffer({"
+     "      size: 16, usage: GB.COPY_DST | GB.MAP_READ });"
+     "    st.tqBusy = false; st.tqMs = -1;"
+     "    return 1; },"
+     "  gpuMs() { return st.tqMs === undefined ? -1 : st.tqMs; },"
      "  replay(count) {"
      "    const dv = new DataView(memory.buffer);"
      "    let p = 0;"
@@ -230,7 +247,11 @@
      "        depthStencilAttachment: {"
      "          view: st.depth.createView(),"
      "          depthClearValue: 1.0,"
-     "          depthLoadOp: 'clear', depthStoreOp: 'store' } }); };"
+     "          depthLoadOp: 'clear', depthStoreOp: 'store' },"
+     "        timestampWrites: st.tq ? {"
+     "          querySet: st.tq,"
+     "          beginningOfPassWriteIndex: 0,"
+     "          endOfPassWriteIndex: 1 } : undefined }); };"
      "    const ready = () => {"
      "      open(); pass.setPipeline(pipeline);"
      "      if (group) pass.setBindGroup(0, group);"
@@ -271,7 +292,30 @@
      "    }"
      "    open();"                       ; a clear-only frame still clears
      "    pass.end();"
-     "    st.q.submit([enc.finish()]); } }; };"))
+     "    if (st.tq && !st.tqBusy) {"
+     "      enc.resolveQuerySet(st.tq, 0, 2, st.tqResolve, 0);"
+     "      enc.copyBufferToBuffer(st.tqResolve, 0, st.tqRead, 0, 16);"
+     "    }"
+     "    st.q.submit([enc.finish()]);"
+     "    if (st.tq && !st.tqBusy) {"
+     "      st.tqBusy = true;"
+     "      st.tqRead.mapAsync(1).then(() => {"     ; GPUMapMode.READ
+     "        const ts = new BigInt64Array(st.tqRead.getMappedRange());"
+     "        st.tqMs = Number(ts[1] - ts[0]) / 1e6;"
+     "        st.tqRead.unmap();"
+     "        st.tqBusy = false; });"
+     "    } } }; };"))
+
+  ;; GPU frame time (needs the timestamp-query feature; ask AFTER
+  ;; attach): the render pass stamps its beginning and end, results
+  ;; resolve and map back a few frames behind.  gpu-gpu-timer!
+  ;; answers #f where the adapter lacks the feature -- hide the
+  ;; readout then; gpu-gpu-ms is -1.0 until the first result
+  (define (gpu-gpu-timer!)
+    (= 1 (js->number (js-method $gpu "gpuTimer"))))
+  (define (gpu-gpu-ms)
+    (let ((v (js->number (js-method $gpu "gpuMs"))))
+      (if (flonum? v) v (exact->inexact v))))
 
   ;; the device handshake is asynchronous: k runs when the canvas is
   ;; configured and resources may be created

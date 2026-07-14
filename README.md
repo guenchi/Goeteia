@@ -368,7 +368,10 @@ buffer, shaders as s-expressions, and everything over them — in
   instance against the frustum, compacts survivors with one
   `atomicAdd` and writes the draw's own argument buffer
   (`gpu-indirect!`), which `gpu-draw-indexed-indirect!` then draws
-  (`examples/gpu-cull.html`: 100,000 boxes the CPU never inspects)
+  (`examples/gpu-cull.html`: 100,000 boxes the CPU never inspects).
+  `gpu-gpu-timer!`/`gpu-gpu-ms` are the backend's frame timer —
+  timestamp queries stamp the render pass when the adapter offers
+  the feature, mirroring `gl-gpu-timer!` on the other side
 - `(gfx xr)` — WebXR over the same command buffer: `xr-start!`
   swaps the pump for the session's rAF, each eye's projection and
   view arrive from the `XRPose` straight into staging memory
