@@ -1224,10 +1224,14 @@
   ;; identifiers resolve like the identifier they renamed
   (let ((slot (assq e locals)))
     (if slot
-        (if (memv (cdr slot) *f64-slots*)
-            ;; an f64 slot referenced generically: box it here
-            (list (local-get (cdr slot)) (struct-new TY-FLONUM))
-            (local-get (cdr slot)))
+        (cond
+         ((memv (cdr slot) *f64-slots*)
+          ;; an f64 slot referenced generically: box it here
+          (list (local-get (cdr slot)) (struct-new TY-FLONUM)))
+         ((memv (- -100000 (cdr slot)) *f64-slots*)
+          ;; an i32 slot: a fixnum by construction, box it
+          (list (local-get (cdr slot)) (wrap-int)))
+         (else (local-get (cdr slot))))
         (let* ((r (unmark e))
                (v (assq r *vars*)))
           (if v
@@ -1416,6 +1420,18 @@
 ;; boxing/unboxing round trip
 (define (compile-test e locals cell)
   (cond
+   ;; fixnum =/< over i32 expressions: compare raw, no boxing
+   ((and (pair? e)
+         (symbol? (car e))
+         (memq (unmark (car e)) '(= <))
+         (not (assq (car e) locals))
+         (not (assq (unmark (car e)) *fns*))
+         (= (length (cdr e)) 2)
+         (i32-expr? (cadr e) locals)
+         (i32-expr? (caddr e) locals))
+    (let* ((a (compile-i32 (cadr e) locals cell))
+           (b (compile-i32 (caddr e) locals cell)))
+      (list a b (if (eq? (unmark (car e)) '=) #x46 #x48))))
    ;; flonum comparisons compare in the f64 context and land i32
    ;; directly -- no boolean box, and f64-slotted arguments never box
    ((and (pair? e)
@@ -1424,9 +1440,9 @@
          (not (assq (car e) locals))
          (not (assq (unmark (car e)) *fns*))
          (= (length (cdr e)) 2))
-    (list (compile-f64 (cadr e) locals cell)
-          (compile-f64 (caddr e) locals cell)
-          (if (eq? (unmark (car e)) 'fl=?) #x61 #x63)))
+    (let* ((a (compile-f64 (cadr e) locals cell))
+           (b (compile-f64 (caddr e) locals cell)))
+      (list a b (if (eq? (unmark (car e)) 'fl=?) #x61 #x63))))
    ((and (pair? e)
          (symbol? (car e))
          (memq (unmark (car e)) i32-predicates)
@@ -1516,21 +1532,31 @@
                 (compile-body (cddr e) scope cell tail?))
           (let* ((b (car bs))
                  (slot (fresh-local! cell)))
-            (if (and (fl-expr? (cadr b) locals)
-                     (or lambda-free
-                         (not (lambda-captures? (car b) (cddr e)))))
-                (begin
-                  (set! *f64-slots* (cons slot *f64-slots*))
-                  (loop (cdr bs)
-                        (cons (list (compile-f64 (cadr b) locals cell)
-                                    (local-set slot))
-                              code)
-                        (cons (cons (car b) slot) scope)))
-                (loop (cdr bs)
-                      (cons (list (compile-exp (cadr b) locals cell #f)
-                                  (local-set slot))
-                            code)
-                      (cons (cons (car b) slot) scope))))))))
+            (cond
+             ((and (fl-expr? (cadr b) locals)
+                   (or lambda-free
+                       (not (lambda-captures? (car b) (cddr e)))))
+              (set! *f64-slots* (cons slot *f64-slots*))
+              (loop (cdr bs)
+                    (cons (list (compile-f64 (cadr b) locals cell)
+                                (local-set slot))
+                          code)
+                    (cons (cons (car b) slot) scope)))
+             ((and (i32-expr? (cadr b) locals)
+                   (or lambda-free
+                       (not (lambda-captures? (car b) (cddr e)))))
+              (set! *f64-slots* (cons (- -100000 slot) *f64-slots*))
+              (loop (cdr bs)
+                    (cons (list (compile-i32 (cadr b) locals cell)
+                                (local-set slot))
+                          code)
+                    (cons (cons (car b) slot) scope)))
+             (else
+              (loop (cdr bs)
+                    (cons (list (compile-exp (cadr b) locals cell #f)
+                                (local-set slot))
+                          code)
+                    (cons (cons (car b) slot) scope)))))))))
 
 (define (compile-body es locals cell tail?)
   (cond
@@ -1908,9 +1934,11 @@
 (define (compile-f32x4-dot args locals cell)
   (let ((v (fresh-local! cell)))
     (set! *f64-slots* (cons (- -1 v) *f64-slots*))
-    (list (compile-exp (car args) locals cell #f) (unwrap-int)
+    (let* ((pa (compile-exp (car args) locals cell #f))
+           (pb (compile-exp (cadr args) locals cell #f)))
+    (list pa (unwrap-int)
           #xFD (uleb 0) (uleb 0) (uleb 0)      ; v128.load
-          (compile-exp (cadr args) locals cell #f) (unwrap-int)
+          pb (unwrap-int)
           #xFD (uleb 0) (uleb 0) (uleb 0)
           #xFD (uleb 230)                      ; f32x4.mul
           (local-set v)
@@ -1921,7 +1949,117 @@
           #x92
           (local-get v) #xFD (uleb 31) 3
           #x92
-          #xBB)))                              ; f64.promote_f32
+          #xBB))))                             ; f64.promote_f32
+
+;; ---- the i32 context: raw machine integers in locals ----
+;; The closed set: operations whose result always fits i31 given
+;; fixnum inputs, so boxing at a generic reference (wrap-int) is
+;; always faithful.  shift-left normalizes to 31 signed bits inside
+;; the context, matching what boxing would have truncated; quotient
+;; requires a positive literal divisor ((-2^30)/(-1) would escape
+;; i31); remainder/quotient demand provably-fixnum arguments, since
+;; their generic spelling handles bignums.  i32 slots ride
+;; *f64-slots* encoded as (- -100000 slot)
+(define (i32-literal? e)
+  (and (integer? e) (exact? e) (fits-fixnum? e)))
+
+(define (i32-slot? e locals)
+  (let ((slot (assq e locals)))
+    (and slot (memv (- -100000 (cdr slot)) *f64-slots*) #t)))
+
+(define (i32-if? e locals)
+  (and (pair? e)
+       (eq? (resolve-tag (car e)) 'if)
+       (= (length e) 4)
+       (i32-expr? (caddr e) locals)
+       (i32-expr? (cadddr e) locals)))
+
+(define ($i32-prim-of e locals)         ; the op, when e is a direct form
+  (let* ((h (car e))
+         (rop (and (symbol? h) (unmark h))))
+    (and rop
+         (not (assq h locals))
+         (not (assq rop *fns*))
+         (let ((a (assq rop prim-arity)))
+           (and a (= (length (cdr e)) (cdr a))))
+         rop)))
+
+(define (i32-expr? e locals)
+  (cond
+   ((i32-literal? e) #t)
+   ((symbol? e) (i32-slot? e locals))
+   ((pair? e)
+    (or (i32-if? e locals)
+        (case ($i32-prim-of e locals)
+          ((bitwise-and bitwise-ior bitwise-xor
+            bitwise-arithmetic-shift-right
+            bitwise-arithmetic-shift-left
+            %mem-u8-ref) #t)
+          ((remainder)
+           (and (i32-expr? (cadr e) locals)
+                (i32-expr? (caddr e) locals)))
+          ((quotient)
+           (and (i32-expr? (cadr e) locals)
+                (i32-literal? (caddr e))
+                (> (caddr e) 0)))
+          (else #f))))
+   (else #f)))
+
+(define (compile-i32 e locals cell)
+  (cond
+   ((i32-literal? e) (i32const e))
+   ((symbol? e)
+    (if (i32-slot? e locals)
+        (local-get (cdr (assq e locals)))
+        (list (compile-exp e locals cell #f) (unwrap-int))))
+   ((and (pair? e) (i32-if? e locals))
+    (let* ((t (compile-test (cadr e) locals cell))
+           (c (compile-i32 (caddr e) locals cell))
+           (alt (compile-i32 (cadddr e) locals cell)))
+      (list t #x04 #x7F c #x05 alt #x0B)))
+   ((and (pair? e) (i32-expr? e locals))
+    (let ((rop ($i32-prim-of e locals)))
+      (if (eq? rop '%mem-u8-ref)
+          (list (compile-exp (cadr e) locals cell #f) (unwrap-int)
+                #x2D (uleb 0) (uleb 0))
+          ;; compile in source order: codegen effects must not
+          ;; depend on the host's argument evaluation order
+          (let* ((a (compile-i32 (cadr e) locals cell))
+                 (b (compile-i32 (caddr e) locals cell)))
+            (case rop
+              ((bitwise-and) (list a b #x71))
+              ((bitwise-ior) (list a b #x72))
+              ((bitwise-xor) (list a b #x73))
+              ((bitwise-arithmetic-shift-right) (list a b #x75))
+              ((bitwise-arithmetic-shift-left)
+               ;; normalize to 31 signed bits: what boxing keeps
+               (list a b #x74 (i32const 1) #x74 (i32const 1) #x75))
+              ((remainder) (list a b #x6F))
+              ((quotient) (list a b #x6D)))))))
+   (else (list (compile-exp e locals cell #f) (unwrap-int)))))
+
+;; the prims that route through the context whatever their
+;; arguments: raw in, one box out -- a chain of them keeps its
+;; intermediates on the wasm stack
+(define i32-context-prims
+  '(bitwise-and bitwise-ior bitwise-xor
+    bitwise-arithmetic-shift-left bitwise-arithmetic-shift-right))
+(define (compile-i32-prim op args locals cell)
+  (let ((expect (assq op prim-arity)))
+    (unless (= (length args) (cdr expect))
+      (errorf 'goeteia "wrong argument count for primitive ~s" op)))
+  (let* ((a (compile-i32 (car args) locals cell))
+         (b (compile-i32 (cadr args) locals cell)))
+    (list a b
+          (case op
+            ((bitwise-and) #x71)
+            ((bitwise-ior) #x72)
+            ((bitwise-xor) #x73)
+            ((bitwise-arithmetic-shift-left)
+             (list #x74 (i32const 1) #x74 (i32const 1) #x75))
+            (else #x75))
+          (wrap-int))))
+
 (define (compile-f64 e locals cell)
   (define (direct rop)
     (case rop
@@ -1964,12 +2102,10 @@
        ;; an if with two flonum arms stays in the f64 context: the
        ;; wasm if blocks type f64 and neither branch boxes
        ((fl-if? e locals)
-        (list (compile-test (cadr e) locals cell)
-              #x04 T-F64
-              (compile-f64 (caddr e) locals cell)
-              #x05
-              (compile-f64 (cadddr e) locals cell)
-              #x0B))
+        (let* ((t (compile-test (cadr e) locals cell))
+               (c (compile-f64 (caddr e) locals cell))
+               (alt (compile-f64 (cadddr e) locals cell)))
+          (list t #x04 T-F64 c #x05 alt #x0B)))
        (else (list (compile-exp e locals cell #f) (unwrap-fl))))))
    (else (list (compile-exp e locals cell #f) (unwrap-fl)))))
 
@@ -2044,9 +2180,19 @@
              (global-get G-VOID))))))
 
 (define (compile-prim op args locals cell)
-  (if (memq op fl-context-prims)
-      (compile-fl-prim op args locals cell)
-      (compile-prim* op args locals cell)))
+  (cond
+   ((memq op fl-context-prims) (compile-fl-prim op args locals cell))
+   ((memq op i32-context-prims) (compile-i32-prim op args locals cell))
+   ;; provably-fixnum quotient/remainder skip the bignum dispatch
+   ((and (memq op '(quotient remainder))
+         (= (length args) 2)
+         (i32-expr? (cons (if (eq? op 'quotient) 'quotient 'remainder)
+                          args)
+                    locals))
+    (let* ((a (compile-i32 (car args) locals cell))
+           (b (compile-i32 (cadr args) locals cell)))
+      (list a b (if (eq? op 'quotient) #x6D #x6F) (wrap-int))))
+   (else (compile-prim* op args locals cell))))
 
 (define (compile-prim* op args locals cell)
   ;; arguments compile once, in source order
@@ -2413,6 +2559,7 @@
             (counted (reverse (flush)))
             (let ((ty (cond ((memv i f64s) T-F64)
                             ((memv (- -1 i) f64s) T-V128)
+                            ((memv (- -100000 i) f64s) #x7F)
                             (else T-EQREF))))
               (if (eqv? ty cur)
                   (loop (+ i 1) groups cur (+ n 1))
