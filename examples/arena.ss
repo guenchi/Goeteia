@@ -79,13 +79,6 @@
 (define shadow-done #f)
 
 ;; ---- the room: floor, four walls, three crates ----
-(define (upload m)
-  (let* ((vbuf (fx-buffer!)) (ibuf (fx-buffer!))
-         (vbase (fx-alloc! (mesh-vertex-bytes m)))
-         (ibase (fx-alloc! (mesh-index-bytes m))))
-    (mesh-write! m vbase ibase)
-    (vector vbuf ibuf vbase ibase (mesh-vertex-bytes m)
-            (mesh-index-bytes m) (mesh-index-count m) #f)))
 
 ;; #(cx cy cz sx sy sz r g b) -- centers and sizes
 (define solid-specs
@@ -103,7 +96,7 @@
          (let ((cx (vector-ref s 0)) (cy (vector-ref s 1))
                (cz (vector-ref s 2)) (sx (vector-ref s 3))
                (sy (vector-ref s 4)) (sz (vector-ref s 5)))
-           (vector (upload (mesh-box sx sy sz))
+           (vector (fx-mesh! (mesh-box sx sy sz))
                    (m4-translate cx cy cz)
                    (cons (v3 (fl- cx (fl/ sx 2.0)) (fl- cy (fl/ sy 2.0))
                              (fl- cz (fl/ sz 2.0)))
@@ -114,7 +107,7 @@
 
 (define grid (make-aabb-grid (map (lambda (s) (vector-ref s 2)) solids)
                              4.0))
-(define orb-mesh (upload (mesh-sphere 0.55 24 12)))
+(define orb-mesh (fx-mesh! (mesh-sphere 0.55 24 12)))
 
 ;; ---- the orbs: a wave of drifting targets ----
 (define seed 991)
@@ -210,21 +203,14 @@
           (m4-look-at (v3-scale light 30.0) (v3 0.0 0.0 0.0)
                       (v3 0.0 1.0 0.0))))
 
-(define (upload! obj)
-  (unless (vector-ref obj 7)
-    (cmd-buffer-data! (vector-ref obj 2) (vector-ref obj 4))
-    (cmd-index-data! (vector-ref obj 3) (vector-ref obj 5))
-    (vector-set! obj 7 #t)))
 
 (define (draw-obj! obj model r g b vp)
-  (fx-use! p (vector-ref obj 0))
-  (cmd-bind-index! (vector-ref obj 1))
-  (upload! obj)
+  (fx-mesh-use! p obj)
   (fx-uniform! p 'u_mvp (m4-mul vp model))
   (fx-uniform! p 'u_model model)
   (fx-uniform! p 'u_light_mvp (m4-mul light-vp model))
   (fx-uniform! p 'u_color r g b 1.0)
-  (cmd-draw-elements! GL-TRIANGLES (vector-ref obj 6)))
+  (fx-mesh-draw! obj))
 
 ;; the once-ever shadow bake: every static solid, from the light
 (define (bake-shadows!)
@@ -233,12 +219,10 @@
   (cmd-depth! #t)
   (for-each (lambda (s)
               (let ((obj (vector-ref s 0)))
-                (fx-use! depth-p (vector-ref obj 0))
-                (cmd-bind-index! (vector-ref obj 1))
-                (upload! obj)
+                (fx-mesh-use! depth-p obj)
                 (fx-uniform! depth-p 'u_mvp
                              (m4-mul light-vp (vector-ref s 1)))
-                (cmd-draw-elements! GL-TRIANGLES (vector-ref obj 6))))
+                (fx-mesh-draw! obj)))
             solids)
   (fx-bind-canvas!))
 

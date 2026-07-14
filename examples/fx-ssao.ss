@@ -87,25 +87,11 @@
        (set! gl_FragColor (vec4 (* c.rgb ao) (fl 1)))))))
 
 ;; ---- a corner-heavy scene ----
-(define (upload m)
-  (let* ((vbuf (fx-buffer!)) (ibuf (fx-buffer!))
-         (vbase (fx-alloc! (mesh-vertex-bytes m)))
-         (ibase (fx-alloc! (mesh-index-bytes m))))
-    (mesh-write! m vbase ibase)
-    (vector vbuf ibuf vbase ibase (mesh-vertex-bytes m)
-            (mesh-index-bytes m) (mesh-index-count m) #f)))
-(define (bind-upload! prog obj)
-  (fx-use! prog (vector-ref obj 0))
-  (cmd-bind-index! (vector-ref obj 1))
-  (unless (vector-ref obj 7)
-    (cmd-buffer-data! (vector-ref obj 2) (vector-ref obj 4))
-    (cmd-index-data! (vector-ref obj 3) (vector-ref obj 5))
-    (vector-set! obj 7 #t)))
 
-(define ground (upload (mesh-plane 40.0 40.0)))
-(define box (upload (mesh-box 3.0 3.0 3.0)))
-(define ball (upload (mesh-sphere 1.6 32 16)))
-(define torus (upload (mesh-torus 2.2 0.7 32 16)))
+(define ground (fx-mesh! (mesh-plane 40.0 40.0)))
+(define box (fx-mesh! (mesh-box 3.0 3.0 3.0)))
+(define ball (fx-mesh! (mesh-sphere 1.6 32 16)))
+(define torus (fx-mesh! (mesh-torus 2.2 0.7 32 16)))
 
 ;; boxes stacked into a corner, a sphere resting against them
 (define models
@@ -125,11 +111,11 @@
 (define light (v3-normalize (v3 0.5 0.8 0.4)))
 
 (define (draw-scene! prog each)
-  (bind-upload! prog ground)
+  (fx-mesh-use! prog ground)
   (each ground (m4-identity))
-  (cmd-draw-elements! GL-TRIANGLES (vector-ref ground 6))
+  (fx-mesh-draw! ground)
   (for-each (lambda (om)
-              (bind-upload! prog (car om))
+              (fx-mesh-use! prog (car om))
               (each (car om) (cdr om))
               (cmd-draw-elements! GL-TRIANGLES
                                   (vector-ref (car om) 6)))

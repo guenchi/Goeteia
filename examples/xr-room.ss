@@ -13,17 +13,10 @@
 
 (define p (fx-program! mesh-lit-vs mesh-lit-fs))
 
-(define (upload m)
-  (let* ((vbuf (fx-buffer!)) (ibuf (fx-buffer!))
-         (vbase (fx-alloc! (mesh-vertex-bytes m)))
-         (ibase (fx-alloc! (mesh-index-bytes m))))
-    (mesh-write! m vbase ibase)
-    (vector vbuf ibuf vbase ibase (mesh-vertex-bytes m)
-            (mesh-index-bytes m) (mesh-index-count m) #f)))
 
-(define ground (upload (mesh-plane 12.0 12.0)))
-(define pillar (upload (mesh-box 0.6 2.2 0.6)))
-(define ring (upload (mesh-torus 0.5 0.18 32 16)))
+(define ground (fx-mesh! (mesh-plane 12.0 12.0)))
+(define pillar (fx-mesh! (mesh-box 0.6 2.2 0.6)))
+(define ring (fx-mesh! (mesh-torus 0.5 0.18 32 16)))
 (define light (v3-normalize (v3 0.5 0.8 0.4)))
 
 ;; pillars around the player, a slowly turning ring on each
@@ -32,16 +25,11 @@
     (0.0 . -4.5) (4.5 . 0.0) (-4.5 . 0.0)))
 
 (define (draw-obj! obj model r g b vp)
-  (fx-use! p (vector-ref obj 0))
-  (cmd-bind-index! (vector-ref obj 1))
-  (unless (vector-ref obj 7)
-    (cmd-buffer-data! (vector-ref obj 2) (vector-ref obj 4))
-    (cmd-index-data! (vector-ref obj 3) (vector-ref obj 5))
-    (vector-set! obj 7 #t))
+  (fx-mesh-use! p obj)
   (fx-uniform! p 'u_mvp (m4-mul vp model))
   (fx-uniform! p 'u_model model)
   (fx-uniform! p 'u_color r g b 1.0)
-  (cmd-draw-elements! GL-TRIANGLES (vector-ref obj 6)))
+  (fx-mesh-draw! obj))
 
 ;; ONE scene function; only the vp differs between desktop and XR
 (define (draw-scene! vp t)

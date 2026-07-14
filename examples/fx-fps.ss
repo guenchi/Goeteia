@@ -16,15 +16,7 @@
 (define proj (m4-perspective 1.1 (/ 800.0 600.0) 0.1 100.0))
 (define light (v3-normalize (v3 0.4 0.9 0.3)))
 
-;; geometry uploads once; #(vbuf ibuf vbase ibase vbytes ibytes n up?)
-(define (upload m)
-  (let* ((vbuf (fx-buffer!))
-         (ibuf (fx-buffer!))
-         (vbase (fx-alloc! (mesh-vertex-bytes m)))
-         (ibase (fx-alloc! (mesh-index-bytes m))))
-    (mesh-write! m vbase ibase)
-    (vector vbuf ibuf vbase ibase (mesh-vertex-bytes m)
-            (mesh-index-bytes m) (mesh-index-count m) #f)))
+;; geometry uploads once, lazily, through fx-mesh handles
 
 ;; the room: centre x/z, size x/y/z, colour
 (define wall-specs
@@ -40,7 +32,7 @@
          (let ((cx (list-ref s 0)) (cz (list-ref s 1))
                (sx (list-ref s 2)) (sy (list-ref s 3)) (sz (list-ref s 4))
                (r (list-ref s 5)) (g (list-ref s 6)) (b (list-ref s 7)))
-           (vector (upload (mesh-box sx sy sz))
+           (vector (fx-mesh! (mesh-box sx sy sz))
                    (m4-translate cx (fl/ sy 2.0) cz)
                    (v3 (fl- cx (fl/ sx 2.0)) 0.0 (fl- cz (fl/ sz 2.0)))
                    (v3 (fl+ cx (fl/ sx 2.0)) sy (fl+ cz (fl/ sz 2.0)))
@@ -48,23 +40,18 @@
        wall-specs))
 
 (define ground
-  (vector (upload (mesh-plane 24.0 24.0)) (m4-identity)
+  (vector (fx-mesh! (mesh-plane 24.0 24.0)) (m4-identity)
           #f #f 0.35 0.40 0.50))
 
 (define (draw-obj! o vp)
   (let ((gv (vector-ref o 0))
         (model (vector-ref o 1)))
-    (fx-use! p (vector-ref gv 0))
-    (cmd-bind-index! (vector-ref gv 1))
-    (unless (vector-ref gv 7)
-      (cmd-buffer-data! (vector-ref gv 2) (vector-ref gv 4))
-      (cmd-index-data! (vector-ref gv 3) (vector-ref gv 5))
-      (vector-set! gv 7 #t))
+    (fx-mesh-use! p gv)
     (fx-uniform! p 'u_mvp (m4-mul vp model))
     (fx-uniform! p 'u_model model)
     (fx-uniform! p 'u_color (vector-ref o 4) (vector-ref o 5)
                  (vector-ref o 6) 1.0)
-    (cmd-draw-elements! GL-TRIANGLES (vector-ref gv 6))))
+    (fx-mesh-draw! gv)))
 
 ;; the player: the packaged character, spawned eye-height over a
 ;; solid ground slab (gravity needs a floor with thickness)

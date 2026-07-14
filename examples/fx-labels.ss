@@ -102,23 +102,9 @@
 
 ;; ---- the scene under the labels ----
 (define lit-p (fx-program! mesh-lit-vs mesh-lit-fs))
-(define (upload m)
-  (let* ((vbuf (fx-buffer!)) (ibuf (fx-buffer!))
-         (vbase (fx-alloc! (mesh-vertex-bytes m)))
-         (ibase (fx-alloc! (mesh-index-bytes m))))
-    (mesh-write! m vbase ibase)
-    (vector vbuf ibuf vbase ibase (mesh-vertex-bytes m)
-            (mesh-index-bytes m) (mesh-index-count m) #f)))
-(define (bind-upload! prog obj)
-  (fx-use! prog (vector-ref obj 0))
-  (cmd-bind-index! (vector-ref obj 1))
-  (unless (vector-ref obj 7)
-    (cmd-buffer-data! (vector-ref obj 2) (vector-ref obj 4))
-    (cmd-index-data! (vector-ref obj 3) (vector-ref obj 5))
-    (vector-set! obj 7 #t)))
 
-(define ground (upload (mesh-plane 18.0 18.0)))
-(define ball (upload (mesh-sphere 0.9 32 16)))
+(define ground (fx-mesh! (mesh-plane 18.0 18.0)))
+(define ball (fx-mesh! (mesh-sphere 0.9 32 16)))
 
 ;; three markers, each wearing a name; one wrapped paragraph floats
 ;; over the middle -- typeset breaks it, CJK and all
@@ -150,24 +136,24 @@
           (vp (m4-mul proj (m4-look-at eye (v3 0.0 0.8 0.0)
                                        (v3 0.0 1.0 0.0)))))
      ;; the solid world
-     (bind-upload! lit-p ground)
+     (fx-mesh-use! lit-p ground)
      (fx-uniform! lit-p 'u_light (v3-x light) (v3-y light) (v3-z light))
      (fx-uniform! lit-p 'u_ambient 0.3)
      (fx-uniform! lit-p 'u_mvp (m4-mul vp (m4-translate 0.0 -0.0 0.0)))
      (fx-uniform! lit-p 'u_model (m4-identity))
      (fx-uniform! lit-p 'u_color 0.32 0.36 0.45 1.0)
-     (cmd-draw-elements! GL-TRIANGLES (vector-ref ground 6))
+     (fx-mesh-draw! ground)
      (for-each
       (lambda (mk)
         (let* ((c (vector-ref mk 0))
                (col (vector-ref mk 2))
                (m (m4-translate (v3-x c) (v3-y c) (v3-z c))))
-          (bind-upload! lit-p ball)
+          (fx-mesh-use! lit-p ball)
           (fx-uniform! lit-p 'u_mvp (m4-mul vp m))
           (fx-uniform! lit-p 'u_model m)
           (fx-uniform! lit-p 'u_color (vector-ref col 0)
                        (vector-ref col 1) (vector-ref col 2) 1.0)
-          (cmd-draw-elements! GL-TRIANGLES (vector-ref ball 6))))
+          (fx-mesh-draw! ball)))
       markers)
      ;; the words, over everything solid
      (cmd-blend! 'alpha)

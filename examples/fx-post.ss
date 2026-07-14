@@ -31,29 +31,16 @@
        (set! gl_FragColor (vec4 (* c.rgb vig) (fl 1)))))))
 
 ;; a small scene to distort
-(define (upload m)
-  (let* ((vbuf (fx-buffer!))
-         (ibuf (fx-buffer!))
-         (vbase (fx-alloc! (mesh-vertex-bytes m)))
-         (ibase (fx-alloc! (mesh-index-bytes m))))
-    (mesh-write! m vbase ibase)
-    (vector vbuf ibuf vbase ibase (mesh-vertex-bytes m)
-            (mesh-index-bytes m) (mesh-index-count m) #f)))
 
-(define ground (upload (mesh-plane 14.0 14.0)))
-(define torus (upload (mesh-torus 1.6 0.55)))
+(define ground (fx-mesh! (mesh-plane 14.0 14.0)))
+(define torus (fx-mesh! (mesh-torus 1.6 0.55)))
 
 (define (draw! obj model r g b vp)
-  (fx-use! scene-prog (vector-ref obj 0))
-  (cmd-bind-index! (vector-ref obj 1))
-  (unless (vector-ref obj 7)
-    (cmd-buffer-data! (vector-ref obj 2) (vector-ref obj 4))
-    (cmd-index-data! (vector-ref obj 3) (vector-ref obj 5))
-    (vector-set! obj 7 #t))
+  (fx-mesh-use! scene-prog obj)
   (fx-uniform! scene-prog 'u_mvp (m4-mul vp model))
   (fx-uniform! scene-prog 'u_model model)
   (fx-uniform! scene-prog 'u_color r g b 1.0)
-  (cmd-draw-elements! GL-TRIANGLES (vector-ref obj 6)))
+  (fx-mesh-draw! obj))
 
 (define proj (m4-perspective 0.9 (/ 800.0 600.0) 0.1 100.0))
 (define view (m4-look-at (v3 0.0 3.0 8.0) (v3 0.0 0.5 0.0) (v3 0 1 0)))
