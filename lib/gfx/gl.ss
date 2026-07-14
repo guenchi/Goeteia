@@ -37,7 +37,8 @@
           cmd-bind-target! cmd-bind-canvas! cmd-resolve!
           cmd-region! cmd-begin! cmd-flush! cmd-pos cmd-draws
           cmd-clear! cmd-use-program! cmd-bind-buffer! cmd-buffer-data!
-          cmd-vertex-attrib! cmd-uniform1f! cmd-uniform4f!
+          cmd-vertex-attrib! cmd-vertex-attrib-h!
+          cmd-uniform1f! cmd-uniform4f!
           cmd-uniform1i! cmd-uniform2f! cmd-uniform3f! cmd-uniform-matrix4!
           cmd-uniform-matrix4s!
           cmd-bind-texture! cmd-unbind-texture!
@@ -384,6 +385,11 @@
      "     case 39: gl.uniformMatrix4fv(slots[u[p]], false,"
      "                new Float32Array(memory.buffer, u[p+1], u[p+2] * 16));"
      "              p += 3; break;"
+     "     case 40: gl.enableVertexAttribArray(u[p]);"
+     "              gl.vertexAttribPointer(u[p], u[p+1], gl.HALF_FLOAT,"
+     "                                     false, u[p+2], u[p+3]);"
+     "              if (gl.vertexAttribDivisor) gl.vertexAttribDivisor(u[p], 0);"
+     "              p += 4; break;"
      "     case 26: gl.bindFramebuffer(gl.READ_FRAMEBUFFER, slots[u[p]]);"
      "              gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, slots[u[p+1]]);"
      "              gl.blitFramebuffer(0, 0, u[p+2], u[p+3],"
@@ -498,6 +504,11 @@
   (define (cmd-buffer-data! offset bytes) (u! 4) (u! offset) (u! bytes))
   (define (cmd-vertex-attrib! loc size stride offset)
     (u! 5) (u! loc) (u! size) (u! stride) (u! offset))
+  ;; the HALF_FLOAT spelling: same wiring, two bytes a component --
+  ;; vertex data written by mesh-write-f16! draws at half the
+  ;; bandwidth and the GPU converts on fetch
+  (define (cmd-vertex-attrib-h! loc size stride offset)
+    (u! 40) (u! loc) (u! size) (u! stride) (u! offset))
   (define (cmd-uniform1f! slot x) (u! 6) (u! slot) (f! x))
   (define (cmd-uniform4f! slot x y z w)
     (u! 7) (u! slot) (f! x) (f! y) (f! z) (f! w))

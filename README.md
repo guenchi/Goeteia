@@ -292,7 +292,12 @@ buffer, shaders as s-expressions, and everything over them — in
   (`examples/fx-terrain.html`: altitude-ramped hills under
   exponential fog) — as interleaved positions + normals with u16
   indices, generated headlessly-verifiably and laid into the staging
-  memory by `mesh-write!`; `mesh-lit-vs`/`-fs` ship the standard
+  memory by `mesh-write!` — or by `mesh-write-f16!` as IEEE
+  half-floats (encoded in pure Scheme off the f32 bit pattern,
+  round-to-nearest): half the vertex bandwidth and memory, paired
+  with `cmd-vertex-attrib-h!`'s HALF_FLOAT wiring, and positions or
+  unit normals lose nothing a screen shows;
+  `mesh-lit-vs`/`-fs` ship the standard
   directional-light program as composable glsl forms
   (`examples/fx-mesh.html`: a lit scene — ground, torus, sphere —
   raw WebGL).  Every generator also carries parametric texture
