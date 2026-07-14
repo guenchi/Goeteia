@@ -46,6 +46,8 @@
           gl-texture-array! gl-texture-layer! gl-texture-layer-data!
           cmd-bind-texture-array!
           gl-gpu-timer! gl-gpu-ms
+          gl-compressed-family gl-texture-compressed!
+          gl-compressed-level!
           cmd-depth!
           gl-vao! cmd-bind-vao! cmd-unbind-vao!
           gl-ubo! gl-uniform-block! cmd-bind-ubo! cmd-ubo-data!
@@ -109,6 +111,32 @@
      "    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);"
      "    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);"
      "    slots[slot] = t; },"
+     "  compressedFamily() {"
+     "    if (gl.getExtension('WEBGL_compressed_texture_etc')"
+     "        || gl.getExtension('WEBGL_compressed_texture_etc1'))"
+     "      return 2;"
+     "    if (gl.getExtension('WEBGL_compressed_texture_s3tc')) return 1;"
+     "    return 0; },"
+     "  textureCompressed(slot, levels) {"
+     "    const t = gl.createTexture();"
+     "    gl.bindTexture(gl.TEXTURE_2D, t);"
+     "    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER,"
+     "                     levels > 1 ? gl.LINEAR_MIPMAP_LINEAR : gl.LINEAR);"
+     "    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);"
+     "    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);"
+     "    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);"
+     "    slots[slot] = t; },"
+     "  compressedLevel(slot, level, fmt, w, h, base, bytes) {"
+     "    gl.bindTexture(gl.TEXTURE_2D, slots[slot]);"
+     "    const etc1 = gl.getExtension('WEBGL_compressed_texture_etc1');"
+     "    const etc = gl.getExtension('WEBGL_compressed_texture_etc');"
+     "    const s3tc = gl.getExtension('WEBGL_compressed_texture_s3tc');"
+     "    const F = fmt === 0"
+     "      ? (etc1 ? etc1.COMPRESSED_RGB_ETC1_WEBGL"
+     "              : etc.COMPRESSED_RGB8_ETC2)"
+     "      : s3tc.COMPRESSED_RGB_S3TC_DXT1_EXT;"
+     "    gl.compressedTexImage2D(gl.TEXTURE_2D, level, F, w, h, 0,"
+     "      new Uint8Array(memory.buffer, base, bytes)); },"
      "  textureArray(slot, w, h, layers) {"
      "    const t = gl.createTexture();"
      "    gl.bindTexture(gl.TEXTURE_2D_ARRAY, t);"
@@ -517,6 +545,19 @@
   ;; raw RGBA bytes out of the staging memory -- procedural textures
   (define (gl-texture-data! slot base w h)
     (js-method $gl "textureData" slot base w h))
+  ;; compressed textures: which block families does this context
+  ;; speak?  2 = ETC2/ETC1 (mobile, ANGLE), 1 = S3TC/BC (desktop),
+  ;; 0 = neither -- transcode to RGBA then.  Upload straight from
+  ;; staging bytes with explicit mip levels (compressed textures
+  ;; cannot generateMipmap; ship the chain)
+  (define (gl-compressed-family)
+    (js->number (js-method $gl "compressedFamily")))
+  (define (gl-texture-compressed! slot levels)
+    (js-method $gl "textureCompressed" slot levels))
+  ;; fmt: 0 = ETC1 RGB, 1 = BC1 RGB
+  (define (gl-compressed-level! slot level fmt w h base bytes)
+    (js-method $gl "compressedLevel" slot level fmt w h base bytes))
+
   ;; GPU frame time (webgl2 + EXT_disjoint_timer_query_webgl2): turn
   ;; the timer on once and every replay wraps itself in a TIME_ELAPSED
   ;; query; results surface a few frames later through gl-gpu-ms
