@@ -13,10 +13,10 @@
 ;; Verified block-for-block against the reference transcoder's
 ;; unpack output (test/ktx.ss carries golden pixels).
 ;;
-;; What this does NOT do yet: alpha slices (RGB only), UASTC, the
-;; P-frame video codec, global selector codebooks, and cube/array/3D
-;; textures -- ETC1S colour, one 2D image with its mip chain, is the
-;; whole of it.
+;; What this does NOT do yet: UASTC, the P-frame video codec,
+;; global selector codebooks, and cube/array/3D textures -- ETC1S
+;; (RGB and RGBA: alpha rides its own grayscale slice into the RGBA
+;; target), one 2D image with its mip chain, is the whole of it.
 ;;
 ;; Copyright (c) 2026 guenchi. MIT license; see LICENSE.
 (library (gfx ktx)
@@ -24,7 +24,7 @@
           ktx-scheme ktx-etc1s?
           ktx-level-width ktx-level-height
           ktx-transcode! ktx-transcode-bytes
-          ktx-fetch! ktx-upload! ktx-stream!)
+          ktx-fetch! ktx-upload! ktx-stream! ktx-alpha?)
   (import (rnrs) (web js) (gfx gl) (gfx fx))
 
   ;; browser loader: fetch, one bulk copy into staging, parse, k
@@ -107,7 +107,9 @@
                     (lambda (s2 t2 ab2)
                       ($ktx-put! ab2 (+ base 1024))
                       (let* ((k (ktx-parse base cut))
-                             (fam (gl-compressed-family))
+                             (fam (if (ktx-alpha? k)
+                                      0
+                                      (gl-compressed-family)))
                              (n (ktx-level-count k)))
                         (if (= fam 0)
                             ;; rgba fallback: the smallest usable
@@ -157,7 +159,7 @@
   ;; upload the chain; returns the texture slot.  Family 2 keeps the
   ;; blocks as ETC1, 1 repacks BC1, 0 decodes level 0 to RGBA
   (define (ktx-upload! k)
-    (let ((fam (gl-compressed-family))
+    (let ((fam (if (ktx-alpha? k) 0 (gl-compressed-family)))
           (n (ktx-level-count k)))
       (if (= fam 0)
           (let* ((bytes (ktx-transcode-bytes k 0 'rgba))
@@ -208,6 +210,14 @@
             ;; BasisLZ global data, decoded once at parse:
             ;; #(endpoints selectors imagedescs) | #f
             (immutable sgd $ktx-sgd)))
+
+  ;; does the file carry alpha slices?  (they are second slices per
+  ;; image, ETC1S grayscale -- R=G=B carries the coverage)
+  (define (ktx-alpha? k)
+    (let ((sgd ($ktx-sgd k)))
+      (and sgd
+           (> (vector-ref (vector-ref (vector-ref sgd 3) 0) 3) 0)
+           #t)))
 
   (define (ktx-etc1s? k)
     (and (= (ktx-scheme k) 1) (= ($ktx-dfd-color k) 163)))
@@ -639,6 +649,36 @@
                     (px (+ x 1))))))
             (py (+ y 1)))))))
 
+  ;; alpha rides its own grayscale slice: same decode, but only the
+  ;; A byte of the already-written RGBA pixels updates
+  (define ($blk-alpha! sgd dst w h)
+    (lambda (bx by ep sel)
+      (let* ((c (vector-ref (vector-ref sgd 0) ep))
+             (r ($x5 (bitwise-and c 31)))
+             (tab (vector-ref $etc1-inten
+                              (vector-ref (vector-ref sgd 1) ep)))
+             (rows (vector-ref sgd 2))
+             (rbase (* sel 4)))
+        (let py ((y 0))
+          (when (< y 4)
+            (let ((row (vector-ref rows (+ rbase y)))
+                  (gy (+ (* by 4) y)))
+              (when (< gy h)
+                (let px ((x 0))
+                  (when (< x 4)
+                    (let ((gx (+ (* bx 4) x)))
+                      (when (< gx w)
+                        (let* ((s (bitwise-and
+                                   (bitwise-arithmetic-shift-right
+                                    row (* x 2))
+                                   3))
+                               (m (vector-ref tab s)))
+                          (%mem-u8-set!
+                           (+ dst (* (+ (* gy w) gx) 4) 3)
+                           ($clamp8 (+ r m))))))
+                    (px (+ x 1))))))
+            (py (+ y 1)))))))
+
   (define ($blk-etc1! sgd dst nbx)
     (lambda (bx by ep sel)
       (let* ((c (vector-ref (vector-ref sgd 0) ep))
@@ -766,4 +806,13 @@
          ((rgba) ($blk-rgba! sgd dst w h))
          ((etc1) ($blk-etc1! sgd dst nbx))
          ((bc1) ($blk-bc1! sgd dst nbx))
-         (else (error 'ktx "unknown format" fmt)))))))
+         (else (error 'ktx "unknown format" fmt))))
+      ;; the alpha slice, when present and the target can carry it
+      (when (and (eq? fmt 'rgba)
+                 (> (vector-ref desc 3) 0))
+        ($slice-decode!
+         sgd
+         (+ ($ktx-base k) (vector-ref lv 0) (vector-ref desc 2))
+         (vector-ref desc 3)
+         nbx nby
+         ($blk-alpha! sgd dst w h))))))
