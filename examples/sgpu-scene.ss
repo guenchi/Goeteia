@@ -45,10 +45,17 @@
               (position 4.0 1.5 0.0) (color 0.4 0.7 0.9))))
    (mesh (@ (geometry (plane 40.0 40.0))
             (color 1.0 1.0 1.0) (texture 40)))
-   ;; a pane of glass in front: alpha < 1 routes it to the blended
-   ;; pass, drawn after the opaque scene with depth writes off
-   (mesh (@ (geometry (box 6.0 4.0 0.2))
-            (position 0.0 3.0 6.0) (color 0.5 0.75 0.95 0.35)))))
+   ;; three overlapping glass panes, one instanced group (shared
+   ;; geometry, alpha < 1): the GPU sorts them back-to-front by depth
+   ;; before the blended draw, so the overlap composites correctly
+   ;; whatever order the cull emits them in
+   (group (@)
+     (mesh (@ (geometry (box 3.0 3.0 0.1))
+              (position -1.0 3.0 3.0) (color 0.95 0.4 0.4 0.4)))
+     (mesh (@ (geometry (box 3.0 3.0 0.1))
+              (position 0.0 3.0 6.0) (color 0.4 0.95 0.4 0.4)))
+     (mesh (@ (geometry (box 3.0 3.0 0.1))
+              (position 1.0 3.0 9.0) (color 0.4 0.4 0.95 0.4))))))
 
 (gpu-attach!
  (get-element-by-id "c")

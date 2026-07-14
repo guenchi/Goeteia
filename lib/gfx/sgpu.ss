@@ -312,6 +312,110 @@
      "  dst[k] = Vis(s.m0, s.m1, s.m2, s.m3, s.color);\n"
      "}\n"))
 
+  ;; the translucent variant: same frustum + hi-Z visibility test, but
+  ;; a single workgroup gathers the survivors, sorts them back-to-front
+  ;; by NDC depth (bitonic, up to 256 per group), and writes them in
+  ;; that order so the blend pipeline composites overlapping instances
+  ;; correctly.  Groups past 256 visible instances drop the surplus.
+  (define $sgpu-cull-sort
+    (string-append
+     "struct Inst { m0 : vec4f, m1 : vec4f, m2 : vec4f, m3 : vec4f,\n"
+     "              color : vec4f, sphere : vec4f, pad : vec4f,\n"
+     "              pad2 : vec4f }\n"
+     "struct Vis { m0 : vec4f, m1 : vec4f, m2 : vec4f, m3 : vec4f,\n"
+     "             color : vec4f }\n"
+     "struct Args { indexCount : u32, instanceCount : atomic<u32>,\n"
+     "              firstIndex : u32, baseVertex : u32,\n"
+     "              firstInstance : u32 }\n"
+     "struct Env { vp : mat4x4f, planes : array<vec4f, 6>,\n"
+     "             light : vec4f, ambient : vec4f,\n"
+     "             p00 : f32, p11 : f32, sw : f32, sh : f32,\n"
+     "             pA : f32, mode : u32, pd0 : u32, pd1 : u32 }\n"
+     "@group(0) @binding(0) var<storage, read> src : array<Inst>;\n"
+     "@group(0) @binding(1) var<storage, read_write> dst : array<Vis>;\n"
+     "@group(0) @binding(2) var<storage, read_write> args : Args;\n"
+     "@group(0) @binding(3) var<uniform> env : Env;\n"
+     "@group(0) @binding(4) var hzb : texture_2d<f32>;\n"
+     "const CAP : u32 = 256u;\n"
+     "var<workgroup> keys : array<f32, 256>;\n"
+     "var<workgroup> ord : array<u32, 256>;\n"
+     "var<workgroup> cnt : atomic<u32>;\n"
+     "fn visible(s : Inst) -> bool {\n"
+     "  for (var p = 0u; p < 6u; p++) {\n"
+     "    if (dot(env.planes[p].xyz, s.sphere.xyz) + env.planes[p].w\n"
+     "        < -s.sphere.w) { return false; }\n"
+     "  }\n"
+     "  if (env.mode == 1u) {\n"
+     "    let clip = env.vp * vec4f(s.sphere.xyz, 1.0);\n"
+     "    if (clip.w > s.sphere.w) {\n"
+     "      let ndc = clip.xy / clip.w;\n"
+     "      let rx = s.sphere.w * env.p00 / clip.w;\n"
+     "      let ry = s.sphere.w * env.p11 / clip.w;\n"
+     "      let px = max(rx * env.sw, ry * env.sh);\n"
+     "      let mip = clamp(u32(ceil(log2(max(px, 1.0)))), 0u, 8u);\n"
+     "      let dims = vec2f(textureDimensions(hzb, mip));\n"
+     "      let uv = ndc * vec2f(0.5, -0.5) + vec2f(0.5, 0.5);\n"
+     "      let lo = vec2i(clamp((uv - vec2f(rx * 0.5, ry * 0.5))\n"
+     "                           * dims, vec2f(0.0), dims - 1.0));\n"
+     "      let hi = vec2i(clamp((uv + vec2f(rx * 0.5, ry * 0.5))\n"
+     "                           * dims, vec2f(0.0), dims - 1.0));\n"
+     "      let d = max(max(textureLoad(hzb, lo, i32(mip)).x,\n"
+     "                      textureLoad(hzb, vec2i(hi.x, lo.y),\n"
+     "                                  i32(mip)).x),\n"
+     "                  max(textureLoad(hzb, vec2i(lo.x, hi.y),\n"
+     "                                  i32(mip)).x,\n"
+     "                      textureLoad(hzb, hi, i32(mip)).x));\n"
+     "      let sphereNear = clamp((clip.z + env.pA * s.sphere.w)\n"
+     "                        / max(clip.w - s.sphere.w, 0.001),\n"
+     "                        0.0, 1.0);\n"
+     "      if (sphereNear > d) { return false; }\n"
+     "    }\n"
+     "  }\n"
+     "  return true;\n"
+     "}\n"
+     "@compute @workgroup_size(256)\n"
+     "fn cs(@builtin(local_invocation_id) lid : vec3u) {\n"
+     "  let tid = lid.x;\n"
+     "  if (tid == 0u) { atomicStore(&cnt, 0u); }\n"
+     "  workgroupBarrier();\n"
+     "  let n = arrayLength(&src);\n"
+     "  for (var i = tid; i < n; i += 256u) {\n"
+     "    if (visible(src[i])) {\n"
+     "      let k = atomicAdd(&cnt, 1u);\n"
+     "      if (k < CAP) {\n"
+     "        let clip = env.vp * vec4f(src[i].sphere.xyz, 1.0);\n"
+     "        keys[k] = clip.z / max(clip.w, 1e-6);\n"
+     "        ord[k] = i;\n"
+     "      }\n"
+     "    }\n"
+     "  }\n"
+     "  workgroupBarrier();\n"
+     "  let count = min(atomicLoad(&cnt), CAP);\n"
+     "  if (tid >= count) { keys[tid] = -1e30; ord[tid] = 0u; }\n"
+     "  workgroupBarrier();\n"
+     ;; bitonic sort descending: farthest (largest NDC z) first, so the
+     ;; blend pass draws back-to-front
+     "  for (var k = 2u; k <= CAP; k <<= 1u) {\n"
+     "    for (var j = k >> 1u; j > 0u; j >>= 1u) {\n"
+     "      let ixj = tid ^ j;\n"
+     "      if (ixj > tid) {\n"
+     "        let up = (tid & k) == 0u;\n"
+     "        if ((up && keys[tid] < keys[ixj]) ||\n"
+     "            (!up && keys[tid] > keys[ixj])) {\n"
+     "          let tk = keys[tid]; keys[tid] = keys[ixj]; keys[ixj] = tk;\n"
+     "          let to = ord[tid]; ord[tid] = ord[ixj]; ord[ixj] = to;\n"
+     "        }\n"
+     "      }\n"
+     "      workgroupBarrier();\n"
+     "    }\n"
+     "  }\n"
+     "  if (tid < count) {\n"
+     "    let s = src[ord[tid]];\n"
+     "    dst[tid] = Vis(s.m0, s.m1, s.m2, s.m3, s.color);\n"
+     "  }\n"
+     "  if (tid == 0u) { atomicStore(&args.instanceCount, count); }\n"
+     "}\n"))
+
   (define $sgpu-render
     (string-append
      "struct Env { vp : mat4x4f, planes : array<vec4f, 6>,\n"
@@ -384,6 +488,7 @@
   ;; camera/scene is static last frame's pyramid is exact, so the
   ;; occluded set matches (occlusion that changes the picture is a bug).
   (define $sgpu-hzb-slot 250)           ; the pyramid resource slot
+  (define $sgpu-sortcull-slot 251)      ; the depth-sorting cull pipeline
   (define $sgpu-hzb-w 0.0)
   (define $sgpu-hzb-h 0.0)
   (define $sgpu-hzb-built #f)
@@ -397,6 +502,7 @@
     ($sg-aspect! sc (fl/ $sgpu-hzb-w $sgpu-hzb-h))
     (gpu-uniforms! 0 224)
     (gpu-compute! 1 $sgpu-cull)
+    (gpu-compute! $sgpu-sortcull-slot $sgpu-cull-sort)
     (gpu-hzb-init! $sgpu-hzb-slot $sgpu-hzb-w $sgpu-hzb-h)
     (gpu-pipeline2! 2 $sgpu-render 24 "float32x3,float32x3" 80 $inst-fmt)
     (gpu-bindgroup! 3 2 0)
@@ -433,9 +539,10 @@
           (gpu-storage! (+ slot 2) (* cap 128))     ; src instances
           (gpu-storage! (+ slot 3) (* cap 80))      ; visible
           (gpu-indirect! (+ slot 4) 20)
-          ;; binding 4 of the cull is the hi-Z texture (t-prefixed)
+          ;; binding 4 of the cull is the hi-Z texture (t-prefixed);
+          ;; translucent groups bind the sorting-cull pipeline's layout
           (gpu-compute-groupx! (+ slot 5)
-                               1
+                               (if (vector-ref g 15) $sgpu-sortcull-slot 1)
                                (string-append
                                 (number->string (+ slot 2)) ","
                                 (number->string (+ slot 3)) ","
@@ -605,8 +712,12 @@
            ;; the group's own argument reset (writeBuffer reads
            ;; staging at flush, so each group keeps its own words)
            (gpu-buffer-data! (vector-ref g 6) (vector-ref g 12) 20)
-           (gpu-dispatch! 1 (vector-ref g 7)
-                          (quotient (+ (vector-ref g 9) 63) 64)))
+           ;; translucent groups run the single-workgroup sorting cull;
+           ;; opaque ones the plain per-instance compaction
+           (if (vector-ref g 15)
+               (gpu-dispatch! $sgpu-sortcull-slot (vector-ref g 7) 1)
+               (gpu-dispatch! 1 (vector-ref g 7)
+                              (quotient (+ (vector-ref g 9) 63) 64))))
          ($sg-groups sc))
         ;; the draws -- opaque groups first, then the translucent
         ;; ones on the blended pipelines (their instances aren't
