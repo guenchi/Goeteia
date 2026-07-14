@@ -180,5 +180,25 @@
   (and (= (- (count-log hi-tag) hi-before) 1)   ; still just the near one
        (= (- (count-log lo-tag) lo-before) 1)))
 
+;; ---- the batched cull across chunks: seven instances, the 2nd,
+;; 5th and 6th out past the far plane -- culled lanes pack down
+;; within their chunk of four and across the chunk boundary, so one
+;; draw carries exactly the four survivors
+(define sc-chunk
+  (sgl (camera (@ (fov 0.9) (position 0.0 0.0 8.0) (look-at 0.0 0.0 0.0)
+                  (near 0.1) (far 50.0)))
+       (light (@ (direction 0.0 1.0 0.0) (ambient 0.25)))
+       (mesh (@ (geometry (box 1 1 1)) (position -3.0 0.0 0.0)))
+       (mesh (@ (geometry (box 1 1 1)) (position 0.0 0.0 300.0)))
+       (mesh (@ (geometry (box 1 1 1)) (position -1.0 0.0 0.0)))
+       (mesh (@ (geometry (box 1 1 1)) (position 1.0 0.0 0.0)))
+       (mesh (@ (geometry (box 1 1 1)) (position 0.0 200.0 0.0)))
+       (mesh (@ (geometry (box 1 1 1)) (position 0.0 -200.0 0.0)))
+       (mesh (@ (geometry (box 1 1 1)) (position 3.0 0.0 0.0)))))
+(define chunk-before (count-log "drawInst:TRI:36:4"))
+(cmd-begin!) (sgl-draw! sc-chunk) (cmd-flush!)
+(define chunk-ok
+  (= (- (count-log "drawInst:TRI:36:4") chunk-before) 1))
+
 (and frame1-ok frame2-ok mat-ok cull-ok group1-ok group2-ok
-     lod-near-ok lod-far-ok)
+     lod-near-ok lod-far-ok chunk-ok)
