@@ -18,8 +18,55 @@
   (export ktx-parse ktx? ktx-width ktx-height ktx-level-count
           ktx-scheme ktx-etc1s?
           ktx-level-width ktx-level-height
-          ktx-transcode! ktx-transcode-bytes)
-  (import (rnrs))
+          ktx-transcode! ktx-transcode-bytes
+          ktx-fetch! ktx-upload!)
+  (import (rnrs) (web js) (gfx gl) (gfx fx))
+
+  ;; browser loader: fetch, one bulk copy into staging, parse, k
+  (define (ktx-fetch! url k)
+    (js-eval "globalThis.__goeteia_glb = (ab, base) => { new Uint8Array(globalThis.__goeteia_mem.buffer).set(new Uint8Array(ab), base); return 0 }")
+    (js-method
+     (js-method (js-call (js-get (js-global) "fetch") (js-undefined) url)
+                "then"
+                (lambda (resp) (js-method resp "arrayBuffer")))
+     "then"
+     (lambda (ab)
+       (let* ((len (js->number (js-get ab "byteLength")))
+              (base (fx-alloc! len)))
+         (js-call (js-get (js-global) "__goeteia_glb") (js-undefined)
+                  ab base)
+         (k (ktx-parse base len))
+         (js-undefined)))))
+
+  ;; transcode every level for whatever the context speaks and
+  ;; upload the chain; returns the texture slot.  Family 2 keeps the
+  ;; blocks as ETC1, 1 repacks BC1, 0 decodes level 0 to RGBA
+  (define (ktx-upload! k)
+    (let ((fam (gl-compressed-family))
+          (n (ktx-level-count k)))
+      (if (= fam 0)
+          (let* ((bytes (ktx-transcode-bytes k 0 'rgba))
+                 (tmp (fx-alloc! bytes))
+                 (slot (fx-texture!)))
+            (ktx-transcode! k 0 tmp 'rgba)
+            (gl-texture-data! slot tmp (ktx-level-width k 0)
+                              (ktx-level-height k 0))
+            slot)
+          (let* ((fmt (if (= fam 2) 'etc1 'bc1))
+                 (gfmt (if (= fam 2) 0 1))
+                 (tmp (fx-alloc! (ktx-transcode-bytes k 0 fmt)))
+                 (slot (fx-slot!)))
+            (gl-texture-compressed! slot n)
+            (let lvl ((l 0))
+              (when (< l n)
+                (ktx-transcode! k l tmp fmt)
+                (gl-compressed-level! slot l gfmt
+                                      (ktx-level-width k l)
+                                      (ktx-level-height k l)
+                                      tmp
+                                      (ktx-transcode-bytes k l fmt))
+                (lvl (+ l 1))))
+            slot))))
 
   ;; ---- little-endian reads from staging ----
   (define ($k-u16 at)
