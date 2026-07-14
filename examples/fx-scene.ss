@@ -75,6 +75,11 @@
                 (position-y ,(signal-ref bob))
                 (color 0.85 0.88 0.92)
                 (metallic 1.0) (roughness 0.15)))
+       ;; a pane of glass in front: alpha < 1 sends it to the
+       ;; blended pass, drawn last and back to front
+       (mesh (@ (geometry (box 3.0 2.4 0.1))
+                (position 0.0 1.2 3.2)
+                (color 0.5 0.75 0.95 0.35)))
        ;; parked past the far plane: culled until you move it
        (mesh (@ (geometry (torus 1.6 0.55))
                 (position 0.0 0.6 -80.0)

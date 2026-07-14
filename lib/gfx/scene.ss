@@ -1020,19 +1020,43 @@
                       ($sgl-draw-igroup! p ig planes
                                          ($sgl-iscratch sc)))
                     ($sgl-igroups sc))))
-      ($sgl-group! ($sgl-prog sc) ($sgl-lits sc) vp planes eye
-                   (lambda (p) #f))
-      ($sgl-group! ($sgl-tprog sc) ($sgl-texs sc) vp planes eye
-                   (lambda (p)
-                     (fx-uniform! p 'u_tex 0)))
-      ($sgl-group! ($sgl-pprog sc) ($sgl-pbrs sc) vp planes eye
-                   (lambda (p)
-                     (let ((probe ($sgl-probe sc)))
-                       (cmd-bind-cubemap! 0 (vector-ref probe 0))
-                       (cmd-bind-texture! 1 (vector-ref probe 1))
-                       (fx-uniform! p 'u_sky 0)
-                       (fx-uniform! p 'u_lut 1)
-                       (fx-uniform! p 'u_mips (vector-ref probe 2)))))))
+      ;; opaque singles first (front to back), collecting any
+      ;; translucent ones (color alpha < 1) into tr for the blended
+      ;; pass that follows
+      (let ((tr (list '())))
+        ($sgl-group! ($sgl-prog sc) ($sgl-lits sc) vp planes eye
+                     (lambda (p) #f) tr)
+        ($sgl-group! ($sgl-tprog sc) ($sgl-texs sc) vp planes eye
+                     (lambda (p)
+                       (fx-uniform! p 'u_tex 0)) tr)
+        ($sgl-group! ($sgl-pprog sc) ($sgl-pbrs sc) vp planes eye
+                     (lambda (p)
+                       (let ((probe ($sgl-probe sc)))
+                         (cmd-bind-cubemap! 0 (vector-ref probe 0))
+                         (cmd-bind-texture! 1 (vector-ref probe 1))
+                         (fx-uniform! p 'u_sky 0)
+                         (fx-uniform! p 'u_lut 1)
+                         (fx-uniform! p 'u_mips (vector-ref probe 2))))
+                     tr)
+        ;; the translucent pass: farthest first, blend on, depth
+        ;; writes off (they test against the opaque depth but do not
+        ;; occlude each other), each node with its own program
+        (when (pair? (car tr))
+          (cmd-blend! 'alpha)
+          (cmd-depth-write! #f)
+          (for-each
+           (lambda (item)              ; item = (-dist . (prog setup . nd))
+             (let ((e (cdr item)))     ; e = (prog setup . nd)
+               (cmd-use-program! (fx-program-slot (car e)))
+               ((cadr e) (car e))
+               ($sgl-draw-node*! (car e) vp planes (cddr e))))
+           ;; farthest first: the ascending merge sort on a negated
+           ;; distance key
+           ($sgl-sort (map (lambda (e)
+                             (cons (fl- 0.0 (car e)) (cdr e)))
+                           (car tr))))
+          (cmd-depth-write! #t)
+          (cmd-blend! 'off)))))
 
   ;; merge sort by an flonum key -- the frame's draw-order sort
   (define ($sgl-sort ks)                ; ks: ((key . nd) ...)
@@ -1056,7 +1080,12 @@
   ;; depth test the whole occluded fragment bill (early z).  The tex
   ;; pass keys on the texture slot first, so equal textures bind
   ;; once, nearest first within each
-  (define ($sgl-group! prog nodes vp planes eye setup!)
+  ;; a node with color alpha below one is translucent: it skips the
+  ;; opaque pass and joins tr (tagged with this program and setup)
+  ;; for the later back-to-front blended pass
+  (define ($sgl-nd-alpha nd) (vector-ref ($sgl-nd-f nd) 10))
+
+  (define ($sgl-group! prog nodes vp planes eye setup! tr)
     (when (pair? nodes)
       (cmd-use-program! (fx-program-slot prog))
       (setup! prog)
@@ -1076,13 +1105,21 @@
                           (d2 (fl+ (fl* dx dx)
                                    (fl+ (fl* dy dy) (fl* dz dz))))
                           (tx ($sgl-nd-tex nd)))
-                     (cons (cons (if tx
-                                     ;; texture major, distance minor
-                                     (fl+ (fl* 1000000000.0
-                                               (fixnum->flonum tx))
-                                          d2)
-                                     d2)
-                                 nd)
-                           acc)))
+                     (if (fl<? ($sgl-nd-alpha nd) 1.0)
+                         ;; defer: (dist prog setup . nd)
+                         (begin
+                           (set-car! tr
+                                     (cons (cons d2 (cons prog
+                                                          (cons setup! nd)))
+                                           (car tr)))
+                           acc)
+                         (cons (cons (if tx
+                                         ;; texture major, distance minor
+                                         (fl+ (fl* 1000000000.0
+                                                   (fixnum->flonum tx))
+                                              d2)
+                                         d2)
+                                     nd)
+                               acc))))
                  acc))
            '() nodes)))))))

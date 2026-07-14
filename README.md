@@ -273,8 +273,11 @@ buffer, shaders as s-expressions, and everything over them — in
   encoded.  The frame globals — view-projection, light, ambient,
   eye — live in one std140 Env block every scene program reads from
   binding 0: 96 bytes uploaded once per frame, no per-program
-  plumbing (`examples/fx-scene.html`: all three materials and a
-  culled straggler, declaratively)
+  plumbing.  A mesh whose colour alpha is below one is translucent:
+  it skips the opaque pass and joins a final blended pass drawn back
+  to front with depth writes off, so glass reads correctly through
+  glass (`examples/fx-scene.html`: all three materials, a pane of
+  glass and a culled straggler, declaratively)
 - `(gfx post)` — the post chains, packaged: `make-bloom` /
   `bloom-run!` / `bloom-composite!` (luminance threshold, ping-ponged
   separable gaussian, tonemapped add — `'clamp` or `'reinhard`),
