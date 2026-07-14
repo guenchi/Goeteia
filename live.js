@@ -18,7 +18,7 @@ const LIB_FILES = [
     'lib/gfx/glsl.ss',
     'lib/gfx/gl.ss',
     'lib/web/typeset.ss',
-    'lib/web/typeset/canvas.ss',
+    'lib/web/canvas.ss',
     'lib/gfx/mat.ss',
     'lib/gfx/mesh.ss',
     'lib/gfx/fx.ss',

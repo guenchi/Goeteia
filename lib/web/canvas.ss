@@ -9,7 +9,7 @@
 ;; match it to the CSS of the element the estimate stands in for.
 ;;
 ;; Copyright (c) 2026 guenchi. MIT license; see LICENSE.
-(library (web typeset canvas)
+(library (web canvas)
   (export canvas-measurer)
   (import (rnrs) (web js))
 

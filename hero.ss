@@ -5,7 +5,7 @@
 ;; Edit anything and press Run: the words, the fonts, the forces, the palette.
 (import (web sx) (web dom) (web reactive) (web js)
         (gfx gl) (gfx glsl) (gfx fx)
-        (web typeset) (web typeset canvas))
+        (web typeset) (web canvas))
 
 ;; ---- the page ----
 (sx-mount (get-element-by-id "live")
