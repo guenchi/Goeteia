@@ -474,8 +474,66 @@
 (define am-noop-ok
   (< (abs (- (m4at am-jm5 1 0) 0.36811)) 0.002))  ; 0.75 again
 
+;; ---- fixture 5: KHR_mesh_quantization -- u16 positions (the tiny
+;; node scale carries them) and normalized i8 normals ----
+(define json5
+  (string-append
+   "{\"asset\":{\"version\":\"2.0\"},\"scene\":0,"
+   "\"scenes\":[{\"nodes\":[0]}],"
+   "\"extensionsUsed\":[\"KHR_mesh_quantization\"],"
+   "\"nodes\":[{\"mesh\":0,\"scale\":[0.5,0.5,0.5],"
+   "\"translation\":[1,2,3]}],"
+   "\"meshes\":[{\"primitives\":[{\"attributes\":"
+   "{\"POSITION\":0,\"NORMAL\":1},\"indices\":2}]}],"
+   "\"buffers\":[{\"byteLength\":44}],"
+   "\"bufferViews\":["
+   "{\"buffer\":0,\"byteOffset\":0,\"byteLength\":24,\"byteStride\":8},"
+   "{\"buffer\":0,\"byteOffset\":24,\"byteLength\":12,\"byteStride\":4},"
+   "{\"buffer\":0,\"byteOffset\":36,\"byteLength\":6}],"
+   "\"accessors\":["
+   "{\"bufferView\":0,\"componentType\":5123,\"count\":3,\"type\":\"VEC3\"},"
+   "{\"bufferView\":1,\"componentType\":5120,\"normalized\":true,"
+   "\"count\":3,\"type\":\"VEC3\"},"
+   "{\"bufferView\":2,\"componentType\":5123,\"count\":3,\"type\":\"SCALAR\"}]}"))
+(define jlen5 (string-length json5))
+(define jpad5 (remainder (- 4 (remainder jlen5 4)) 4))
+(define total5 (+ 12 8 jlen5 jpad5 8 44))
+(set! base 16384)
+(set! at 0)
+(u32! #x46546C67) (u32! 2) (u32! total5)
+(u32! (+ jlen5 jpad5)) (u32! #x4E4F534A)
+(str! json5)
+(let pad ((i 0)) (when (< i jpad5) (b! 32) (pad (+ i 1))))
+(u32! 44) (u32! #x004E4942)
+;; POSITION u16 x3 + 2 pad, per vertex (stride 8)
+(u16! 0) (u16! 0) (u16! 0) (b! 0) (b! 0)
+(u16! 16384) (u16! 0) (u16! 0) (b! 0) (b! 0)
+(u16! 0) (u16! 16384) (u16! 0) (b! 0) (b! 0)
+;; NORMAL i8 x3 + 1 pad (stride 4): (0,0,127) (-127,0,0) (64,0,0)
+(b! 0) (b! 0) (b! 127) (b! 0)
+(b! 129) (b! 0) (b! 0) (b! 0)
+(b! 64) (b! 0) (b! 0) (b! 0)
+(u16! 0) (u16! 1) (u16! 2)                ; indices
+(b! 0) (b! 0)                             ; pad to 44
+
+(define g5 (gltf-parse 16384 total5))
+(define p5 (car (gltf-prims g5)))
+(define vb5 (gprim-vbase p5))
+(define quant-ok
+  (and (near? (%mem-f32-ref vb5) 0.0)               ; v0.x = 0
+       (near? (%mem-f32-ref (+ vb5 24)) 16384.0)    ; v1.x = raw u16
+       (near? (%mem-f32-ref (+ vb5 52)) 16384.0)    ; v2.y (vbase+48+4)
+       ;; normalized i8 normals: 127/127, -127/127, 64/127
+       (near? (%mem-f32-ref (+ vb5 20)) 1.0)        ; v0.nz
+       (near? (%mem-f32-ref (+ vb5 36)) -1.0)       ; v1.nx (24+12)
+       (< (abs (- (%mem-f32-ref (+ vb5 60)) 0.503937)) 0.0001) ; v2.nx (48+12)
+       ;; the tiny scale + offset ride the node's world matrix
+       (near? (vector-ref (gprim-world p5) 0) 0.5)
+       (near? (vector-ref (gprim-world p5) 12) 1.0)
+       (near? (vector-ref (gprim-world p5) 13) 2.0)))
+
 (and parse-ok tex-parse-ok skin-parse-ok pose0-ok pose1-ok pose-mid-ok
      blend-ok pal-ok morph-parse-ok morph0-ok morph-anim-ok
-     morph-hand-ok
+     morph-hand-ok quant-ok
      am-run-ok am-fade-ok am-done-ok am-instant-ok am-noop-ok
      skin-draw-ok draw-ok reuse-ok tex-load-ok tex-draw-ok mismatch-ok)

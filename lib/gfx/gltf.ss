@@ -165,7 +165,8 @@
                    ($or0 (json-ref acc "byteOffset"))))
             stride
             (json-ref acc "count")
-            (json-ref acc "componentType"))))
+            (json-ref acc "componentType")
+            (and (json-ref acc "normalized") #t))))
 
   (define ($material-color json mi)
     (let ((fallback (vector 0.8 0.8 0.8 1.0)))
@@ -803,6 +804,26 @@
         (set! v_normal (vec3 (* skin (vec4 a_normal (fl 0)))))
         (set! v_uv a_uv))))
 
+  ;; KHR_mesh_quantization: read component c of a vertex as a flonum,
+  ;; dequantizing by componentType + normalized.  Positions ride the
+  ;; node's tiny scale/offset (applied as the model matrix at draw), so
+  ;; they come through as unnormalized integers; normals/uvs normalize.
+  (define ($s8 at) (let ((u (%mem-u8-ref at))) (if (>= u 128) (- u 256) u)))
+  (define ($s16 at) (let ((u ($glb-u16 at))) (if (>= u 32768) (- u 65536) u)))
+  (define ($clamp-1 x) (if (fl<? x -1.0) -1.0 x))
+  (define ($deq base c ct norm)
+    (cond
+     ((= ct 5126) (%mem-f32-ref (+ base (* 4 c))))
+     ((= ct 5123) (let ((v (fixnum->flonum ($glb-u16 (+ base (* 2 c))))))
+                    (if norm (fl/ v 65535.0) v)))
+     ((= ct 5122) (let ((v (fixnum->flonum ($s16 (+ base (* 2 c))))))
+                    (if norm ($clamp-1 (fl/ v 32767.0)) v)))
+     ((= ct 5121) (let ((v (fixnum->flonum (%mem-u8-ref (+ base c)))))
+                    (if norm (fl/ v 255.0) v)))
+     ((= ct 5120) (let ((v (fixnum->flonum ($s8 (+ base c)))))
+                    (if norm ($clamp-1 (fl/ v 127.0)) v)))
+     (else (error 'gltf "bad vertex component type" ct))))
+
   ;; one primitive: interleave pos+normal (+uv when the asset has
   ;; TEXCOORD_0) and pack u16 index pairs into fresh staging memory
   (define ($build-prim json bin prim world skin nidx mw)
@@ -827,29 +848,32 @@
            (count (caddr pos))
            (stride (cond ((and jn wt) 64) (uv 32) (else 24)))
            (vbytes (* stride count))
-           (vbase (fx-alloc! vbytes)))
-      (unless (= (cadddr pos) 5126)
-        (error 'gltf "positions must be float32" (cadddr pos)))
+           (vbase (fx-alloc! vbytes))
+           ;; componentType + normalized per attribute (5126 float =
+           ;; the plain path; anything else is KHR_mesh_quantization)
+           (pct (cadddr pos)) (pn (list-ref pos 4))
+           (nct (and nrm (cadddr nrm))) (nn (and nrm (list-ref nrm 4)))
+           (uct (and uv (cadddr uv))) (un (and uv (list-ref uv 4))))
       (let copy ((v 0))
         (when (< v count)
           (let ((src (+ (car pos) (* v (cadr pos))))
                 (dst (+ vbase (* v stride))))
-            (%mem-f32-set! dst (%mem-f32-ref src))
-            (%mem-f32-set! (+ dst 4) (%mem-f32-ref (+ src 4)))
-            (%mem-f32-set! (+ dst 8) (%mem-f32-ref (+ src 8)))
+            (%mem-f32-set! dst ($deq src 0 pct pn))
+            (%mem-f32-set! (+ dst 4) ($deq src 1 pct pn))
+            (%mem-f32-set! (+ dst 8) ($deq src 2 pct pn))
             (if nrm
                 (let ((ns (+ (car nrm) (* v (cadr nrm)))))
-                  (%mem-f32-set! (+ dst 12) (%mem-f32-ref ns))
-                  (%mem-f32-set! (+ dst 16) (%mem-f32-ref (+ ns 4)))
-                  (%mem-f32-set! (+ dst 20) (%mem-f32-ref (+ ns 8))))
+                  (%mem-f32-set! (+ dst 12) ($deq ns 0 nct nn))
+                  (%mem-f32-set! (+ dst 16) ($deq ns 1 nct nn))
+                  (%mem-f32-set! (+ dst 20) ($deq ns 2 nct nn)))
                 (begin
                   (%mem-f32-set! (+ dst 12) 0.0)
                   (%mem-f32-set! (+ dst 16) 1.0)
                   (%mem-f32-set! (+ dst 20) 0.0)))
             (if uv
                 (let ((us (+ (car uv) (* v (cadr uv)))))
-                  (%mem-f32-set! (+ dst 24) (%mem-f32-ref us))
-                  (%mem-f32-set! (+ dst 28) (%mem-f32-ref (+ us 4))))
+                  (%mem-f32-set! (+ dst 24) ($deq us 0 uct un))
+                  (%mem-f32-set! (+ dst 28) ($deq us 1 uct un)))
                 (when (= stride 64)      ; skinned but uv-less: zeros
                   (%mem-f32-set! (+ dst 24) 0.0)
                   (%mem-f32-set! (+ dst 28) 0.0)))
