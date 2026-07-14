@@ -79,11 +79,9 @@
                             extra)))
                (else (loop (cdr ds) (cons d plain) extra))))))))
 
-  ;; the markup and its css, one form.  Define components in the
-  ;; program (or another library) that uses them: a syntax-rules
-  ;; macro defined AND used inside one library currently miscompiles.
-  ;; kids quasiquote as ONE list, so a splicing hole may stand alone
-  ;; as a child -- (div (b "r") ,@cells) -- then apply spreads them
+  ;; the markup and its css, one form.  The kids quasiquote as ONE
+  ;; list, so a splicing hole may stand alone as a child --
+  ;; (div (b "r") ,@cells) -- then apply spreads them.
   (define-syntax define-component
     (syntax-rules (style)
       ((_ (name . args) (style decl ...) (tag kid ...))
