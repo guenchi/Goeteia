@@ -22,6 +22,7 @@
           v3-normalize!
           m4-identity m4-mul m4-scratch! m4-transform
           m4s-write! m4s-read m4s-identity! m4s-mul! m4s-trs!
+          m4s-tqs!
           m4-translate m4-scale m4-rotate-x m4-rotate-y m4-rotate-z
           m4-from-quat m4-perspective m4-ortho m4-look-at
           m4-inverse m4-unproject
@@ -231,6 +232,34 @@
       (%mem-f32-set! (+ at 48) ($mat-fl px))
       (%mem-f32-set! (+ at 52) ($mat-fl py))
       (%mem-f32-set! (+ at 56) ($mat-fl pz))
+      (%mem-f32-set! (+ at 60) 1.0)))
+
+  ;; T x R(quat) x S in closed form, straight into staging: the local
+  ;; matrix every skeleton node rebuilds each frame (glTF nodes carry
+  ;; translation/rotation-quaternion/scale), without a constructor
+  ;; chain's boxed intermediates.  The quaternion is assumed unit
+  (define (m4s-tqs! at tx ty tz qx qy qz qw sx sy sz)
+    (let* ((qx ($mat-fl qx)) (qy ($mat-fl qy))
+           (qz ($mat-fl qz)) (qw ($mat-fl qw))
+           (sx ($mat-fl sx)) (sy ($mat-fl sy)) (sz ($mat-fl sz))
+           (xx (fl* qx qx)) (yy (fl* qy qy)) (zz (fl* qz qz))
+           (xy (fl* qx qy)) (xz (fl* qx qz)) (yz (fl* qy qz))
+           (wx (fl* qw qx)) (wy (fl* qw qy)) (wz (fl* qw qz)))
+      (%mem-f32-set! at (fl* sx (fl- 1.0 (fl* 2.0 (fl+ yy zz)))))
+      (%mem-f32-set! (+ at 4) (fl* sx (fl* 2.0 (fl+ xy wz))))
+      (%mem-f32-set! (+ at 8) (fl* sx (fl* 2.0 (fl- xz wy))))
+      (%mem-f32-set! (+ at 12) 0.0)
+      (%mem-f32-set! (+ at 16) (fl* sy (fl* 2.0 (fl- xy wz))))
+      (%mem-f32-set! (+ at 20) (fl* sy (fl- 1.0 (fl* 2.0 (fl+ xx zz)))))
+      (%mem-f32-set! (+ at 24) (fl* sy (fl* 2.0 (fl+ yz wx))))
+      (%mem-f32-set! (+ at 28) 0.0)
+      (%mem-f32-set! (+ at 32) (fl* sz (fl* 2.0 (fl+ xz wy))))
+      (%mem-f32-set! (+ at 36) (fl* sz (fl* 2.0 (fl- yz wx))))
+      (%mem-f32-set! (+ at 40) (fl* sz (fl- 1.0 (fl* 2.0 (fl+ xx yy)))))
+      (%mem-f32-set! (+ at 44) 0.0)
+      (%mem-f32-set! (+ at 48) ($mat-fl tx))
+      (%mem-f32-set! (+ at 52) ($mat-fl ty))
+      (%mem-f32-set! (+ at 56) ($mat-fl tz))
       (%mem-f32-set! (+ at 60) 1.0)))
 
   (define (m4-mul a b)                  ; (m4-mul a b) transforms as a after b

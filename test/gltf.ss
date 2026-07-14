@@ -311,6 +311,22 @@
        (< (abs (- (m4at jm-blend 1 1) 0.7071)) 0.002)
        (near? (m4at jm-b0 1 0) 1.0)
        (< (abs (- (m4at jm-b1 1 0) 0.0)) 0.001)))
+;; the resident palette holds the same matrices, f32 for f32
+(define (m4s~ at m)
+  (let loop ((i 0))
+    (or (= i 16)
+        (and (< (abs (- (%mem-f32-ref (+ at (* 4 i)))
+                        (vector-ref m i)))
+                0.001)
+             (loop (+ i 1))))))
+(gltf-animate! g3 0 0.5)
+(define jm-box (gltf-joint-matrices g3 0))
+(define pal-at (gltf-joint-palette! g3 0))
+(define pal-ok
+  (and (= (gltf-joint-count g3 0) 2)
+       (m4s~ pal-at (vector-ref jm-box 0))
+       (m4s~ (+ pal-at 64) (vector-ref jm-box 1))))
+
 ;; draw through the skin shader: one joint-array upload per prim
 (define sprog (fx-program! gltf-skin-vs mesh-tex-fs))
 (cmd-begin!)
@@ -459,6 +475,7 @@
   (< (abs (- (m4at am-jm5 1 0) 0.36811)) 0.002))  ; 0.75 again
 
 (and parse-ok tex-parse-ok skin-parse-ok pose0-ok pose1-ok pose-mid-ok
-     blend-ok morph-parse-ok morph0-ok morph-anim-ok morph-hand-ok
+     blend-ok pal-ok morph-parse-ok morph0-ok morph-anim-ok
+     morph-hand-ok
      am-run-ok am-fade-ok am-done-ok am-instant-ok am-noop-ok
      skin-draw-ok draw-ok reuse-ok tex-load-ok tex-draw-ok mismatch-ok)

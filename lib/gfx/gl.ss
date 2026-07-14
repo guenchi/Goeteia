@@ -49,7 +49,7 @@
           cmd-bind-index! cmd-index-data! cmd-draw-elements!
           cmd-index-data32! cmd-draw-elements32!
           cmd-attrib-divisor! cmd-draw-elements-instanced!
-          cmd-uniform-matrices!
+          cmd-uniform-matrices! cmd-uniform-matrices4s!
           cmd-draw-arrays! cmd-viewport! cmd-blend!
           GL-POINTS GL-LINES GL-TRIANGLES GL-TRIANGLE-STRIP)
   (import (rnrs) (web js))
@@ -381,6 +381,9 @@
      "     case 38: gl.uniformMatrix4fv(slots[u[p]], false,"
      "                new Float32Array(memory.buffer, u[p+1], 16));"
      "              p += 2; break;"
+     "     case 39: gl.uniformMatrix4fv(slots[u[p]], false,"
+     "                new Float32Array(memory.buffer, u[p+1], u[p+2] * 16));"
+     "              p += 3; break;"
      "     case 26: gl.bindFramebuffer(gl.READ_FRAMEBUFFER, slots[u[p]]);"
      "              gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, slots[u[p+1]]);"
      "              gl.blitFramebuffer(0, 0, u[p+2], u[p+3],"
@@ -569,6 +572,10 @@
               (f! (vector-ref m i))
               (mat (+ i 1)))))
         (each (+ k 1)))))
+  ;; the staging-resident flavor: n matrices already lying at `at`
+  ;; upload in three words -- the replayer reads them in place
+  (define (cmd-uniform-matrices4s! slot at n)
+    (u! 39) (u! slot) (u! at) (u! n))
   (define (cmd-pos) $p)                 ; for overflow checks by callers
   (define (cmd-draws) $draw-count)      ; and HUDs counting the frame
   (define (cmd-viewport! x y w h) (u! 9) (u! x) (u! y) (u! w) (u! h))
