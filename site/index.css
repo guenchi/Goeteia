@@ -90,7 +90,9 @@
       h2 { font-size: 1.5em; font-weight: 600; }
       .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(16em, 1fr)); gap: 1em; margin-top: 1.4em; }
       @media (min-width: 64em) { .grid { grid-template-columns: repeat(3, 1fr); } }
-      .card { background: var(--bg2); border: 1px solid var(--line); border-radius: 10px; padding: 1.1em 1.2em; box-shadow: 0 1px 3px rgba(16,20,42,.06); }
+      .card { background: var(--bg2); border: 1px solid var(--line); border-radius: 12px; padding: 1.4em 1.4em 1.3em; box-shadow: 0 1px 3px rgba(16,20,42,.06); transition: transform .15s ease, box-shadow .15s ease; }
+      .card:hover { transform: translateY(-2px); box-shadow: 0 6px 18px rgba(16,20,42,.10); }
+      .card .ic { font-size: 26px; line-height: 1; margin-bottom: .55em; color: var(--azure); }
       .card h3 { margin: 0 0 .4em; font-size: 1em; color: var(--lapis); font-weight: 600; }
       .card p { margin: 0; color: var(--dim); font-size: .92em; }
       .card code, #quickstart p code { font-family: var(--mono); color: var(--lapis); font-size: .9em; }
