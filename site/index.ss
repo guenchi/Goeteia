@@ -3,6 +3,29 @@
 ;; browser from hero.ss (see index.js); everything else is static.
 (import (web html) (web css) (chrome))   ; card / section* come from chrome
 
+;; a titled box: markup and its css in ONE form; every card on the
+;; page interns to the same generated class
+(define-component (card title . body)
+  (style (background (var bg2)) (border (px 1) solid (var line))
+         (border-radius (px 10)) (padding (em 1 10) (em 1 20))
+         (box-shadow "0 1px 3px rgba(16,20,42,.06)")
+         ("h3" (margin 0 0 (em 0 40)) (font-size (em 1))
+               (color (var lapis)) (font-weight 600))
+         ("p" (margin 0) (color (var dim)) (font-size (em 0 92)))
+         ("code" (font-family (var mono)) (color (var lapis))
+                 (font-size (em 0 90))))
+  (div (h3 ,title) (p ,@body)))
+
+;; the Run button: its css lives on it, pseudo-classes included
+(define-component (run-button)
+  (style (font-size (px 15)) (padding (em 0 45) (em 2))
+         (border-radius (px 6)) (background (var lapis))
+         (color "#fff") (border none) (font-weight 600)
+         (cursor pointer) (min-width (em 7))
+         (:hover (filter "brightness(1.1)"))
+         (:disabled (opacity (dec 0 50)) (cursor default)))
+  (button (@ (id "run") (disabled #t)) "Run"))
+
 ;; ---- the numbered feature showcases: kicker, title, lead, then a
 ;; text column beside a code block (flip? alternates the sides) ----
 (define (show num kick title lead flip? txt code)
@@ -33,17 +56,19 @@
 (/ <span class=\"tok-n\">1</span> <span class=\"tok-n\">3</span>)    <span class=\"tok-c\">; =&gt; 1/3 -- a rational, not 0.333…</span>")
 
 (define webdsl-code
-  "(<span class=\"tok-k\">define</span> (card title . body)       <span class=\"tok-c\">; UI is a function</span>
-  `(div (@ (class <span class=\"tok-s\">\"card\"</span>))
-     (h3 ,title) (p ,@body)))
+  "<span class=\"tok-c\">;; one form: the markup AND its css -- this is the</span>
+<span class=\"tok-c\">;; real definition of the cards further down this page</span>
+(<span class=\"tok-k\">define-component</span> (card title . body)
+  (style (background (var bg2))
+         (border-radius (px <span class=\"tok-n\">10</span>))
+         (<span class=\"tok-s\">\"h3\"</span> (color (var lapis))))   <span class=\"tok-c\">; descendants,</span>
+  (div (h3 ,title) (p ,@body)))       <span class=\"tok-c\">; :hover, @media…</span>
 
-(<span class=\"tok-h\">css-&gt;string</span>                       <span class=\"tok-c\">; CSS is a list</span>
- `((.card (background (var bg2))
-          (border-radius (px <span class=\"tok-n\">12</span>)))))
-<span class=\"tok-c\">;; =&gt; \".card{background:var(--bg2);border-radius:12px}\"</span>
+<span class=\"tok-c\">;; equal style sets intern to ONE generated class:</span>
+<span class=\"tok-c\">;; nine cards below share a single rule</span>
 
-(<span class=\"tok-k\">sx</span> (button (@ (on-click ,bump!))  <span class=\"tok-c\">; a macro: the static</span>
-      <span class=\"tok-s\">\"clicked \"</span> ,(<span class=\"tok-h\">signal-ref</span> n)))  <span class=\"tok-c\">; tree is built ONCE,</span>
+(<span class=\"tok-k\">sx</span> (button (@ (on-click ,bump!))  <span class=\"tok-c\">; live holes: the</span>
+      <span class=\"tok-s\">\"clicked \"</span> ,(<span class=\"tok-h\">signal-ref</span> n)))  <span class=\"tok-c\">; tree builds ONCE,</span>
                                     <span class=\"tok-c\">; holes become effects</span>")
 
 (define typeset-code
@@ -109,16 +134,7 @@
           (textarea (@ (id "src") (rows "18") (spellcheck "false")
                        (autocapitalize "off") (autocorrect "off")) "loading…"))
         (div (@ (class "bar"))
-          ;; styled: the button carries its css, pseudo-classes included
-          ,(styled 'button 'run
-             `((font-size (px 15)) (padding (em 0 45) (em 2))
-               (border-radius (px 6)) (background (var lapis))
-               (color "#fff") (border none) (font-weight 600)
-               (cursor pointer) (min-width (em 7))
-               (:hover (filter "brightness(1.1)"))
-               (:disabled (opacity (dec 0 50)) (cursor default)))
-             '(@ (id "run") (disabled #t))
-             "Run")
+          ,(run-button)
           (span (@ (id "status") (class "status")) "booting the compiler…"))
         (p (@ (class "hint"))
            "No server compiles this — the page carries the whole compiler ("

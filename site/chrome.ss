@@ -4,8 +4,8 @@
 ;; are the same on every page. Rendered to a string by Goeteia.
 (library (chrome)
   (export render-page read-file write-file base-styles footer-styles palette
-          card feat section* soft-box inline-code
-          styled styled-css)
+          feat section* soft-box inline-code
+          styled styled-css define-component)
   (import (rnrs) (web html) (web css))
 
   ;; ---- reusable (web css) declaration helpers ----
@@ -77,20 +77,28 @@
                             extra)))
                (else (loop (cdr ds) (cons d plain) extra))))))))
 
+  ;; ---- define-component: the function and its css, one form ----
+  ;; The component's name doubles as the class prefix, the tag is
+  ;; read off the template's head, the style clause interns through
+  ;; styled, and the template is implicitly quasiquoted -- an unquote
+  ;; is a hole:
+  ;;
+  ;;   (define-component (chip label)
+  ;;     (style (background "#eef1f9") (:hover (color (var lapis))))
+  ;;     (span "· " ,label))
+  ;;
+  ;; NOTE: define it here, use it in a page PROGRAM -- the current
+  ;; compiler miscompiles a syntax-rules macro that is both defined
+  ;; and used inside one library ("illegal cast").
+  (define-syntax define-component
+    (syntax-rules (style)
+      ((_ (name . args) (style decl ...) (tag kid ...))
+       (define (name . args)
+         (styled 'tag 'name
+                 (quasiquote (decl ...))
+                 (quasiquote kid) ...)))))
+
   ;; ---- reusable content helpers (SXML-returning) ----
-  ;; a titled box: markup and its css in ONE place; every card on a
-  ;; page interns to the same generated class
-  (define (card title . body)
-    (styled 'div 'card
-      `((background (var bg2)) (border (px 1) solid (var line))
-        (border-radius (px 10)) (padding (em 1 10) (em 1 20))
-        (box-shadow "0 1px 3px rgba(16,20,42,.06)")
-        ("h3" (margin 0 0 (em 0 40)) (font-size (em 1))
-              (color (var lapis)) (font-weight 600))
-        ("p" (margin 0) (color (var dim)) (font-size (em 0 92)))
-        ("code" (font-family (var mono)) (color (var lapis))
-                (font-size (em 0 90))))
-      `(h3 ,title) `(p ,@body)))
   (define (feat title . body)
     `(div (@ (class "feat")) (h4 ,title) (p ,@body)))
   ;; a section with a heading: (section* "What's inside" node ...)
