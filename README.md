@@ -406,7 +406,11 @@ buffer, shaders as s-expressions, and everything over them — in
   needs no extension; `gl-compressed-family` answers which, and
   `gl-compressed-level!` uploads the mip chain straight from
   staging.  The decoder is verified byte-for-byte against the
-  reference transcoder's unpack (the RGBA goldens ride in the test)
+  reference transcoder's unpack (the RGBA goldens ride in the test),
+  a full mip chain transcodes in single-digit milliseconds, and it
+  DCEs down to a few KB inside a module — where the official C++
+  transcoder is a 300–700KB wasm all its own
+  (`examples/fx-ktx.html`)
 - `(gfx gltf)` — real 3D assets: GLB files parse with the binary
   chunk in staging memory (the wasm f32 loads are the float decoder).
   Geometry, node transforms, base colors, metallic/roughness
@@ -673,6 +677,48 @@ variadic closures' body *is* their generic entry.  `apply` always
 targets the generic entry, so `(apply f a b lst)` is just two conses.
 Tail calls use `return_call_ref` on either path.
 
+### Compressed textures
+
+`(gfx ktx)` transcodes Basis Universal ETC1S/BasisLZ inside a KTX2
+container, and it is written from the Khronos bitstream specification
+rather than vendoring the reference C++ transcoder — that transcoder
+is a 300–700KB wasm of its own, while a decoder written in the subset
+goeteia already compiles rides the DCE like any other library and
+falls to a few KB when a module uses only the target it needs.
+
+The bitstream is a chain of LSB-first bit fields, and the reader keeps
+its accumulator in a fixnum: refill caps at 30 live bits (an `i31`
+holds no more) and no field is wider than 16, so the whole reader is
+fixnum arithmetic with no bignum ever touched.  Every Huffman table is
+canonical — codes assigned by (length, symbol) — and the decode walks
+lengths one bit at a time, comparing against the first code at each
+length; the encoder emits the codes MSB-first while the reader is
+LSB-first, and the two reversals cancel, so no bit-reversal table
+exists on our side at all.
+
+The endpoint palette is DPCM: each of R, G, B is a delta from the
+predecessor through one of three Huffman models split by the
+predecessor's magnitude (`p ≤ 9`, `≤ 21`, else), with mod-32/mod-8
+wrap, and the intensity index its own model.  Selectors ride a history
+buffer with an approximate move-to-front — a hit doesn't shift the
+whole buffer, it swaps the entry with the one halfway toward the front
+— plus a run-length escape.  Endpoints across the image are predicted
+in 2x2 block groups: a two-bit code per block, read at the group's
+even/even corner and its top nibble saved to restore on the odd row,
+says whether the block reuses the left, the up, or the upper-left
+endpoint or reads a fresh delta — a small state machine walking the
+grid.
+
+Three targets come off the reconstructed (endpoint, selector) blocks:
+ETC1, a bit-identical repack of the ETC1S block into an ETC1 one; BC1,
+a table-free path that takes the block's brightest and darkest colors
+as the BC1 endpoints (the reference bakes optimal tables; this trades
+a little PSNR for carrying none); and RGBA8, the universal fallback
+that decodes to plain pixels and needs no GPU extension.  The test
+carries golden RGBA rows unpacked by the official basisu transcoder
+from a real encoder-produced file, and the decode is checked against
+them byte-for-byte across every mip level.
+
 ### Roadmap
 
 - **M1 (done)**: fixnums, booleans, pairs, arithmetic, comparisons,
@@ -729,6 +775,16 @@ Tail calls use `return_call_ref` on either path.
   motivated n-ary `+`/`-`/`*` with strict arity checking for the
   other primitives -- a silently dropped argument cost a day of
   index-space debugging.
+- **M8 (done)**: compressed textures — `(gfx ktx)`, a Basis Universal
+  ETC1S/BasisLZ transcoder written from the Khronos specifications, no
+  C++ transcoder vendored.  KTX2 container parse, a fixnum-safe
+  LSB-first bit reader, canonical-Huffman codebooks, DPCM endpoint
+  palettes, the approximate-move-to-front selector history, and the
+  2x2 endpoint-prediction state machine, feeding three transcode
+  targets (ETC1 bit-identical repack, table-free BC1, universal
+  RGBA8).  Verified byte-for-byte against the reference transcoder's
+  unpack, and it DCEs to a few KB where the official transcoder is a
+  300–700KB wasm.  See [Compressed textures](#compressed-textures).
 
 ## License
 

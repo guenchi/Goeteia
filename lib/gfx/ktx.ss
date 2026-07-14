@@ -13,6 +13,11 @@
 ;; Verified block-for-block against the reference transcoder's
 ;; unpack output (test/ktx.ss carries golden pixels).
 ;;
+;; What this does NOT do yet: alpha slices (RGB only), UASTC, the
+;; P-frame video codec, global selector codebooks, and cube/array/3D
+;; textures -- ETC1S colour, one 2D image with its mip chain, is the
+;; whole of it.
+;;
 ;; Copyright (c) 2026 guenchi. MIT license; see LICENSE.
 (library (gfx ktx)
   (export ktx-parse ktx? ktx-width ktx-height ktx-level-count
