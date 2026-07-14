@@ -42,7 +42,9 @@ wasmtime).  Proper tail calls compile to `return_call`.
   conservative inliner erases small helper calls
 - Wasm SIMD, memory-to-memory: `%f32x4-add!/-sub!/-mul!` and the
   scalar-mixing `%f32x4-scale!`/`%f32x4-axpy!` run four f32 lanes
-  per instruction over staging memory — the v128 lives only inside
+  per instruction over staging memory, and `%f32x4-dot` multiplies
+  four lanes and sums them to one flonum (the quaternion/plane dot)
+  — the v128 lives only inside
   each primitive, so no new types anywhere; modules pay for it only
   when they use it
 - Compile errors carry source context (`at file:line (function)`),

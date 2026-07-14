@@ -35,4 +35,18 @@
 (%f32x4-axpy! D D A 1.0)
 (define acc-ok (is4? D 111.0 222.0 333.0 444.0))
 
-(and add-ok sub-ok mul-ok scale-ok axpy-ok acc-ok)
+;; the dot: four lanes multiplied and summed to one flonum --
+;; 1*10 + 2*20 + 3*30 + 4*40 = 300
+(define (near? a b)
+  (and (fl<? (fl- a b) 0.001) (fl<? (fl- b a) 0.001)))
+(define dot-ok
+  (and (near? (%f32x4-dot A B) 300.0)
+       (near? (%f32x4-dot A A) 30.0)
+       ;; it composes in the f64 context unboxed
+       (near? (fl+ (%f32x4-dot A B) (%f32x4-dot A A)) 330.0)
+       ;; a unit quaternion dotted with itself is one
+       (let ((n (flsqrt 30.0)))
+         (put4! C (fl/ 1.0 n) (fl/ 2.0 n) (fl/ 3.0 n) (fl/ 4.0 n))
+         (near? (%f32x4-dot C C) 1.0))))
+
+(and add-ok sub-ok mul-ok scale-ok axpy-ok acc-ok dot-ok)
