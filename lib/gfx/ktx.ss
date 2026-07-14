@@ -299,6 +299,15 @@
                         (vector-ref b 2) n))
       (vector-set! b 3 (- (vector-ref b 3) n))
       v))
+  ;; peek n bits (up to 16) without consuming, and drop k after a
+  ;; table hit -- the fast-table decode's two halves
+  (define ($br-peek b n)
+    ($br-refill! b n)
+    (bitwise-and (vector-ref b 2)
+                 (- (bitwise-arithmetic-shift-left 1 n) 1)))
+  (define ($br-drop! b k)
+    (vector-set! b 2 (bitwise-arithmetic-shift-right (vector-ref b 2) k))
+    (vector-set! b 3 (- (vector-ref b 3) k)))
   (define ($br-vlc b chunk)             ; basis variable-length count
     (let loop ((shift 0) (out 0))
       (let* ((v ($br-bits b (+ chunk 1)))
@@ -339,33 +348,67 @@
                     (+ code (vector-ref counts l)) 1)
                    (+ off (vector-ref counts l)))))
         (let ((syms (make-vector (if (= total 0) 1 total) 0))
-              (fill (make-vector 17 0)))
+              (fill (make-vector 17 0))
+              ;; the 10-bit fast table: entry = sym*32 + len for a
+              ;; code of at most 10 bits, -1 to fall back to the
+              ;; length walk.  The reader consumes bits low-first
+              ;; while a code reads high-first, so a code's table
+              ;; slots are its bit-reversal with the high bits free
+              (fast (make-vector 1024 -1)))
           (let put ((i 0))
             (when (< i n)
               (let ((l (vector-ref sizes i)))
                 (when (> l 0)
-                  (vector-set! syms (+ (vector-ref offs l)
-                                       (vector-ref fill l))
-                               i)
-                  (vector-set! fill l (+ 1 (vector-ref fill l)))))
+                  (let ((slot (+ (vector-ref offs l)
+                                 (vector-ref fill l))))
+                    (vector-set! syms slot i)
+                    (vector-set! fill l (+ 1 (vector-ref fill l)))
+                    (when (<= l 10)
+                      ;; this symbol's canonical code, MSB-first
+                      (let* ((code (+ (vector-ref firsts l)
+                                      (- slot (vector-ref offs l))))
+                             (rev (let rv ((j 0) (r 0))
+                                    (if (= j l)
+                                        r
+                                        (rv (+ j 1)
+                                            (+ (bitwise-arithmetic-shift-left
+                                                r 1)
+                                               (bitwise-and
+                                                (bitwise-arithmetic-shift-right
+                                                 code j)
+                                                1))))))
+                             (val (+ (* i 32) l)))
+                        (let hi ((h 0))
+                          (when (< h (bitwise-arithmetic-shift-left
+                                      1 (- 10 l)))
+                            (vector-set!
+                             fast
+                             (+ rev (bitwise-arithmetic-shift-left h l))
+                             val)
+                            (hi (+ h 1)))))))))
               (put (+ i 1))))
-          (vector counts firsts syms offs)))))
+          (vector counts firsts syms offs fast)))))
 
   (define ($huff-decode b t)
-    (let walk ((l 1) (code 0))
-      (if (> l 16)
-          (error 'ktx "bad huffman code")
-          (let ((code (+ (bitwise-arithmetic-shift-left code 1)
-                         ($br-bits b 1))))
-            (let ((c (vector-ref (vector-ref t 0) l)))
-              (if (and (> c 0)
-                       (< (- code (vector-ref (vector-ref t 1) l)) c)
-                       (>= (- code (vector-ref (vector-ref t 1) l)) 0))
-                  (vector-ref (vector-ref t 2)
-                              (+ (vector-ref (vector-ref t 3) l)
-                                 (- code
-                                    (vector-ref (vector-ref t 1) l))))
-                  (walk (+ l 1) code)))))))
+    (let ((e (vector-ref (vector-ref t 4) ($br-peek b 10))))
+      (if (>= e 0)
+          (begin ($br-drop! b (bitwise-and e 31))
+                 (quotient e 32))
+          ;; an 11+ bit code: the length walk, from the top
+          (let walk ((l 1) (code 0))
+            (if (> l 16)
+                (error 'ktx "bad huffman code")
+                (let ((code (+ (bitwise-arithmetic-shift-left code 1)
+                               ($br-bits b 1))))
+                  (let ((c (vector-ref (vector-ref t 0) l)))
+                    (if (and (> c 0)
+                             (< (- code (vector-ref (vector-ref t 1) l)) c)
+                             (>= (- code (vector-ref (vector-ref t 1) l)) 0))
+                        (vector-ref (vector-ref t 2)
+                                    (+ (vector-ref (vector-ref t 3) l)
+                                       (- code
+                                          (vector-ref (vector-ref t 1) l))))
+                        (walk (+ l 1) code)))))))))
 
   ;; the code-length-code symbol order (spec constant)
   (define $huff-cl-order
