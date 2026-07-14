@@ -767,6 +767,29 @@ func -> *domElement -> string -> string -> void
 把 `el.style` 上的 CSS 属性 `prop` 设为 `v`。
 
 ```
+procedure: (computed-style el name)
+
+func -> *domElement -> string -> string
+```
+`el` 上样式属性 `name` 的解析后计算值，以字符串返回（`window.getComputedStyle(el)[name]`）。
+
+```scheme
+(computed-style el "fontFamily")
+=> "\"Inter\", sans-serif"
+```
+
+```
+procedure: (computed-px el name fallback)
+
+func -> *domElement -> string -> number -> number
+```
+同一个值，解析成像素——`"28.5px"` → `28.5`。凡 `parseFloat` 拒绝的（`"normal"`、`"auto"` 之类会得到 `NaN`）都改取 `fallback`。
+
+```scheme
+(computed-px el "lineHeight" 24.0)
+```
+
+```
 procedure: (add-event-listener! el event handler)
 
 func -> *domElement -> string -> procedure -> void
@@ -1130,6 +1153,60 @@ procedure: (num->css n)
 func -> number -> string
 ```
 渲染单个数值 CSS 标量——一个精确整数，或一个原样通过的字符串。供单位形式内部使用。
+
+```
+procedure: (palette->root palette)
+
+func -> alist -> list
+```
+把一张调色板 alist `((name value) ...)` 变成 `:root` 规则，把每种颜色声明为自定义属性——于是一个 Scheme 绑定同时为代码与 CSS 命名一种颜色。结果是单条规则，可直接在样式表首部 `css->string`。
+
+```scheme
+(palette->root '((ink "#14203a") (lapis "#1550c4")))
+=> (:root (--ink "#14203a") (--lapis "#1550c4"))
+```
+
+### `(web component)`：附着于元素的 CSS
+
+在构建期领取 React 的教训：把样式写*在*元素上，其中的值是普通绑定（改一处，改每一处使用），并让库把每个不同的样式集内联到一个生成的类——九张相同的卡片只花一条规则。注册表在页面*被构建*时填充、只渲染一次，故没有 css-in-js 的运行时开销；真正动态的东西属于信号与 CSS 变量，不在此处。
+
+```
+syntax: (define-component (name . args) (style decl ...) (tag kid ...))
+```
+把一个组件的标记模板与其样式集捆在一个形式里。`name` 兼作类前缀；每个 `arg` 是一个模板洞。`(tag kid ...)` 体**隐式准引用**——unquote `,x` 是一个洞，`,@xs` 展开一个子节点列表——故 `tag` 命名元素、kid 填充它。领头的 `(@ ...)` kid 传递额外属性。一个 `decl` 要么是普通声明 `(prop value ...)`，要么是三种嵌套子形式之一：
+
+- `(:hover decls ...)`——一条伪类规则（任何以 `:` 领头的符号）。
+- `("h3" decls ...)`——组件类下的后代选择器。
+- `(@media 42 decls ...)`——一个 `max-width` 断点，数字以 `em` 计。
+
+相等的样式集共享一个内联类，故相同的组件只发一条规则。
+
+```scheme
+(define-component (card title . body)
+  (style (background (var bg2)) (border (px 1) solid (var line))
+         (border-radius (px 10)) (padding (em 1 10) (em 1 20))
+         ("h3" (margin 0 0 (em 0 40)) (color (var lapis)) (font-weight 600))
+         ("p" (margin 0) (color (var dim))))
+  (div (h3 ,title) (p ,@body)))
+```
+
+```
+procedure: (styled tag name style-set kid ...)
+
+func -> symbol -> symbol -> list -> any … -> sxml
+```
+`define-component` 底下的过程形式：把 `style-set` 以前缀 `name` 内联，返回携带生成 `class` 的 `tag` 节点——领头的 `(@ ...)` kid 贡献该元素的其他属性。你很少直接调它。
+
+```
+procedure: (styled-css)
+
+func -> list
+```
+至此内联的每一条规则，按注册顺序，作为一个 `(web css)` 规则列表。在渲染前把它追加到页面样式表：
+
+```scheme
+(css->string (styled-css))   ; 附着于元素的样式
+```
 
 ## React 互操作
 
@@ -1703,6 +1780,35 @@ func -> *fx-program -> symbol -> number … -> void
 `(array mat4 N)`（一个矩阵向量）。浮点参数可以是定点数；会被强转。
 
 ```
+procedure: (fx-mesh! m)
+
+func -> *mesh -> *fx-mesh
+```
+取一个 `(web mesh)` 网格，分配其顶点与索引缓冲并暂存数据——每个 demo 曾手写重复的上传舞步。返回一个句柄；真正的 GPU 上传推迟到首次绘制。
+
+```
+procedure: (fx-mesh-use! prog h)
+
+func -> *fx-program -> *fx-mesh -> void
+```
+在 `prog` 下绑定句柄 `h` 以供绘制，重放顶点指针与索引缓冲，并在首次抵达它的那帧里做一次性的惰性上传。绑定一次，设 uniform，绘制多次。
+
+```
+procedure: (fx-mesh-draw! h)
+
+func -> *fx-mesh -> void
+```
+为句柄 `h` 发出索引三角形（`fx-mesh-count` 是其索引数；`fx-mesh?` 判断句柄类型）。
+
+```scheme
+(define pillar (fx-mesh! (mesh-box 1.4 7.0 1.4)))
+;; …… 每帧：绑定一次，在每个模型矩阵下绘制柱子
+(fx-mesh-use! lit-p pillar)
+(fx-uniform! lit-p 'u_color 0.7 0.55 0.4 1.0)
+(fx-mesh-draw! pillar)
+```
+
+```
 procedure: (fx-loop! proc)
 
 func -> procedure -> void
@@ -1835,6 +1941,42 @@ func -> *prepared -> number -> number -> *layout
 过宽的词按码点拆分。`layout-height`、`layout-line-count`、`layout-lines` 读取
 结果；每行给出 `line-text`、`line-width`、`line-y`。`string-fold-cp` 在码点上
 折叠一个过程（字节偏移与长度），是精灵文本用的热路径原语。
+
+### `(web glyphs)`：躲避指针的字形
+
+把一个元素的文本炸成逐字形的绝对定位 span——布局不会移动——并让每个字形以弹簧-斥力物理躲避指针。两条入路，一个组出来。`glyphs!` 取纯文本并经 `(web typeset)` 重排：笔位相对整串宽度做过字距归一（逐码点求和会漏掉约 1% 的字距调整），letter-spacing 得到尊重，`text-align` 的 center 与 right 得到遵守，并且——对于渐变文本，其裁剪会吞掉绝对 span——沿行逐字形采样一个实色。`glyphs-mixed!` 则处理行内标记（`em`、`code`、`a`）：重排会吃掉标签，故每个字符的矩形改由一个 DOM Range 给出，字形 span 坐落在各自的父元素*内部*（`em` 的字形保持斜体，链接的字形照样可点），原始文本段藏在 `opacity:0` 之后，这从不扰动布局。
+
+```
+procedure: (glyphs! el)   (glyphs-mixed! el)
+
+func -> *domElement -> *group
+```
+炸开 `el` 并返回一个*组*记录（一个已炸开的元素）。纯文本用 `glyphs!`，带标记用 `glyphs-mixed!`。`glyphs-group?` 判断该记录；`glyphs-rebuild!` 还原原始标记并在当前几何下重新炸开（resize 处理器会调它）。
+
+```scheme
+(cons (if (plain? el) (glyphs! el) (glyphs-mixed! el)) groups)
+```
+
+```
+procedure: (glyphs-dodge! groups)
+
+func -> list -> void
+```
+一列组的独立驱动器：安装指针、滚动、resize 监听器并跑一个自有的 `requestAnimationFrame` 循环。当页面自身没有渲染循环时用它。
+
+```
+procedure: (glyphs-track! groups)   (glyphs-step! group)
+
+func -> list -> void   /   func -> *group -> void
+```
+拆分形式，用于从你已经在跑的循环里驱动。`glyphs-track!` 只安装监听器（指针、滚动、resize）；`glyphs-step!` 把一个组推进单个弹簧步——每帧调它。主页 hero 正是这样从它的 GL 循环驱动副标题：
+
+```scheme
+(define sub-glyphs (glyphs! sub-el))
+(glyphs-track! (list sub-glyphs))
+;; …… 然后在 GL 帧内：
+(glyphs-step! sub-glyphs)
+```
 
 ### `(web sprite)`：2D 精灵与 GL 文本
 

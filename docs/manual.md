@@ -808,6 +808,32 @@ func -> *domElement -> string -> string -> void
 Set the CSS property `prop` to `v` on `el.style`.
 
 ```
+procedure: (computed-style el name)
+
+func -> *domElement -> string -> string
+```
+The resolved computed value of style property `name` on `el`, as a string
+(`window.getComputedStyle(el)[name]`).
+
+```scheme
+(computed-style el "fontFamily")
+=> "\"Inter\", sans-serif"
+```
+
+```
+procedure: (computed-px el name fallback)
+
+func -> *domElement -> string -> number -> number
+```
+The same value parsed as pixels — `"28.5px"` → `28.5`. Anything
+`parseFloat` rejects (`"normal"`, `"auto"`, and the like yield `NaN`)
+takes `fallback` instead.
+
+```scheme
+(computed-px el "lineHeight" 24.0)
+```
+
+```
 procedure: (add-event-listener! el event handler)
 
 func -> *domElement -> string -> procedure -> void
@@ -1189,6 +1215,79 @@ func -> number -> string
 ```
 Render one numeric CSS scalar — an exact integer, or a string passed
 through. Used internally by the unit forms.
+
+```
+procedure: (palette->root palette)
+
+func -> alist -> list
+```
+Turn a palette alist `((name value) ...)` into the `:root` rule that
+declares each colour as a custom property — one Scheme binding then names
+a colour for both code and CSS. The result is a single rule, ready to
+`css->string` at the head of the stylesheet.
+
+```scheme
+(palette->root '((ink "#14203a") (lapis "#1550c4")))
+=> (:root (--ink "#14203a") (--lapis "#1550c4"))
+```
+
+### `(web component)`: Element-Attached CSS
+
+The React lesson taken at build time: write the styles *on* the element,
+where the values are ordinary bindings (change one, change every use), and
+let the library intern each distinct style set to one generated class —
+nine identical cards cost one rule. The registry fills while the page is
+*built* and renders once, so there is no css-in-js runtime tax; anything
+genuinely dynamic belongs to signals and CSS variables, not here.
+
+```
+syntax: (define-component (name . args) (style decl ...) (tag kid ...))
+```
+Bundle a component's markup template and its style set in one form.
+`name` doubles as the class prefix; each `arg` is a template hole. The
+`(tag kid ...)` body is **implicitly quasiquoted** — an unquote `,x` is a
+hole, and `,@xs` splices a list of children — so `tag` names the element
+and the kids fill it. A leading `(@ ...)` kid passes extra attributes
+through. A `decl` is either a plain declaration `(prop value ...)` or one
+of three nested sub-forms:
+
+- `(:hover decls ...)` — a pseudo-class rule (any `:`-led symbol).
+- `("h3" decls ...)` — a descendant selector under the component's class.
+- `(@media 42 decls ...)` — a `max-width` breakpoint, the number in `em`.
+
+Equal style sets share one interned class, so identical components emit a
+single rule.
+
+```scheme
+(define-component (card title . body)
+  (style (background (var bg2)) (border (px 1) solid (var line))
+         (border-radius (px 10)) (padding (em 1 10) (em 1 20))
+         ("h3" (margin 0 0 (em 0 40)) (color (var lapis)) (font-weight 600))
+         ("p" (margin 0) (color (var dim))))
+  (div (h3 ,title) (p ,@body)))
+```
+
+```
+procedure: (styled tag name style-set kid ...)
+
+func -> symbol -> symbol -> list -> any … -> sxml
+```
+The procedural form underneath `define-component`: intern `style-set`
+under prefix `name`, and return the `tag` node carrying the generated
+`class` — a leading `(@ ...)` kid contributes the element's other
+attributes. You rarely call this directly.
+
+```
+procedure: (styled-css)
+
+func -> list
+```
+Every interned rule so far, in registration order, as a `(web css)` rule
+list. Append it to the page's stylesheet before rendering:
+
+```scheme
+(css->string (styled-css))   ; the element-attached styles
+```
 
 ## React Interop
 
@@ -1815,6 +1914,40 @@ Set a uniform by name, dispatched on its declared type — `float`,
 may be fixnums; they are coerced.
 
 ```
+procedure: (fx-mesh! m)
+
+func -> *mesh -> *fx-mesh
+```
+Take a `(web mesh)` mesh, allocate its vertex and index buffers, and stage
+its data — the upload dance every demo used to repeat by hand. Returns a
+handle; the actual GPU upload is deferred to the first draw.
+
+```
+procedure: (fx-mesh-use! prog h)
+
+func -> *fx-program -> *fx-mesh -> void
+```
+Bind handle `h` for drawing under `prog`, replaying the vertex pointers
+and the index buffer, and performing the one-time lazy upload inside the
+first frame that reaches it. Bind once, set uniforms, and draw many times.
+
+```
+procedure: (fx-mesh-draw! h)
+
+func -> *fx-mesh -> void
+```
+Issue the indexed triangles for handle `h` (`fx-mesh-count` is its index
+count; `fx-mesh?` tests the handle type).
+
+```scheme
+(define pillar (fx-mesh! (mesh-box 1.4 7.0 1.4)))
+;; ... per frame: bind once, draw the pillar under each model matrix
+(fx-mesh-use! lit-p pillar)
+(fx-uniform! lit-p 'u_color 0.7 0.55 0.4 1.0)
+(fx-mesh-draw! pillar)
+```
+
+```
 procedure: (fx-loop! proc)
 
 func -> procedure -> void
@@ -1962,6 +2095,60 @@ never end one), over-wide words split by code point. `layout-height`,
 `line-text`, `line-width`, `line-y`. `string-fold-cp` folds a procedure
 over the code points (byte offset and length), the hot-path primitive
 sprite text uses.
+
+### `(web glyphs)`: Glyphs That Dodge the Pointer
+
+Explode an element's text into per-glyph absolute spans — the layout does
+not move — and let each glyph dodge the pointer with spring-and-repulsion
+physics. Two ways in, one group out. `glyphs!` takes plain text and
+re-sets it through `(web typeset)`: pen positions kerning-normalized
+against the whole-string width, letter-spacing honoured, `text-align`
+center and right respected, and — for gradient text, whose clip would swallow the absolute spans — a solid colour sampled per glyph along the
+run. `glyphs-mixed!` handles inline markup (`em`, `code`, `a`) instead:
+re-setting would eat the tags, so each character's rectangle comes from a
+DOM Range, glyph spans sit *inside* their own parents (an `em`'s glyphs
+stay italic, a link's glyphs still click), and the original runs hide
+behind `opacity:0`, which never disturbs layout.
+
+```
+procedure: (glyphs! el)   (glyphs-mixed! el)
+
+func -> *domElement -> *group
+```
+Explode `el` and return a *group* record (one exploded element).
+`glyphs!` for plain text, `glyphs-mixed!` for markup. `glyphs-group?`
+tests the record; `glyphs-rebuild!` restores the original markup and
+re-explodes at the current geometry (the resize handler calls it).
+
+```scheme
+(cons (if (plain? el) (glyphs! el) (glyphs-mixed! el)) groups)
+```
+
+```
+procedure: (glyphs-dodge! groups)
+
+func -> list -> void
+```
+The standalone driver for a list of groups: install the pointer, scroll,
+and resize listeners and run an own `requestAnimationFrame` loop. Use this
+when the page has no render loop of its own.
+
+```
+procedure: (glyphs-track! groups)   (glyphs-step! group)
+
+func -> list -> void   /   func -> *group -> void
+```
+The split form, for driving from a loop you already run. `glyphs-track!`
+installs only the listeners (pointer, scroll, resize); `glyphs-step!`
+advances one group by a single spring step — call it per frame. This is
+how the homepage hero drives its subtitle from its GL loop:
+
+```scheme
+(define sub-glyphs (glyphs! sub-el))
+(glyphs-track! (list sub-glyphs))
+;; ... then inside the GL frame:
+(glyphs-step! sub-glyphs)
+```
 
 ### `(web sprite)`: 2D Sprites and GL Text
 
