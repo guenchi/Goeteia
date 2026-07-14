@@ -186,7 +186,7 @@
 
 (define (build!)
   (let* ((els (js-method (document) "querySelectorAll"
-                         "h1, h2, .era, .note-sub, .sub"))
+                         "h1, h2, .era, .lede, .note-sub, .sub"))
          (n (js->number (js-get els "length"))))
     (set! groups '())
     (let loop ((i 0))
