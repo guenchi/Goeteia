@@ -83,6 +83,8 @@ globalThis.__gpulog = [];
                    setIndexBuffer(b, f){ push('setIbuf', b.id, f) },
                    draw(n, inst){ push('draw', inst === undefined ? n : n + ':' + inst) },
                    drawIndexed(n){ push('drawIndexed', n) },
+                   drawIndexedIndirect(b, o){ push('drawIndexedIndirect', b.id, o) },
+                   drawIndirect(b, o){ push('drawIndirect', b.id, o) },
                    end(){ push('endPass') } } },
         beginComputePass(){
           return { setPipeline(p){ push('csPipeline', p.id) },
@@ -269,5 +271,27 @@ globalThis.__gpulog = [];
        (check 63 "endPass")
        (check 64 "submit:1")))
 
+;; GPU-driven draws: the indirect buffer's usage carries INDIRECT |
+;; STORAGE, the N-buffer compute group binds in list order, and the
+;; indirect opcodes decode buffer + offset
+(define base-i (js->number (js-get log "length")))
+(gpu-indirect! 17 20)
+(gpu-compute-group*! 18 9 "8,17,6")
+(gpu-begin!)
+(gpu-use-pipeline! 0)
+(gpu-bind-vbuf! 1)
+(gpu-bind-ibuf! 5)
+(gpu-draw-indexed-indirect! 17 0)
+(gpu-draw-indirect! 17 4)
+(gpu-flush!)
+(define indirect-ok
+  (and (check base-i "buffer:20:392")            ; INDIRECT|STORAGE|COPY_DST
+       (check (+ base-i 1) "bindgroup:CL0:0=B4|1=B5|2=B3")
+       (check (+ base-i 3) "setPipeline:PL1")
+       (check (+ base-i 4) "setVbuf:0:B1")
+       (check (+ base-i 5) "setIbuf:B2:uint16")
+       (check (+ base-i 6) "drawIndexedIndirect:B5:0")
+       (check (+ base-i 9) "drawIndirect:B5:4")))
+
 (and attach-ok resource-ok frame-ok clear-ok indexed-ok compute-ok
-     tex-ok bundle-ok)
+     tex-ok bundle-ok indirect-ok)

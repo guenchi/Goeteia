@@ -358,7 +358,12 @@ buffer, shaders as s-expressions, and everything over them — in
   over a storage buffer that doubles as the render pass's instance
   stream
   (`examples/gpu-compute.html`: 100,000 particles whose physics
-  never touches the CPU — 16 bytes of uniforms per frame)
+  never touches the CPU — 16 bytes of uniforms per frame), and
+  GPU-driven draws close it twice: a compute pass culls every
+  instance against the frustum, compacts survivors with one
+  `atomicAdd` and writes the draw's own argument buffer
+  (`gpu-indirect!`), which `gpu-draw-indexed-indirect!` then draws
+  (`examples/gpu-cull.html`: 100,000 boxes the CPU never inspects)
 - `(gfx xr)` — WebXR over the same command buffer: `xr-start!`
   swaps the pump for the session's rAF, each eye's projection and
   view arrive from the `XRPose` straight into staging memory
