@@ -1075,6 +1075,8 @@
 ;;;; program state (one program per compiler run)
 
 (define *fns* '())        ; name -> (index n-fixed variadic?)
+(define *fn-specs* '())   ; name -> boolean list: which params are f64
+(define *fn-spec-ty* '()) ; name -> specialized wasm type index
 (define *vars* '())       ; name -> global index
 (define *plain-ty* '())   ; arity -> type index (top-level functions)
 (define *clos-ty* '())    ; arity -> (fn-type . struct-type)
@@ -1941,14 +1943,15 @@
      ((and rop (memq rop primitives) (not (assq rop *fns*)))
       (compile-prim rop args locals cell))
      ((and rop (assq rop *fns*))
-      (compile-direct (cdr (assq rop *fns*)) e args locals cell tail?))
+      (compile-direct (cdr (assq rop *fns*)) e args locals cell tail?
+                      (assq rop *fn-specs*)))
      ((and rop (assq rop *vars*))
       (compile-indirect (compile-ref op locals cell) args locals cell tail?))
      ((pair? op)
       (compile-indirect (compile-exp op locals cell #f) args locals cell tail?))
      (else (errorf 'goeteia "cannot call ~s" op)))))
 
-(define (compile-direct entry e args locals cell tail?)
+(define (compile-direct entry e args locals cell tail? spec)
   (let ((idx (car entry))
         (nfixed (cadr entry))
         (variadic? (caddr entry)))
@@ -1965,7 +1968,20 @@
         (begin
           (unless (= nfixed (length args))
             (errorf 'goeteia "wrong argument count in ~s" e))
-          (list (map-in-order (lambda (a) (compile-exp a locals cell #f)) args)
+          ;; f64 parameter positions take the argument in the f64
+          ;; context (the analysis proved every such argument is a
+          ;; flonum expression)
+          (list (if spec
+                    (let go ((as args) (bs (cdr spec)))
+                      (if (null? as)
+                          '()
+                          (cons (if (and (pair? bs) (car bs))
+                                    (compile-f64 (car as) locals cell)
+                                    (compile-exp (car as) locals cell #f))
+                                (go (cdr as)
+                                    (if (pair? bs) (cdr bs) '())))))
+                    (map-in-order
+                     (lambda (a) (compile-exp a locals cell #f)) args))
                 (if tail? #x12 #x10)
                 (uleb idx))))))
 
@@ -2737,6 +2753,209 @@
 
 (define (define-form? f)
   (and (pair? f) (eq? (car f) 'define)))
+;; ---- flonum function specialization ----
+;; A top-level fixed-arity function that is only ever called directly
+;; (never used as a value) may take some parameters as raw f64: a
+;; parameter qualifies when every call site passes a flonum
+;; expression for it, and the body then computes over the unboxed
+;; parameter instead of unwrapping it on every use -- flsin/flcos and
+;; the collide predicates are the customers.  Results stay boxed, so
+;; callers only change by passing f64.  Qualification is a
+;; monotonic-demotion fixpoint: whether a call-site argument is a
+;; flonum expression can itself depend on the enclosing function's
+;; parameters being f64.
+
+;; fl-expr? with an explicit f64-name set (analysis time -- no slots
+;; exist yet); a call result is never a flonum expression here, since
+;; specialization keeps results boxed
+(define (fl-expr-in? e f64names)
+  (cond
+   ((and (number? e) (flonum? e)) #t)
+   ((symbol? e) (and (memq e f64names) #t))
+   ((pair? e)
+    (let* ((h (car e))
+           (rop (and (symbol? h) (unmark h))))
+      (or (and rop (memq rop fl-direct-ops)
+               (not (assq rop *fns*))
+               (let ((a (assq rop prim-arity)))
+                 (and a (= (length (cdr e)) (cdr a)))))
+          (and (eq? (resolve-tag h) 'if) (= (length e) 4)
+               (fl-expr-in? (caddr e) f64names)
+               (fl-expr-in? (cadddr e) f64names)))))
+   (else #f)))
+
+;; collect operator-position calls (name . arglist) in e; a name that
+;; appears anywhere else (a value use) is added to escaped
+(define (spec-scan e cand escaped calls)
+  ;; cand: names that are specialization candidates; mutating the
+  ;; escaped hashtable and returning the call list
+  (let walk ((stack (list e)) (calls calls))
+    (if (null? stack)
+        calls
+        (let ((x (car stack)) (rest (cdr stack)))
+          (cond
+           ((not (pair? x)) (walk rest calls))
+           ((and (symbol? (car x)) (eq? (resolve-tag (car x)) 'quote))
+            (walk rest calls))
+           (else
+            (let* ((h (car x))
+                   (rop (and (symbol? h) (unmark h)))
+                   (called (and rop (memq rop cand) rop)))
+              ;; the operator, when a call to a candidate, is not a
+              ;; value use; a candidate name in any other position is
+              ;; an escape.  Push car and cdr separately so dotted
+              ;; formal lists ((x . more)) don't reach append
+              (let mark ((es (if called (cdr x) x)))
+                (when (pair? es)
+                  (when (and (symbol? (car es))
+                             (memq (unmark (car es)) cand))
+                    (hashtable-set! escaped (unmark (car es)) #t))
+                  (mark (cdr es))))
+              ;; flatten x's elements onto the stack as individual
+              ;; forms (the operator skipped when it's a candidate
+              ;; call); a dotted tail (a lambda's rest formal) rides
+              ;; on too but is a bare symbol, harmless to revisit
+              (let push ((es (if called (cdr x) x)) (st rest))
+                (cond
+                 ((pair? es) (push (cdr es) (cons (car es) st)))
+                 ((null? es)
+                  (walk st (if called
+                               (cons (cons rop (cdr x)) calls)
+                               calls)))
+                 (else                            ; dotted tail
+                  (walk (cons es st)
+                        (if called
+                            (cons (cons rop (cdr x)) calls)
+                            calls))))))))))))
+
+;; the arithmetic helpers codegen calls by index (arith2's slow
+;; path, compile-test) with eqref operands -- these hidden call
+;; sites bypass the spec, so the helpers must never specialize
+(define $spec-denylist
+  '($add2 $sub2 $mul2 $quot2 $rem2 $eq2 $lt2))
+
+(define (compute-fn-specs! fn-defs main-steps)
+  (set! *fn-specs* '())
+  (let* ((cand (fold-left
+                (lambda (acc d)
+                  (let ((fs (cdadr d)))
+                    (if (and (fixed-formals? fs)
+                             (pair? fs)     ; at least one parameter
+                             (not (memq (unmark (def-name d))
+                                        $spec-denylist)))
+                        (cons (unmark (def-name d)) acc)
+                        acc)))
+                '() fn-defs))
+         (escaped (make-eq-hashtable))
+         (spec (make-eq-hashtable)))     ; name -> vector of booleans
+    ;; seed every candidate optimistic: all params f64
+    (for-each
+     (lambda (d)
+       (let ((name (unmark (def-name d))))
+         (when (memq name cand)
+           (let* ((fs (cdadr d))
+                  (body (cddr d))
+                  (assigned (assigned-vars (cons 'begin body) '()))
+                  ;; a param captured by an inner lambda lands in the
+                  ;; closure env as eqref, so it cannot ride an f64
+                  ;; slot -- same rule as an f64 let binding
+                  (v (list->vector
+                      (map (lambda (p)
+                             (and (not (memq p assigned))
+                                  (not (lambda-captures? p
+                                        (cons 'begin body)))))
+                           (formals-names fs)))))
+             (hashtable-set! spec name v)))))
+     fn-defs)
+    ;; collect all calls, each tagged with its enclosing function's
+    ;; parameter names (for the f64 scope), and note escapes
+    (let ((call-ctxs
+           (fold-left
+            (lambda (acc d)
+              (let* ((name (unmark (def-name d)))
+                     (params (formals-names (cdadr d)))
+                     (calls (spec-scan (cons 'begin (cddr d))
+                                       cand escaped '())))
+                (cons (cons (and (memq name cand) name) calls) acc)))
+            (list (cons #f (spec-scan (cons 'begin main-steps)
+                                      cand escaped '())))
+            fn-defs)))
+      ;; a function with NO source-level call site proves nothing --
+      ;; the arithmetic helpers and the call/cc internals are reached
+      ;; only from synthesized codegen (generic-call, throw/catch),
+      ;; which bypasses the spec -- so they, and every escape, are
+      ;; cleared to all-eqref
+      (let ((called (make-eq-hashtable)))
+        (for-each (lambda (ctx)
+                    (for-each (lambda (call)
+                                (hashtable-set! called (car call) #t))
+                              (cdr ctx)))
+                  call-ctxs)
+        (for-each
+         (lambda (n)
+           (unless (hashtable-ref called n #f)
+             (hashtable-set! escaped n #t)))
+         cand))
+      ;; escapes disqualify every parameter at once
+      (let ((keys (vector->list (hashtable-keys escaped))))
+        (for-each (lambda (n)
+                    (let ((v (hashtable-ref spec n #f)))
+                      (when v
+                        (let clr ((i 0))
+                          (when (< i (vector-length v))
+                            (vector-set! v i #f) (clr (+ i 1)))))))
+                  keys))
+      ;; the demotion fixpoint
+      (let loop ()
+        (let ((changed #f))
+          (for-each
+           (lambda (ctx)
+             (let* ((home (car ctx))
+                    (hv (and home (hashtable-ref spec home #f)))
+                    (hparams (if home
+                                 (formals-names
+                                  (cdadr (find-def fn-defs home)))
+                                 '()))
+                    (f64names
+                     (if hv
+                         (let pick ((ps hparams) (i 0) (acc '()))
+                           (if (null? ps)
+                               acc
+                               (pick (cdr ps) (+ i 1)
+                                     (if (vector-ref hv i)
+                                         (cons (car ps) acc)
+                                         acc))))
+                         '())))
+               (for-each
+                (lambda (call)
+                  (let ((tv (hashtable-ref spec (car call) #f)))
+                    (when tv
+                      (let arg ((as (cdr call)) (i 0))
+                        (when (and (pair? as) (< i (vector-length tv)))
+                          (when (and (vector-ref tv i)
+                                     (not (fl-expr-in? (car as) f64names)))
+                            (vector-set! tv i #f)
+                            (set! changed #t))
+                          (arg (cdr as) (+ i 1)))))))
+                (cdr ctx))))
+           call-ctxs)
+          (when changed (loop))))
+      ;; publish specs that have at least one f64 parameter
+      (for-each
+       (lambda (name)
+         (let ((v (hashtable-ref spec name #f)))
+           (when (and v (let any ((i 0))
+                          (and (< i (vector-length v))
+                               (or (vector-ref v i) (any (+ i 1))))))
+             (set! *fn-specs*
+                   (cons (cons name (vector->list v)) *fn-specs*)))))
+       cand))))
+
+(define (find-def defs name)
+  (cond ((null? defs) (error 'goeteia "spec: missing def" name))
+        ((eq? (unmark (def-name (car defs))) name) (car defs))
+        (else (find-def (cdr defs) name))))
+
 (define (fn-define? f)
   (and (define-form? f) (pair? (cadr f))))
 (define (var-define? f)
@@ -2793,10 +3012,21 @@
          (arity (length names))
          (cell (list arity))
          (locals (number-locals names 0))
+         (spec (assq (unmark (def-name form)) *fn-specs*))
          (saved *f64-slots*)
          (saved-loops *loops*)
          (saved-blocks *blocks*))
-    (set! *f64-slots* '())
+    ;; f64 parameters ride raw slots (indices 0..arity-1); the type
+    ;; declares them f64 and refs read them unboxed / box on generic
+    ;; use, exactly like an f64 let binding
+    (set! *f64-slots*
+          (if spec
+              (let seed ((bs (cdr spec)) (i 0) (acc '()))
+                (if (null? bs)
+                    acc
+                    (seed (cdr bs) (+ i 1)
+                          (if (car bs) (cons i acc) acc))))
+              '()))
     (set! *loops* '())
     (set! *blocks* 0)
     (let* ((code (compile-body (cddr form) locals cell #t))
@@ -2804,7 +3034,9 @@
       (set! *f64-slots* saved)
       (set! *loops* saved-loops)
       (set! *blocks* saved-blocks)
-      (list (cdr (assv arity *plain-ty*))
+      (list (if spec
+                (cdr (assq (unmark (def-name form)) *fn-spec-ty*))
+                (cdr (assv arity *plain-ty*)))
             arity
             (cons (- (car cell) arity) (cons f64s code))))))
 
@@ -3248,6 +3480,8 @@
         (set! *vars* (cons (cons (cadr (car ds)) g) *vars*))
         (number (cdr ds) (+ g 1))))
     (set! *next-global* (+ G-FIRST-VAR (length var-defs)))
+    ;; which top-level functions take f64 parameters
+    (compute-fn-specs! fn-defs main-steps)
     ;; type table
     (let* ((plain-arities (sort-by self-id (fold-left
                                    (lambda (acc d)
@@ -3272,6 +3506,16 @@
         (unless (null? ns)
           (set! *rec-ty* (cons (cons (car ns) i) *rec-ty*))
           (number (cdr ns) (+ i 1))))
+      ;; a specialized wasm type per function with an f64 parameter,
+      ;; appended after the record types so no existing index shifts
+      (set! *fn-spec-ty* '())
+      (let number ((ss (reverse *fn-specs*))
+                   (i (+ next (* 2 (length clos-arities))
+                         (length rec-fields))))
+        (unless (null? ss)
+          (set! *fn-spec-ty*
+                (cons (cons (car (car ss)) i) *fn-spec-ty*))
+          (number (cdr ss) (+ i 1))))
       (let* ((fn-entries (map-in-order
                           (lambda (d)
                             ;; loc plus the function's name: library
@@ -3432,7 +3676,17 @@
                               (counted
                                (cons (list T-EQREF #x00)
                                      (repeat-n n (list T-EQREF #x01))))))
-                      rec-fields))))
+                      rec-fields)
+                 ;; specialized function types: f64 where a parameter
+                 ;; qualified, eqref otherwise; result stays eqref
+                 (map (lambda (s)
+                        (list #x60
+                              (counted
+                               (map (lambda (f64?)
+                                      (if f64? T-F64 T-EQREF))
+                                    (cdr s)))
+                              (counted (list T-EQREF))))
+                      (reverse *fn-specs*)))))
     ;; import section
     (section 2 (counted
                 (list (list (name-bytes "io") (name-bytes "write_byte")

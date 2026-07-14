@@ -12,7 +12,7 @@ Machine: macOS 26 (Darwin 25.3), Safari 26 / Chrome 150.
 | m4-mul   × 100k      |        110 |         33 | 3.3  |        274 |        119 | 2.3  |
 | flsin    × 1M        |          9 |         11 | ~1   |         20 |         13 | 1.5  |
 | character-move × 200k|        140 |         82 | 1.7  |        300 |        211 | 1.4  |
-| frustum cull × 2M    |         98 |         44 | 2.2  |        197 |         84 | 2.3  |
+| frustum cull × 2M    |         98 |         35 | 2.8  |        197 |         68 | 2.9  |
 
 ## Findings
 
@@ -22,11 +22,15 @@ Machine: macOS 26 (Darwin 25.3), Safari 26 / Chrome 150.
 - JSC is ~2.3–3× slower than V8 in absolute terms on every kernel,
   confirming that its WasmGC allocator is the bottleneck the memory
   note flagged — which is exactly why removing allocations helps.
-- **flsin barely moves** (Chrome ~1×, Safari 1.5×): its cost is the
-  box at the call boundary — argument unwrapped, result boxed then
-  immediately unwrapped by the caller — which loop-internal
-  deboxing can't reach.  This is the case flonum function
-  specialization targets next.
+- **flsin barely moves on V8** (~1×) but 1.5× on Safari: its cost is
+  the box at the call boundary — argument unwrapped, result boxed
+  then immediately unwrapped by the caller — which loop-internal
+  deboxing can't reach.  Flonum function specialization (a later
+  commit) gives flsin an f64 parameter, and the frustum cull's
+  predicate specializes too: cull improves a further step (Chrome
+  44→35, Safari 84→68).  The NEW column above is post-specialization.
+  V8 still shows ~1× on flsin — its JIT already elides the small
+  function's boxing — so this win, like the rest, is a JSC story.
 - The benchmark caught a **shipped Safari regression**: the fused
   `relaxed_madd` (a 3% V8 win on a memory-bound kernel) failed to
   validate on this Safari's WasmGC build, breaking every module that
