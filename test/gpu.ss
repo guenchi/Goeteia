@@ -50,10 +50,16 @@ globalThis.__gpulog = [];
                getBindGroupLayout(i){ return { id: 'L' + i } } } },
     createBuffer(d){
       push('buffer', d.size, d.usage);
-      return { id: 'B' + (this._b = (this._b || 0) + 1) } },
+      return { id: 'B' + (this._b = (this._b || 0) + 1),
+               mapAsync(m){ push('mapAsync', m); return { then(f){ f(); return this } } },
+               getMappedRange(){ return new BigInt64Array([1000000n, 5200000n]).buffer },
+               unmap(){ push('unmap') } } },
     createSampler(d){
       push('sampler', d.magFilter);
       return { id: 'S' + (this._s = (this._s || 0) + 1) } },
+    createQuerySet(d){
+      push('querySet', d.type, d.count);
+      return { id: 'QS' + (this._qs = (this._qs || 0) + 1) } },
     createComputePipeline(d){
       push('computePipeline', d.compute.entryPoint);
       return { id: 'CP' + (this._c = (this._c || 0) + 1),
@@ -86,6 +92,8 @@ globalThis.__gpulog = [];
                    drawIndexedIndirect(b, o){ push('drawIndexedIndirect', b.id, o) },
                    drawIndirect(b, o){ push('drawIndirect', b.id, o) },
                    end(){ push('endPass') } } },
+        resolveQuerySet(qs, a, b, buf, o){ push('resolveQS', qs.id, buf.id) },
+        copyBufferToBuffer(src, so, dst, dofs, n){ push('copyB2B', src.id, dst.id, n) },
         beginComputePass(){
           return { setPipeline(p){ push('csPipeline', p.id) },
                    setBindGroup(i, g){ push('csGroup', i, g.id) },
@@ -93,7 +101,8 @@ globalThis.__gpulog = [];
                    end(){ push('csEnd') } } },
         finish(){ return {} } } } };
   const adapter = {
-    requestDevice(){ return { then(f){ return f(device) } } } };
+    features: { has(n){ return n === 'timestamp-query' } },
+    requestDevice(opts){ return { then(f){ return f(device) } } } };
   Object.defineProperty(globalThis, 'navigator', {
     configurable: true,
     value: { gpu: {
@@ -293,5 +302,26 @@ globalThis.__gpulog = [];
        (check (+ base-i 6) "drawIndexedIndirect:B5:0")
        (check (+ base-i 9) "drawIndirect:B5:4")))
 
+;; GPU frame time: the pass stamps both ends, the resolve copies to
+;; a mappable buffer, and the (synchronous, in this mock) map reads
+;; 4.2ms back
+(define ts-base (js->number (js-get log "length")))
+(define ts-on (gpu-gpu-timer!))
+(gpu-begin!)
+(gpu-clear! 0.0 0.0 0.0 1.0)
+(gpu-flush!)
+(define ts-ok
+  (and ts-on
+       (check ts-base "querySet:timestamp:2")
+       (check (+ ts-base 1) "buffer:16:516")     ; QUERY_RESOLVE|COPY_SRC
+       (check (+ ts-base 2) "buffer:16:9")       ; COPY_DST|MAP_READ
+       (check (+ ts-base 5) "resolveQS:QS1:B6")
+       (check (+ ts-base 6) "copyB2B:B6:B7:16")
+       (check (+ ts-base 7) "submit:1")
+       (check (+ ts-base 8) "mapAsync:1")
+       (check (+ ts-base 9) "unmap")
+       (fl<? 4.1 (gpu-gpu-ms))
+       (fl<? (gpu-gpu-ms) 4.3)))
+
 (and attach-ok resource-ok frame-ok clear-ok indexed-ok compute-ok
-     tex-ok bundle-ok indirect-ok)
+     tex-ok bundle-ok indirect-ok ts-ok)
