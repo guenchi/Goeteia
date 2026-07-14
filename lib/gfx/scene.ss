@@ -450,8 +450,9 @@
             (begin
               (when (and (pair? pbrs) (not probe))
                 (error 'sgl "pbr meshes need a probe tag"))
-              (let-values (((groups singles)
+              (let-values (((groups singles*)
                             ($sgl-igroups! (reverse lits))))
+                (define singles ($sgl-weld! singles*))
                 (let* ((env! (lambda (p)     ; wire Env to binding 0
                                (when p
                                  (gl-uniform-block!
@@ -493,6 +494,206 @@
                    scr)
                  (fx-ubo! 96)
                  (fx-alloc! 96)))))))))
+
+  ;; ---- static batching: strangers welded into one draw ----
+  ;; Signal-driven holes ran their effects at build, so a node whose
+  ;; transform generations all read zero is provably static.  Static
+  ;; lit singles of the same color bake their model matrices into
+  ;; fresh vertex data (positions transformed, normals rotated and
+  ;; renormalized) and weld into ONE geometry drawn by ONE node with
+  ;; the identity transform -- different shapes, one draw.  The
+  ;; welded bounding sphere is the conservative hull of the parts
+  (define ($sgl-static? nd)
+    (and (not ($sgl-nd-lod nd))
+         (= 0 (vector-ref ($sgl-nd-f nd) 13))
+         (let chain ((gs ($sgl-nd-chain nd)))
+           (or (null? gs)
+               (and (= 0 (vector-ref (car gs) 7))
+                    (chain (cdr gs)))))))
+
+  (define ($sgl-node-model nd)          ; static: safe to fold now
+    (m4-mul (fold-left (lambda (acc gf) (m4-mul acc ($sgl-trs gf)))
+                       (m4-identity) ($sgl-nd-chain nd))
+            ($sgl-trs ($sgl-nd-f nd))))
+
+  (define ($sgl-weld nodes)             ; two or more static, same color
+    (let* ((total-v (fold-left (lambda (a nd)
+                                 (+ a (quotient
+                                       (vector-ref ($sgl-nd-geo nd) 4)
+                                       24)))
+                               0 nodes))
+           (total-i (fold-left (lambda (a nd)
+                                 (+ a (vector-ref ($sgl-nd-geo nd) 6)))
+                               0 nodes))
+           (vbuf (fx-buffer!))
+           (ibuf (fx-buffer!))
+           (vbase (fx-alloc! (* total-v 24)))
+           (ibase (fx-alloc! (* 4 (quotient (+ total-i 1) 2)))))
+      ;; bake each node's vertices; indices shift by the running base
+      (let weld ((ns nodes) (v0 0) (i0 0)
+                 (cx 0.0) (cy 0.0) (cz 0.0))
+        (if (pair? ns)
+            (let* ((nd (car ns))
+                   (geo ($sgl-nd-geo nd))
+                   (m ($sgl-node-model nd))
+                   (src (vector-ref geo 2))
+                   (nsrc (quotient (vector-ref geo 4) 24))
+                   (isrc (vector-ref geo 3))
+                   (icnt (vector-ref geo 6)))
+              (let vtx ((k 0))
+                (when (< k nsrc)
+                  (let* ((at (+ src (* k 24)))
+                         (x (%mem-f32-ref at))
+                         (y (%mem-f32-ref (+ at 4)))
+                         (z (%mem-f32-ref (+ at 8)))
+                         (nx (%mem-f32-ref (+ at 12)))
+                         (ny (%mem-f32-ref (+ at 16)))
+                         (nz (%mem-f32-ref (+ at 20)))
+                         (out (+ vbase (* (+ v0 k) 24)))
+                         (tx (fl+ (fl+ (fl* (vector-ref m 0) x)
+                                       (fl* (vector-ref m 4) y))
+                                  (fl+ (fl* (vector-ref m 8) z)
+                                       (vector-ref m 12))))
+                         (ty (fl+ (fl+ (fl* (vector-ref m 1) x)
+                                       (fl* (vector-ref m 5) y))
+                                  (fl+ (fl* (vector-ref m 9) z)
+                                       (vector-ref m 13))))
+                         (tz (fl+ (fl+ (fl* (vector-ref m 2) x)
+                                       (fl* (vector-ref m 6) y))
+                                  (fl+ (fl* (vector-ref m 10) z)
+                                       (vector-ref m 14))))
+                         (rx (fl+ (fl+ (fl* (vector-ref m 0) nx)
+                                       (fl* (vector-ref m 4) ny))
+                                  (fl* (vector-ref m 8) nz)))
+                         (ry (fl+ (fl+ (fl* (vector-ref m 1) nx)
+                                       (fl* (vector-ref m 5) ny))
+                                  (fl* (vector-ref m 9) nz)))
+                         (rz (fl+ (fl+ (fl* (vector-ref m 2) nx)
+                                       (fl* (vector-ref m 6) ny))
+                                  (fl* (vector-ref m 10) nz)))
+                         (len (flsqrt (fl+ (fl+ (fl* rx rx)
+                                                (fl* ry ry))
+                                           (fl* rz rz)))))
+                    (%mem-f32-set! out tx)
+                    (%mem-f32-set! (+ out 4) ty)
+                    (%mem-f32-set! (+ out 8) tz)
+                    (%mem-f32-set! (+ out 12) (fl/ rx len))
+                    (%mem-f32-set! (+ out 16) (fl/ ry len))
+                    (%mem-f32-set! (+ out 20) (fl/ rz len)))
+                  (vtx (+ k 1))))
+              (let idx ((k 0))
+                (when (< k icnt)
+                  (let* ((w (%mem-i32-ref (+ isrc (* 4 (quotient k 2)))))
+                         (half (if (= 0 (remainder k 2))
+                                   (remainder w 65536)
+                                   (quotient w 65536)))
+                         (v (+ half v0))
+                         (oat (+ ibase (* 2 (+ i0 k))))
+                         )
+                    (%mem-u8-set! oat (remainder v 256))
+                    (%mem-u8-set! (+ oat 1) (quotient v 256)))
+                  (idx (+ k 1))))
+              (weld (cdr ns) (+ v0 nsrc) (+ i0 icnt)
+                    ;; running centroid of part centers, for the hull
+                    (fl+ cx (fl* (vector-ref m 12) 1.0))
+                    (fl+ cy (vector-ref m 13))
+                    (fl+ cz (vector-ref m 14))))
+            ;; the welded node: identity transform, hull bounds
+            (let* ((n (fixnum->flonum (length nodes)))
+                   (bx (fl/ cx n)) (by (fl/ cy n)) (bz (fl/ cz n))
+                   (br (fold-left
+                        (lambda (r nd)
+                          (let* ((m ($sgl-node-model nd))
+                                 (bc ($sgl-nd-bc nd))
+                                 (s (fold-left
+                                     (lambda (a gf)
+                                       (fl* a (vector-ref gf 6)))
+                                     (vector-ref ($sgl-nd-f nd) 6)
+                                     ($sgl-nd-chain nd)))
+                                 (px (fl+ (fl+ (fl* (vector-ref m 0)
+                                                    (v3-x bc))
+                                               (fl* (vector-ref m 4)
+                                                    (v3-y bc)))
+                                          (fl+ (fl* (vector-ref m 8)
+                                                    (v3-z bc))
+                                               (vector-ref m 12))))
+                                 (py (fl+ (fl+ (fl* (vector-ref m 1)
+                                                    (v3-x bc))
+                                               (fl* (vector-ref m 5)
+                                                    (v3-y bc)))
+                                          (fl+ (fl* (vector-ref m 9)
+                                                    (v3-z bc))
+                                               (vector-ref m 13))))
+                                 (pz (fl+ (fl+ (fl* (vector-ref m 2)
+                                                    (v3-x bc))
+                                               (fl* (vector-ref m 6)
+                                                    (v3-y bc)))
+                                          (fl+ (fl* (vector-ref m 10)
+                                                    (v3-z bc))
+                                               (vector-ref m 14))))
+                                 (dx (fl- px bx)) (dy (fl- py by))
+                                 (dz (fl- pz bz))
+                                 (d (fl+ (flsqrt
+                                          (fl+ (fl+ (fl* dx dx)
+                                                    (fl* dy dy))
+                                               (fl* dz dz)))
+                                         (fl* s ($sgl-nd-br nd)))))
+                            (if (fl<? r d) d r)))
+                        0.0 nodes))
+                   (f0 ($sgl-nd-f (car nodes)))
+                   (geo (vector vbuf ibuf vbase ibase
+                                (* total-v 24)
+                                (* 4 (quotient (+ total-i 1) 2))
+                                total-i #f
+                                (cons (v3 0.0 0.0 0.0) 1.0))))
+              ($make-sgl-node geo
+                              (vector 0.0 0.0 0.0 0.0 0.0 0.0 1.0
+                                      (vector-ref f0 7)
+                                      (vector-ref f0 8)
+                                      (vector-ref f0 9)
+                                      (vector-ref f0 10)
+                                      0.0 0.5 0)
+                              'lit #f
+                              (v3 bx by bz) br
+                              '() #f
+                              -1 0 #f 1.0))))))
+
+  ;; partition lit singles: same-color static groups of 2+ weld
+  (define ($sgl-weld! singles)
+    (let part ((ns singles) (stat '()) (dyn '()))
+      (if (pair? ns)
+          (if ($sgl-static? (car ns))
+              (part (cdr ns) (cons (car ns) stat) dyn)
+              (part (cdr ns) stat (cons (car ns) dyn)))
+          (let group ((ns (reverse stat)) (groups '()) (out (reverse dyn)))
+            (if (null? ns)
+                (append
+                 (fold-left
+                  (lambda (acc g)
+                    (let ((members (cdr g)))
+                      (if (and (pair? (cdr members))
+                               (< (fold-left
+                                   (lambda (a nd)
+                                     (+ a (quotient
+                                           (vector-ref
+                                            ($sgl-nd-geo nd) 4)
+                                           24)))
+                                   0 members)
+                                  65536))
+                          (cons ($sgl-weld (reverse members)) acc)
+                          (append (reverse members) acc))))
+                  '() groups)
+                 out)
+                (let* ((f ($sgl-nd-f (car ns)))
+                       (key (list (vector-ref f 7) (vector-ref f 8)
+                                  (vector-ref f 9) (vector-ref f 10)))
+                       (hit (assoc key groups)))
+                  (if hit
+                      (begin (set-cdr! hit (cons (car ns) (cdr hit)))
+                             (group (cdr ns) groups out))
+                      (group (cdr ns)
+                             (cons (cons key (list (car ns))) groups)
+                             out))))))))
 
   ;; lit nodes sharing a geometry, two or more, become an instanced
   ;; group -- one buffer of matrix+color per instance, one draw
