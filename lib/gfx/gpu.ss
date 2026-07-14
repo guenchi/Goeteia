@@ -52,6 +52,8 @@
 (library (gfx gpu)
   (export gpu-attach! gpu-pipeline! gpu-pipeline2!
           gpu-buffer! gpu-index! gpu-uniforms! gpu-storage!
+          gpu-indirect! gpu-compute-group*!
+          gpu-draw-indexed-indirect! gpu-draw-indirect!
           gpu-texture! gpu-texture-data! gpu-sampler!
           gpu-bindgroup! gpu-texgroup!
           gpu-compute! gpu-compute-group!
@@ -59,7 +61,8 @@
           gpu-clear! gpu-use-pipeline! gpu-bind-vbuf! gpu-bind-vbuf2!
           gpu-bind-ibuf! gpu-set-group! gpu-buffer-data!
           gpu-draw! gpu-draw-indexed! gpu-draw-instanced!
-          gpu-dispatch!)
+          gpu-dispatch! gpu-bundle! gpu-execute!
+          gpu-gpu-timer! gpu-gpu-ms)
   (import (rnrs) (web js))
 
   (define $gpu #f)
@@ -72,7 +75,10 @@
      " return {"
      "  attach(cb) {"
      "    navigator.gpu.requestAdapter()"
-     "      .then(ad => ad.requestDevice())"
+     "      .then(ad => {"
+     "        st.ts = ad.features && ad.features.has('timestamp-query');"
+     "        return ad.requestDevice(st.ts"
+     "          ? { requiredFeatures: ['timestamp-query'] } : {}); })"
      "      .then(dev => {"
      "        st.dev = dev; st.q = dev.queue;"
      "        st.ctx = canvas.getContext('webgpu');"
@@ -122,14 +128,15 @@
      "                      depthWriteEnabled: true,"
      "                      depthCompare: 'less' },"
      "      primitive: { topology: 'triangle-list' } }); },"
-     "  buffer(slot, bytes, kind) {"  ; 0 vtx, 1 idx, 2 uniform, 3 storage
-     "    const GB = globalThis.GPUBufferUsage"
+     "  buffer(slot, bytes, kind) {"  ; 0 vtx, 1 idx, 2 uniform,
+     "    const GB = globalThis.GPUBufferUsage" ; 3 storage, 4 indirect
      "             || { VERTEX: 32, INDEX: 16, UNIFORM: 64,"
-     "                  STORAGE: 128, COPY_DST: 8 };"
+     "                  STORAGE: 128, COPY_DST: 8, INDIRECT: 256 };"
      "    slots[slot] = st.dev.createBuffer({"
      "      size: bytes,"
      "      usage: (kind === 1 ? GB.INDEX : kind === 2 ? GB.UNIFORM"
      "              : kind === 3 ? (GB.VERTEX | GB.STORAGE)"
+     "              : kind === 4 ? (GB.INDIRECT | GB.STORAGE)"
      "              : GB.VERTEX) | GB.COPY_DST }); },"
      "  bindgroup(slot, pslot, ubslot) {"
      "    slots[slot] = st.dev.createBindGroup({"
@@ -160,6 +167,38 @@
      "                   resource: slots[tslot].createView() });"
      "    slots[slot] = st.dev.createBindGroup({"
      "      layout: slots[pslot].getBindGroupLayout(0), entries }); },"
+     "  bundle(slot, base, count) {"    ; draws only: no clear, no
+     "    const dv = new DataView(memory.buffer);"  ; writes, no compute
+     "    let p = base;"
+     "    const end = base + count * 4;"
+     "    const u = () => { const v = dv.getUint32(p, true); p += 4;"
+     "                      return v; };"
+     "    const be = st.dev.createRenderBundleEncoder({"
+     "      colorFormats: [st.fmt],"
+     "      depthStencilFormat: 'depth24plus' });"
+     "    let pipeline = null, vbuf = null, vbuf2 = null;"
+     "    let ibuf = null, group = null;"
+     "    const ready = () => {"
+     "      be.setPipeline(pipeline);"
+     "      if (group) be.setBindGroup(0, group);"
+     "      be.setVertexBuffer(0, vbuf);"
+     "      if (vbuf2) be.setVertexBuffer(1, vbuf2); };"
+     "    while (p < end) {"
+     "      switch (u()) {"
+     "        case 2: pipeline = slots[u()]; break;"
+     "        case 3: vbuf = slots[u()]; break;"
+     "        case 6: group = slots[u()]; break;"
+     "        case 7: ibuf = slots[u()]; break;"
+     "        case 10: vbuf2 = slots[u()]; break;"
+     "        case 5: ready(); be.draw(u()); break;"
+     "        case 8: ready(); be.setIndexBuffer(ibuf, 'uint16');"
+     "                be.drawIndexed(u()); break;"
+     "        case 11: ready(); { const v = u(); be.draw(v, u()); }"
+     "                 break;"
+     "        default: throw new Error('bundle: draw commands only');"
+     "      }"
+     "    }"
+     "    slots[slot] = be.finish(); },"
      "  compute(slot, code) {"
      "    slots[slot] = st.dev.createComputePipeline({"
      "      layout: 'auto',"
@@ -172,6 +211,25 @@
      "                  resource: { buffer: slots[sslot] } },"
      "                { binding: 1,"
      "                  resource: { buffer: slots[uslot] } }] }); },"
+     "  computeGroupN(slot, pslot, list) {"
+     "    slots[slot] = st.dev.createBindGroup({"
+     "      layout: slots[pslot].getBindGroupLayout(0),"
+     "      entries: String(list).split(',').map((s, i) =>"
+     "        ({ binding: i,"
+     "           resource: { buffer: slots[Number(s)] } })) }); },"
+     "  gpuTimer() {"
+     "    if (!st.ts) return 0;"
+     "    const GB = globalThis.GPUBufferUsage"
+     "             || { QUERY_RESOLVE: 512, COPY_SRC: 4,"
+     "                  COPY_DST: 8, MAP_READ: 1 };"
+     "    st.tq = st.dev.createQuerySet({ type: 'timestamp', count: 2 });"
+     "    st.tqResolve = st.dev.createBuffer({"
+     "      size: 16, usage: GB.QUERY_RESOLVE | GB.COPY_SRC });"
+     "    st.tqRead = st.dev.createBuffer({"
+     "      size: 16, usage: GB.COPY_DST | GB.MAP_READ });"
+     "    st.tqBusy = false; st.tqMs = -1;"
+     "    return 1; },"
+     "  gpuMs() { return st.tqMs === undefined ? -1 : st.tqMs; },"
      "  replay(count) {"
      "    const dv = new DataView(memory.buffer);"
      "    let p = 0;"
@@ -189,7 +247,11 @@
      "        depthStencilAttachment: {"
      "          view: st.depth.createView(),"
      "          depthClearValue: 1.0,"
-     "          depthLoadOp: 'clear', depthStoreOp: 'store' } }); };"
+     "          depthLoadOp: 'clear', depthStoreOp: 'store' },"
+     "        timestampWrites: st.tq ? {"
+     "          querySet: st.tq,"
+     "          beginningOfPassWriteIndex: 0,"
+     "          endOfPassWriteIndex: 1 } : undefined }); };"
      "    const ready = () => {"
      "      open(); pass.setPipeline(pipeline);"
      "      if (group) pass.setBindGroup(0, group);"
@@ -219,11 +281,41 @@
      "        case 10: vbuf2 = slots[u()]; break;"
      "        case 11: ready(); { const v = u(); pass.draw(v, u()); }"
      "                 break;"
+     "        case 12: open(); pass.executeBundles([slots[u()]]);"
+     "                 break;"
+     "        case 13: ready(); pass.setIndexBuffer(ibuf, 'uint16');"
+     "                 { const b = slots[u()];"
+     "                   pass.drawIndexedIndirect(b, u()); } break;"
+     "        case 14: ready(); { const b = slots[u()];"
+     "                   pass.drawIndirect(b, u()); } break;"
      "      }"
      "    }"
      "    open();"                       ; a clear-only frame still clears
      "    pass.end();"
-     "    st.q.submit([enc.finish()]); } }; };"))
+     "    if (st.tq && !st.tqBusy) {"
+     "      enc.resolveQuerySet(st.tq, 0, 2, st.tqResolve, 0);"
+     "      enc.copyBufferToBuffer(st.tqResolve, 0, st.tqRead, 0, 16);"
+     "    }"
+     "    st.q.submit([enc.finish()]);"
+     "    if (st.tq && !st.tqBusy) {"
+     "      st.tqBusy = true;"
+     "      st.tqRead.mapAsync(1).then(() => {"     ; GPUMapMode.READ
+     "        const ts = new BigInt64Array(st.tqRead.getMappedRange());"
+     "        st.tqMs = Number(ts[1] - ts[0]) / 1e6;"
+     "        st.tqRead.unmap();"
+     "        st.tqBusy = false; });"
+     "    } } }; };"))
+
+  ;; GPU frame time (needs the timestamp-query feature; ask AFTER
+  ;; attach): the render pass stamps its beginning and end, results
+  ;; resolve and map back a few frames behind.  gpu-gpu-timer!
+  ;; answers #f where the adapter lacks the feature -- hide the
+  ;; readout then; gpu-gpu-ms is -1.0 until the first result
+  (define (gpu-gpu-timer!)
+    (= 1 (js->number (js-method $gpu "gpuTimer"))))
+  (define (gpu-gpu-ms)
+    (let ((v (js->number (js-method $gpu "gpuMs"))))
+      (if (flonum? v) v (exact->inexact v))))
 
   ;; the device handshake is asynchronous: k runs when the canvas is
   ;; configured and resources may be created
@@ -261,6 +353,15 @@
   ;; writes it, the render pass reads it back as attributes
   (define (gpu-storage! slot bytes)
     (js-method $gpu "buffer" slot bytes 3))
+  ;; an indirect-argument buffer: compute writes the draw call's own
+  ;; arguments (it is also storage), the render pass draws from it
+  (define (gpu-indirect! slot bytes)
+    (js-method $gpu "buffer" slot bytes 4))
+  ;; a compute bind group over any buffer list: "3,5,6,4" binds
+  ;; slots 3,5,6,4 at bindings 0..3 (storage or uniform alike --
+  ;; the auto layout reads the WGSL)
+  (define (gpu-compute-group*! slot pslot buffers)
+    (js-method $gpu "computeGroupN" slot pslot buffers))
   ;; an rgba8 texture, filled straight from staging bytes
   (define (gpu-texture! slot w h)
     (js-method $gpu "texture" slot w h))
@@ -301,6 +402,22 @@
   (define (gpu-bind-vbuf2! slot) ($gpu-u! 10) ($gpu-u! slot))
   (define (gpu-draw-instanced! verts insts)
     ($gpu-u! 11) ($gpu-u! verts) ($gpu-u! insts))
+  ;; the GPU-driven draw: the argument buffer (gpu-indirect!) holds
+  ;; [indexCount instanceCount firstIndex baseVertex firstInstance],
+  ;; written by a compute pass -- a cull that never touches the CPU
+  (define (gpu-draw-indexed-indirect! slot offset)
+    ($gpu-u! 13) ($gpu-u! slot) ($gpu-u! offset))
+  (define (gpu-draw-indirect! slot offset)
+    ($gpu-u! 14) ($gpu-u! slot) ($gpu-u! offset))
+
+  ;; freeze the commands encoded since gpu-begin! into a render
+  ;; bundle -- draws and their state only.  Recorded once, a whole
+  ;; static scene replays from inside the browser with no decode at
+  ;; all: the frame becomes clear + uniforms + gpu-execute!
+  (define (gpu-bundle! slot)
+    (js-method $gpu "bundle" slot 0 (quotient $gpu-p 4))
+    (gpu-begin!))
+  (define (gpu-execute! slot) ($gpu-u! 12) ($gpu-u! slot))
 
   (define (gpu-flush!)
     (js-method $gpu "replay" (quotient $gpu-p 4))))

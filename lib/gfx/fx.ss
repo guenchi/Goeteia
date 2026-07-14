@@ -29,6 +29,7 @@
 ;; Copyright (c) 2026 guenchi. MIT license; see LICENSE.
 (library (gfx fx)
   (export fx-init! fx-slot! fx-alloc! fx-buffer! fx-texture!
+          fx-texture-array!
           fx-width fx-height
           fx-target! fx-target-hdr! fx-target-msaa! fx-resolve!
           fx-target-mrt! fx-mrt-texture
@@ -92,6 +93,10 @@
   (define (fx-buffer!) (let ((s (fx-slot!))) (gl-buffer! s) s))
   (define (fx-texture!) (let ((s (fx-slot!))) (gl-texture! s) s))
   (define (fx-ubo! bytes) (let ((s (fx-slot!))) (gl-ubo! s bytes) s))
+  ;; many same-size images behind one bind; fill layers with
+  ;; gl-texture-layer!/-data!, sample with sampler2DArray
+  (define (fx-texture-array! w h layers)
+    (let ((s (fx-slot!))) (gl-texture-array! s w h layers) s))
 
   ;; ---- offscreen render targets (webgl2) ----
   (define-record-type (fx-target $make-fx-target fx-target?)
@@ -178,7 +183,11 @@
             (immutable attribs $fx-program-attribs)   ; ((loc size offset) ...)
             (immutable istride fx-program-istride)    ; per-instance bytes
             (immutable iattribs $fx-program-iattribs)
-            (immutable uniforms $fx-program-uniforms))) ; name -> (slot . type)
+            (immutable uniforms $fx-program-uniforms)  ; name -> (slot . type)
+            ;; name -> last encoded value: same value, no command.
+            ;; GL uniform state is per-program and persistent, so a
+            ;; skipped re-send is exactly free
+            (immutable ucache $fx-program-ucache)))
 
   (define ($fx-instance-name? n)        ; i_offset, i_tint, ...
     (let ((s (symbol->string n)))
@@ -240,7 +249,8 @@
         (let loop ((as as) (loc 0) (voff 0) (ioff 0) (vacc '()) (iacc '()))
           (if (null? as)
               ($make-fx-program pslot voff (reverse vacc)
-                                ioff (reverse iacc) uniforms)
+                                ioff (reverse iacc) uniforms
+                                (make-eq-hashtable))
               (let ((n (caar as)) (size (caddr (car as))))
                 (if ($fx-instance-name? n)
                     (loop (cdr as) (+ loc 1) voff (+ ioff (* 4 size))
@@ -297,23 +307,65 @@
                           (cmd-attrib-divisor! (car a) 1))
                         ($fx-program-iattribs prog)))))))
 
-  ;; dispatch on the declared type; sampler values are texture units
+  ;; scalar/vector cache: #t = unchanged since last send.  The cell
+  ;; vector is reused, so a steady uniform allocates once, ever
+  (define ($fx-same? cache name n v0 v1 v2 v3)
+    (let ((prev (hashtable-ref cache name #f)))
+      (if prev
+          (if (and (fl=? (vector-ref prev 0) v0)
+                   (or (< n 2) (fl=? (vector-ref prev 1) v1))
+                   (or (< n 3) (fl=? (vector-ref prev 2) v2))
+                   (or (< n 4) (fl=? (vector-ref prev 3) v3)))
+              #t
+              (begin (vector-set! prev 0 v0) (vector-set! prev 1 v1)
+                     (vector-set! prev 2 v2) (vector-set! prev 3 v3)
+                     #f))
+          (begin (hashtable-set! cache name (vector v0 v1 v2 v3))
+                 #f))))
+
+  ;; dispatch on the declared type; sampler values are texture units.
+  ;; Scalar and vector uniforms remember their last value and skip
+  ;; the re-send (matrices change every frame; they don't bother).
+  ;; Don't mix raw cmd-uniform*! writes with fx-uniform! on the same
+  ;; uniform -- the cache cannot see them
   (define (fx-uniform! prog name . vs)
-    (let ((u (hashtable-ref ($fx-program-uniforms prog) name #f)))
+    (let ((u (hashtable-ref ($fx-program-uniforms prog) name #f))
+          (cache ($fx-program-ucache prog)))
       (unless u (error 'fx-uniform! "undeclared uniform" name))
       (let ((slot (car u)) (ty (cdr u)))
         (if (pair? ty)                  ; (array mat4 N): joint matrices
-            (cmd-uniform-matrices! slot (car vs))
+            ;; a vector of m4s streams through the buffer; a staging
+            ;; ADDRESS plus a count uploads in place, three words
+            (if (fixnum? (car vs))
+                (cmd-uniform-matrices4s! slot (car vs) (cadr vs))
+                (cmd-uniform-matrices! slot (car vs)))
             (case ty
-          ((float) (cmd-uniform1f! slot ($fx-fl (car vs))))
-          ((vec2) (cmd-uniform2f! slot ($fx-fl (car vs)) ($fx-fl (cadr vs))))
-          ((vec3) (cmd-uniform3f! slot ($fx-fl (car vs)) ($fx-fl (cadr vs))
-                                  ($fx-fl (caddr vs))))
-          ((vec4) (cmd-uniform4f! slot
-                                  ($fx-fl (car vs)) ($fx-fl (cadr vs))
-                                  ($fx-fl (caddr vs)) ($fx-fl (cadddr vs))))
-          ((sampler2D samplerCube int) (cmd-uniform1i! slot (car vs)))
-          ((mat4) (cmd-uniform-matrix4! slot (car vs)))  ; (gfx mat) m4
+          ((float)
+           (let ((x ($fx-fl (car vs))))
+             (unless ($fx-same? cache name 1 x 0.0 0.0 0.0)
+               (cmd-uniform1f! slot x))))
+          ((vec2)
+           (let ((x ($fx-fl (car vs))) (y ($fx-fl (cadr vs))))
+             (unless ($fx-same? cache name 2 x y 0.0 0.0)
+               (cmd-uniform2f! slot x y))))
+          ((vec3)
+           (let ((x ($fx-fl (car vs))) (y ($fx-fl (cadr vs)))
+                 (z ($fx-fl (caddr vs))))
+             (unless ($fx-same? cache name 3 x y z 0.0)
+               (cmd-uniform3f! slot x y z))))
+          ((vec4)
+           (let ((x ($fx-fl (car vs))) (y ($fx-fl (cadr vs)))
+                 (z ($fx-fl (caddr vs))) (w ($fx-fl (cadddr vs))))
+             (unless ($fx-same? cache name 4 x y z w)
+               (cmd-uniform4f! slot x y z w))))
+          ((sampler2D samplerCube sampler2DArray int)
+           (let ((x (fixnum->flonum (car vs))))
+             (unless ($fx-same? cache name 1 x 0.0 0.0 0.0)
+               (cmd-uniform1i! slot (car vs)))))
+          ((mat4)                       ; a (gfx mat) m4 vector, or an
+           (if (fixnum? (car vs))       ; m4s staging address
+               (cmd-uniform-matrix4s! slot (car vs))
+               (cmd-uniform-matrix4! slot (car vs))))
           (else (error 'fx-uniform! "unsupported uniform type" ty)))))))
 
   ;; ---- the timing pump and the frame loop ----
