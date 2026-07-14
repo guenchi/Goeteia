@@ -46,7 +46,9 @@ globalThis.__gpulog = [];
              d.vertex.buffers[1].attributes
                .map(a => a.format + '@' + a.offset + '>' + a.shaderLocation)
                .join('|'));
-      push('depth', d.depthStencil.format, d.depthStencil.depthCompare);
+      push('depth', d.depthStencil.format, d.depthStencil.depthCompare,
+           d.depthStencil.depthWriteEnabled ? 1 : 0,
+           d.fragment.targets[0].blend ? 'blend' : 'opaque');
       return { id: 'PL' + (this._p = (this._p || 0) + 1),
                getBindGroupLayout(i){ return { id: 'L' + i } } } },
     createBuffer(d){
@@ -186,4 +188,26 @@ globalThis.__gpulog = [];
 (define dirty-ok
   (= (- (count-log "writeBuffer") w2) 4))
 
-(and init-ok frame1-ok static-ok dirty-ok)
+;; ---- translucency: a group with alpha<1 draws blended, depth
+;; writes off, after the opaque groups ----
+(define sctr
+  (sgl-gpu
+   (camera (@ (fov 0.9) (position 0.0 0.0 8.0) (look-at 0.0 0.0 0.0)))
+   (light (@ (direction 0.0 1.0 0.0) (ambient 0.25)))
+   (mesh (@ (geometry (box 1 1 1)) (position -2.0 0.0 0.0)))   ; opaque
+   (mesh (@ (geometry (sphere 1.0 8 4)) (position 2.0 0.0 0.0)
+            (color 0.3 0.6 0.9 0.4)))))                         ; glass
+(define tr-base (log-len))
+(sgpu-init! sctr (js-get (js-global) "__mockcanvas"))
+(define tr-init-ok
+  ;; among the pipelines, exactly two carry a blend target with
+  ;; depth writes disabled (the blended lit + tex)
+  (= (count-log "depth:depth24plus:less:0:blend") 4))
+(define d0 (count-log "drawIndexedIndirect"))
+(gpu-begin!) (gpu-clear! 0.0 0.0 0.0 1.0) (sgpu-draw! sctr) (gpu-flush!)
+(define tr-draw-ok
+  ;; two indirect draws: the opaque box, then the glass sphere on
+  ;; the blend pipeline
+  (= (- (count-log "drawIndexedIndirect") d0) 2))
+
+(and init-ok frame1-ok static-ok dirty-ok tr-init-ok tr-draw-ok)

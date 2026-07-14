@@ -19,12 +19,14 @@
 ;;       (gpu-begin!) (gpu-clear! ...)
 ;;       (sgpu-draw! sc) (gpu-flush!)))))
 ;;
-;; Materials: lit solid color, and (texture slot) -- a textured
-;; group samples through its own pipeline and bind group (grouping
-;; keys on geometry AND texture, so a shared texture instances
-;; together).  Not here yet (the GL backend has them): PBR probes,
-;; lod containers, static welding, and the HZB occlusion the raw
-;; gpu-cull example wires by hand.
+;; Materials: lit solid color, (texture slot), and translucency --
+;; a group any of whose instances has colour alpha below one draws
+;; last on a src-over blend pipeline with depth writes off (its
+;; instances aren't back-to-front sorted, so overlapping glass of
+;; ONE group is order-dependent; separate panes are exact).
+;; Grouping keys on geometry AND texture.  Not here yet (the GL
+;; backend has them): PBR probes, lod containers, static welding,
+;; and the HZB occlusion the raw gpu-cull example wires by hand.
 ;;
 ;; Copyright (c) 2026 guenchi. MIT license; see LICENSE.
 (library (gfx sgpu)
@@ -230,11 +232,20 @@
                                   (vector-set! nd 2 (car bounds))
                                   (vector-set! nd 3 (cdr bounds)))
                                 nodes)
-                      ;; +texture slot (13), +tex render group (14)
+                      ;; +texture slot (13), +tex render group (14),
+                      ;; +translucent? (15): any node's alpha below 1
+                      ;; sends the whole group to the blended pass
                       (vector m nodes 0 0 0 0 0 0
                               (mesh-index-count m)
                               (length nodes)
-                              -1 0 0 tex 0)))
+                              -1 0 0 tex 0
+                              (let any ((ns nodes))
+                                (and (pair? ns)
+                                     (or (fl<? (vector-ref
+                                                (vector-ref (car ns) 0)
+                                                10)
+                                               1.0)
+                                         (any (cdr ns))))))))
                   (reverse groups))
              0 1.333 #f)))))
 
@@ -325,23 +336,31 @@
      "}\n"))
 
   ;; fixed slots: 0 env, 1 cull pipeline, 2 lit pipeline, 3 env bind
-  ;; group, 4 textured pipeline, 5 shared sampler; groups take 7
-  ;; slots each from 8 up (the 7th is a per-group texture bind group)
+  ;; group, 4 textured pipeline, 5 shared sampler, 6/7 the blended
+  ;; (lit/tex) pipelines; groups take 8 slots each from 8 up
+  (define $inst-fmt
+    "float32x4,float32x4,float32x4,float32x4,float32x4")
   (define (sgpu-init! sc canvas)
     ($sg-aspect! sc (fl/ ($sgpu-fl (js->number (js-get canvas "width")))
                          ($sgpu-fl (js->number (js-get canvas "height")))))
     (gpu-uniforms! 0 192)
     (gpu-compute! 1 $sgpu-cull)
-    (gpu-pipeline2! 2 $sgpu-render
-                    24 "float32x3,float32x3"
-                    80 "float32x4,float32x4,float32x4,float32x4,float32x4")
+    (gpu-pipeline2! 2 $sgpu-render 24 "float32x3,float32x3" 80 $inst-fmt)
     (gpu-bindgroup! 3 2 0)
     (gpu-pipeline2! 4 $sgpu-render-tex
-                    32 "float32x3,float32x3,float32x2"
-                    80 "float32x4,float32x4,float32x4,float32x4,float32x4")
+                    32 "float32x3,float32x3,float32x2" 80 $inst-fmt)
     (gpu-sampler! 5)
+    ;; the translucent-pass pipelines: src-over blend, depth writes
+    ;; off.  A pipeline's 'auto layout is its own object, so the env
+    ;; bind group must come from the pipeline it is used with -- slot
+    ;; 8 is the blend-lit env group
+    (gpu-pipeline2-blend! 6 $sgpu-render 24 "float32x3,float32x3"
+                          80 $inst-fmt)
+    (gpu-pipeline2-blend! 7 $sgpu-render-tex
+                          32 "float32x3,float32x3,float32x2" 80 $inst-fmt)
+    (gpu-bindgroup! 8 6 0)
     ($sg-envat! sc (fx-alloc! 192))
-    (let init ((gs ($sg-groups sc)) (slot 8))
+    (let init ((gs ($sg-groups sc)) (slot 9))
       (when (pair? gs)
         (let* ((g (car gs))
                (m (vector-ref g 0))
@@ -374,9 +393,13 @@
           (vector-set! g 6 (+ slot 4))
           (vector-set! g 7 (+ slot 5))
           ;; textured groups need a render bind group (env, sampler,
-          ;; the group's texture); lit groups reuse the shared one
+          ;; the group's texture) from the pipeline they actually
+          ;; use -- the blend-tex pipeline 7 for a translucent group,
+          ;; else the opaque tex pipeline 4; lit groups reuse a
+          ;; shared env group (3 opaque, 8 blended)
           (when tex
-            (gpu-texgroup! (+ slot 6) 4 0 5 tex)
+            (gpu-texgroup! (+ slot 6) (if (vector-ref g 15) 7 4)
+                           0 5 tex)
             (vector-set! g 14 (+ slot 6)))
           (vector-set! g 11 srcbase)
           (vector-set! g 12 argbase)
@@ -520,17 +543,26 @@
            (gpu-dispatch! 1 (vector-ref g 7)
                           (quotient (+ (vector-ref g 9) 63) 64)))
          ($sg-groups sc))
-        ;; then the draws -- textured groups on the textured
-        ;; pipeline with their own bind group, lit ones on the shared
-        (for-each
-         (lambda (g)
-           (if (vector-ref g 13)
-               (begin (gpu-use-pipeline! 4)
-                      (gpu-set-group! (vector-ref g 14)))
-               (begin (gpu-use-pipeline! 2)
-                      (gpu-set-group! 3)))
-           (gpu-bind-vbuf! (vector-ref g 2))
-           (gpu-bind-vbuf2! (vector-ref g 5))
-           (gpu-bind-ibuf! (vector-ref g 3))
-           (gpu-draw-indexed-indirect! (vector-ref g 6) 0))
-         ($sg-groups sc))))))
+        ;; the draws -- opaque groups first, then the translucent
+        ;; ones on the blended pipelines (their instances aren't
+        ;; back-to-front sorted yet, so overlapping glass of the
+        ;; same group is order-dependent; non-overlapping is exact).
+        ;; Textured groups ride the textured pipeline with their own
+        ;; bind group, lit ones the shared
+        (let ((draw
+               (lambda (g lit-pl tex-pl env-grp)
+                 (if (vector-ref g 13)
+                     (begin (gpu-use-pipeline! tex-pl)
+                            (gpu-set-group! (vector-ref g 14)))
+                     (begin (gpu-use-pipeline! lit-pl)
+                            (gpu-set-group! env-grp)))
+                 (gpu-bind-vbuf! (vector-ref g 2))
+                 (gpu-bind-vbuf2! (vector-ref g 5))
+                 (gpu-bind-ibuf! (vector-ref g 3))
+                 (gpu-draw-indexed-indirect! (vector-ref g 6) 0))))
+          (for-each (lambda (g)
+                      (unless (vector-ref g 15) (draw g 2 4 3)))
+                    ($sg-groups sc))
+          (for-each (lambda (g)
+                      (when (vector-ref g 15) (draw g 6 7 8)))
+                    ($sg-groups sc)))))))
