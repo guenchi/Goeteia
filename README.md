@@ -110,13 +110,14 @@ The UI, text and network stack over the JS bridge, in `lib/web/`:
   compatible with Igropyr's `(igropyr sexpr)` extended mode:
   `sexpr->string` / `string->sexpr` over a depth- and size-limited
   whitelist — proper and dotted lists, symbols, strings, exact
-  integers and ratios, vectors, and bytevectors as `#vu8"<base64>"`.
-  No flonums on the wire (this runtime cannot print one that reads
-  back bit-identically), so exactness is the contract
+  integers and ratios, vectors, bytevectors as `#vu8"<base64>"`, and
+  every IEEE double as `#f8"<base64>"` — its 8 IEEE-754 bytes via a JS
+  DataView, bit-exact (inf and nan included) and byte-identical to
+  Chez's `bytevector-ieee-double-*` (−0.0 reads back as 0.0)
 - `(web rpc)` — s-expression RPC to a Scheme backend (Igropyr's
   `(igropyr sexpr)` is the server half): serialized and parsed
-  through `(web sexpr)`, so exact integers, ratios and binary cross
-  the wire intact and there is no codec at all
+  through `(web sexpr)`, so exact integers, ratios, binary and every
+  IEEE double cross the wire bit-exact and there is no codec at all
 - `(web fetch)` — direct-style HTTP over JSPI: `(http-get url)` reads
   like a blocking call, suspending the whole wasm stack on the
   underlying promise and resuming with the value — sequential code,
