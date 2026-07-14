@@ -455,6 +455,15 @@ sources, and on every save runs the project's `./build.sh` (which
 recompiles any changed page module) before pushing a live reload to
 every open tab. Edit a `.ss`, save, and the page re-renders.
 
+A module can also run its whole render loop OFF the main thread:
+`loadGoeteiaWorker(url, canvas)` transfers the canvas to a Worker
+(OffscreenCanvas), forwards keys and pointer events as messages, and
+`rt/worker.mjs` re-dispatches them to the module's listeners — the
+program finds its canvas at `(js-get (js-global) "__goeteia_canvas")`
+instead of the DOM, and everything else (fx-init!, fx-loop!, input)
+runs unchanged (`examples/fx-worker.html`: jam the main thread for a
+second, the animation doesn't drop a frame).
+
 ## Self-hosting
 
 `goeteia.wasm` is Goeteia compiled by Goeteia.  After editing
