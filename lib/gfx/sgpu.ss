@@ -30,7 +30,8 @@
 ;;
 ;; Copyright (c) 2026 guenchi. MIT license; see LICENSE.
 (library (gfx sgpu)
-  (export sgl-gpu $sgpu-build sgpu-init! sgpu-draw! sgpu-scene?)
+  (export sgl-gpu $sgpu-build sgpu-init! sgpu-draw! sgpu-scene?
+          sgpu-occlusion!)
   (import (rnrs) (web js) (gfx gpu) (gfx fx) (gfx mat) (gfx mesh)
           (web reactive))
 
@@ -261,11 +262,14 @@
      "              firstIndex : u32, baseVertex : u32,\n"
      "              firstInstance : u32 }\n"
      "struct Env { vp : mat4x4f, planes : array<vec4f, 6>,\n"
-     "             light : vec4f, ambient : vec4f }\n"
+     "             light : vec4f, ambient : vec4f,\n"
+     "             p00 : f32, p11 : f32, sw : f32, sh : f32,\n"
+     "             pA : f32, mode : u32, pd0 : u32, pd1 : u32 }\n"
      "@group(0) @binding(0) var<storage, read> src : array<Inst>;\n"
      "@group(0) @binding(1) var<storage, read_write> dst : array<Vis>;\n"
      "@group(0) @binding(2) var<storage, read_write> args : Args;\n"
      "@group(0) @binding(3) var<uniform> env : Env;\n"
+     "@group(0) @binding(4) var hzb : texture_2d<f32>;\n"
      "@compute @workgroup_size(64)\n"
      "fn cs(@builtin(global_invocation_id) id : vec3u) {\n"
      "  let i = id.x;\n"
@@ -275,6 +279,35 @@
      "    if (dot(env.planes[p].xyz, s.sphere.xyz) + env.planes[p].w\n"
      "        < -s.sphere.w) { return; }\n"
      "  }\n"
+     ;; occlusion: project the bounding sphere, sample the hi-Z pyramid
+     ;; over its screen footprint; cull when its nearest depth is behind
+     ;; everything already drawn there.  Mirrors examples/gpu-hzb.ss.
+     "  if (env.mode == 1u) {\n"
+     "    let clip = env.vp * vec4f(s.sphere.xyz, 1.0);\n"
+     "    if (clip.w > s.sphere.w) {\n"
+     "      let ndc = clip.xy / clip.w;\n"
+     "      let rx = s.sphere.w * env.p00 / clip.w;\n"
+     "      let ry = s.sphere.w * env.p11 / clip.w;\n"
+     "      let px = max(rx * env.sw, ry * env.sh);\n"
+     "      let mip = clamp(u32(ceil(log2(max(px, 1.0)))), 0u, 8u);\n"
+     "      let dims = vec2f(textureDimensions(hzb, mip));\n"
+     "      let uv = ndc * vec2f(0.5, -0.5) + vec2f(0.5, 0.5);\n"
+     "      let lo = vec2i(clamp((uv - vec2f(rx * 0.5, ry * 0.5))\n"
+     "                           * dims, vec2f(0.0), dims - 1.0));\n"
+     "      let hi = vec2i(clamp((uv + vec2f(rx * 0.5, ry * 0.5))\n"
+     "                           * dims, vec2f(0.0), dims - 1.0));\n"
+     "      let d = max(max(textureLoad(hzb, lo, i32(mip)).x,\n"
+     "                      textureLoad(hzb, vec2i(hi.x, lo.y),\n"
+     "                                  i32(mip)).x),\n"
+     "                  max(textureLoad(hzb, vec2i(lo.x, hi.y),\n"
+     "                                  i32(mip)).x,\n"
+     "                      textureLoad(hzb, hi, i32(mip)).x));\n"
+     "      let sphereNear = clamp((clip.z + env.pA * s.sphere.w)\n"
+     "                        / max(clip.w - s.sphere.w, 0.001),\n"
+     "                        0.0, 1.0);\n"
+     "      if (sphereNear > d) { return; }\n"
+     "    }\n"
+     "  }\n"
      "  let k = atomicAdd(&args.instanceCount, 1u);\n"
      "  dst[k] = Vis(s.m0, s.m1, s.m2, s.m3, s.color);\n"
      "}\n"))
@@ -282,7 +315,9 @@
   (define $sgpu-render
     (string-append
      "struct Env { vp : mat4x4f, planes : array<vec4f, 6>,\n"
-     "             light : vec4f, ambient : vec4f }\n"
+     "             light : vec4f, ambient : vec4f,\n"
+     "             p00 : f32, p11 : f32, sw : f32, sh : f32,\n"
+     "             pA : f32, mode : u32, pd0 : u32, pd1 : u32 }\n"
      "@group(0) @binding(0) var<uniform> env : Env;\n"
      "struct VOut { @builtin(position) pos : vec4f,\n"
      "              @location(0) c : vec4f }\n"
@@ -309,7 +344,9 @@
   (define $sgpu-render-tex
     (string-append
      "struct Env { vp : mat4x4f, planes : array<vec4f, 6>,\n"
-     "             light : vec4f, ambient : vec4f }\n"
+     "             light : vec4f, ambient : vec4f,\n"
+     "             p00 : f32, p11 : f32, sw : f32, sh : f32,\n"
+     "             pA : f32, mode : u32, pd0 : u32, pd1 : u32 }\n"
      "@group(0) @binding(0) var<uniform> env : Env;\n"
      "@group(0) @binding(1) var samp : sampler;\n"
      "@group(0) @binding(2) var tex : texture_2d<f32>;\n"
@@ -340,11 +377,27 @@
   ;; (lit/tex) pipelines; groups take 8 slots each from 8 up
   (define $inst-fmt
     "float32x4,float32x4,float32x4,float32x4,float32x4")
+
+  ;; hi-Z occlusion state (module-level, like $sgpu-scratch): one depth
+  ;; pyramid shared by the active scene.  Cull runs a frame behind the
+  ;; pyramid -- mode stays 0 until the first gpu-hzb!, and while a
+  ;; camera/scene is static last frame's pyramid is exact, so the
+  ;; occluded set matches (occlusion that changes the picture is a bug).
+  (define $sgpu-hzb-slot 250)           ; the pyramid resource slot
+  (define $sgpu-hzb-w 0.0)
+  (define $sgpu-hzb-h 0.0)
+  (define $sgpu-hzb-built #f)
+  (define $sgpu-occlusion #t)
+  (define (sgpu-occlusion! on?) (set! $sgpu-occlusion (and on? #t)))
+
   (define (sgpu-init! sc canvas)
-    ($sg-aspect! sc (fl/ ($sgpu-fl (js->number (js-get canvas "width")))
-                         ($sgpu-fl (js->number (js-get canvas "height")))))
-    (gpu-uniforms! 0 192)
+    (set! $sgpu-hzb-w ($sgpu-fl (js->number (js-get canvas "width"))))
+    (set! $sgpu-hzb-h ($sgpu-fl (js->number (js-get canvas "height"))))
+    (set! $sgpu-hzb-built #f)
+    ($sg-aspect! sc (fl/ $sgpu-hzb-w $sgpu-hzb-h))
+    (gpu-uniforms! 0 224)
     (gpu-compute! 1 $sgpu-cull)
+    (gpu-hzb-init! $sgpu-hzb-slot $sgpu-hzb-w $sgpu-hzb-h)
     (gpu-pipeline2! 2 $sgpu-render 24 "float32x3,float32x3" 80 $inst-fmt)
     (gpu-bindgroup! 3 2 0)
     (gpu-pipeline2! 4 $sgpu-render-tex
@@ -359,7 +412,7 @@
     (gpu-pipeline2-blend! 7 $sgpu-render-tex
                           32 "float32x3,float32x3,float32x2" 80 $inst-fmt)
     (gpu-bindgroup! 8 6 0)
-    ($sg-envat! sc (fx-alloc! 192))
+    ($sg-envat! sc (fx-alloc! 224))
     (let init ((gs ($sg-groups sc)) (slot 9))
       (when (pair? gs)
         (let* ((g (car gs))
@@ -380,12 +433,14 @@
           (gpu-storage! (+ slot 2) (* cap 128))     ; src instances
           (gpu-storage! (+ slot 3) (* cap 80))      ; visible
           (gpu-indirect! (+ slot 4) 20)
-          (gpu-compute-group*! (+ slot 5)
+          ;; binding 4 of the cull is the hi-Z texture (t-prefixed)
+          (gpu-compute-groupx! (+ slot 5)
                                1
                                (string-append
                                 (number->string (+ slot 2)) ","
                                 (number->string (+ slot 3)) ","
-                                (number->string (+ slot 4)) ",0"))
+                                (number->string (+ slot 4)) ",0,t"
+                                (number->string $sgpu-hzb-slot)))
           (vector-set! g 2 slot)
           (vector-set! g 3 (+ slot 1))
           (vector-set! g 4 (+ slot 2))
@@ -522,7 +577,17 @@
         (%mem-f32-set! (+ ea 168) (v3-z ld))
         (%mem-f32-set! (+ ea 172) 0.0)
         (%mem-f32-set! (+ ea 176) (vector-ref light 3))
-        (gpu-buffer-data! 0 ea 192)
+        ;; projection params + occlusion mode for the hi-Z cull
+        (%mem-f32-set! (+ ea 192) (vector-ref proj 0))   ; p00
+        (%mem-f32-set! (+ ea 196) (vector-ref proj 5))   ; p11
+        (%mem-f32-set! (+ ea 200) $sgpu-hzb-w)           ; sw
+        (%mem-f32-set! (+ ea 204) $sgpu-hzb-h)           ; sh
+        (%mem-f32-set! (+ ea 208) (vector-ref proj 10))  ; pA
+        (%mem-i32-set! (+ ea 212)
+                       (if (and $sgpu-occlusion $sgpu-hzb-built) 1 0))
+        (%mem-i32-set! (+ ea 216) 0)
+        (%mem-i32-set! (+ ea 220) 0)
+        (gpu-buffer-data! 0 ea 224)
         ;; refresh dirty groups, reset args, dispatch culls
         (for-each
          (lambda (g)
@@ -565,4 +630,9 @@
                     ($sg-groups sc))
           (for-each (lambda (g)
                       (when (vector-ref g 15) (draw g 6 7 8)))
-                    ($sg-groups sc)))))))
+                    ($sg-groups sc))
+          ;; reduce this frame's depth into the hi-Z pyramid; next
+          ;; frame's cull occludes against it (mode is 0 until it exists)
+          (gpu-end-pass!)
+          (gpu-hzb!)
+          (set! $sgpu-hzb-built #t))))))
