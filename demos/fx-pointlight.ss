@@ -1,9 +1,12 @@
-;; Point-light shadows: a light in the middle of the room casts in
-;; every direction at once, so the shadow map is a cube -- six
-;; half-float faces (fx-cube-target!) each holding the distance from
-;; the light to whatever it sees.  The lit pass samples the cube
-;; with the fragment-to-light direction and compares distances.
-;; Watch the pillar shadows sweep the floor as the light wanders.
+;; Point-light shadows over a mirror floor.  A light in the middle of
+;; the room casts in every direction at once, so the shadow map is a
+;; cube -- six half-float faces (fx-cube-target!) each holding the
+;; distance from the light to whatever it sees.  The floor is polished
+;; black: a second camera, mirrored about the floor plane, renders the
+;; pillars and the bulb upside down into a texture, and each floor
+;; fragment projects itself through that camera and Fresnel-blends the
+;; reflection over its own shadowed stone -- so the pillars stand in
+;; the floor, and the bulb drags a hot streak beneath itself.
 ;; Needs WebGL 2.
 (import (rnrs) (web sx) (web js) (web dom) (gfx gl) (gfx glsl) (gfx fx)
         (gfx mat) (gfx mesh))
@@ -87,6 +90,58 @@
      (define (main) void
        (set! gl_FragColor (vec4 (fl 1) "0.95" "0.8" (fl 1)))))))
 
+;; the floor: the same shadowed point light over dark stone, then the
+;; mirrored world projected back down and blended in by Fresnel --
+;; grazing views turn to mirror, steep ones keep the stone (and its
+;; sweeping shadows)
+(define floor-p
+  (fx-program!
+   '((attribute vec3 a_pos)
+     (attribute vec3 a_normal)
+     (uniform mat4 u_mvp)
+     (uniform mat4 u_rvp)                ; the reflection camera's VP
+     (varying vec3 v_wp)
+     (varying vec4 v_rclip)
+     (define (main) void
+       (set! gl_Position (* u_mvp (vec4 a_pos (fl 1))))
+       (set! v_wp a_pos)                 ; the floor sits at the origin
+       (set! v_rclip (* u_rvp (vec4 a_pos (fl 1))))))
+   '((precision mediump float)
+     (uniform samplerCube u_shadow)
+     (uniform sampler2D u_refl)
+     (uniform vec3 u_lpos)
+     (uniform vec3 u_eye)
+     (uniform float u_far)
+     (varying vec3 v_wp)
+     (varying vec4 v_rclip)
+     (define (main) void
+       ;; the same shadow test the pillars run, normal pinned to +y
+       (local vec3 dv (- v_wp u_lpos))
+       (local float dist (length dv))
+       (local float dn (/ dist u_far))
+       (local vec4 sv (textureCube u_shadow dv))
+       (local float lit (step (- dn "0.01") sv.r))
+       (local vec3 l (normalize (- dv)))
+       (local float diff (max l.y (fl 0)))
+       (local float atten (/ (fl 1) (+ (fl 1) (* "0.015"
+                                                  (* dist dist)))))
+       (local vec3 base (pow (vec3 "0.30" "0.30" "0.34")
+                             (vec3 "2.2" "2.2" "2.2")))
+       (local vec3 c (* base (+ "0.06"
+                                (* (* (* diff lit) atten) "2.4"))))
+       (local vec3 fc (pow c (vec3 "0.4545" "0.4545" "0.4545")))
+       ;; where the mirrored camera saw this spot
+       (local vec2 uv (+ (* (/ v_rclip.xy v_rclip.w) (fl 0 50))
+                         (vec2 (fl 0 50) (fl 0 50))))
+       (local vec4 refl (texture2D u_refl uv))
+       ;; flat views mirror the room, steep ones see the stone
+       (local vec3 v (normalize (- u_eye v_wp)))
+       (local float f (+ (fl 0 30)
+                         (* (fl 0 60)
+                            (pow (- (fl 1) (max v.y (fl 0)))
+                                 (fl 3)))))
+       (set! gl_FragColor (vec4 (mix fc refl.rgb f) (fl 1)))))))
+
 ;; ---- geometry ----
 (define (upload m)
   (let* ((vbuf (fx-buffer!)) (ibuf (fx-buffer!))
@@ -118,6 +173,7 @@
                       acc))))))
 
 (define cube-t (fx-cube-target! 512))
+(define refl (fx-target! 360 200))      ; the room, as the floor sees it
 
 ;; the six views out of the light, GL cube-face conventions
 (define face-proj (m4-perspective 1.5707963267948966 1.0 0.1 FAR))
@@ -142,6 +198,26 @@
               (cmd-draw-elements! GL-TRIANGLES (vector-ref pillar 6)))
             pillar-models))
 
+;; the pillars and the bulb, from any camera -- once upside down into
+;; the reflection target, once onto the canvas
+(define (draw-scene! vp lp)
+  (bind-upload! lit-p pillar)
+  (cmd-bind-cubemap! 0 (fx-target-texture cube-t))
+  (fx-uniform! lit-p 'u_shadow 0)
+  (fx-uniform! lit-p 'u_lpos (v3-x lp) (v3-y lp) (v3-z lp))
+  (fx-uniform! lit-p 'u_far FAR)
+  (draw-pillars! lit-p
+                 (lambda (m)
+                   (fx-uniform! lit-p 'u_mvp (m4-mul vp m))
+                   (fx-uniform! lit-p 'u_model m)
+                   (fx-uniform! lit-p 'u_color 0.7 0.55 0.4 1.0)))
+  ;; the bulb, small and hot
+  (bind-upload! glow-p bulb)
+  (fx-uniform! glow-p 'u_mvp
+               (m4-mul vp (m4-translate (v3-x lp) (v3-y lp)
+                                        (v3-z lp))))
+  (cmd-draw-elements! GL-TRIANGLES (vector-ref bulb 6)))
+
 (fx-loop!
  (lambda (t dt)
    (cmd-depth! #t)
@@ -151,10 +227,15 @@
           (a (fl* 0.1 t))
           (eye (v3 (fl* 26.0 (flsin a)) 12.0 (fl* 26.0 (flcos a))))
           (vp (m4-mul proj (m4-look-at eye (v3 0.0 2.0 0.0)
-                                       (v3 0.0 1.0 0.0)))))
-     ;; unbind the cube first: rendering into faces still bound for
-     ;; sampling is a feedback loop Chrome rejects on every draw
+                                       (v3 0.0 1.0 0.0))))
+          ;; the same camera mirrored about the floor plane (y = 0)
+          (meye (v3 (v3-x eye) (fl- 0.0 (v3-y eye)) (v3-z eye)))
+          (rvp (m4-mul proj (m4-look-at meye (v3 0.0 -2.0 0.0)
+                                        (v3 0.0 1.0 0.0)))))
+     ;; unbind first: rendering into targets still bound for sampling
+     ;; is a feedback loop Chrome rejects on every draw
      (cmd-unbind-cubemap! 0)
+     (cmd-unbind-texture! 1)
      ;; six distance passes out of the light
      (let face ((i 0))
        (when (< i 6)
@@ -169,24 +250,22 @@
                                          (v3-y lp) (v3-z lp))
                             (fx-uniform! dist-p 'u_far FAR))))
          (face (+ i 1))))
-     ;; the room, asking the cube who sees the light
+     ;; the room upside down: what the floor will reflect
+     (fx-bind-target! refl)
+     (cmd-clear! 0.03 0.03 0.05 1.0)
+     (draw-scene! rvp lp)
+     ;; the room itself, standing on its own reflection
      (fx-bind-canvas!)
      (cmd-clear! 0.03 0.03 0.05 1.0)
-     (let ((unis! (lambda (m r g b)
-                    (fx-uniform! lit-p 'u_mvp (m4-mul vp m))
-                    (fx-uniform! lit-p 'u_model m)
-                    (fx-uniform! lit-p 'u_color r g b 1.0))))
-       (bind-upload! lit-p floor-obj)
-       (cmd-bind-cubemap! 0 (fx-target-texture cube-t))
-       (fx-uniform! lit-p 'u_shadow 0)
-       (fx-uniform! lit-p 'u_lpos (v3-x lp) (v3-y lp) (v3-z lp))
-       (fx-uniform! lit-p 'u_far FAR)
-       (unis! (m4-identity) 0.55 0.53 0.5)
-       (cmd-draw-elements! GL-TRIANGLES (vector-ref floor-obj 6))
-       (draw-pillars! lit-p (lambda (m) (unis! m 0.7 0.55 0.4)))
-       ;; the bulb, small and hot
-       (bind-upload! glow-p bulb)
-       (fx-uniform! glow-p 'u_mvp
-                    (m4-mul vp (m4-translate (v3-x lp) (v3-y lp)
-                                             (v3-z lp))))
-       (cmd-draw-elements! GL-TRIANGLES (vector-ref bulb 6))))))
+     (bind-upload! floor-p floor-obj)
+     (cmd-bind-cubemap! 0 (fx-target-texture cube-t))
+     (cmd-bind-texture! 1 (fx-target-texture refl))
+     (fx-uniform! floor-p 'u_shadow 0)
+     (fx-uniform! floor-p 'u_refl 1)
+     (fx-uniform! floor-p 'u_lpos (v3-x lp) (v3-y lp) (v3-z lp))
+     (fx-uniform! floor-p 'u_far FAR)
+     (fx-uniform! floor-p 'u_eye (v3-x eye) (v3-y eye) (v3-z eye))
+     (fx-uniform! floor-p 'u_mvp vp)
+     (fx-uniform! floor-p 'u_rvp rvp)
+     (cmd-draw-elements! GL-TRIANGLES (vector-ref floor-obj 6))
+     (draw-scene! vp lp))))
