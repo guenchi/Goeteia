@@ -405,7 +405,13 @@ buffer, shaders as s-expressions, and everything over them — in
   repack), BC1 (the table-free path), or RGBA8, the fallback that
   needs no extension; `gl-compressed-family` answers which, and
   `gl-compressed-level!` uploads the mip chain straight from
-  staging.  The decoder is verified byte-for-byte against the
+  staging.  `ktx-stream!` exploits the container's layout (level
+  data sits smallest mip first) to stream: three ranged requests --
+  a 1KB head, everything below level 0, the rest -- with
+  `TEXTURE_BASE_LEVEL` walking down as levels land, so the texture
+  is usable from its small mips while the big one is still in
+  flight (servers without Range support degrade to one load).
+  The decoder is verified byte-for-byte against the
   reference transcoder's unpack (the RGBA goldens ride in the test),
   a full mip chain transcodes in single-digit milliseconds, and it
   DCEs down to a few KB inside a module — where the official C++
