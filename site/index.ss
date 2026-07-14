@@ -116,7 +116,7 @@
               "renaming: a macro's bindings and yours can never collide. "
               "Paste any of this into the editor above and press Run."))
          r6rs-code)
-      ,(show "02" "The web as data" "Macros expand into HTML and CSS"
+      ,(show "02" "The web as list" "Macros expand into HTML and CSS"
          '("A document is a tree; a stylesheet is a list of rules — the "
            "exact shapes s-expressions were made for. " (code "(web html)")
            " and " (code "(web css)") " are two pure functions over one "
