@@ -26,12 +26,17 @@
             (immutable ring $st-ring)     ; last 60 frame times
             (mutable idx $st-idx $st-idx!)
             (mutable cool $st-cool $st-cool!)  ; frames till re-typeset
-            (mutable lay $st-lay $st-lay!)))
+            (mutable lay $st-lay $st-lay!)
+            (immutable gpu? $st-gpu?)))   ; timer extension present?
 
   (define (make-stats)
     (let ((at (make-atlas "600 13px ui-monospace, Menlo, monospace" 13)))
       ($make-stats at (make-batch at)
-                   (make-vector 60 0.0166) 0 0 #f)))
+                   (make-vector 60 0.0166) 0 0 #f
+                   ;; GPU frame time, when the browser exposes the
+                   ;; timer extension: every replay wraps itself in a
+                   ;; TIME_ELAPSED query, results arrive frames later
+                   (gl-gpu-timer!))))
 
   (define ($st-num v)                   ; one decimal, no printer noise
     (let* ((tenths (%fl->fx (fl+ (fl* v 10.0) 0.5)))
@@ -56,8 +61,12 @@
               (sum (+ k 1) (fl+ acc (vector-ref ring k)))
               (let* ((avg (fl/ acc 60.0))
                      (fps (%fl->fx (fl+ (fl/ 1.0 avg) 0.5)))
+                     (gpu (and ($st-gpu? st) (gl-gpu-ms)))
                      (text (string-append
                             ($st-num (fl* avg 1000.0)) " MS  "
+                            (if (and gpu (fl<? 0.0 gpu))
+                                (string-append ($st-num gpu) " GPU  ")
+                                "")
                             (number->string fps) " FPS  "
                             (number->string draws) " DRAWS  "
                             ($st-num (fl/ (fixnum->flonum bytes)
@@ -72,7 +81,8 @@
       ;; the panel: backdrop, the frame-time strip, the line
       (cmd-depth! #f)
       (batch-begin! b)
-      (rect! b 8.0 8.0 210.0 46.0 0.04 0.05 0.09 0.72)
+      (rect! b 8.0 8.0 (if ($st-gpu? st) 272.0 210.0) 46.0
+             0.04 0.05 0.09 0.72)
       (let bar ((k 0))
         (when (< k 60)
           ;; oldest to the left; 33ms tops the strip out
