@@ -15,8 +15,8 @@
                                      (js-undefined) s)))))
     (if (fl=? v v) v fallback)))        ; NaN ("normal") -> fallback
 
-;; one group per heading -- #(el text left top lh chars); a char is
-;; #(style home-x home-y w dx dy vx vy), home in element-local px
+;; one group per heading -- #(el html left top chars); a char is
+;; #(style cx cy dx dy vx vy), its rest CENTER in element-local px
 (define groups '())
 
 ;; the numbers in a computed style string, e.g. the two rgb() stops
@@ -78,6 +78,7 @@
                    (js-get (js-method el "getBoundingClientRect") "width"))))
          (l (layout (prepare text measure) (fl+ (fl* bw 1.01) 2.0) lh))
          (grad (gradient-sampler cs bw))
+         (html (js->string (js-get el "innerHTML")))
          (acc '()))
     (set-style! el "position" "relative")
     (set-text! el "")
@@ -103,12 +104,74 @@
                   (set-text! span g)
                   (append-child! el span)
                   (set! acc (cons (vector (js-get span "style")
-                                          pen y cw 0.0 0.0 0.0 0.0)
+                                          (fl+ pen (fl/ cw 2.0))
+                                          (fl+ y (fl/ lh 2.0))
+                                          0.0 0.0 0.0 0.0)
                                   acc))))
               (fl+ pen cw)))
           0.0 lt)))
      (layout-lines l))
-    (vector el text 0.0 0.0 lh (list->vector (reverse acc)))))
+    (vector el html 0.0 0.0 (list->vector (reverse acc)))))
+
+;; a heading with inline markup (the em in a .sub) cannot go through
+;; the plain-text path -- re-typesetting would eat the markup.  Ask
+;; the browser instead: a Range around each character of each text
+;; node yields its rendered rect; the glyph span goes INSIDE the
+;; character's own parent (so an em's glyphs stay italic), and the
+;; original run hides behind opacity:0, which never moves layout.
+(define (build-mixed! el)
+  (let* ((html (js->string (js-get el "innerHTML")))
+         (erect (js-method el "getBoundingClientRect"))
+         (ex ($fl (js->number (js-get erect "left"))))
+         (ey ($fl (js->number (js-get erect "top"))))
+         (range (js-method (document) "createRange"))
+         (acc '())
+         (texts '()))
+    (set-style! el "position" "relative")
+    (let walk ((n (js-get el "firstChild")))
+      (when (js-truthy? n)
+        (let ((ty (js->number (js-get n "nodeType"))))
+          (cond ((= ty 3) (set! texts (cons n texts)))
+                ((= ty 1) (walk (js-get n "firstChild")))))
+        (walk (js-get n "nextSibling"))))
+    (for-each
+     (lambda (tn)
+       (let ((s (js->string (js-get tn "nodeValue")))
+             (parent (js-get tn "parentNode")))
+         ;; Range offsets count utf-16 units, not the bridge's utf-8
+         ;; bytes -- fold the code points and track units ourselves
+         (string-fold-cp
+          (lambda (u16 cp start len)
+            (let ((units (if (< cp #x10000) 1 2)))
+              (unless (or (= cp 32) (= cp 9) (= cp 10) (= cp 160))
+                (js-method range "setStart" tn u16)
+                (js-method range "setEnd" tn (+ u16 units))
+                (let* ((r (js-method range "getBoundingClientRect"))
+                       (x (fl- ($fl (js->number (js-get r "left"))) ex))
+                       (y (fl- ($fl (js->number (js-get r "top"))) ey))
+                       (w ($fl (js->number (js-get r "width"))))
+                       (h ($fl (js->number (js-get r "height"))))
+                       (span (create-element "span")))
+                  (set-attribute! span "style"
+                    (string-append "position:absolute;left:"
+                                   (number->string x) "px;top:"
+                                   (number->string y) "px"))
+                  (set-text! span (substring s start (+ start len)))
+                  (append-child! parent span)
+                  (set! acc (cons (vector (js-get span "style")
+                                          (fl+ x (fl/ w 2.0))
+                                          (fl+ y (fl/ h 2.0))
+                                          0.0 0.0 0.0 0.0)
+                                  acc))))
+              (+ u16 units)))
+          0 s)
+         ;; hide the measured run in place; opacity keeps its layout
+         (let ((hider (create-element "span")))
+           (set-style! hider "opacity" "0")
+           (insert-before! parent hider tn)
+           (append-child! hider tn))))
+     (reverse texts))
+    (vector el html 0.0 0.0 (list->vector (reverse acc)))))
 
 ;; the elements' viewport rects, cached: reading them every frame
 ;; would force a layout pass -- they move only on scroll and resize
@@ -118,7 +181,7 @@
     (vector-set! g 3 ($fl (js->number (js-get r "top"))))))
 (define (rects!) (for-each rect! groups))
 
-(define (plain? el)                     ; glyph spans would eat markup
+(define (plain? el)                     ; markup goes the Range way
   (= 0 (js->number (js-get el "childElementCount"))))
 
 (define (build!)
@@ -129,13 +192,13 @@
     (let loop ((i 0))
       (when (< i n)
         (let ((el (js-index els i)))
-          (when (plain? el)
-            (set! groups (cons (build-el! el) groups))))
+          (set! groups (cons (if (plain? el) (build-el! el) (build-mixed! el))
+                             groups)))
         (loop (+ i 1))))
     (rects!)))
 
 (define (rebuild!)                      ; resize: restore, re-measure
-  (for-each (lambda (g) (set-text! (vector-ref g 0) (vector-ref g 1)))
+  (for-each (lambda (g) (set-inner-html! (vector-ref g 0) (vector-ref g 1)))
             groups)
   (build!))
 
@@ -147,15 +210,14 @@
 (define (step-group! g)
   (let ((mx (fl- pcx (vector-ref g 2)))
         (my (fl- pcy (vector-ref g 3)))
-        (hh (fl/ (vector-ref g 4) 2.0))
-        (chars (vector-ref g 5)))
+        (chars (vector-ref g 4)))
     (let each ((i 0))
       (when (< i (vector-length chars))
         (let* ((c (vector-ref chars i))
-               (hx (fl+ (vector-ref c 1) (fl/ (vector-ref c 3) 2.0)))
-               (hy (fl+ (vector-ref c 2) hh))
-               (dx (vector-ref c 4)) (dy (vector-ref c 5))
-               (vx (vector-ref c 6)) (vy (vector-ref c 7))
+               (hx (vector-ref c 1))
+               (hy (vector-ref c 2))
+               (dx (vector-ref c 3)) (dy (vector-ref c 4))
+               (vx (vector-ref c 5)) (vy (vector-ref c 6))
                (px (fl- (fl+ hx dx) mx))
                (py (fl- (fl+ hy dy) my))
                (r2 (fl+ (fl+ (fl* px px) (fl* py py)) 40.0))
@@ -168,8 +230,8 @@
                (nvy (fl* (fl+ vy (fl* ay 0.016)) 0.86))
                (ndx (fl+ dx (fl* nvx 0.016)))
                (ndy (fl+ dy (fl* nvy 0.016))))
-          (vector-set! c 4 ndx) (vector-set! c 5 ndy)
-          (vector-set! c 6 nvx) (vector-set! c 7 nvy)
+          (vector-set! c 3 ndx) (vector-set! c 4 ndy)
+          (vector-set! c 5 nvx) (vector-set! c 6 nvy)
           ;; touch the DOM only while it moves
           (when (fl<? 0.001 (fl+ (fl+ (fl* ndx ndx) (fl* ndy ndy))
                                  (fl+ (fl* nvx nvx) (fl* nvy nvy))))
