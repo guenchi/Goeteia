@@ -85,24 +85,10 @@
                    (fl 1)))))))
 
 ;; ---- geometry ----
-(define (upload m)
-  (let* ((vbuf (fx-buffer!)) (ibuf (fx-buffer!))
-         (vbase (fx-alloc! (mesh-vertex-bytes m)))
-         (ibase (fx-alloc! (mesh-index-bytes m))))
-    (mesh-write! m vbase ibase)
-    (vector vbuf ibuf vbase ibase (mesh-vertex-bytes m)
-            (mesh-index-bytes m) (mesh-index-count m) #f)))
-(define (bind-upload! prog obj)
-  (fx-use! prog (vector-ref obj 0))
-  (cmd-bind-index! (vector-ref obj 1))
-  (unless (vector-ref obj 7)
-    (cmd-buffer-data! (vector-ref obj 2) (vector-ref obj 4))
-    (cmd-index-data! (vector-ref obj 3) (vector-ref obj 5))
-    (vector-set! obj 7 #t)))
 
-(define torus (upload (mesh-torus 1.5 0.55 40 20)))
-(define ball (upload (mesh-sphere 1.3 40 20)))
-(define box (upload (mesh-box 2.0 2.0 2.0)))
+(define torus (fx-mesh! (mesh-torus 1.5 0.55 40 20)))
+(define ball (fx-mesh! (mesh-sphere 1.3 40 20)))
+(define box (fx-mesh! (mesh-box 2.0 2.0 2.0)))
 
 ;; the buffer behind the block, and its staging mirror
 (define env-ubo (fx-ubo! 112))
@@ -145,14 +131,14 @@
      ;; the whole frame's shared state: one upload, one binding
      (env! vp light eye t)
      (let ((spin (m4-rotate-y (fl* 0.6 t))))
-       (bind-upload! lit-p torus)
+       (fx-mesh-use! lit-p torus)
        (fx-uniform! lit-p 'u_model
                     (m4-mul (m4-translate -3.4 0.0 0.0) spin))
-       (cmd-draw-elements! GL-TRIANGLES (vector-ref torus 6))
-       (bind-upload! stripe-p ball)
+       (fx-mesh-draw! torus)
+       (fx-mesh-use! stripe-p ball)
        (fx-uniform! stripe-p 'u_model (m4-translate 0.0 0.0 0.0))
-       (cmd-draw-elements! GL-TRIANGLES (vector-ref ball 6))
-       (bind-upload! rim-p box)
+       (fx-mesh-draw! ball)
+       (fx-mesh-use! rim-p box)
        (fx-uniform! rim-p 'u_model
                     (m4-mul (m4-translate 3.4 0.0 0.0) spin))
-       (cmd-draw-elements! GL-TRIANGLES (vector-ref box 6))))))
+       (fx-mesh-draw! box)))))

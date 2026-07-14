@@ -138,24 +138,10 @@
        (set! gl_FragColor (vec4 outc sc.a))))))
 
 ;; ---- geometry ----
-(define (upload m)
-  (let* ((vbuf (fx-buffer!)) (ibuf (fx-buffer!))
-         (vbase (fx-alloc! (mesh-vertex-bytes m)))
-         (ibase (fx-alloc! (mesh-index-bytes m))))
-    (mesh-write! m vbase ibase)
-    (vector vbuf ibuf vbase ibase (mesh-vertex-bytes m)
-            (mesh-index-bytes m) (mesh-index-count m) #f)))
-(define (bind-upload! prog obj)
-  (fx-use! prog (vector-ref obj 0))
-  (cmd-bind-index! (vector-ref obj 1))
-  (unless (vector-ref obj 7)
-    (cmd-buffer-data! (vector-ref obj 2) (vector-ref obj 4))
-    (cmd-index-data! (vector-ref obj 3) (vector-ref obj 5))
-    (vector-set! obj 7 #t)))
 
-(define ground (upload (mesh-plane 30.0 30.0)))
-(define torus (upload (mesh-torus 1.1 0.42 28 14)))
-(define ball (upload (mesh-sphere 0.9 28 14)))
+(define ground (fx-mesh! (mesh-plane 30.0 30.0)))
+(define torus (fx-mesh! (mesh-torus 1.1 0.42 28 14)))
+(define ball (fx-mesh! (mesh-sphere 0.9 28 14)))
 
 ;; a 4x4 field of alternating toruses and spheres to catch the light
 (define models
@@ -204,24 +190,24 @@
      ;; geometry: one traversal fills all three attachments
      (fx-bind-target! gbuf)
      (cmd-clear! 0.0 0.0 0.0 0.0)
-     (bind-upload! geo-p ground)
+     (fx-mesh-use! geo-p ground)
      (fx-uniform! geo-p 'u_mvp vp)
      (fx-uniform! geo-p 'u_model (m4-identity))
      (fx-uniform! geo-p 'u_albedo 0.42 0.44 0.48 1.0)
      (fx-uniform! geo-p 'u_reflect 0.6)  ; the floor is polished
-     (cmd-draw-elements! GL-TRIANGLES (vector-ref ground 6))
+     (fx-mesh-draw! ground)
      (fx-uniform! geo-p 'u_reflect 0.1)
      (for-each
       (lambda (om)
         (let ((obj (vector-ref om 0))
               (m (vector-ref om 1))
               (c (vector-ref om 2)))
-          (bind-upload! geo-p obj)
+          (fx-mesh-use! geo-p obj)
           (fx-uniform! geo-p 'u_mvp (m4-mul vp m))
           (fx-uniform! geo-p 'u_model m)
           (fx-uniform! geo-p 'u_albedo (vector-ref c 0)
                        (vector-ref c 1) (vector-ref c 2) 1.0)
-          (cmd-draw-elements! GL-TRIANGLES (vector-ref obj 6))))
+          (fx-mesh-draw! obj)))
       models)
      ;; lights: one quad, whatever the scene weighed
      (cmd-depth! #f)

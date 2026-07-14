@@ -79,23 +79,9 @@
 (define pbr-p (fx-program! mesh-pbr-vs mesh-pbr-fs))
 
 ;; ---- geometry ----
-(define (upload m)
-  (let* ((vbuf (fx-buffer!)) (ibuf (fx-buffer!))
-         (vbase (fx-alloc! (mesh-vertex-bytes m)))
-         (ibase (fx-alloc! (mesh-index-bytes m))))
-    (mesh-write! m vbase ibase)
-    (vector vbuf ibuf vbase ibase (mesh-vertex-bytes m)
-            (mesh-index-bytes m) (mesh-index-count m) #f)))
-(define (bind-upload! prog obj)
-  (fx-use! prog (vector-ref obj 0))
-  (cmd-bind-index! (vector-ref obj 1))
-  (unless (vector-ref obj 7)
-    (cmd-buffer-data! (vector-ref obj 2) (vector-ref obj 4))
-    (cmd-index-data! (vector-ref obj 3) (vector-ref obj 5))
-    (vector-set! obj 7 #t)))
 
-(define cube (upload (mesh-box 2.0 2.0 2.0)))
-(define ball (upload (mesh-sphere 0.78 40 20)))
+(define cube (fx-mesh! (mesh-box 2.0 2.0 2.0)))
+(define ball (fx-mesh! (mesh-sphere 0.78 40 20)))
 
 (define proj (m4-perspective 0.8 (/ 800.0 600.0) 0.1 100.0))
 
@@ -110,14 +96,14 @@
                                        (v3 0.0 1.0 0.0)))))
      ;; the sky, depth off
      (cmd-depth! #f)
-     (bind-upload! sky-p cube)
+     (fx-mesh-use! sky-p cube)
      (cmd-bind-cubemap! 0 sky-map)
      (fx-uniform! sky-p 'u_sky 0)
      (fx-uniform! sky-p 'u_vp vp)
-     (cmd-draw-elements! GL-TRIANGLES (vector-ref cube 6))
+     (fx-mesh-draw! cube)
      ;; the grid: metallic front to back, roughness left to right
      (cmd-depth! #t)
-     (bind-upload! pbr-p ball)
+     (fx-mesh-use! pbr-p ball)
      (cmd-bind-cubemap! 0 env)
      (cmd-bind-texture! 1 lut)
      (fx-uniform! pbr-p 'u_sky 0)
@@ -136,6 +122,6 @@
                             (fl+ 0.05 (fl* 0.2375 (fixnum->flonum j))))
                (fx-uniform! pbr-p 'u_mvp (m4-mul vp m))
                (fx-uniform! pbr-p 'u_model m)
-               (cmd-draw-elements! GL-TRIANGLES (vector-ref ball 6)))
+               (fx-mesh-draw! ball))
              (col (+ j 1))))
          (row (+ i 1)))))))

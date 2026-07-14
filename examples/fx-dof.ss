@@ -30,23 +30,9 @@
        (set! gl_FragColor (vec4 v_d (fl 0) (fl 0) (fl 1)))))))
 
 ;; ---- a row of spheres marching away from the camera ----
-(define (upload m)
-  (let* ((vbuf (fx-buffer!)) (ibuf (fx-buffer!))
-         (vbase (fx-alloc! (mesh-vertex-bytes m)))
-         (ibase (fx-alloc! (mesh-index-bytes m))))
-    (mesh-write! m vbase ibase)
-    (vector vbuf ibuf vbase ibase (mesh-vertex-bytes m)
-            (mesh-index-bytes m) (mesh-index-count m) #f)))
-(define (bind-upload! prog obj)
-  (fx-use! prog (vector-ref obj 0))
-  (cmd-bind-index! (vector-ref obj 1))
-  (unless (vector-ref obj 7)
-    (cmd-buffer-data! (vector-ref obj 2) (vector-ref obj 4))
-    (cmd-index-data! (vector-ref obj 3) (vector-ref obj 5))
-    (vector-set! obj 7 #t)))
 
-(define ground (upload (mesh-plane 40.0 40.0)))
-(define ball (upload (mesh-sphere 1.0 32 16)))
+(define ground (fx-mesh! (mesh-plane 40.0 40.0)))
+(define ball (fx-mesh! (mesh-sphere 1.0 32 16)))
 
 ;; alternating spheres left and right, receding into the distance
 (define places
@@ -70,15 +56,15 @@
                                     (v3 0.0 1.0 0.0))))
 
 (define (draw-scene! prog each)
-  (bind-upload! prog ground)
+  (fx-mesh-use! prog ground)
   (each -1 (m4-identity))
-  (cmd-draw-elements! GL-TRIANGLES (vector-ref ground 6))
+  (fx-mesh-draw! ground)
   (let loop ((i 0) (cs places))
     (when (pair? cs)
       (let ((c (car cs)))
-        (bind-upload! prog ball)
+        (fx-mesh-use! prog ball)
         (each i (m4-translate (v3-x c) (v3-y c) (v3-z c)))
-        (cmd-draw-elements! GL-TRIANGLES (vector-ref ball 6)))
+        (fx-mesh-draw! ball))
       (loop (+ i 1) (cdr cs)))))
 
 (fx-loop!

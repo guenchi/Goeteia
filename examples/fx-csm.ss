@@ -68,22 +68,8 @@
 ;; ---- geometry: a wide ground, a field of pillars ----
 (define ground (mesh-plane 240.0 240.0))
 (define box (mesh-box 1.6 5.0 1.6))
-(define (upload m)
-  (let* ((vbuf (fx-buffer!)) (ibuf (fx-buffer!))
-         (vbase (fx-alloc! (mesh-vertex-bytes m)))
-         (ibase (fx-alloc! (mesh-index-bytes m))))
-    (mesh-write! m vbase ibase)
-    (vector vbuf ibuf vbase ibase (mesh-vertex-bytes m)
-            (mesh-index-bytes m) (mesh-index-count m) #f)))
-(define (bind-upload! prog obj)
-  (fx-use! prog (vector-ref obj 0))
-  (cmd-bind-index! (vector-ref obj 1))
-  (unless (vector-ref obj 7)
-    (cmd-buffer-data! (vector-ref obj 2) (vector-ref obj 4))
-    (cmd-index-data! (vector-ref obj 3) (vector-ref obj 5))
-    (vector-set! obj 7 #t)))
-(define ground-obj (upload ground))
-(define box-obj (upload box))
+(define ground-obj (fx-mesh! ground))
+(define box-obj (fx-mesh! box))
 
 ;; pillars on a jittered grid
 (define N 80)
@@ -111,10 +97,10 @@
                       (v3 0.0 1.0 0.0))))
 
 (define (draw-boxes! prog each)
-  (bind-upload! prog box-obj)
+  (fx-mesh-use! prog box-obj)
   (for-each (lambda (s)
               (each (m4-translate (car s) 2.5 (cdr s)))
-              (cmd-draw-elements! GL-TRIANGLES (vector-ref box-obj 6)))
+              (fx-mesh-draw! box-obj))
             spots))
 
 (fx-loop!
@@ -152,7 +138,7 @@
                     (fx-uniform! lit-p 'u_lvp0 (m4-mul lvp0 m))
                     (fx-uniform! lit-p 'u_lvp1 (m4-mul lvp1 m))
                     (fx-uniform! lit-p 'u_color r g b 1.0))))
-       (bind-upload! lit-p ground-obj)
+       (fx-mesh-use! lit-p ground-obj)
        (cmd-bind-texture! 0 (fx-target-texture csm0))
        (cmd-bind-texture! 1 (fx-target-texture csm1))
        (fx-uniform! lit-p 'u_shadow0 0)
@@ -160,6 +146,6 @@
        (fx-uniform! lit-p 'u_light (v3-x light) (v3-y light)
                     (v3-z light))
        (unis! (m4-identity) 0.38 0.42 0.38)
-       (cmd-draw-elements! GL-TRIANGLES (vector-ref ground-obj 6))
+       (fx-mesh-draw! ground-obj)
        (draw-boxes! lit-p
                     (lambda (m) (unis! m 0.72 0.5 0.35)))))))
