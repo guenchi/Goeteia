@@ -730,7 +730,9 @@ ETC1, a bit-identical repack of the ETC1S block into an ETC1 one; BC1,
 a table-free path that takes the block's brightest and darkest colors
 as the BC1 endpoints (the reference bakes optimal tables; this trades
 a little PSNR for carrying none); and RGBA8, the universal fallback
-that decodes to plain pixels and needs no GPU extension.  The test
+that decodes to plain pixels and needs no GPU extension — and the
+one that carries alpha: an RGBA file's alpha is a second grayscale
+ETC1S slice, decoded by the same machinery into the A bytes.  The test
 carries golden RGBA rows unpacked by the official basisu transcoder
 from a real encoder-produced file, and the decode is checked against
 them byte-for-byte across every mip level.
