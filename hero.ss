@@ -4,7 +4,7 @@
 ;; shader — the physics IS the vertex shader.
 ;; Edit anything and press Run: the words, the fonts, the forces, the palette.
 (import (web sx) (web dom) (web reactive) (web js)
-        (web gl) (web glsl) (web fx)
+        (gfx gl) (gfx glsl) (gfx fx)
         (web typeset) (web typeset canvas))
 
 ;; ---- the page ----

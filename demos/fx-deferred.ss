@@ -5,8 +5,8 @@
 ;; then 24 moving point lights cost one fullscreen pass, not 24
 ;; scene traversals.  Lighting price stops depending on scene
 ;; complexity: the classic trade.  Needs WebGL 2.
-(import (rnrs) (web sx) (web js) (web dom) (web gl) (web glsl) (web fx)
-        (web mat) (web mesh) (web post))
+(import (rnrs) (web sx) (web js) (web dom) (gfx gl) (gfx glsl) (gfx fx)
+        (gfx mat) (gfx mesh) (gfx post))
 
 ;; the demo mounts its own canvas where the hero usually lives
 (sx-mount (get-element-by-id "live")

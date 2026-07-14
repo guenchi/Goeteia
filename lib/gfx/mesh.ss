@@ -15,7 +15,7 @@
 ;; vertex, matching mesh-lit-vs's a_pos/a_normal layout -- and u16
 ;; indices (so at most 65536 vertices; every generator here is far
 ;; below).  Generation is pure and verifies headlessly; mesh-write!
-;; lays the data into the staging memory for (web gl).
+;; lays the data into the staging memory for (gfx gl).
 ;;
 ;; mesh-lit-vs / mesh-lit-fs are ready-made glsl forms for one
 ;; directional light plus an ambient floor: uniforms u_mvp, u_model
@@ -24,7 +24,7 @@
 ;; u_ambient.  Compose or replace them freely; they are just data.
 ;;
 ;; Copyright (c) 2026 guenchi. MIT license; see LICENSE.
-(library (web mesh)
+(library (gfx mesh)
   (export mesh? mesh-verts mesh-indices mesh-uvs
           mesh-vert-count mesh-index-count
           mesh-vertex-bytes mesh-index-bytes mesh-index-u32? mesh-write!
@@ -35,7 +35,7 @@
           mesh-heightmap
           mesh-lit-vs mesh-lit-fs mesh-tex-vs mesh-tex-fs
           mesh-normal-vs mesh-normal-fs mesh-pbr-vs mesh-pbr-fs)
-  (import (rnrs) (web mat))
+  (import (rnrs) (gfx mat))
 
   (define $mesh-pi 3.141592653589793)
   (define $mesh-2pi 6.283185307179586)
@@ -392,7 +392,7 @@
     ($mesh-write-ix! m ibase))
 
   ;; the bounding sphere, for frustum culls: AABB center, then the
-  ;; farthest vertex from it.  Pair with (web mat)'s
+  ;; farthest vertex from it.  Pair with (gfx mat)'s
   ;; m4-frustum-planes / sphere-in-frustum? -- remember to transform
   ;; the center by the model matrix and scale the radius
   (define ($mesh-min a b) (if (fl<? a b) a b))
@@ -628,7 +628,7 @@
 
   ;; ---- PBR: Cook-Torrance GGX with a real light probe ----
   ;; One directional light plus split-sum image-based ambient: u_sky
-  ;; is a cube map prefiltered by (web ibl)'s ibl-prefilter! (its mip
+  ;; is a cube map prefiltered by (gfx ibl)'s ibl-prefilter! (its mip
   ;; chain holds GGX convolutions, u_mips = levels - 1) and u_lut is
   ;; ibl-brdf-lut!'s scale/bias table.  Pair with mesh-write! (stride
   ;; 24); gltf's gprim-metallic/gprim-roughness feed the factor

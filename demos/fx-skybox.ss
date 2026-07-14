@@ -7,8 +7,8 @@
 ;; test off (translation dies in the w=0 multiply, so the sky never
 ;; moves); the sphere samples the same cube map along the reflected
 ;; eye ray.  Needs WebGL 2.
-(import (rnrs) (web sx) (web js) (web dom) (web gl) (web glsl) (web fx)
-        (web mat) (web mesh))
+(import (rnrs) (web sx) (web js) (web dom) (gfx gl) (gfx glsl) (gfx fx)
+        (gfx mat) (gfx mesh))
 
 ;; the demo mounts its own canvas where the hero usually lives
 (sx-mount (get-element-by-id "live")

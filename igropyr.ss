@@ -1,7 +1,7 @@
 ;; Igropyr — a Dijkstra fire front spreading over a hex-graph logo,
 ;; sampled into a WebGL point cloud and rendered live by Goeteia.
 ;; Edit the shader, the palette, or CYCLE below — then press Run.
-(import (rnrs) (web sx) (web js) (web dom) (web gl) (web glsl))
+(import (rnrs) (web sx) (web js) (web dom) (gfx gl) (gfx glsl))
 
 ;; #live is cleared on every Run, so rebuild the hero shell — the fire
 ;; canvas takes the title's place, the tagline and buttons stay put
@@ -114,7 +114,7 @@
         (let ((d (vector-ref dist i)))
           (mx (+ i 1) (if (and (fl<? d INF) (fl<? m d)) d m))))))
 
-;; ---- shaders as s-expressions (web glsl) ----
+;; ---- shaders as s-expressions (gfx glsl) ----
 (define vs
   (glsl->string
    '((attribute vec4 a)                ; x, y, arrival, seed (packed)

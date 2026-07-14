@@ -58,11 +58,11 @@
            " renderer, and a " '(code "(web js)") " FFI that reaches straight "
            "into the host — this page is built with it.")
         ,(card "3D and WebGL"
-           '(code "(web gl)") " drives WebGL 2 through a command buffer "
+           '(code "(gfx gl)") " drives WebGL 2 through a command buffer "
            "with shaders as s-expressions in "
-           '(code "(web glsl)") ", rendered to either GLSL dialect from "
+           '(code "(gfx glsl)") ", rendered to either GLSL dialect from "
            "the same forms. Shadow maps, PBR, HDR bloom, SSAO, "
-           "instancing, skeletal animation from " '(code "(web gltf)")
+           "instancing, skeletal animation from " '(code "(gfx gltf)")
            " assets, and transform-feedback particles whose physics "
            '(em "is") " the vertex shader — the title above is twelve "
            "thousand of them dodging your cursor.")

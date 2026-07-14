@@ -5,9 +5,9 @@
 ;; the random source), then the SAME buffer feeds the render pass as
 ;; a per-instance vertex stream -- gpu-storage! carries both usages.
 ;; The CPU's whole per-frame contribution is 16 bytes of uniforms.
-;; This is (web gl)'s transform-feedback trick, the WebGPU way.
+;; This is (gfx gl)'s transform-feedback trick, the WebGPU way.
 ;; Needs a WebGPU browser.
-(import (rnrs) (web sx) (web js) (web dom) (web fx) (web gpu))
+(import (rnrs) (web sx) (web js) (web dom) (gfx fx) (gfx gpu))
 
 ;; re-running (or leaving) a tab must retire the previous loop; GL
 ;; demos bump this through fx-init!, a WebGPU demo bumps it itself
