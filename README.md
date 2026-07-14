@@ -315,6 +315,11 @@ buffer, shaders as s-expressions, and everything over them — in
   round-to-nearest): half the vertex bandwidth and memory, paired
   with `cmd-vertex-attrib-h!`'s HALF_FLOAT wiring, and positions or
   unit normals lose nothing a screen shows;
+  `mesh-optimize!` reorders any mesh's triangles for the GPU's
+  post-transform vertex cache (Forsyth's linear-time greedy: a
+  simulated LRU scores recency, low valence boosts stragglers) and
+  `mesh-acmr` measures the result headlessly — shuffled soup drops
+  from over 1.0 misses per triangle back under 0.75;
   `mesh-lit-vs`/`-fs` ship the standard
   directional-light program as composable glsl forms
   (`examples/fx-mesh.html`: a lit scene — ground, torus, sphere —
