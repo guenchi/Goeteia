@@ -1,0 +1,471 @@
+;; The sgl template on the WebGPU backend -- the declarative scene,
+;; GPU-culled.  Same walker, same signal holes, same transform
+;; chains; the differences are all downstream: every mesh joins a
+;; geometry group (instancing is the only path -- WebGPU has no
+;; cheap per-draw uniforms, so a "single" is a group of one), each
+;; group's instances live in a storage buffer as matrix + color +
+;; bounding sphere, a compute kernel culls them against the frustum
+;; and compacts survivors straight into the render pass's instance
+;; stream, and one drawIndexedIndirect per group draws exactly the
+;; visible count.  The CPU recomposes only matrices whose signals
+;; moved (the same generation scheme (gfx scene) uses) and never
+;; looks at an instance again.
+;;
+;;   (define sc (sgl-gpu (camera ...) (light ...)
+;;                       (group ... (mesh ...)) ...))
+;;   (gpu-attach! canvas (lambda ()
+;;     (sgpu-init! sc)
+;;     (fx-ticks! (lambda (t dt)
+;;       (gpu-begin!) (gpu-clear! ...)
+;;       (sgpu-draw! sc) (gpu-flush!)))))
+;;
+;; Not here yet (the GL backend has them): textures, PBR probes,
+;; lod containers, static welding.  Lit solid color is the whole of
+;; v1.
+;;
+;; Copyright (c) 2026 guenchi. MIT license; see LICENSE.
+(library (gfx sgpu)
+  (export sgl-gpu $sgpu-build sgpu-init! sgpu-draw! sgpu-scene?)
+  (import (rnrs) (web js) (gfx gpu) (gfx fx) (gfx mat) (gfx mesh)
+          (web reactive))
+
+  ;; ---- the template macro: identical walker to (gfx scene) ----
+  (define-syntax sgl-gpu
+    (lambda (x)
+      (syntax-case x ()
+        ((_ . forms)
+         (let ((thunks '()) (nd 0))
+           (letrec
+               ((unq?
+                 (lambda (t)
+                   (and (pair? t) (eq? (car t) 'unquote)
+                        (pair? (cdr t)) (null? (cddr t)))))
+                (add-thunk!
+                 (lambda (e)
+                   (set! thunks (cons (list 'lambda '() e) thunks))
+                   (set! nd (+ nd 1))
+                   (cons '$sgpu-d (- nd 1))))
+                (walk-attr
+                 (lambda (a)
+                   (if (and (pair? (cdr a)) (unq? (cadr a)) (null? (cddr a)))
+                       (list (car a) (add-thunk! (cadr (cadr a))))
+                       a)))
+                (walk-form
+                 (lambda (f)
+                   (let* ((tag (car f)) (rest (cdr f))
+                          (attrs? (and (pair? rest) (pair? (car rest))
+                                       (eq? (car (car rest)) '@)))
+                          (attrs (if attrs?
+                                     (cons '@ (map walk-attr
+                                                   (cdr (car rest))))
+                                     '(@)))
+                          (kids (if attrs? (cdr rest) rest)))
+                     (if (eq? tag 'group)
+                         (cons tag (cons attrs (map walk-form kids)))
+                         (if attrs? (list tag attrs) f))))))
+             (let ((anno (map walk-form forms)))
+               (list '$sgpu-build (list 'quote anno)
+                     (cons 'list (reverse thunks))))))))))
+
+  (define ($sgpu-d? t) (and (pair? t) (eq? (car t) '$sgpu-d)))
+  (define ($sgpu-fl v) (if (flonum? v) v (exact->inexact v)))
+
+  ;; ---- runtime state ----
+  ;; scene: #(cam light groups scratch envat ready?)
+  ;; group: #(mesh nodes vslot islot srcslot dstslot argslot groupslot
+  ;;          icount cap gens srcbase)
+  ;; node:  #(f chain bc br)
+  (define-record-type (sgpu-scene $make-sgpu sgpu-scene?)
+    (fields (immutable cam $sg-cam)
+            (immutable light $sg-light)
+            (immutable groups $sg-groups)
+            (mutable envat $sg-envat $sg-envat!)
+            (mutable aspect $sg-aspect $sg-aspect!)
+            (mutable ready $sg-ready $sg-ready!)))
+
+  (define ($sgpu-set1! vec idx v ds gen)
+    (if ($sgpu-d? v)
+        (let ((th (list-ref ds (cdr v))))
+          (effect (lambda ()
+                    (vector-set! vec idx ($sgpu-fl (th)))
+                    (when gen
+                      (vector-set! vec gen
+                                   (+ 1 (vector-ref vec gen)))))))
+        (vector-set! vec idx ($sgpu-fl v))))
+  (define ($sgpu-set3! vec idx vals)
+    (vector-set! vec idx ($sgpu-fl (car vals)))
+    (vector-set! vec (+ idx 1) ($sgpu-fl (cadr vals)))
+    (vector-set! vec (+ idx 2) ($sgpu-fl (caddr vals))))
+
+  (define ($sgpu-geometry spec ds)
+    (if ($sgpu-d? spec)
+        ((list-ref ds (cdr spec)))
+        (case (car spec)
+          ((plane) (mesh-plane (cadr spec) (caddr spec)))
+          ((box) (mesh-box (cadr spec) (caddr spec) (cadddr spec)))
+          ((sphere) (apply mesh-sphere (cdr spec)))
+          ((cylinder) (apply mesh-cylinder (cdr spec)))
+          ((torus) (apply mesh-torus (cdr spec)))
+          (else (error 'sgl-gpu "unknown geometry" (car spec))))))
+
+  (define ($sgpu-build forms ds)
+    (let ((cam (vector 0.9 0.1 100.0 0.0 2.0 8.0 0.0 0.0 0.0))
+          (light (vector 0.5 0.8 0.4 0.25))
+          (cache (list '()))
+          (meshes '()))
+      (let walk ((forms forms) (chain '()))
+        (for-each
+         (lambda (f)
+           (let* ((attrs? (and (pair? (cdr f)) (pair? (cadr f))
+                               (eq? (car (cadr f)) '@)))
+                  (attrs (if attrs? (cdr (cadr f)) '()))
+                  (kids (if attrs? (cddr f) (cdr f))))
+             (case (car f)
+               ((camera)
+                (for-each
+                 (lambda (a)
+                   (case (car a)
+                     ((fov) ($sgpu-set1! cam 0 (cadr a) ds #f))
+                     ((near) ($sgpu-set1! cam 1 (cadr a) ds #f))
+                     ((far) ($sgpu-set1! cam 2 (cadr a) ds #f))
+                     ((position) ($sgpu-set3! cam 3 (cdr a)))
+                     ((look-at) ($sgpu-set3! cam 6 (cdr a)))
+                     (else (error 'sgl-gpu "unknown camera attribute"
+                                  (car a)))))
+                 attrs))
+               ((light)
+                (for-each
+                 (lambda (a)
+                   (case (car a)
+                     ((direction) ($sgpu-set3! light 0 (cdr a)))
+                     ((ambient) ($sgpu-set1! light 3 (cadr a) ds #f))
+                     (else (error 'sgl-gpu "unknown light attribute"
+                                  (car a)))))
+                 attrs))
+               ((group)
+                (let ((gf (vector 0.0 0.0 0.0 0.0 0.0 0.0 1.0 0)))
+                  (for-each
+                   (lambda (a)
+                     (case (car a)
+                       ((position) ($sgpu-set3! gf 0 (cdr a)))
+                       ((rotation) ($sgpu-set3! gf 3 (cdr a)))
+                       ((position-x) ($sgpu-set1! gf 0 (cadr a) ds 7))
+                       ((position-y) ($sgpu-set1! gf 1 (cadr a) ds 7))
+                       ((position-z) ($sgpu-set1! gf 2 (cadr a) ds 7))
+                       ((rotation-x) ($sgpu-set1! gf 3 (cadr a) ds 7))
+                       ((rotation-y) ($sgpu-set1! gf 4 (cadr a) ds 7))
+                       ((rotation-z) ($sgpu-set1! gf 5 (cadr a) ds 7))
+                       ((scale) ($sgpu-set1! gf 6 (cadr a) ds 7))
+                       (else (error 'sgl-gpu "unknown group attribute"
+                                    (car a)))))
+                   attrs)
+                  (walk kids (append chain (list gf)))))
+               ((mesh)
+                (let ((gspec #f)
+                      (f (vector 0.0 0.0 0.0 0.0 0.0 0.0 1.0
+                                 0.8 0.8 0.8 1.0 0.0 0.5 0)))
+                  (for-each
+                   (lambda (a)
+                     (case (car a)
+                       ((geometry) (set! gspec (cadr a)))
+                       ((position) ($sgpu-set3! f 0 (cdr a)))
+                       ((rotation) ($sgpu-set3! f 3 (cdr a)))
+                       ((color) ($sgpu-set3! f 7 (cdr a))
+                        (unless (null? (cdddr (cdr a)))
+                          (vector-set! f 10
+                                       ($sgpu-fl (car (cdddr (cdr a)))))))
+                       ((position-x) ($sgpu-set1! f 0 (cadr a) ds 13))
+                       ((position-y) ($sgpu-set1! f 1 (cadr a) ds 13))
+                       ((position-z) ($sgpu-set1! f 2 (cadr a) ds 13))
+                       ((rotation-x) ($sgpu-set1! f 3 (cadr a) ds 13))
+                       ((rotation-y) ($sgpu-set1! f 4 (cadr a) ds 13))
+                       ((rotation-z) ($sgpu-set1! f 5 (cadr a) ds 13))
+                       ((scale) ($sgpu-set1! f 6 (cadr a) ds 13))
+                       ((color-r) ($sgpu-set1! f 7 (cadr a) ds #f))
+                       ((color-g) ($sgpu-set1! f 8 (cadr a) ds #f))
+                       ((color-b) ($sgpu-set1! f 9 (cadr a) ds #f))
+                       ((color-a) ($sgpu-set1! f 10 (cadr a) ds #f))
+                       (else (error 'sgl-gpu "unknown mesh attribute"
+                                    (car a)))))
+                   attrs)
+                  (unless gspec (error 'sgl-gpu "mesh needs a geometry"))
+                  (set! meshes (cons (cons gspec (vector f chain #f #f))
+                                     meshes))))
+               (else (error 'sgl-gpu "unsupported tag on gpu backend"
+                            (car f))))))
+         forms))
+      ;; group by geometry spec (equal), building meshes once
+      (let group ((ms (reverse meshes)) (groups '()))
+        (if (pair? ms)
+            (let* ((key (car (car ms)))
+                   (nd (cdr (car ms)))
+                   (hit (and (not ($sgpu-d? key))
+                             (assoc key groups))))
+              (if hit
+                  (begin (set-cdr! hit (cons nd (cdr hit)))
+                         (group (cdr ms) groups))
+                  (group (cdr ms) (cons (list key nd) groups))))
+            ($make-sgpu
+             cam light
+             (map (lambda (g)
+                    (let* ((m ($sgpu-geometry (car g) ds))
+                           (bounds (mesh-bounds m))
+                           (nodes (reverse (cdr g))))
+                      (for-each (lambda (nd)
+                                  (vector-set! nd 2 (car bounds))
+                                  (vector-set! nd 3 (cdr bounds)))
+                                nodes)
+                      (vector m nodes 0 0 0 0 0 0
+                              (mesh-index-count m)
+                              (length nodes)
+                              -1 0 0)))
+                  (reverse groups))
+             0 1.333 #f)))))
+
+  ;; ---- gpu resources; call once inside gpu-attach!'s callback ----
+  (define $sgpu-cull
+    (string-append
+     "struct Inst { m0 : vec4f, m1 : vec4f, m2 : vec4f, m3 : vec4f,\n"
+     "              color : vec4f, sphere : vec4f, pad : vec4f,\n"
+     "              pad2 : vec4f }\n"
+     "struct Vis { m0 : vec4f, m1 : vec4f, m2 : vec4f, m3 : vec4f,\n"
+     "             color : vec4f }\n"
+     "struct Args { indexCount : u32, instanceCount : atomic<u32>,\n"
+     "              firstIndex : u32, baseVertex : u32,\n"
+     "              firstInstance : u32 }\n"
+     "struct Env { vp : mat4x4f, planes : array<vec4f, 6>,\n"
+     "             light : vec4f, ambient : vec4f }\n"
+     "@group(0) @binding(0) var<storage, read> src : array<Inst>;\n"
+     "@group(0) @binding(1) var<storage, read_write> dst : array<Vis>;\n"
+     "@group(0) @binding(2) var<storage, read_write> args : Args;\n"
+     "@group(0) @binding(3) var<uniform> env : Env;\n"
+     "@compute @workgroup_size(64)\n"
+     "fn cs(@builtin(global_invocation_id) id : vec3u) {\n"
+     "  let i = id.x;\n"
+     "  if (i >= arrayLength(&src)) { return; }\n"
+     "  let s = src[i];\n"
+     "  for (var p = 0u; p < 6u; p++) {\n"
+     "    if (dot(env.planes[p].xyz, s.sphere.xyz) + env.planes[p].w\n"
+     "        < -s.sphere.w) { return; }\n"
+     "  }\n"
+     "  let k = atomicAdd(&args.instanceCount, 1u);\n"
+     "  dst[k] = Vis(s.m0, s.m1, s.m2, s.m3, s.color);\n"
+     "}\n"))
+
+  (define $sgpu-render
+    (string-append
+     "struct Env { vp : mat4x4f, planes : array<vec4f, 6>,\n"
+     "             light : vec4f, ambient : vec4f }\n"
+     "@group(0) @binding(0) var<uniform> env : Env;\n"
+     "struct VOut { @builtin(position) pos : vec4f,\n"
+     "              @location(0) c : vec4f }\n"
+     "@vertex fn vs(@location(0) p : vec3f, @location(1) n : vec3f,\n"
+     "              @location(2) m0 : vec4f, @location(3) m1 : vec4f,\n"
+     "              @location(4) m2 : vec4f, @location(5) m3 : vec4f,\n"
+     "              @location(6) color : vec4f) -> VOut {\n"
+     "  var o : VOut;\n"
+     "  let m = mat4x4f(m0, m1, m2, m3);\n"
+     "  o.pos = env.vp * (m * vec4f(p, 1.0));\n"
+     "  let wn = normalize((m * vec4f(n, 0.0)).xyz);\n"
+     "  let d = max(dot(wn, normalize(env.light.xyz)), 0.0);\n"
+     "  let a = env.ambient.x;\n"
+     "  o.c = vec4f(color.rgb * (a + d * (1.0 - a)), color.a);\n"
+     "  return o;\n"
+     "}\n"
+     "@fragment fn fs(@location(0) c : vec4f) -> @location(0) vec4f {\n"
+     "  return c;\n"
+     "}\n"))
+
+  ;; fixed slots: 0 env, 1 cull pipeline, 2 render pipeline, 3 env
+  ;; bind group; groups take 6 slots each from 8 up
+  (define (sgpu-init! sc canvas)
+    ($sg-aspect! sc (fl/ ($sgpu-fl (js->number (js-get canvas "width")))
+                         ($sgpu-fl (js->number (js-get canvas "height")))))
+    (gpu-uniforms! 0 192)
+    (gpu-compute! 1 $sgpu-cull)
+    (gpu-pipeline2! 2 $sgpu-render
+                    24 "float32x3,float32x3"
+                    80 "float32x4,float32x4,float32x4,float32x4,float32x4")
+    (gpu-bindgroup! 3 2 0)
+    ($sg-envat! sc (fx-alloc! 192))
+    (let init ((gs ($sg-groups sc)) (slot 8))
+      (when (pair? gs)
+        (let* ((g (car gs))
+               (m (vector-ref g 0))
+               (cap (vector-ref g 9))
+               (vbytes (mesh-vertex-bytes m))
+               (ibytes (mesh-index-bytes m))
+               (vbase (fx-alloc! vbytes))
+               (ibase (fx-alloc! ibytes))
+               (srcbase (fx-alloc! (* cap 128)))
+               (argbase (fx-alloc! 20)))
+          (mesh-write! m vbase ibase)
+          (gpu-buffer! slot vbytes)
+          (gpu-index! (+ slot 1) ibytes)
+          (gpu-storage! (+ slot 2) (* cap 128))     ; src instances
+          (gpu-storage! (+ slot 3) (* cap 80))      ; visible
+          (gpu-indirect! (+ slot 4) 20)
+          (gpu-compute-group*! (+ slot 5)
+                               1
+                               (string-append
+                                (number->string (+ slot 2)) ","
+                                (number->string (+ slot 3)) ","
+                                (number->string (+ slot 4)) ",0"))
+          (vector-set! g 2 slot)
+          (vector-set! g 3 (+ slot 1))
+          (vector-set! g 4 (+ slot 2))
+          (vector-set! g 5 (+ slot 3))
+          (vector-set! g 6 (+ slot 4))
+          (vector-set! g 7 (+ slot 5))
+          (vector-set! g 11 srcbase)
+          (vector-set! g 12 argbase)
+          (%mem-i32-set! argbase (vector-ref g 8))
+          (%mem-i32-set! (+ argbase 4) 0)
+          (%mem-i32-set! (+ argbase 8) 0)
+          (%mem-i32-set! (+ argbase 12) 0)
+          (%mem-i32-set! (+ argbase 16) 0)
+          ;; geometry ships now, once
+          (gpu-begin!)
+          (gpu-buffer-data! slot vbase vbytes)
+          (gpu-buffer-data! (+ slot 1) ibase ibytes)
+          (gpu-flush!))
+        (init (cdr gs) (+ slot 6))))
+    ($sg-ready! sc #t))
+
+  (define ($sgpu-gen nodes)
+    (fold-left
+     (lambda (a nd)
+       (+ a (vector-ref (vector-ref nd 0) 13)
+          (fold-left (lambda (b gf) (+ b (vector-ref gf 7)))
+                     0 (vector-ref nd 1))))
+     0 nodes))
+
+  (define ($sgpu-trs! at f)
+    (m4s-trs! at (vector-ref f 0) (vector-ref f 1) (vector-ref f 2)
+              (vector-ref f 3) (vector-ref f 4) (vector-ref f 5)
+              (vector-ref f 6)))
+
+  ;; compose one node's model matrix + color + world sphere into its
+  ;; 128-byte instance slot
+  (define ($sgpu-inst! nd at scratch)
+    (let* ((f (vector-ref nd 0))
+           (chain (vector-ref nd 1))
+           (n-ch (length chain)))
+      (if (= n-ch 0)
+          ($sgpu-trs! at f)
+          (let ((sg scratch) (sa (+ scratch 64)) (sb (+ scratch 128)))
+            ($sgpu-trs! sa f)
+            (let fold ((gs (reverse chain)) (i 0) (acc sa))
+              (when (pair? gs)
+                ($sgpu-trs! sg (car gs))
+                (let ((dst (if (= i (- n-ch 1))
+                               at
+                               (if (= acc sa) sb sa))))
+                  (m4s-mul! dst sg acc)
+                  (fold (cdr gs) (+ i 1) dst))))))
+      (%mem-f32-set! (+ at 64) (vector-ref f 7))
+      (%mem-f32-set! (+ at 68) (vector-ref f 8))
+      (%mem-f32-set! (+ at 72) (vector-ref f 9))
+      (%mem-f32-set! (+ at 76) (vector-ref f 10))
+      ;; the world bounding sphere: transformed center, scaled radius
+      (let* ((bc (vector-ref nd 2))
+             (x (v3-x bc)) (y (v3-y bc)) (z (v3-z bc))
+             (s (fold-left (lambda (a gf) (fl* a (vector-ref gf 6)))
+                           (vector-ref f 6) chain)))
+        (%mem-f32-set!
+         (+ at 80)
+         (fl+ (fl+ (fl* (%mem-f32-ref at) x)
+                   (fl* (%mem-f32-ref (+ at 16)) y))
+              (fl+ (fl* (%mem-f32-ref (+ at 32)) z)
+                   (%mem-f32-ref (+ at 48)))))
+        (%mem-f32-set!
+         (+ at 84)
+         (fl+ (fl+ (fl* (%mem-f32-ref (+ at 4)) x)
+                   (fl* (%mem-f32-ref (+ at 20)) y))
+              (fl+ (fl* (%mem-f32-ref (+ at 36)) z)
+                   (%mem-f32-ref (+ at 52)))))
+        (%mem-f32-set!
+         (+ at 88)
+         (fl+ (fl+ (fl* (%mem-f32-ref (+ at 8)) x)
+                   (fl* (%mem-f32-ref (+ at 24)) y))
+              (fl+ (fl* (%mem-f32-ref (+ at 40)) z)
+                   (%mem-f32-ref (+ at 56)))))
+        (%mem-f32-set! (+ at 92) (fl* s (vector-ref nd 3))))))
+
+  (define $sgpu-scratch #f)
+
+  (define (sgpu-draw! sc)
+    (when ($sg-ready sc)
+      (unless $sgpu-scratch (set! $sgpu-scratch (fx-alloc! 192)))
+      (let* ((cam ($sg-cam sc))
+             (light ($sg-light sc))
+             (eye (v3 (vector-ref cam 3) (vector-ref cam 4)
+                      (vector-ref cam 5)))
+             (proj (let* ((f (fl/ 1.0 (fltan (fl/ (vector-ref cam 0)
+                                                  2.0))))
+                          (near (vector-ref cam 1))
+                          (far (vector-ref cam 2))
+                          (nf (fl/ 1.0 (fl- near far))))
+                     ;; WebGPU depth range: z lands in [0, 1]
+                     (vector (fl/ f ($sg-aspect sc))
+                             0.0 0.0 0.0
+                             0.0 f 0.0 0.0
+                             0.0 0.0 (fl* far nf) -1.0
+                             0.0 0.0 (fl* (fl* far near) nf) 0.0)))
+             (vp (m4-mul proj
+                         (m4-look-at eye
+                                     (v3 (vector-ref cam 6)
+                                         (vector-ref cam 7)
+                                         (vector-ref cam 8))
+                                     (v3 0.0 1.0 0.0))))
+             (planes (m4-frustum-planes vp))
+             (ld (v3-normalize (v3 (vector-ref light 0)
+                                   (vector-ref light 1)
+                                   (vector-ref light 2))))
+             (ea ($sg-envat sc)))
+        (m4s-write! ea vp)
+        (let plane ((i 0))
+          (when (< i 6)
+            (let ((p (vector-ref planes i))
+                  (at (+ ea 64 (* i 16))))
+              (%mem-f32-set! at (vector-ref p 0))
+              (%mem-f32-set! (+ at 4) (vector-ref p 1))
+              (%mem-f32-set! (+ at 8) (vector-ref p 2))
+              (%mem-f32-set! (+ at 12) (vector-ref p 3)))
+            (plane (+ i 1))))
+        (%mem-f32-set! (+ ea 160) (v3-x ld))
+        (%mem-f32-set! (+ ea 164) (v3-y ld))
+        (%mem-f32-set! (+ ea 168) (v3-z ld))
+        (%mem-f32-set! (+ ea 172) 0.0)
+        (%mem-f32-set! (+ ea 176) (vector-ref light 3))
+        (gpu-buffer-data! 0 ea 192)
+        ;; refresh dirty groups, reset args, dispatch culls
+        (for-each
+         (lambda (g)
+           (let ((gen ($sgpu-gen (vector-ref g 1))))
+             (unless (= gen (vector-ref g 10))
+               (vector-set! g 10 gen)
+               (let comp ((ns (vector-ref g 1)) (k 0))
+                 (when (pair? ns)
+                   ($sgpu-inst! (car ns)
+                                (+ (vector-ref g 11) (* k 128))
+                                $sgpu-scratch)
+                   (comp (cdr ns) (+ k 1))))
+               (gpu-buffer-data! (vector-ref g 4) (vector-ref g 11)
+                                 (* (vector-ref g 9) 128))))
+           ;; the group's own argument reset (writeBuffer reads
+           ;; staging at flush, so each group keeps its own words)
+           (gpu-buffer-data! (vector-ref g 6) (vector-ref g 12) 20)
+           (gpu-dispatch! 1 (vector-ref g 7)
+                          (quotient (+ (vector-ref g 9) 63) 64)))
+         ($sg-groups sc))
+        ;; then the draws
+        (for-each
+         (lambda (g)
+           (gpu-use-pipeline! 2)
+           (gpu-set-group! 3)
+           (gpu-bind-vbuf! (vector-ref g 2))
+           (gpu-bind-vbuf2! (vector-ref g 5))
+           (gpu-bind-ibuf! (vector-ref g 3))
+           (gpu-draw-indexed-indirect! (vector-ref g 6) 0))
+         ($sg-groups sc))))))

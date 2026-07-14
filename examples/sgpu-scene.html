@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <title>Goeteia — the declarative scene, on WebGPU</title>
+    <style>
+      body { font-family: system-ui; text-align: center; margin-top: 2em; background: #f2f4fa; color: #14203a; }
+      canvas { border-radius: 12px; box-shadow: 0 4px 20px rgba(16,20,42,.2); }
+      code { font-family: ui-monospace, Menlo, monospace; color: #1550c4; }
+    </style>
+  </head>
+  <body>
+    <h1>sgl, the WebGPU way</h1>
+    <p>The same declarative scene notation, culled and drawn
+    entirely GPU-side: every mesh joins a geometry group, instances
+    live in storage buffers as matrix + color + bounding sphere, a
+    compute kernel culls them against the frustum, and one
+    <code>drawIndexedIndirect</code> per group draws exactly the
+    survivors.  The CPU recomposes only matrices whose signals
+    moved.  Needs a WebGPU browser.  See <code>sgpu-scene.ss</code>.</p>
+    <canvas id="c" width="800" height="600"></canvas>
+    <script type="module">
+      import { loadGoeteia } from '../rt/web.mjs';
+      loadGoeteia('sgpu-scene.wasm');
+    </script>
+  </body>
+</html>
