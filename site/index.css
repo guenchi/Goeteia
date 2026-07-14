@@ -85,6 +85,30 @@
       .hint { color: var(--dim); font-size: .85em; margin-top: .5em; }
       .hint code { background: #eef1f9; padding: .1em .4em; border-radius: 5px; font-family: var(--mono); }
 
+      /* the numbered feature showcases: kicker + title + text|code */
+      #showcase { border-top: 1px solid var(--line); padding: 1.2em 0 2em; max-width: 66em; margin: 0 auto; }
+      .show { padding: 1.8em 0 .8em; }
+      .kicker { font-family: var(--mono); font-size: .76em; font-weight: 600; letter-spacing: .16em; text-transform: uppercase; color: var(--azure); }
+      .show h2 { font-size: 1.55em; margin: .25em 0 .4em; letter-spacing: -.01em; }
+      .slead { color: var(--dim); font-size: 1.05em; max-width: 44em; margin: 0; }
+      .slead code, .feature .txt code { font-family: var(--mono); color: var(--lapis); font-size: .88em; background: #eef1f9; padding: .05em .35em; border-radius: 4px; }
+      .feature { display: grid; grid-template-columns: 1fr 1fr; gap: 2.6em; align-items: center; margin-top: 1.4em; }
+      .feature > * { min-width: 0; }
+      .feature.flip .txt { order: 2; }
+      .feature h3 { font-size: 1.12em; margin: 0 0 .5em; }
+      .feature p { color: var(--dim); font-size: .95em; margin: 0 0 .7em; }
+      .feature p b { color: var(--ink); }
+      .feature pre { background: var(--bg2); border: 1px solid var(--line); border-radius: 10px; padding: 1.1em 1.2em; overflow-x: auto; font-family: var(--mono); font-size: 12.5px; line-height: 1.55; color: var(--ink); margin: 0; box-shadow: 0 1px 3px rgba(16,20,42,.06); }
+      .feature pre .tok-c { color: #7a869f; font-style: italic; }
+      .feature pre .tok-s { color: #1e7d34; }
+      .feature pre .tok-k { color: var(--lapis); font-weight: 600; }
+      .feature pre .tok-h { color: var(--azure); }
+      .feature pre .tok-n { color: #b0483f; }
+      @media (max-width: 64em) {
+        .feature { grid-template-columns: 1fr; gap: 1.2em; }
+        .feature.flip .txt { order: 0; }
+      }
+
       /* informational sections below the hero */
       #features, #quickstart { padding: 2.5em 0; border-top: 1px solid var(--line); scroll-margin-top: 4em; }
       h2 { font-size: 1.5em; font-weight: 600; }
