@@ -7,6 +7,11 @@
 (import (rnrs) (web js) (web dom) (gfx fx) (gfx gpu) (gfx mat)
         (gfx sgpu) (web reactive))
 
+;; Open with #nocull to turn the hi-Z occlusion cull off: the picture
+;; must be identical -- occlusion culling that changes it is a bug.
+(when (string=? "#nocull" (js->string (js-eval "location.hash")))
+  (sgpu-occlusion! #f))
+
 (define angle (signal 0.0))
 
 ;; an 8x8 checker into staging, uploaded to a gpu texture (slot 40)

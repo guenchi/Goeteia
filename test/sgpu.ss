@@ -155,7 +155,10 @@ globalThis.__gpulog = [];
   (and ready (sgpu-scene? sc)
        ;; 2 groups x (vbuf + ibuf + src storage + dst storage +
        ;; indirect) + env uniform = 11 buffers
-       (= (count-log "buffer:") 11)))
+       (= (count-log "buffer:") 11)
+       ;; the hi-Z pyramid: one r32float texture, full mip chain
+       ;; (640 -> 10 levels), built at init for occlusion culling
+       (= (count-log "texture:640,480:r32float:10") 1)))
 
 (define d0 (count-log "dispatch"))
 (define i0 (count-log "drawIndexedIndirect"))
@@ -165,7 +168,10 @@ globalThis.__gpulog = [];
 (sgpu-draw! sc)
 (gpu-flush!)
 (define frame1-ok
-  (and (= (- (count-log "dispatch") d0) 2)          ; one cull per group
+  ;; two cull dispatches (one per group) plus the hi-Z reduce: a copy
+  ;; from the depth buffer then one dispatch per remaining mip (640 ->
+  ;; 10 levels) = 2 + 10 = 12 dispatches; two indirect draws
+  (and (= (- (count-log "dispatch") d0) 12)
        (= (- (count-log "drawIndexedIndirect") i0) 2)))
 
 ;; frame 2, nothing moved: no instance re-upload (env + 2 arg resets
