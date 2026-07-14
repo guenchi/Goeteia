@@ -1414,18 +1414,30 @@
 ;; a test position wants an i32; predicates skip the boolean
 ;; boxing/unboxing round trip
 (define (compile-test e locals cell)
-  (if (and (pair? e)
-           (symbol? (car e))
-           (memq (unmark (car e)) i32-predicates)
-           (let ((expect (assq (unmark (car e)) prim-arity)))
-             (and expect (= (length (cdr e)) (cdr expect))))
-           (not (assq (car e) locals))
-           (not (assq (unmark (car e)) *fns*)))
-      (pred-i32 (unmark (car e))
-                (map-in-order (lambda (a) (compile-exp a locals cell #f))
-                              (cdr e))
-                cell)
-      (list (compile-exp e locals cell #f) (truthy))))
+  (cond
+   ;; flonum comparisons compare in the f64 context and land i32
+   ;; directly -- no boolean box, and f64-slotted arguments never box
+   ((and (pair? e)
+         (symbol? (car e))
+         (memq (unmark (car e)) '(fl<? fl=?))
+         (not (assq (car e) locals))
+         (not (assq (unmark (car e)) *fns*))
+         (= (length (cdr e)) 2))
+    (list (compile-f64 (cadr e) locals cell)
+          (compile-f64 (caddr e) locals cell)
+          (if (eq? (unmark (car e)) 'fl=?) #x61 #x63)))
+   ((and (pair? e)
+         (symbol? (car e))
+         (memq (unmark (car e)) i32-predicates)
+         (let ((expect (assq (unmark (car e)) prim-arity)))
+           (and expect (= (length (cdr e)) (cdr expect))))
+         (not (assq (car e) locals))
+         (not (assq (unmark (car e)) *fns*)))
+    (pred-i32 (unmark (car e))
+              (map-in-order (lambda (a) (compile-exp a locals cell #f))
+                            (cdr e))
+              cell))
+   (else (list (compile-exp e locals cell #f) (truthy)))))
 
 ;; does a form contain a lambda? (quote subtrees don't count) -- a
 ;; binding captured by an inner lambda cannot live in an f64 slot,
@@ -1439,8 +1451,41 @@
           (else (or (contains-lambda? (car e))
                     (contains-lambda? (cdr e))))))))
 
+;; does the symbol occur anywhere in e? identity walk, quotes and all
+;; -- over-approximating occurrence keeps the capture test safe
+(define (mentions? v e)
+  (cond
+   ((eq? e v) #t)
+   ((pair? e) (or (mentions? v (car e)) (mentions? v (cdr e))))
+   (else #f)))
+
+;; could a lambda nested in e capture v?  Any lambda subtree that so
+;; much as mentions the symbol counts (shadowing ignored -- that only
+;; costs a boxing, never correctness).  This is the per-binding
+;; refinement of contains-lambda?: a loop in the body no longer
+;; denies f64 slots to bindings the loop never touches
+(define (lambda-captures? v e)
+  (and (pair? e)
+       (let ((tag (resolve-tag (car e))))
+         (cond
+          ((eq? tag 'quote) #f)
+          ((eq? tag 'lambda) (mentions? v e))
+          (else (or (lambda-captures? v (car e))
+                    (lambda-captures? v (cdr e))))))))
+
+;; a two-armed if whose branches are both flonum expressions is one
+;; itself -- min/max/clamp/abs arrive in this shape once the inliner
+;; has erased the helper call
+(define (fl-if? e locals)
+  (and (pair? e)
+       (eq? (resolve-tag (car e)) 'if)
+       (= (length e) 4)
+       (fl-expr? (caddr e) locals)
+       (fl-expr? (cadddr e) locals)))
+
 ;; is e statically a flonum expression? (an unshadowed fl form, a
-;; flonum literal, or a reference to an f64-slotted local)
+;; flonum literal, a reference to an f64-slotted local, or an if
+;; with two flonum arms)
 (define (fl-expr? e locals)
   (cond
    ((and (number? e) (flonum? e)) #t)
@@ -1450,25 +1495,29 @@
    ((pair? e)
     (let* ((h (car e))
            (rop (and (symbol? h) (unmark h))))
-      (and rop (memq rop fl-direct-ops)
-           (not (assq h locals))
-           (not (assq rop *fns*))
-           (let ((a (assq rop prim-arity)))
-             (and a (= (length (cdr e)) (cdr a)))))))
+      (or (and rop (memq rop fl-direct-ops)
+               (not (assq h locals))
+               (not (assq rop *fns*))
+               (let ((a (assq rop prim-arity)))
+                 (and a (= (length (cdr e)) (cdr a)))))
+          (fl-if? e locals))))
    (else #f)))
 
 (define (compile-let e locals cell tail?)
   ;; a binding whose value is statically a flonum gets a raw f64 slot
-  ;; when no lambda in the body could capture it; reads inside float
-  ;; expressions then use the slot directly, others box on reference
-  (let ((f64-ok (not (contains-lambda? (cddr e)))))
+  ;; when no lambda in the body could capture IT (other bindings may
+  ;; well be captured); reads inside float expressions then use the
+  ;; slot directly, others box on reference
+  (let ((lambda-free (not (contains-lambda? (cddr e)))))
     (let loop ((bs (cadr e)) (code '()) (scope locals))
       (if (null? bs)
           (list (reverse code)
                 (compile-body (cddr e) scope cell tail?))
           (let* ((b (car bs))
                  (slot (fresh-local! cell)))
-            (if (and f64-ok (fl-expr? (cadr b) locals))
+            (if (and (fl-expr? (cadr b) locals)
+                     (or lambda-free
+                         (not (lambda-captures? (car b) (cddr e)))))
                 (begin
                   (set! *f64-slots* (cons slot *f64-slots*))
                   (loop (cdr bs)
@@ -1881,13 +1930,23 @@
            (rop (and (symbol? h) (unmark h))))
       ;; direct only when the head really is the primitive: not
       ;; lexically bound, not redefined at top level, arity right
-      (if (and rop (memq rop fl-direct-ops)
-               (not (assq h locals))
-               (not (assq rop *fns*))
-               (let ((a (assq rop prim-arity)))
-                 (and a (= (length (cdr e)) (cdr a)))))
-          (direct rop)
-          (list (compile-exp e locals cell #f) (unwrap-fl)))))
+      (cond
+       ((and rop (memq rop fl-direct-ops)
+             (not (assq h locals))
+             (not (assq rop *fns*))
+             (let ((a (assq rop prim-arity)))
+               (and a (= (length (cdr e)) (cdr a)))))
+        (direct rop))
+       ;; an if with two flonum arms stays in the f64 context: the
+       ;; wasm if blocks type f64 and neither branch boxes
+       ((fl-if? e locals)
+        (list (compile-test (cadr e) locals cell)
+              #x04 T-F64
+              (compile-f64 (caddr e) locals cell)
+              #x05
+              (compile-f64 (cadddr e) locals cell)
+              #x0B))
+       (else (list (compile-exp e locals cell #f) (unwrap-fl))))))
    (else (list (compile-exp e locals cell #f) (unwrap-fl)))))
 
 ;; float primitives bypass the generic path so their arguments compile
