@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <title>Goeteia — occlusion culling, hierarchical Z</title>
+    <style>
+      body { font-family: system-ui; text-align: center; margin-top: 2em; background: #f2f4fa; color: #14203a; }
+      canvas { border-radius: 12px; box-shadow: 0 4px 20px rgba(16,20,42,.2); }
+      code { font-family: ui-monospace, Menlo, monospace; color: #1550c4; }
+    </style>
+  </head>
+  <body>
+    <h1>What the walls hide never draws</h1>
+    <p>Three walls render first; the depth buffer reduces into a
+    max-mip pyramid (<code>gpu-hzb!</code>, compute), and the cull
+    kernel tests all 30,000 boxes against the frustum AND the
+    pyramid — a box whose nearest point is farther than everything
+    already drawn over its screen footprint never reaches the vertex
+    shader.  Add <code>#nocull</code> to the URL and reload: the
+    image must be pixel-identical, only slower — occlusion culling
+    that changes the picture is a bug.  Needs a WebGPU browser.
+    See <code>gpu-hzb.ss</code>.</p>
+    <canvas id="c" width="800" height="600"></canvas>
+    <script type="module">
+      import { loadGoeteia } from '../rt/web.mjs';
+      loadGoeteia('gpu-hzb.wasm');
+    </script>
+  </body>
+</html>

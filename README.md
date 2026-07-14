@@ -378,7 +378,15 @@ buffer, shaders as s-expressions, and everything over them — in
   instance against the frustum, compacts survivors with one
   `atomicAdd` and writes the draw's own argument buffer
   (`gpu-indirect!`), which `gpu-draw-indexed-indirect!` then draws
-  (`examples/gpu-cull.html`: 100,000 boxes the CPU never inspects).
+  (`examples/gpu-cull.html`: 100,000 boxes the CPU never inspects)
+  — and the cull sees through walls' worth of nothing: `gpu-hzb!`
+  reduces the frame's own depth buffer into a max-mip pyramid
+  (compute, one dispatch per level) after `gpu-end-pass!` closes
+  the occluder pass, and the kernel rejects any sphere whose
+  nearest point is farther than everything already drawn over its
+  screen footprint (`examples/gpu-hzb.html`: 30,000 boxes behind
+  three walls; open with #nocull — the image is pixel-identical,
+  which is the whole correctness claim of occlusion culling).
   `gpu-gpu-timer!`/`gpu-gpu-ms` are the backend's frame timer —
   timestamp queries stamp the render pass when the adapter offers
   the feature, mirroring `gl-gpu-timer!` on the other side

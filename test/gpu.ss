@@ -24,9 +24,10 @@ globalThis.__gpulog = [];
     queue,
     createShaderModule(d){ push('module', d.code.length); return {} },
     createTexture(d){
-      push('texture', d.size.join('x'), d.format);
+      push('texture', d.size.join(','), d.format,
+           d.mipLevelCount || 1);
       const id = 'T' + (this._t = (this._t || 0) + 1);
-      return { id, createView(){ return { id: id + 'v' } } } },
+      return { id, createView(o){ return { id: id + 'v' } } } },
     createBindGroup(d){
       push('bindgroup', d.layout.id,
            d.entries.map(e => e.binding + '=' +
@@ -134,7 +135,7 @@ globalThis.__gpulog = [];
        (check 0 "getContext:webgpu")
        (check 1 "configure:bgra8unorm:opaque")
        ;; the depth buffer comes up with the canvas
-       (check 2 "texture:640x480:depth24plus")))
+       (check 2 "texture:640,480:depth24plus:1")))
 
 ;; resources: a pipeline over one interleaved buffer, and the buffer
 (gpu-pipeline! 0 "@vertex fn vs() {} @fragment fn fs() {}"
@@ -249,7 +250,7 @@ globalThis.__gpulog = [];
 (gpu-texgroup! 14 0 6 13 12)
 (gpu-texgroup! 15 0 -1 13 12)           ; no scalar uniforms
 (define tex-ok
-  (and (check 49 "texture:64x64:rgba8unorm")
+  (and (check 49 "texture:64,64:rgba8unorm:1")
        (check 50 "writeTexture:T2:16384:256:64x64")
        (check 51 "sampler:linear")
        (check 52 "bindgroup:L0:0=B3|1=S1|2=T2v")
@@ -323,5 +324,43 @@ globalThis.__gpulog = [];
        (fl<? 4.1 (gpu-gpu-ms))
        (fl<? (gpu-gpu-ms) 4.3)))
 
+;; HZB: pyramid resources build once; endPass closes the occluder
+;; pass (the next opens with loadOp load), the pyramid pass runs its
+;; copy + reduces, and the mixed bind group carries a texture view
+(define hzb-base (js->number (js-get log "length")))
+(gpu-hzb-init! 20 64 64)
+(gpu-compute-groupx! 21 9 "8,t20")
+(gpu-begin!)
+(gpu-clear! 0.0 0.0 0.0 1.0)
+(gpu-use-pipeline! 0)
+(gpu-bind-vbuf! 1)
+(gpu-draw! 3)
+(gpu-end-pass!)
+(gpu-hzb!)
+(gpu-use-pipeline! 0)
+(gpu-bind-vbuf! 1)
+(gpu-draw! 3)
+(gpu-flush!)
+(define hzb-ok
+  (and (check hzb-base "texture:64,64:r32float:7")
+       ;; two pipelines (copy + reduce), then 7 bind groups
+       (>= (js->number (js-get log "length")) (+ hzb-base 10))
+       (let scan ((i hzb-base) (ends 0) (passes 0) (disp 0))
+         (if (= i (js->number (js-get log "length")))
+             (and (= ends 2)            ; occluder pass + final pass
+                  (= disp 7)            ; one dispatch per level
+                  (>= passes 2))
+             (let ((e (entry i)))
+               (scan (+ i 1)
+                     (if (string=? e "endPass") (+ ends 1) ends)
+                     (if (and (>= (string-length e) 9)
+                              (string=? (substring e 0 9) "beginPass"))
+                         (+ passes 1)
+                         passes)
+                     (if (and (>= (string-length e) 8)
+                              (string=? (substring e 0 8) "dispatch"))
+                         (+ disp 1)
+                         disp)))))))
+
 (and attach-ok resource-ok frame-ok clear-ok indexed-ok compute-ok
-     tex-ok bundle-ok indirect-ok ts-ok)
+     tex-ok bundle-ok indirect-ok ts-ok hzb-ok)
