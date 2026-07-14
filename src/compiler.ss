@@ -1165,7 +1165,7 @@
     (%mem-f64-ref . 1) (%mem-f64-set! . 2)
     (%mem-size . 0) (%mem-grow . 1)
     (%f32x4-add! . 3) (%f32x4-sub! . 3) (%f32x4-mul! . 3)
-    (%f32x4-scale! . 3) (%f32x4-axpy! . 4)
+    (%f32x4-scale! . 3) (%f32x4-axpy! . 4) (%f32x4-dot . 2)
     (%js-await . 1)))
 
 (define primitives
@@ -1194,6 +1194,7 @@
     %mem-f32-ref %mem-f32-set! %mem-f64-ref %mem-f64-set!
     %mem-size %mem-grow
     %f32x4-add! %f32x4-sub! %f32x4-mul! %f32x4-scale! %f32x4-axpy!
+    %f32x4-dot
     %unreachable %throw-k))
 
 (define (compile-exp e locals cell tail?)
@@ -1898,7 +1899,29 @@
 ;; anything else compiles normally and unboxes at the boundary.
 (define fl-direct-ops
   '(fl+ fl- fl* fl/ flsqrt flfloor fltruncate fixnum->flonum
-    %mem-f64-ref %mem-f32-ref))
+    %mem-f64-ref %mem-f32-ref %f32x4-dot))
+
+;; (%f32x4-dot a b): four lanes of [a]*[b] summed to one f64 -- the
+;; quaternion/plane dot.  The product parks in a v128 local (encoded
+;; as (- -1 slot) in *f64-slots*, see locals-decl) so each lane
+;; extracts without recomputing
+(define (compile-f32x4-dot args locals cell)
+  (let ((v (fresh-local! cell)))
+    (set! *f64-slots* (cons (- -1 v) *f64-slots*))
+    (list (compile-exp (car args) locals cell #f) (unwrap-int)
+          #xFD (uleb 0) (uleb 0) (uleb 0)      ; v128.load
+          (compile-exp (cadr args) locals cell #f) (unwrap-int)
+          #xFD (uleb 0) (uleb 0) (uleb 0)
+          #xFD (uleb 230)                      ; f32x4.mul
+          (local-set v)
+          (local-get v) #xFD (uleb 31) 0       ; f32x4.extract_lane k
+          (local-get v) #xFD (uleb 31) 1
+          #x92                                 ; f32.add
+          (local-get v) #xFD (uleb 31) 2
+          #x92
+          (local-get v) #xFD (uleb 31) 3
+          #x92
+          #xBB)))                              ; f64.promote_f32
 (define (compile-f64 e locals cell)
   (define (direct rop)
     (case rop
@@ -1917,7 +1940,8 @@
              #x2B (uleb 3) (uleb 0)))
       ((%mem-f32-ref)
        (list (compile-exp (cadr e) locals cell #f) (unwrap-int)
-             #x2A (uleb 2) (uleb 0) #xBB))))
+             #x2A (uleb 2) (uleb 0) #xBB))
+      ((%f32x4-dot) (compile-f32x4-dot (cdr e) locals cell))))
   (cond
    ((and (number? e) (flonum? e)) (list #x44 (ieee-bytes e)))
    ((symbol? e)
@@ -1954,7 +1978,7 @@
 (define fl-context-prims
   '(fl+ fl- fl* fl/ fl=? fl<? flsqrt flfloor fltruncate
     fixnum->flonum %fl->fx %mem-f64-set! %mem-f32-set!
-    %f32x4-scale! %f32x4-axpy!))
+    %f32x4-scale! %f32x4-axpy! %f32x4-dot))
 (define (compile-fl-prim op args locals cell)
   (let ((expect (assq op prim-arity)))
     (unless (= (length args) (cdr expect))
@@ -1978,6 +2002,9 @@
            (struct-new TY-FLONUM)))
     ((%fl->fx)
      (list (compile-f64 (car args) locals cell) #xAA (wrap-int)))
+    ((%f32x4-dot)
+     (list (compile-f32x4-dot args locals cell)
+           (struct-new TY-FLONUM)))
     ((%mem-f64-set!)
      (let* ((a (compile-exp (car args) locals cell #f))
             (v (compile-f64 (cadr args) locals cell)))
@@ -2373,6 +2400,7 @@
             (cons (- (car cell) arity) (cons f64s code))))))
 
 (define T-F64 #x7C)
+(define T-V128 #x7B)
 (define (locals-decl n-params extra f64s)
   ;; run-length local groups from index n-params up, eqref except the
   ;; f64 slots (scanned by index, so order of collection is irrelevant)
@@ -2383,7 +2411,9 @@
           (if (> n 0) (cons (list (uleb n) cur) groups) groups))
         (if (= i (+ n-params extra))
             (counted (reverse (flush)))
-            (let ((ty (if (memv i f64s) T-F64 T-EQREF)))
+            (let ((ty (cond ((memv i f64s) T-F64)
+                            ((memv (- -1 i) f64s) T-V128)
+                            (else T-EQREF))))
               (if (eqv? ty cur)
                   (loop (+ i 1) groups cur (+ n 1))
                   (loop (+ i 1) (flush) ty 1)))))))
