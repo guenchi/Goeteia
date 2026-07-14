@@ -77,6 +77,23 @@
      (<span class=\"tok-k\">define</span> (main) void
        (<span class=\"tok-k\">set!</span> gl_FragColor (textureCube u_sky v_dir))))))")
 
+(define rpc-code
+  "<span class=\"tok-c\">;; (web rpc): the wire carries a datum</span>
+(<span class=\"tok-h\">rpc</span> <span class=\"tok-s\">\"/rpc\"</span> '(add <span class=\"tok-n\">1</span> <span class=\"tok-n\">2</span> <span class=\"tok-n\">1/2</span>))     <span class=\"tok-c\">; =&gt; (ok 7/2) -- exact</span>
+(<span class=\"tok-h\">ws-connect!</span> <span class=\"tok-s\">\"/live\"</span> (<span class=\"tok-k\">lambda</span> (msg) ...))
+
+<span class=\"tok-c\">;; the server (Igropyr): a dialogue is ONE process,</span>
+<span class=\"tok-c\">;; parked at a line by its continuation</span>
+(<span class=\"tok-h\">conversation-start!</span>
+  (<span class=\"tok-k\">lambda</span> (req suspend!)
+    (<span class=\"tok-k\">let</span> ((req2 (suspend! confirm-page)))  <span class=\"tok-c\">; round-trip;</span>
+      (commit!)                            <span class=\"tok-c\">; resumes HERE</span>
+      done))
+  req)
+
+(<span class=\"tok-h\">conversation-resume!</span> id req2)  <span class=\"tok-c\">; =&gt; reply | 'gone</span>
+<span class=\"tok-c\">;; 'gone means: rolled back. guaranteed.</span>")
+
 (define body
   (list
    `(div (@ (class "cols"))
@@ -167,7 +184,28 @@
            (p "Because a shader is a datum, " (b "macros can write shaders")
               ": the hero's twelve thousand particles run their physics in "
               "a vertex shader assembled by Scheme."))
-         shader-code))
+         shader-code)
+      ,(show "05" "Networking" "S-expressions on the wire, continuations over it"
+         '("When the backend is also Scheme ("
+           (a (@ (href "https://igropyr.com")) "Igropyr")
+           "), requests and replies are s-expressions — there is no "
+           "protocol to design, " (code "read") " and " (code "write")
+           " are the codec. And with continuations on the server, a whole "
+           "multi-request dialogue is ordinary control flow.")
+         #f
+         '((h3 "The dialogue is a process")
+           (p "A wizard, a booking, a transfer — the flow runs as "
+              (b "one process") " whose local bindings are the "
+              "conversation state. “The user is at the confirm "
+              "step” means the process is parked " (b "at that line")
+              " — a step order the code cannot express cannot happen.")
+           (p "Death for any reason answers " (code "gone") " — proof the "
+              "transaction rolled back. On this side it is all "
+              (code "(web rpc)") ": datum in, datum out, exact rationals "
+              "intact; " (code "(web ws)") " and " (code "(web sse)")
+              " push datum streams; " (code "(web json)") " covers every "
+              "other backend."))
+         rpc-code))
 
    (section* "features" "What's inside"
       `(div (@ (class "grid"))
