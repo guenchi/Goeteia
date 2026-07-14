@@ -155,7 +155,10 @@ buffer, shaders as s-expressions, and everything over them — in
   instanced draws (`examples/fx-forest.html`: 8,000 trees, one call;
   `examples/fx-particles.html`: 4,000 sparks integrating in staging
   memory), cube maps (`examples/fx-skybox.html`: a procedural sky
-  and a mirror ball reflecting it), and mat4-array uniforms for
+  and a mirror ball reflecting it), texture arrays (many same-size
+  images behind ONE bind — `sampler2DArray` picks a layer, and the
+  layer index rides a per-instance attribute, so differently-skinned
+  instances stay one draw), and mat4-array uniforms for
   skinning
 - `(gfx glsl)` — GLSL as s-expressions: `glsl->string` is a pure
   function from a shader form list to GLSL source (the `(web css)` of
