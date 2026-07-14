@@ -10,7 +10,7 @@
 ;;   (layout p max-width line-height) ; pure arithmetic; no DOM, no reflow
 ;;
 ;; `measure` maps a one-code-point string to its advance width and is
-;; the only place a host appears: (web typeset canvas) supplies one
+;; the only place a host appears: (web canvas) supplies one
 ;; backed by canvas measureText for browsers, tests pass arithmetic
 ;; stand-ins, a font-table parser could serve wasmtime.  Widths and
 ;; max-width share whatever unit `measure` returns (typically px).

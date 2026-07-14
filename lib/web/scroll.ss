@@ -23,7 +23,7 @@
 (library (web scroll)
   (export make-vscroll vscroll? vscroll-element vscroll-count
           vscroll-append! vscroll-render!)
-  (import (rnrs) (web js) (web dom) (web typeset) (web typeset canvas))
+  (import (rnrs) (web js) (web dom) (web typeset) (web canvas))
 
   (define $vs-pad 2)                    ; overscan items above/below
   (define $vs-bar 18)                   ; scrollbar allowance, px
