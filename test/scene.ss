@@ -131,14 +131,36 @@
        (= (count-log "uniform1f:U:u_metallic:1.00") 1)
        (= (count-log "uniform1f:U:u_roughness:0.30") 1)))
 
-;; frame two: geometry stays put, only the instance buffer re-ships
+;; frame two: nothing moved and the camera held, so the static
+;; instanced group redraws its cached set with no re-cull or re-upload
+;; -- the frame ships no new buffer data at all
 (cmd-begin!)
 (sgl-draw! sc2)
 (cmd-flush!)
 (define cull-ok
-  (and (= (- (count-log "drawInst") idraws-before) 2)
+  (and (= (- (count-log "drawInst") idraws-before) 2)   ; still one draw
        (= (- (count-log "drawElements") draws-before) 4)
-       (= (- (count-log "bufferData") uploads-before) 8)))
+       (= (- (count-log "bufferData") uploads-before) 7)))
+
+;; ---- the static-skip is conditional: a moved instance re-ships ----
+(define iswing (signal 0.0))
+(define sc-inst
+  (sgl (camera (@ (fov 0.9) (position 0.0 0.0 10.0) (look-at 0.0 0.0 0.0)))
+       (light (@ (direction 0.0 1.0 0.0) (ambient 0.25)))
+       (mesh (@ (geometry (box 1 1 1)) (position -2.0 0.0 0.0)
+                (color 1.0 1.0 1.0)))
+       (mesh (@ (geometry (box 1 1 1)) (position 2.0 0.0 0.0)
+                (color 1.0 1.0 1.0) (rotation-y ,(signal-ref iswing))))))
+(cmd-begin!) (sgl-draw! sc-inst) (cmd-flush!)   ; frame 1: build + upload
+(define u1 (count-log "bufferData"))
+(cmd-begin!) (sgl-draw! sc-inst) (cmd-flush!)   ; frame 2: static, no upload
+(define u2 (count-log "bufferData"))
+(signal-set! iswing 1.0)
+(cmd-begin!) (sgl-draw! sc-inst) (cmd-flush!)   ; frame 3: moved, re-upload
+(define u3 (count-log "bufferData"))
+(define inst-skip-ok
+  (and (= u2 u1)              ; the still frame ships nothing
+       (= u3 (+ u2 1))))      ; the moved frame re-ships the instances
 
 ;; ---- groups: a parent transform the children inherit ----
 (define swing (signal 0.0))
@@ -310,5 +332,5 @@
          (> far-at mask-at)                    ; blended pass after mask off
          (< far-at near-at))))                 ; farther drawn before nearer
 
-(and frame1-ok frame2-ok mat-ok cull-ok group1-ok group2-ok
+(and frame1-ok frame2-ok mat-ok cull-ok inst-skip-ok group1-ok group2-ok
      lod-near-ok lod-far-ok chunk-ok dirty-ok order-ok weld-ok tr-ok)
