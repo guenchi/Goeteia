@@ -396,6 +396,17 @@ buffer, shaders as s-expressions, and everything over them — in
   and `make-aabb-grid`/`grid-near` are the broadphase: static boxes
   hash into xz cells so each step sweeps a handful, not the level.
   Pure arithmetic, verifies headlessly
+- `(gfx ktx)` — compressed textures without the C++ transcoder: the
+  KTX2 container and the Basis Universal ETC1S/BasisLZ decoder,
+  written from the Khronos specifications — canonical Huffman
+  codebooks, DPCM endpoint palettes, the selector history buffer,
+  the whole slice state machine — in pure Scheme.  Transcode any
+  level to what the GPU speaks: ETC1 (a bit-identical block
+  repack), BC1 (the table-free path), or RGBA8, the fallback that
+  needs no extension; `gl-compressed-family` answers which, and
+  `gl-compressed-level!` uploads the mip chain straight from
+  staging.  The decoder is verified byte-for-byte against the
+  reference transcoder's unpack (the RGBA goldens ride in the test)
 - `(gfx gltf)` — real 3D assets: GLB files parse with the binary
   chunk in staging memory (the wasm f32 loads are the float decoder).
   Geometry, node transforms, base colors, metallic/roughness
