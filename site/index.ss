@@ -46,6 +46,21 @@
       <span class=\"tok-s\">\"clicked \"</span> ,(<span class=\"tok-h\">signal-ref</span> n)))  <span class=\"tok-c\">; tree is built ONCE,</span>
                                     <span class=\"tok-c\">; holes become effects</span>")
 
+(define typeset-code
+  "<span class=\"tok-c\">;; (web dom): the browser, as ordinary calls</span>
+(<span class=\"tok-k\">define</span> el (<span class=\"tok-h\">create-element</span> <span class=\"tok-s\">\"span\"</span>))
+(<span class=\"tok-h\">set-text!</span> el <span class=\"tok-s\">\"the glyph\"</span>)
+(<span class=\"tok-h\">append-child!</span> (<span class=\"tok-h\">get-element-by-id</span> <span class=\"tok-s\">\"live\"</span>) el)
+
+<span class=\"tok-c\">;; (web typeset), after pretext: measure once,</span>
+<span class=\"tok-c\">;; then layout is pure arithmetic -- no DOM</span>
+(<span class=\"tok-k\">define</span> l
+  (<span class=\"tok-h\">layout</span> (<span class=\"tok-h\">prepare</span> text (<span class=\"tok-h\">canvas-measurer</span> font))
+          max-width line-height))
+
+(<span class=\"tok-h\">layout-height</span> l)   <span class=\"tok-c\">; known BEFORE anything renders</span>
+(<span class=\"tok-h\">for-each</span> place-line! (<span class=\"tok-h\">layout-lines</span> l))")
+
 (define shader-code
   "(<span class=\"tok-k\">define</span> sky-p
   (<span class=\"tok-h\">fx-program!</span>
@@ -118,12 +133,31 @@
               "hole wired to a signal — one text node updates, and "
               (b "nothing re-renders") ". No virtual DOM, no diffing."))
          webdsl-code)
-      ,(show "03" "Graphics" "3D, from s-expressions"
+      ,(show "03" "Text & the DOM" "Typesetting without a layout engine"
+         '((code "(web dom)") " wraps the browser in ordinary procedures. "
+           (code "(web typeset)") " — after "
+           (a (@ (href "https://www.pretext.cool")) "pretext")
+           " — takes the layout engine " (em "out") " of the browser: "
+           "measure each distinct code point once, then layout is a pure "
+           "function from metrics to line boxes.")
+         #f
+         '((h3 "Layout you can compute, not await")
+           (p "Heights are known " (b "before") " anything touches the DOM "
+              "— virtual scrolls and streaming chat stop guessing — and "
+              "text can be set where no layout engine exists at all: "
+              "canvas and WebGL scenes. Greedy first-fit breaking with CJK "
+              "kinsoku — closing punctuation never starts a line.")
+           (p "It is at work on this site: the hero's subtitle and the "
+              (b "Why Scheme?") " page's headings are set glyph by glyph "
+              "by " (code "(web typeset)") " — which is why they can dodge "
+              "your cursor."))
+         typeset-code)
+      ,(show "04" "Graphics" "3D, from s-expressions"
          '((code "(gfx gl)") " drives WebGL 2 through a command buffer — "
            "shadow maps, PBR, HDR bloom, SSAO, instancing, skeletal "
            "animation from glTF — and " (code "(gfx glsl)") " renders "
            "shaders written as s-expressions to either GLSL dialect.")
-         #f
+         #t
          '((h3 "This exact program runs above")
            (p "It is the sky of the " (code "skybox.ss") " tab in the live "
               "editor — switch to it, edit a form, press Run. The mirror "
