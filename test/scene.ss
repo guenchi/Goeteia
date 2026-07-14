@@ -244,13 +244,40 @@
   (sgl (camera (@ (fov 0.9) (position 0.0 0.0 8.0) (look-at 0.0 0.0 0.0)
                   (near 0.1) (far 60.0)))
        (light (@ (direction 0.0 1.0 0.0) (ambient 0.25)))
-       (mesh (@ (geometry (box 1 1 1)) (position 2.0 0.0 -6.0)))  ; far
-       (mesh (@ (geometry (box 2 2 2)) (position 1.0 0.0 4.0))))) ; near
+       (mesh (@ (geometry (box 1 1 1)) (position 2.0 0.0 -6.0)
+                (color 0.9 0.2 0.2)))                             ; far
+       (mesh (@ (geometry (box 2 2 2)) (position 1.0 0.0 4.0)
+                (color 0.2 0.9 0.2)))))                           ; near
 (cmd-begin!) (sgl-draw! sc-order) (cmd-flush!)
 (define near-at (find-log "uniformMat4:U:u_model:16:1.00:1.00" order-base))
 (define far-at (find-log "uniformMat4:U:u_model:16:1.00:2.00" order-base))
 (define order-ok
   (and (> near-at -1) (> far-at -1) (< near-at far-at)))
 
+;; ---- static welding: strangers, one draw ----
+;; three static same-color meshes of DIFFERENT geometry weld into a
+;; single draw whose count is their sum (36 + 192 + 288); the
+;; signal-driven fourth stays its own draw
+(define wsig (signal 0.0))
+(define welded-count (+ 36 192 288))
+(define weld-tag (string-append "drawElements:TRI:"
+                                (number->string welded-count) ":US"))
+(define weld-before (count-log weld-tag))
+(define sc-weld
+  (sgl (camera (@ (fov 0.9) (position 0.0 0.0 10.0)
+                  (look-at 0.0 0.0 0.0) (near 0.1) (far 60.0)))
+       (light (@ (direction 0.0 1.0 0.0) (ambient 0.25)))
+       (mesh (@ (geometry (box 1 1 1)) (position -2.0 0.0 0.0)))
+       (mesh (@ (geometry (sphere 1.0 8 4)) (position 0.0 0.0 0.0)))
+       (mesh (@ (geometry (torus 1.0 0.3 8 6)) (position 2.0 0.0 0.0)))
+       (mesh (@ (geometry (box 2 2 2)) (position 0.0 2.5 0.0)
+                (position-x ,(signal-ref wsig))))))
+(define weld-draws-before (count-log "drawElements"))
+(cmd-begin!) (sgl-draw! sc-weld) (cmd-flush!)
+(define weld-ok
+  (and (= (- (count-log weld-tag) weld-before) 1)   ; the welded draw
+       ;; welded + the dynamic box = exactly two element draws
+       (= (- (count-log "drawElements") weld-draws-before) 2)))
+
 (and frame1-ok frame2-ok mat-ok cull-ok group1-ok group2-ok
-     lod-near-ok lod-far-ok chunk-ok dirty-ok order-ok)
+     lod-near-ok lod-far-ok chunk-ok dirty-ok order-ok weld-ok)

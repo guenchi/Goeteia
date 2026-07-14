@@ -257,7 +257,12 @@ buffer, shaders as s-expressions, and everything over them — in
   matrix anywhere) with its color beside it, and culled instances
   simply don't join the buffer — the cull itself runs four spheres
   at a time: centers and radii lie SoA in staging and each frustum
-  plane tests all four in five SIMD instructions.  `(lod (@ (switch d ...)) mesh ...)`
+  plane tests all four in five SIMD instructions.  Static strangers
+  weld: same-color lit meshes of DIFFERENT geometry whose
+  transforms no signal drives (the effects already ran, so a zero
+  generation is proof) bake their model matrices into fresh vertex
+  data at build and draw as ONE mesh under one conservative
+  bounding sphere.  `(lod (@ (switch d ...)) mesh ...)`
   containers hold detail levels of one thing — the eye's distance
   picks which child draws, and the mesh generators' own segment
   parameters make the levels free.  Meshes pick materials
