@@ -43,6 +43,8 @@
           cmd-uniform-matrix4s!
           cmd-bind-texture! cmd-unbind-texture!
           cmd-bind-cubemap! cmd-unbind-cubemap!
+          gl-texture-array! gl-texture-layer! gl-texture-layer-data!
+          cmd-bind-texture-array!
           cmd-depth!
           gl-vao! cmd-bind-vao! cmd-unbind-vao!
           gl-ubo! gl-uniform-block! cmd-bind-ubo! cmd-ubo-data!
@@ -106,6 +108,25 @@
      "    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);"
      "    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);"
      "    slots[slot] = t; },"
+     "  textureArray(slot, w, h, layers) {"
+     "    const t = gl.createTexture();"
+     "    gl.bindTexture(gl.TEXTURE_2D_ARRAY, t);"
+     "    gl.texStorage3D(gl.TEXTURE_2D_ARRAY, 1, gl.RGBA8, w, h, layers);"
+     "    gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_MIN_FILTER, gl.LINEAR);"
+     "    gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_MAG_FILTER, gl.LINEAR);"
+     "    gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);"
+     "    gl.texParameteri(gl.TEXTURE_2D_ARRAY, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);"
+     "    slots[slot] = t; },"
+     "  textureLayer(slot, layer, src) {"
+     "    gl.bindTexture(gl.TEXTURE_2D_ARRAY, slots[slot]);"
+     "    gl.texSubImage3D(gl.TEXTURE_2D_ARRAY, 0, 0, 0, layer,"
+     "                     src.width, src.height, 1,"
+     "                     gl.RGBA, gl.UNSIGNED_BYTE, src); },"
+     "  textureLayerData(slot, layer, w, h, base) {"
+     "    gl.bindTexture(gl.TEXTURE_2D_ARRAY, slots[slot]);"
+     "    gl.texSubImage3D(gl.TEXTURE_2D_ARRAY, 0, 0, 0, layer, w, h, 1,"
+     "                     gl.RGBA, gl.UNSIGNED_BYTE,"
+     "                     new Uint8Array(memory.buffer, base, w * h * 4)); },"
      "  target(slot, tslot, w, h, mode) {"        ; 0 rgba8, 1 depth, 2 rgba16f
      "    const depthOnly = mode === 1;"
      "    const t = gl.createTexture();"
@@ -390,6 +411,9 @@
      "                                     false, u[p+2], u[p+3]);"
      "              if (gl.vertexAttribDivisor) gl.vertexAttribDivisor(u[p], 0);"
      "              p += 4; break;"
+     "     case 41: gl.activeTexture(gl.TEXTURE0 + u[p]);"
+     "              gl.bindTexture(gl.TEXTURE_2D_ARRAY, slots[u[p+1]]);"
+     "              p += 2; break;"
      "     case 26: gl.bindFramebuffer(gl.READ_FRAMEBUFFER, slots[u[p]]);"
      "              gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, slots[u[p+1]]);"
      "              gl.blitFramebuffer(0, 0, u[p+2], u[p+3],"
@@ -472,6 +496,15 @@
   ;; raw RGBA bytes out of the staging memory -- procedural textures
   (define (gl-texture-data! slot base w h)
     (js-method $gl "textureData" slot base w h))
+  ;; a texture array (webgl2): many same-size images behind ONE bind,
+  ;; the shader picks a layer -- sampler2DArray + texture(u, vec3(uv,
+  ;; layer)), and a layer index rides an instance attribute for free
+  (define (gl-texture-array! slot w h layers)
+    (js-method $gl "textureArray" slot w h layers))
+  (define (gl-texture-layer! slot layer src)
+    (js-method $gl "textureLayer" slot layer src))
+  (define (gl-texture-layer-data! slot layer w h base)
+    (js-method $gl "textureLayerData" slot layer w h base))
   ;; a cube map from six dim*dim RGBA faces laid out consecutively at
   ;; base, in +x -x +y -y +z -z order
   (define (gl-cubemap! slot base dim)
@@ -516,6 +549,7 @@
     ($draw!) (u! 8) (u! mode) (u! first) (u! count))
   (define (cmd-bind-texture! unit slot) (u! 11) (u! unit) (u! slot))
   (define (cmd-bind-cubemap! unit slot) (u! 25) (u! unit) (u! slot))
+  (define (cmd-bind-texture-array! unit slot) (u! 41) (u! unit) (u! slot))
   ;; unbind before rendering into a cube target's faces: a cube map
   ;; both attached and bound for sampling is a feedback loop, and
   ;; ANGLE (Chrome) rejects every draw of it

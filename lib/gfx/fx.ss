@@ -29,6 +29,7 @@
 ;; Copyright (c) 2026 guenchi. MIT license; see LICENSE.
 (library (gfx fx)
   (export fx-init! fx-slot! fx-alloc! fx-buffer! fx-texture!
+          fx-texture-array!
           fx-width fx-height
           fx-target! fx-target-hdr! fx-target-msaa! fx-resolve!
           fx-target-mrt! fx-mrt-texture
@@ -92,6 +93,10 @@
   (define (fx-buffer!) (let ((s (fx-slot!))) (gl-buffer! s) s))
   (define (fx-texture!) (let ((s (fx-slot!))) (gl-texture! s) s))
   (define (fx-ubo! bytes) (let ((s (fx-slot!))) (gl-ubo! s bytes) s))
+  ;; many same-size images behind one bind; fill layers with
+  ;; gl-texture-layer!/-data!, sample with sampler2DArray
+  (define (fx-texture-array! w h layers)
+    (let ((s (fx-slot!))) (gl-texture-array! s w h layers) s))
 
   ;; ---- offscreen render targets (webgl2) ----
   (define-record-type (fx-target $make-fx-target fx-target?)
@@ -353,7 +358,7 @@
                  (z ($fx-fl (caddr vs))) (w ($fx-fl (cadddr vs))))
              (unless ($fx-same? cache name 4 x y z w)
                (cmd-uniform4f! slot x y z w))))
-          ((sampler2D samplerCube int)
+          ((sampler2D samplerCube sampler2DArray int)
            (let ((x (fixnum->flonum (car vs))))
              (unless ($fx-same? cache name 1 x 0.0 0.0 0.0)
                (cmd-uniform1i! slot (car vs)))))
