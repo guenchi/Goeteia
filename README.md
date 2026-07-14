@@ -390,6 +390,17 @@ buffer, shaders as s-expressions, and everything over them — in
   `gpu-gpu-timer!`/`gpu-gpu-ms` are the backend's frame timer —
   timestamp queries stamp the render pass when the adapter offers
   the feature, mirroring `gl-gpu-timer!` on the other side
+- `(gfx sgpu)` — the declarative scene on the WebGPU backend: the
+  same `sgl` notation (camera, light, nested groups, signal holes),
+  culled and drawn entirely GPU-side — every mesh joins a geometry
+  group (WebGPU has no cheap per-draw uniforms, so a single is a
+  group of one), instances live in storage buffers as matrix +
+  color + bounding sphere, a compute kernel culls and compacts
+  survivors into the instance stream, and one `drawIndexedIndirect`
+  per group draws exactly the visible count.  The CPU recomposes
+  only matrices whose signals moved and never inspects an instance
+  (`examples/sgpu-scene.html`).  Lit solid color for now — textures,
+  probes, lod and welding remain the GL backend's
 - `(gfx xr)` — WebXR over the same command buffer: `xr-start!`
   swaps the pump for the session's rAF, each eye's projection and
   view arrive from the `XRPose` straight into staging memory
