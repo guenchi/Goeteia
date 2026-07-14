@@ -542,16 +542,11 @@
     (let ((l ($sgl-nd-lod nd)))
       (or (not l) (= (vector-ref (car l) 0) (cdr l)))))
 
-  (define ($sgl-draw-node! prog vp planes nd)
-    (when ($sgl-lod-active? nd)
-      ($sgl-draw-node*! prog vp planes nd)))
-
-  (define ($sgl-draw-node*! prog vp planes nd)
-    (let* ((f ($sgl-nd-f nd))
-           (geo ($sgl-nd-geo nd))
-           (gen ($sgl-node-gen nd)))
-      ;; the chain fold and TRS rebuild happen only when a signal
-      ;; moved something -- a static node composes exactly once
+  ;; the chain fold and TRS rebuild happen only when a signal
+  ;; moved something -- a static node composes exactly once
+  (define ($sgl-refresh! nd)
+    (let ((f ($sgl-nd-f nd))
+          (gen ($sgl-node-gen nd)))
       (unless (and (= gen ($sgl-nd-cgen nd)) ($sgl-nd-cmodel nd))
         ($sgl-nd-cmodel!
          nd (m4-mul (fold-left (lambda (acc gf)
@@ -561,7 +556,10 @@
         ($sgl-nd-cscale!
          nd (fold-left (lambda (acc gf) (fl* acc (vector-ref gf 6)))
                        (vector-ref f 6) ($sgl-nd-chain nd)))
-        ($sgl-nd-cgen! nd gen)))
+        ($sgl-nd-cgen! nd gen))))
+
+  (define ($sgl-draw-node*! prog vp planes nd)
+    ($sgl-refresh! nd)
     (let ((f ($sgl-nd-f nd))
           (geo ($sgl-nd-geo nd))
           (model ($sgl-nd-cmodel nd))
@@ -821,12 +819,12 @@
                       ($sgl-draw-igroup! p ig planes
                                          ($sgl-iscratch sc)))
                     ($sgl-igroups sc))))
-      ($sgl-group! ($sgl-prog sc) ($sgl-lits sc) vp planes
+      ($sgl-group! ($sgl-prog sc) ($sgl-lits sc) vp planes eye
                    (lambda (p) #f))
-      ($sgl-group! ($sgl-tprog sc) ($sgl-texs sc) vp planes
+      ($sgl-group! ($sgl-tprog sc) ($sgl-texs sc) vp planes eye
                    (lambda (p)
                      (fx-uniform! p 'u_tex 0)))
-      ($sgl-group! ($sgl-pprog sc) ($sgl-pbrs sc) vp planes
+      ($sgl-group! ($sgl-pprog sc) ($sgl-pbrs sc) vp planes eye
                    (lambda (p)
                      (let ((probe ($sgl-probe sc)))
                        (cmd-bind-cubemap! 0 (vector-ref probe 0))
@@ -835,10 +833,55 @@
                        (fx-uniform! p 'u_lut 1)
                        (fx-uniform! p 'u_mips (vector-ref probe 2)))))))
 
+  ;; merge sort by an flonum key -- the frame's draw-order sort
+  (define ($sgl-sort ks)                ; ks: ((key . nd) ...)
+    (if (or (null? ks) (null? (cdr ks)))
+        ks
+        (let split ((slow ks) (fast ks) (left '()))
+          (if (or (null? fast) (null? (cdr fast)))
+              (let merge ((a ($sgl-sort (reverse left)))
+                          (b ($sgl-sort slow))
+                          (out '()))
+                (cond
+                 ((null? a) (append (reverse out) b))
+                 ((null? b) (append (reverse out) a))
+                 ((fl<? (car (car a)) (car (car b)))
+                  (merge (cdr a) b (cons (car a) out)))
+                 (else (merge a (cdr b) (cons (car b) out)))))
+              (split (cdr slow) (cddr fast) (cons (car slow) left))))))
+
   ;; one material's pass: the shared uniforms once, then each node
-  (define ($sgl-group! prog nodes vp planes setup!)
+  ;; nearest first -- opaque geometry drawn front to back hands the
+  ;; depth test the whole occluded fragment bill (early z).  The tex
+  ;; pass keys on the texture slot first, so equal textures bind
+  ;; once, nearest first within each
+  (define ($sgl-group! prog nodes vp planes eye setup!)
     (when (pair? nodes)
       (cmd-use-program! (fx-program-slot prog))
       (setup! prog)
-      (for-each (lambda (nd) ($sgl-draw-node! prog vp planes nd))
-                nodes))))
+      (let ((ex (v3-x eye)) (ey (v3-y eye)) (ez (v3-z eye)))
+        (for-each
+         (lambda (k) ($sgl-draw-node*! prog vp planes (cdr k)))
+         ($sgl-sort
+          (fold-left
+           (lambda (acc nd)
+             (if ($sgl-lod-active? nd)
+                 (begin
+                   ($sgl-refresh! nd)
+                   (let* ((m ($sgl-nd-cmodel nd))
+                          (dx (fl- (vector-ref m 12) ex))
+                          (dy (fl- (vector-ref m 13) ey))
+                          (dz (fl- (vector-ref m 14) ez))
+                          (d2 (fl+ (fl* dx dx)
+                                   (fl+ (fl* dy dy) (fl* dz dz))))
+                          (tx ($sgl-nd-tex nd)))
+                     (cons (cons (if tx
+                                     ;; texture major, distance minor
+                                     (fl+ (fl* 1000000000.0
+                                               (fixnum->flonum tx))
+                                          d2)
+                                     d2)
+                                 nd)
+                           acc)))
+                 acc))
+           '() nodes)))))))
