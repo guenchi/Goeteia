@@ -332,10 +332,21 @@
                (xpand `(let (,(car bs)) (let* ,(cdr bs) . ,(cddr e)))))))
         ((let)
          (if (symbol? (cadr e))
-             (let ((name (cadr e)) (bs (caddr e)) (body (cdddr e)))
-               (xpand `((letrec ((,name (lambda ,(map car bs) . ,body)))
-                          ,name)
-                        . ,(map cadr bs))))
+             ;; a named let whose name only ever recurs as a
+             ;; correct-arity tail call lowers to %loop -- a wasm
+             ;; loop block, no closure, no call per iteration.
+             ;; Anything else keeps the letrec spelling
+             (let* ((name (cadr e)) (bs (caddr e))
+                    (params (map car bs))
+                    (xinits (map-in-order (lambda (b) (xpand (cadr b)))
+                                          bs))
+                    (xbody (xpand* (cdddr e))))
+               (if (loop-ok? name (length params) params xbody)
+                   `(%loop ,name ,params ,xinits . ,xbody)
+                   `((let ((,name (begin)))
+                       (set! ,name (lambda ,params . ,xbody))
+                       ,name)
+                     . ,xinits)))
              `(let ,(map (lambda (b) (list (car b) (xpand (cadr b))))
                          (cadr e))
                 . ,(xpand* (cddr e)))))
@@ -994,6 +1005,15 @@
                              `(,(car b) ,init))))
                      bs)
             . ,(avc-body (cddr e) scope* assigned))))
+      ((%loop)
+       ;; loop-ok? already rejected assigned params and names, so
+       ;; the binders convert unboxed; inits in the outer scope
+       (let* ((params (caddr e))
+              (scope* (append (map (lambda (p) (cons p #f)) params)
+                              (cons (cons (cadr e) #f) scope))))
+         `(%loop ,(cadr e) ,params
+                 ,(avc* (cadddr e) scope assigned)
+                 . ,(avc-body (cdr (cdddr e)) scope* assigned))))
       (else (avc* e scope assigned))))
    (else e)))
 (define (avc* es scope assigned)
@@ -1063,6 +1083,10 @@
 ;; local slots holding a raw f64 in the function being compiled;
 ;; reset at every function-body boundary, collected into its entry
 (define *f64-slots* '())
+;; active %loop labels: (name slots base-blocks) -- scoped to the
+;; body compile; and the open-block counter brs measure against
+(define *loops* '())
+(define *blocks* 0)
 (define *next-fn* 0)
 (define *wrappers* '())   ; top-level fn name -> wrapper fn index
 (define *adapters* '())   ; arity -> generic-entry adapter fn index
@@ -1108,6 +1132,82 @@
 ;;;; ------------------------------------------------------------------
 ;;;; free variables (over the converted core language)
 
+;; may (let name ...) lower to a wasm loop?  Only when every
+;; occurrence of the name is the operator of a correct-arity
+;; application in tail position of the loop body -- no value uses,
+;; no set!, no appearance inside a nested lambda, no capture-prone
+;; corner.  The body arrives expanded, so only core forms walk here.
+(define (loop-mentions? v e)
+  (cond
+   ((eq? e v) #t)
+   ((pair? e) (or (loop-mentions? v (car e)) (loop-mentions? v (cdr e))))
+   (else #f)))
+
+(define (loop-ok? name arity params xbody)
+  (define (expr-ok e tail?)
+    (cond
+     ((eq? e name) #f)                  ; a bare value reference
+     ((not (pair? e)) #t)
+     (else
+      (case (resolve-tag (car e))
+        ((quote) #t)
+        ((lambda) (not (loop-mentions? name e)))
+        ((set!) (and (not (eq? (cadr e) name))
+                     (expr-ok (caddr e) #f)))
+        ((if) (and (expr-ok (cadr e) #f)
+                   (expr-ok (caddr e) tail?)
+                   (or (null? (cdddr e))
+                       (expr-ok (cadddr e) tail?))))
+        ((let)
+         (and (not (symbol? (cadr e)))  ; named lets are gone by now
+              (let ok ((binds (cadr e)))
+                (or (null? binds)
+                    (and (expr-ok (cadr (car binds)) #f)
+                         (ok (cdr binds)))))
+              (if (memq name (map car (cadr e)))
+                  (not (loop-mentions? name (cddr e)))
+                  (body-ok (cddr e) tail?))))
+        ((begin) (body-ok (cdr e) tail?))
+        ((define)                        ; internal defines, pre-avc
+         (and (not (eq? (if (pair? (cadr e)) (car (cadr e)) (cadr e))
+                        name))
+              (expr-ok (if (pair? (cadr e))
+                           (cons 'lambda (cons (cdr (cadr e)) (cddr e)))
+                           (caddr e))
+                       #f)))
+        ((%loop)
+         (if (or (eq? (cadr e) name) (memq name (caddr e)))
+             (not (loop-mentions? name (cdr (cdddr e))))
+             (and (let ok ((is (cadddr e)))
+                    (or (null? is)
+                        (and (expr-ok (car is) #f) (ok (cdr is)))))
+                  (body-ok (cdr (cdddr e)) tail?))))
+        (else                            ; an application
+         (if (eq? (car e) name)
+             (and tail?
+                  (= (length (cdr e)) arity)
+                  (let ok ((as (cdr e)))
+                    (or (null? as)
+                        (and (expr-ok (car as) #f) (ok (cdr as))))))
+             (let ok ((es e))
+               (or (null? es)
+                   (and (expr-ok (car es) #f) (ok (cdr es)))))))))))
+  (define (body-ok es tail?)
+    (cond
+     ((null? es) #t)
+     ((null? (cdr es)) (expr-ok (car es) tail?))
+     (else (and (expr-ok (car es) #f) (body-ok (cdr es) tail?)))))
+  (and (not (memq name params))          ; a param shadowing the name
+       ;; a set! of a loop parameter would need boxing; keep those
+       ;; on the letrec path
+       (let ((assigned (assigned-vars (cons 'begin xbody) '())))
+         (and (not (memq name assigned))
+              (let ok ((ps params))
+                (or (null? ps)
+                    (and (not (memq (car ps) assigned))
+                         (ok (cdr ps)))))))
+       (body-ok xbody #t)))
+
 (define (free-vars e bound)
   (cond
    ((symbol? e) (if (memq e bound) '() (list e)))
@@ -1121,6 +1221,11 @@
        (union (free-vars-body (map cadr (cadr e)) bound)
               (free-vars-body (cddr e)
                               (append (map car (cadr e)) bound))))
+      ((%loop)
+       (union (free-vars-body (cadddr e) bound)
+              (free-vars-body (cdr (cdddr e))
+                              (cons (cadr e)
+                                    (append (caddr e) bound)))))
       ((begin if) (free-vars-body (cdr e) bound))
       (else (free-vars-body e bound))))
    (else '())))
@@ -1210,6 +1315,7 @@
       ((quote) (compile-datum (strip-marks (cadr e))))
       ((if) (compile-if e locals cell tail?))
       ((let) (compile-let e locals cell tail?))
+      ((%loop) (compile-%loop e locals cell tail?))
       ((begin) (compile-body (cdr e) locals cell tail?))
       ((lambda) (compile-lambda (cadr e) (cddr e) locals cell))
       ((set!) (compile-global-set e locals cell))
@@ -1409,13 +1515,16 @@
 (define (compile-if e locals cell tail?)
   ;; compile in source order: codegen effects (function indices,
   ;; interned literals) must not depend on the host's argument
-  ;; evaluation order
-  (let* ((t (compile-test (cadr e) locals cell))
-         (c (compile-exp (caddr e) locals cell tail?))
-         (a (if (null? (cdddr e))
-                (global-get G-VOID)
-                (compile-exp (cadddr e) locals cell tail?))))
-    (list t #x04 T-EQREF c #x05 a #x0B)))
+  ;; evaluation order.  The arms live one block deeper -- %loop brs
+  ;; measure their label distance through *blocks*
+  (let ((t (compile-test (cadr e) locals cell)))
+    (set! *blocks* (+ *blocks* 1))
+    (let* ((c (compile-exp (caddr e) locals cell tail?))
+           (a (if (null? (cdddr e))
+                  (global-get G-VOID)
+                  (compile-exp (cadddr e) locals cell tail?))))
+      (set! *blocks* (- *blocks* 1))
+      (list t #x04 T-EQREF c #x05 a #x0B))))
 ;; a test position wants an i32; predicates skip the boolean
 ;; boxing/unboxing round trip
 (define (compile-test e locals cell)
@@ -1558,6 +1667,33 @@
                           code)
                     (cons (cons (car b) slot) scope)))))))))
 
+;; (%loop name (p ...) (init ...) body ...): the loop that never
+;; calls.  Parameters are plain locals, iteration is a br back to
+;; the loop header with the new values set, and the body's normal
+;; fall-through is the loop's value.  Self-calls push every new
+;; value on the wasm stack, then set the parameter locals in
+;; reverse -- parallel binding for free
+(define (compile-%loop e locals cell tail?)
+  (let* ((name (cadr e))
+         (params (caddr e))
+         (inits (cadddr e))
+         (body (cdr (cdddr e)))
+         (slots (map-in-order (lambda (p) (fresh-local! cell)) params))
+         (scope (append (map cons params slots) locals))
+         (init-code (map-in-order
+                     (lambda (i) (compile-exp i locals cell #f))
+                     inits)))
+    (set! *blocks* (+ *blocks* 1))      ; the loop's own label
+    (set! *loops* (cons (list name slots *blocks*) *loops*))
+    (let ((body-code (compile-body body scope cell tail?)))
+      (set! *loops* (cdr *loops*))
+      (set! *blocks* (- *blocks* 1))
+      (list (map2* (lambda (code slot) (list code (local-set slot)))
+                   init-code slots)
+            #x03 T-EQREF                ; loop (result eqref)
+            body-code
+            #x0B))))
+
 (define (compile-body es locals cell tail?)
   (cond
    ((null? es) (global-get G-VOID))
@@ -1640,11 +1776,17 @@
          (cell (list (+ arity 1)))
          (locals (slot-locals! free cell (number-locals formals 1)))
          (prologue (env-prologue free locals cell (cdr tys)))
-         (saved *f64-slots*))
+         (saved *f64-slots*)
+         (saved-loops *loops*)
+         (saved-blocks *blocks*))
     (set! *f64-slots* '())
+    (set! *loops* '())
+    (set! *blocks* 0)
     (let* ((body-code (compile-body body locals cell #t))
            (f64s *f64-slots*))
       (set! *f64-slots* saved)
+      (set! *loops* saved-loops)
+      (set! *blocks* saved-blocks)
       (record-fn! idx (list (car tys) (+ arity 1)
                             (- (car cell) (+ arity 1)) f64s
                             (list prologue body-code))))))
@@ -1667,11 +1809,17 @@
                      fixed)
                 (local-get t) (local-set (cdr (assq rest locals)))
                 (env-prologue free locals cell TY-CLOSV)))
-         (saved *f64-slots*))
+         (saved *f64-slots*)
+         (saved-loops *loops*)
+         (saved-blocks *blocks*))
     (set! *f64-slots* '())
+    (set! *loops* '())
+    (set! *blocks* 0)
     (let* ((body-code (compile-body body locals cell #t))
            (f64s *f64-slots*))
       (set! *f64-slots* saved)
+      (set! *loops* saved-loops)
+      (set! *blocks* saved-blocks)
       (record-fn! idx (list TY-FNG 2 (- (car cell) 2) f64s
                             (list prologue body-code))))))
 
@@ -1684,6 +1832,19 @@
     (cond
      ((and (symbol? op) (assq op locals))
       (compile-indirect (compile-ref op locals cell) args locals cell tail?))
+     ;; a %loop self-call: new values on the stack, parameters set
+     ;; in reverse, one br to the header.  loop-ok? proved every
+     ;; such site is in tail position of the loop body
+     ((and (symbol? op) (assq op *loops*))
+      (let* ((entry (assq op *loops*))
+             (slots (cadr entry))
+             (base (caddr entry))
+             (acode (map-in-order
+                     (lambda (a) (compile-exp a locals cell #f))
+                     args)))
+        (list acode
+              (map (lambda (slot) (local-set slot)) (reverse slots))
+              #x0C (uleb (- *blocks* base)))))
      ((and rop (memq rop primitives) (not (assq rop *fns*)))
       (compile-prim rop args locals cell))
      ((and rop (assq rop *fns*))
@@ -2536,11 +2697,17 @@
          (arity (length names))
          (cell (list arity))
          (locals (number-locals names 0))
-         (saved *f64-slots*))
+         (saved *f64-slots*)
+         (saved-loops *loops*)
+         (saved-blocks *blocks*))
     (set! *f64-slots* '())
+    (set! *loops* '())
+    (set! *blocks* 0)
     (let* ((code (compile-body (cddr form) locals cell #t))
            (f64s *f64-slots*))
       (set! *f64-slots* saved)
+      (set! *loops* saved-loops)
+      (set! *blocks* saved-blocks)
       (list (cdr (assv arity *plain-ty*))
             arity
             (cons (- (car cell) arity) (cons f64s code))))))
@@ -2770,7 +2937,8 @@
          ((and (symbol? h) (eq? (resolve-tag h) 'quote))
           (walk (cdr stack) (+ n 1)))
          ((and (symbol? h)
-               (memq (resolve-tag h) '(lambda define set! let letrec letrec*)))
+               (memq (resolve-tag h)
+                     '(lambda define set! let letrec letrec* %loop)))
           #f)
          (else (walk (cons (car (car stack))
                            (cons (cdr (car stack)) (cdr stack)))
@@ -2893,6 +3061,21 @@
               ((set!)
                (let ((ne (inline-sites (caddr e) scope cands)))
                  (if (eq? ne (caddr e)) e (list h (cadr e) ne))))
+              ((%loop)
+               (let* ((name (cadr e))
+                      (params (caddr e))
+                      (inits (cadddr e))
+                      (body (cdr (cdddr e)))
+                      (scope2 (cons name (append params scope)))
+                      (ninits (map-same (lambda (x)
+                                          (inline-sites x scope cands))
+                                        inits))
+                      (nb (map-same (lambda (x)
+                                      (inline-sites x scope2 cands))
+                                    body)))
+                 (if (and (eq? ninits inits) (eq? nb body))
+                     e
+                     (cons h (cons name (cons params (cons ninits nb)))))))
               (else ($inline-app e scope cands)))))))
 
 (define (inline-forms forms)
