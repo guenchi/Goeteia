@@ -1,7 +1,7 @@
 ;; index.html — the homepage shell, authored in Scheme, rendered by
 ;; Goeteia. The hero inside #live is compiled and mounted live in the
 ;; browser from hero.ss (see index.js); everything else is static.
-(import (web html) (web css) (web component) (chrome))
+(import (web html) (web css) (web component) (chrome) (hl))
 
 ;; a titled box: markup and its css in ONE form; every card on the
 ;; page interns to the same generated class
@@ -37,87 +37,87 @@
        (div (@ (class "txt")) ,@txt)
        (pre ,(raw code)))))
 
-;; hand-highlighted code, igropyr-style: the token classes are the
-;; same ones the live editor's highlighter uses
-(define r6rs-code
-  "(<span class=\"tok-k\">define-syntax</span> while              <span class=\"tok-c\">; syntax-rules</span>
-  (<span class=\"tok-k\">syntax-rules</span> ()
+;; the code samples, as plain text; (hl)'s build-time highlighter
+;; paints them with the same token classes the live editor uses
+(define r6rs-code (highlight
+"(define-syntax while              ; syntax-rules
+  (syntax-rules ()
     ((_ c body ...)
-     (<span class=\"tok-k\">let</span> loop ()
-       (<span class=\"tok-k\">when</span> c body ... (loop))))))
+     (let loop ()
+       (when c body ... (loop))))))
 
-(<span class=\"tok-k\">define-syntax</span> inc!               <span class=\"tok-c\">; procedural syntax-case</span>
-  (<span class=\"tok-k\">lambda</span> (x)
-    (<span class=\"tok-k\">syntax-case</span> x ()
-      ((_ v)   #'(<span class=\"tok-k\">set!</span> v (+ v <span class=\"tok-n\">1</span>)))
-      ((_ v n) #'(<span class=\"tok-k\">set!</span> v (+ v n))))))
+(define-syntax inc!               ; procedural syntax-case
+  (lambda (x)
+    (syntax-case x ()
+      ((_ v)   #'(set! v (+ v 1)))
+      ((_ v n) #'(set! v (+ v n))))))
 
-(fact <span class=\"tok-n\">20</span>)  <span class=\"tok-c\">; =&gt; 2432902008176640000 -- exact</span>
-(/ <span class=\"tok-n\">1</span> <span class=\"tok-n\">3</span>)    <span class=\"tok-c\">; =&gt; 1/3 -- a rational, not 0.333…</span>")
+(fact 20)  ; => 2432902008176640000 -- exact
+(/ 1 3)    ; => 1/3 -- a rational, not 0.333…"))
 
-(define webdsl-code
-  "<span class=\"tok-c\">;; one form: the markup AND its css -- this is the</span>
-<span class=\"tok-c\">;; real definition of the cards further down this page</span>
-(<span class=\"tok-k\">define-component</span> (card title . body)
+(define webdsl-code (highlight
+";; one form: the markup AND its css -- this is the
+;; real definition of the cards further down this page
+(define-component (card title . body)
   (style (background (var bg2))
-         (border-radius (px <span class=\"tok-n\">10</span>))
-         (<span class=\"tok-s\">\"h3\"</span> (color (var lapis))))   <span class=\"tok-c\">; descendants,</span>
-  (div (h3 ,title) (p ,@body)))       <span class=\"tok-c\">; :hover, @media…</span>
+         (border-radius (px 10))
+         (\"h3\" (color (var lapis))))   ; descendants,
+  (div (h3 ,title) (p ,@body)))       ; :hover, @media…
 
-<span class=\"tok-c\">;; equal style sets intern to ONE generated class:</span>
-<span class=\"tok-c\">;; nine cards below share a single rule</span>
+;; equal style sets intern to ONE generated class:
+;; nine cards below share a single rule
 
-(<span class=\"tok-k\">sx</span> (button (@ (on-click ,bump!))  <span class=\"tok-c\">; live holes: the</span>
-      <span class=\"tok-s\">\"clicked \"</span> ,(<span class=\"tok-h\">signal-ref</span> n)))  <span class=\"tok-c\">; tree builds ONCE,</span>
-                                    <span class=\"tok-c\">; holes become effects</span>")
+(sx (button (@ (on-click ,bump!))  ; live holes: the
+      \"clicked \" ,(signal-ref n)))  ; tree builds ONCE,
+                                    ; holes become effects"))
 
-(define typeset-code
-  "<span class=\"tok-c\">;; (web dom): the browser, as ordinary calls</span>
-(<span class=\"tok-k\">define</span> el (<span class=\"tok-h\">create-element</span> <span class=\"tok-s\">\"span\"</span>))
-(<span class=\"tok-h\">set-text!</span> el <span class=\"tok-s\">\"the glyph\"</span>)
-(<span class=\"tok-h\">append-child!</span> (<span class=\"tok-h\">get-element-by-id</span> <span class=\"tok-s\">\"live\"</span>) el)
+(define typeset-code (highlight
+";; (web dom): the browser, as ordinary calls
+(define el (create-element \"span\"))
+(set-text! el \"the glyph\")
+(append-child! (get-element-by-id \"live\") el)
 
-<span class=\"tok-c\">;; (web typeset), after pretext: measure once,</span>
-<span class=\"tok-c\">;; then layout is pure arithmetic -- no DOM</span>
-(<span class=\"tok-k\">define</span> l
-  (<span class=\"tok-h\">layout</span> (<span class=\"tok-h\">prepare</span> text (<span class=\"tok-h\">canvas-measurer</span> font))
+;; (web typeset), after pretext: measure once,
+;; then layout is pure arithmetic -- no DOM
+(define l
+  (layout (prepare text (canvas-measurer font))
           max-width line-height))
 
-(<span class=\"tok-h\">layout-height</span> l)   <span class=\"tok-c\">; known BEFORE anything renders</span>
-(<span class=\"tok-h\">for-each</span> place-line! (<span class=\"tok-h\">layout-lines</span> l))")
+(layout-height l)   ; known BEFORE anything renders
+(for-each place-line! (layout-lines l))"))
 
-(define shader-code
-  "(<span class=\"tok-k\">define</span> sky-p
-  (<span class=\"tok-h\">fx-program!</span>
+(define shader-code (highlight
+"(define sky-p
+  (fx-program!
    '((attribute vec3 a_pos)
      (uniform mat4 u_vp)
      (varying vec3 v_dir)
-     (<span class=\"tok-k\">define</span> (main) void
-       (<span class=\"tok-k\">set!</span> v_dir a_pos)
-       (local vec4 p (* u_vp (vec4 a_pos (fl <span class=\"tok-n\">0</span>))))
-       (<span class=\"tok-k\">set!</span> gl_Position p.xyww)))  <span class=\"tok-c\">; the sky never moves</span>
+     (define (main) void
+       (set! v_dir a_pos)
+       (local vec4 p (* u_vp (vec4 a_pos (fl 0))))
+       (set! gl_Position p.xyww)))  ; the sky never moves
    '((precision mediump float)
      (uniform samplerCube u_sky)
      (varying vec3 v_dir)
-     (<span class=\"tok-k\">define</span> (main) void
-       (<span class=\"tok-k\">set!</span> gl_FragColor (textureCube u_sky v_dir))))))")
+     (define (main) void
+       (set! gl_FragColor (textureCube u_sky v_dir))))))"))
 
-(define rpc-code
-  "<span class=\"tok-c\">;; (web rpc): the wire carries a datum</span>
-(<span class=\"tok-h\">rpc</span> <span class=\"tok-s\">\"/rpc\"</span> '(add <span class=\"tok-n\">1</span> <span class=\"tok-n\">2</span> <span class=\"tok-n\">1/2</span>))     <span class=\"tok-c\">; =&gt; (ok 7/2) -- exact</span>
-(<span class=\"tok-h\">ws-connect!</span> <span class=\"tok-s\">\"/live\"</span> (<span class=\"tok-k\">lambda</span> (msg) ...))
+(define rpc-code (highlight
+";; (web rpc): the wire carries a datum
+(rpc \"/rpc\" '(add 1 2 1/2))     ; => (ok 7/2) -- exact
+(ws-connect! \"/live\" (lambda (msg) ...))
 
-<span class=\"tok-c\">;; the server (Igropyr): a dialogue is ONE process,</span>
-<span class=\"tok-c\">;; parked at a line by its continuation</span>
-(<span class=\"tok-h\">conversation-start!</span>
-  (<span class=\"tok-k\">lambda</span> (req suspend!)
-    (<span class=\"tok-k\">let</span> ((req2 (suspend! confirm-page)))  <span class=\"tok-c\">; round-trip;</span>
-      (commit!)                            <span class=\"tok-c\">; resumes HERE</span>
+;; the server (Igropyr): a dialogue is ONE process,
+;; parked at a line by its continuation
+(conversation-start!
+  (lambda (req suspend!)
+    (let ((req2 (suspend! confirm-page)))  ; round-trip;
+      (commit!)                            ; resumes HERE
       done))
   req)
 
-(<span class=\"tok-h\">conversation-resume!</span> id req2)  <span class=\"tok-c\">; =&gt; reply | 'gone</span>
-<span class=\"tok-c\">;; 'gone means: rolled back. guaranteed.</span>")
+(conversation-resume! id req2)  ; => reply | 'gone
+;; 'gone means: rolled back. guaranteed."))
 
 (define body
   (list
