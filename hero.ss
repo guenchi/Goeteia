@@ -157,7 +157,7 @@
 ;; pointer/scroll/resize listeners; the GL loop drives the steps
 (define sub-el (get-element-by-id "sub-flow"))
 (set-style! sub-el "textAlign" "center")
-(set-text! sub-el "A pure-Scheme web toolkit, compiled to WebAssembly.")
+(set-text! sub-el "A graphics optimized pure Scheme web programming toolkit.")
 (define sub-glyphs (glyphs! sub-el))
 (glyphs-track! (list sub-glyphs))
 
