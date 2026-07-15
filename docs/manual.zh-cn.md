@@ -1200,7 +1200,12 @@ syntax: (define-component (name . args) (style decl ...) (tag kid ...))
 
 - `(:hover decls ...)`——一条伪类规则（任何以 `:` 领头的符号）。
 - `("h3" decls ...)`——组件类下的后代选择器。
-- `(@media 42 decls ...)`——一个 `max-width` 断点，数字以 `em` 计。
+- `(@media 42 items ...)`——一个 `max-width` 断点，数字以 `em` 计。块内
+  可放与顶层相同的 `item`：普通声明（作用于组件自身的类）**以及**
+  `("sel" ...)` / `(:pseudo ...)` 子规则——于是组件的响应式形态，
+  包括它的后代在断点处如何重排，都随组件一同迁移。例如
+  `(@media 64 (".feature" (grid-template-columns "1fr")))` 在 64 em
+  以下把后代网格收成单列。
 
 相等的样式集共享一个内联类，故相同的组件只发一条规则。
 

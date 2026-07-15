@@ -1276,7 +1276,14 @@ of three nested sub-forms:
 
 - `(:hover decls ...)` — a pseudo-class rule (any `:`-led symbol).
 - `("h3" decls ...)` — a descendant selector under the component's class.
-- `(@media 42 decls ...)` — a `max-width` breakpoint, the number in `em`.
+- `(@media 42 items ...)` — a `max-width` breakpoint, the number in `em`.
+  The block holds the same `item` shapes as the top level: plain
+  declarations (applied to the component's own class) *and*
+  `("sel" ...)` / `(:pseudo ...)` sub-rules — so a component's
+  responsive shape, including how its descendants reflow at a
+  breakpoint, travels with it. For example
+  `(@media 64 (".feature" (grid-template-columns "1fr")))` narrows a
+  descendant grid to one column below 64 em.
 
 Equal style sets share one interned class, so identical components emit a
 single rule.
