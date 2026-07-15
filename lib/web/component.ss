@@ -53,6 +53,28 @@
            (map (lambda (e) ($styled-rules (cdr e) (car e)))
                 (reverse $styled))))
 
+  ;; split a declaration list into (base-decls . sub-rules): a decl
+  ;; heads with a property symbol; a sub-rule heads with a string
+  ;; ("h3" -> descendant) or a :pseudo symbol, and carries its own
+  ;; full selector
+  (define ($classify base ds)
+    (let loop ((ds ds) (plain '()) (subs '()))
+      (if (null? ds)
+          (cons (reverse plain) (reverse subs))
+          (let ((d (car ds)))
+            (cond
+             ((string? (car d))         ; ("h3" decls...): descendant
+              (loop (cdr ds) plain
+                    (cons (cons (string-append base " " (car d)) (cdr d))
+                          subs)))
+             ((and (symbol? (car d))    ; (:hover decls...): pseudo
+                   (char=? (string-ref (symbol->string (car d)) 0) #\:))
+              (loop (cdr ds) plain
+                    (cons (cons (string-append base (symbol->string (car d)))
+                                (cdr d))
+                          subs)))
+             (else (loop (cdr ds) (cons d plain) subs)))))))
+
   (define ($styled-rules cls sty)
     (let ((base (string-append "." cls)))
       (let loop ((ds sty) (plain '()) (extra '()))
@@ -60,16 +82,23 @@
             (cons (cons base (reverse plain)) (reverse extra))
             (let ((d (car ds)))
               (cond
+               ((eq? (car d) '@media)   ; (@media 42 decls... ("sel" ...) ...)
+                ;; the query block holds base declarations AND its own
+                ;; descendant/pseudo sub-rules, so a component's
+                ;; responsive shape travels with it
+                (let* ((c ($classify base (cddr d)))
+                       (mbase (if (null? (car c))
+                                  '()
+                                  (list (cons base (car c))))))
+                  (loop (cdr ds) plain
+                        (cons `(@media ,(string-append "(max-width: "
+                                                       (number->string (cadr d))
+                                                       "em)")
+                                ,@mbase ,@(cdr c))
+                              extra))))
                ((string? (car d))       ; ("h3" decls...): descendant
                 (loop (cdr ds) plain
                       (cons (cons (string-append base " " (car d)) (cdr d))
-                            extra)))
-               ((eq? (car d) '@media)   ; (@media 42 decls...): max-width em
-                (loop (cdr ds) plain
-                      (cons `(@media ,(string-append "(max-width: "
-                                                     (number->string (cadr d))
-                                                     "em)")
-                              ,(cons base (cddr d)))
                             extra)))
                ((and (symbol? (car d))  ; (:hover decls...): pseudo
                      (char=? (string-ref (symbol->string (car d)) 0) #\:))

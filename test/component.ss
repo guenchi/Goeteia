@@ -7,7 +7,7 @@
   (style (background "#eef1f9")
          (:hover (color (var lapis)))
          ("b" (font-weight 600))
-         (@media 42 (padding (em 1))))
+         (@media 42 (padding (em 1)) ("b" (font-weight 400))))
   (span "· " ,label))
 
 (define a (chip "one"))
@@ -36,6 +36,6 @@
    ".chip-0{background:#eef1f9;}"
    ".chip-0:hover{color:var(--lapis);}"
    ".chip-0 b{font-weight:600;}"
-   "@media (max-width: 42em){.chip-0{padding:1em;}}"
+   "@media (max-width: 42em){.chip-0{padding:1em;}.chip-0 b{font-weight:400;}}"
    ".x-1{margin:0;}"
    ".row-2{display:flex;}")))
