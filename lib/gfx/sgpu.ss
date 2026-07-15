@@ -58,6 +58,13 @@
                        a)))
                 (walk-form
                  (lambda (f)
+                   ;; a malformed child ((group () ...) instead of
+                   ;; (group (@) ...)) used to trap on (car '()) --
+                   ;; name the offender and the fix instead
+                   (unless (and (pair? f) (symbol? (car f)))
+                     (error 'sgl-gpu
+                            "form must be (tag (@ attrs ...) kids ...)"
+                            f))
                    (let* ((tag (car f)) (rest (cdr f))
                           (attrs? (and (pair? rest) (pair? (car rest))
                                        (eq? (car (car rest)) '@)))
