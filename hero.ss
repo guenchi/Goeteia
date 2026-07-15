@@ -54,22 +54,33 @@
   (js-method hctx "fillText" text x y))
 (define (clear!) (js-method hctx "clearRect" 0 0 720 230))
 
-;; lit pixels -> home positions, written straight into wasm memory
-(js-eval "globalThis.__hero_sample = (base, max, step) => {
-  const cv = globalThis.__hero_cv;
-  const d = cv.getContext('2d').getImageData(0, 0, cv.width, cv.height).data;
-  const f = new Float32Array(globalThis.__goeteia_mem.buffer);
-  let n = 0;
-  for (let y = 0; y < cv.height; y += step)
-    for (let x = 0; x < cv.width; x += step) {
-      if (d[(y * cv.width + x) * 4 + 3] > 100 && n < max) {
-        f[(base >> 2) + n * 2] = x;
-        f[(base >> 2) + n * 2 + 1] = y;
-        n++; } }
-  return n; }")
+;; lit pixels -> home positions, in Scheme: ONE bulk Uint8Array.set
+;; copies the canvas pixels into staging memory, then a plain byte
+;; scan turns every step-th pixel whose alpha clears 100 into a home
+;; (x y) pair at base.  The view is built fresh per call: fx-alloc!
+;; may have grown (and so detached) the buffer since the last one.
+(define samp-px (fx-alloc! (* 720 230 4)))
 (define (sample! base max step)
-  (js->number (js-call (js-get (js-global) "__hero_sample")
-                       (js-undefined) base max step)))
+  (let* ((img (js-method hctx "getImageData" 0 0 720 230))
+         (view (js-new (js-get (js-global) "Uint8Array")
+                       (js-get (js-get (js-global) "__goeteia_mem")
+                               "buffer")
+                       samp-px (* 720 230 4))))
+    (js-method view "set" (js-get img "data"))
+    (let yloop ((y 0) (n 0))
+      (if (>= y 230)
+          n
+          (let xloop ((x 0) (n n))
+            (cond
+             ((>= x 720) (yloop (+ y step) n))
+             ((and (< n max)
+                   (> (%mem-u8-ref
+                       (+ samp-px (+ (* (+ (* y 720) x) 4) 3)))
+                      100))
+              (%mem-f32-set! (+ base (* n 8)) (fixnum->flonum x))
+              (%mem-f32-set! (+ base (+ (* n 8) 4)) (fixnum->flonum y))
+              (xloop (+ x step) (+ n 1)))
+             (else (xloop (+ x step) n))))))))
 
 ;; ---- particle state: pos2 vel2 homeA2 homeB2 seed block = 40B ----
 (define CAP 16000)
