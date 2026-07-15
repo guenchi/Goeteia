@@ -194,7 +194,7 @@
               "by " (code "(web typeset)") " — which is why they can dodge "
               "your cursor."))
          typeset-code)
-      ,(show "04" "Graphics" "This exact program runs above"
+      ,(show "04" "Graphics" "Textures in Scheme, frames on the card"
          '("A pure-Scheme KTX2/Basis transcoder — ETC1S and UASTC, "
            "written from the Khronos specs — decodes compressed textures "
            "in ~12 KB gzipped, where the official C++ one ships 462 KB. "
