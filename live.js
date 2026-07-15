@@ -160,9 +160,12 @@ function resolveImports(text, file) {
     return result + text.slice(at);
 }
 
-// compile Scheme source to a wasm module (pure; no DOM, safe to call often)
+// compile Scheme source to a wasm module (pure; no DOM, safe to call
+// often).  The editor compiles at -O0 (script mode): on every press
+// of Run, latency beats the last drop of runtime speed.
 export async function compile(userSource) {
-    const input = enc.encode(locMark('prelude', 1) + preludeText + '\n'
+    const input = enc.encode('(%opt 0)\n'
+                             + locMark('prelude', 1) + preludeText + '\n'
                              + resolveImports(userSource, 'editor'));
     const out = [];
     let pos = 0;
