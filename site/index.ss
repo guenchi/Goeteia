@@ -308,6 +308,117 @@ $ node rt/run.mjs fact.wasm
          "Bootstrapping from source needs Chez Scheme; the checked-in "
          "compiler wasm works without it."))))
 
+;; the page's own stylesheet, as (web css) data -- the raw
+;; site/index.css is gone; markup and styles are one language now
+(define index-styles
+  `(;; the live-rendered hero (built by Goeteia, mounted into #live)
+    ("#live" (min-height (em 15)) (padding (em 3 50) 0 (em 1)))
+    (".hero" (text-align center))
+    (".hero h1"
+     (font-family "\"Times New Roman\", Times, serif")
+     (font-size (em 4)) (margin 0) (font-weight 400) (letter-spacing (em 0 2))
+     (background "linear-gradient(120deg, var(--lapis), var(--azure))")
+     (-webkit-background-clip text) (background-clip text) (color transparent))
+    (".hero .tagline" (color (var dim)) (font-size (em 1 20)) (margin-top (em 0 70)))
+    (".hero .gname" (color (var azure)) (font-weight 600))
+    (".hero .sub" (color (var dim)) (margin-top (em 0 20)))
+    (".hero .cmd"
+     (display inline-block) (margin (em 1 40) auto 0) (padding (em 0 70) (em 1 20))
+     (background "#eef1f9") (border (px 1) solid (var line)) (border-radius (px 8))
+     (font-family (var mono)) (font-size (px 14)) (color (var ink)))
+    (".hero .links" (margin-top (em 1 60)))
+    (".hero .btn"
+     (display inline-block) (margin 0 (em 0 40)) (padding (em 0 55) (em 1 50))
+     (border (px 1) solid (var line)) (border-radius (px 6)) (color (var ink)) (font-weight 600))
+    (".hero .btn.primary" (background (var lapis)) (color "#fff") (border-color (var lapis)))
+    (".hero .btn:hover" (text-decoration none) (border-color (var lapis)))
+    ;; the editor: the page's own source
+    ("#editor" (padding (em 2) 0 (em 4)) (border-top (px 1) solid (var line)) (scroll-margin-top (em 4)))
+    (".lead" (color (var dim)) (font-size (em 0 95)) (margin 0 0 (em 1)))
+    (".lead b" (color (var ink)))
+    ;; a colored <pre> under a transparent <textarea>; identical box
+    ;; metrics keep the glyphs aligned
+    (".tabs" (display flex) (gap (em 0 40)) (margin 0 0 (px -1)))
+    (".tabs .tab"
+     (flex 1 1 0) (min-width 0) (text-align center)
+     (white-space nowrap) (overflow hidden) (text-overflow ellipsis)
+     (font-family (var mono)) (font-size (px 12)) (padding (em 0 30) (em 0 80))
+     (border (px 1) solid (var line)) (border-radius (px 6) (px 6) 0 0)
+     (background "#eef1f9") (color (var dim)) (cursor pointer))
+    (@media "(max-width: 36em)"
+      (".tabs" (gap (em 0 25)))
+      (".tabs .tab" (font-size (px 10 50)) (padding (em 0 30) (em 0 25))))
+    (".tabs .tab.active"
+     (background "#fff") (color (var ink)) (border-bottom-color "#fff") (font-weight 600))
+    (".code" (position relative))
+    (".code textarea, .code .hl"
+     (margin 0) (padding (em 1)) (border (px 1) solid transparent) (border-radius (px 8))
+     (font-family (var mono)) (font-size (px 13)) (line-height (dec 1 50)) (tab-size 2)
+     (white-space pre-wrap) (overflow-wrap break-word) (word-break break-word))
+    (".code .hl"
+     (position absolute) (inset 0) (z-index 0) (overflow hidden)
+     (border-color (var line)) (background (var bg2)) (color (var ink))
+     (pointer-events none) (box-shadow inset 0 (px 1) (px 3) (rgba 16 20 42 (dec 0 6))))
+    (".code textarea"
+     (position relative) (z-index 1) (width (pct 100)) (display block)
+     (background transparent) (color transparent) (caret-color (var ink))
+     (resize vertical))
+    (".code textarea:focus" (outline none))
+    (".code:focus-within .hl" (border-color (var azure)))
+    (".hl .tok-c" (color "#7a869f") (font-style italic))
+    (".hl .tok-s" (color "#1e7d34"))
+    (".hl .tok-k" (color (var lapis)) (font-weight 600))
+    (".hl .tok-h" (color (var azure)))
+    (".hl .tok-n" (color "#b0483f"))
+    (".hl .tok-l" (color "#8a5cf5"))
+    (".hl .tok-p" (color (var dim)))
+    (".bar" (display flex) (gap (em 0 90)) (align-items center) (margin (em 0 90) 0 0) (flex-wrap wrap))
+    (".status" (font-family (var mono)) (font-size (em 0 82)) (color (var dim)))
+    (".status.err" (color "#b0483f"))
+    (".hint" (color (var dim)) (font-size (em 0 85)) (margin-top (em 0 50)))
+    (".hint code" (background "#eef1f9") (padding (em 0 10) (em 0 40)) (border-radius (px 5)) (font-family (var mono)))
+    ;; the numbered feature showcases: kicker + title + text|code
+    ("#showcase" (border-top (px 1) solid (var line)) (padding (em 1 20) 0 (em 2)) (max-width (em 66)) (margin 0 auto))
+    (".show" (padding (em 1 80) 0 (em 0 80)))
+    (".kicker" (font-family (var mono)) (font-size (em 0 76)) (font-weight 600) (letter-spacing (em 0 16)) (text-transform uppercase) (color (var azure)))
+    (".show h2" (font-size (em 1 55)) (margin (em 0 25) 0 (em 0 40)) (letter-spacing "-.01em"))
+    (".slead" (color (var dim)) (font-size (em 1 5)) (max-width (em 44)) (margin 0))
+    (".slead code, .feature .txt code" (font-family (var mono)) (color (var lapis)) (font-size (em 0 88)) (background "#eef1f9") (padding (em 0 5) (em 0 35)) (border-radius (px 4)))
+    (".feature" (display grid) (grid-template-columns "1fr 1fr") (gap (em 2 60)) (align-items center) (margin-top (em 1 40)))
+    (".feature > *" (min-width 0))
+    (".feature.flip .txt" (order 2))
+    (".feature h3" (font-size (em 1 12)) (margin 0 0 (em 0 50)))
+    (".feature p" (color (var dim)) (font-size (em 0 95)) (margin 0 0 (em 0 70)))
+    (".feature p b" (color (var ink)))
+    (".feature pre" (background (var bg2)) (border (px 1) solid (var line)) (border-radius (px 10)) (padding (em 1 10) (em 1 20)) (overflow-x auto) (font-family (var mono)) (font-size (px 12 50)) (line-height (dec 1 55)) (color (var ink)) (margin 0) (box-shadow 0 (px 1) (px 3) (rgba 16 20 42 (dec 0 6))))
+    (".feature pre .tok-c" (color "#7a869f") (font-style italic))
+    (".feature pre .tok-s" (color "#1e7d34"))
+    (".feature pre .tok-k" (color (var lapis)) (font-weight 600))
+    (".feature pre .tok-h" (color (var azure)))
+    (".feature pre .tok-n" (color "#b0483f"))
+    (@media "(max-width: 64em)"
+      (".feature" (grid-template-columns "1fr") (gap (em 1 20)))
+      (".feature.flip .txt" (order 0)))
+    ;; informational sections below the hero
+    ("#features, #quickstart" (padding (em 2 50) 0) (border-top (px 1) solid (var line)) (scroll-margin-top (em 4)))
+    (h2 (font-size (em 1 50)) (font-weight 600))
+    (".grid" (display grid) (grid-template-columns "repeat(auto-fit, minmax(16em, 1fr))") (gap (em 1)) (margin-top (em 1 40)))
+    (@media "(min-width: 64em)" (".grid" (grid-template-columns "repeat(3, 1fr)")))
+    ("#quickstart p code" (font-family (var mono)) (color (var lapis)) (font-size (em 0 90)))
+    ("#quickstart pre"
+     (background "#eef1f9") (border (px 1) solid (var line)) (padding (em 0 90))
+     (border-radius (px 8)) (white-space pre-wrap) (font-family (var mono))
+     (font-size (px 13)) (overflow-x auto) (color (var ink)))
+    ;; wide screens: hero on the left, the live editor on the right
+    (@media "(min-width: 64em)"
+      (".wrap" (max-width (em 84)))
+      (".cols" (display grid) (grid-template-columns "minmax(0, 1fr) minmax(0, 1.1fr)") (gap 0 (em 3)) (align-items start))
+      (".cols > *" (min-width 0))
+      ("#live" (text-align left) (padding-top (em 9)))
+      (".hero" (text-align left))
+      (".hero .cmd" (margin-left 0))
+      ("#editor" (border-top none) (padding-top (em 3 40))))))
+
 (write-file "index.html"
   (render-page "Goeteia — a page that compiles itself"
                (string-append "The Goeteia homepage renders itself: its Scheme "
@@ -316,7 +427,7 @@ $ node rt/run.mjs fact.wasm
                               "below re-renders.")
                (string-append
                  (css->string (base-styles 60))
-                 (read-file "site/index.css")
+                 (css->string index-styles)
                  (css->string (styled-css))   ; the element-attached styles
                  (css->string (footer-styles)))
                'index "site/index.ss" body

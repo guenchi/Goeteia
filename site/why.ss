@@ -156,9 +156,58 @@
 
 ;; shared base (palette + nav) from chrome, then this page's own rules,
 ;; then the shared footer
+(define why-styles
+  `((header (padding (em 5) 0 (em 2 50)))
+    (".head-row" (display flex) (align-items baseline) (justify-content flex-start) (gap (em 0 70)) (flex-wrap wrap))
+    (h1
+     (font-size (em 3)) (margin 0) (font-weight 650) (letter-spacing (em 0 2))
+     (background "linear-gradient(120deg, var(--lapis), var(--azure))")
+     (-webkit-background-clip text) (background-clip text) (color transparent))
+    (".era" (font-family (var mono)) (font-size (em 0 85)) (color (var dim)))
+    (".lede" (color (var dim)) (font-size (em 1 20)) (margin-top (em 0 80)) (max-width (em 34)))
+    (section (padding (em 2 40) 0) (border-top (px 1) solid (var line)))
+    (p (color (var ink)))
+    (code (font-family (var mono)) (color (var lapis)) (font-size (em 0 90))
+          (background "#eef1f9") (padding (em 0 10) (em 0 38)) (border-radius (px 5)))
+    (pre
+     (background "#eef1f9") (border (px 1) solid (var line))
+     (padding (em 0 90) (em 1)) (border-radius (px 8)) (overflow-x auto)
+     (font-family (var mono)) (font-size (px 13 50)) (line-height (dec 1 50)))
+    ("pre code" (color (var ink)) (background none) (padding 0))
+    ;; numbered layers
+    (".layer" (display flex) (gap (em 1 10)) (align-items baseline))
+    (".layer .n"
+     (flex none) (font-family (var mono)) (font-weight 700) (font-size (em 1 5))
+     (color "#fff") (background (var lapis))
+     (width (em 1 90)) (height (em 1 90)) (border-radius (pct 50))
+     (display inline-flex) (align-items center) (justify-content center))
+    (".layer h2" (font-size (em 1 50)) (font-weight 600) (margin 0))
+    (".layer .sub" (color (var dim)) (font-size (em 0 95)) (margin-top (em 0 15)))
+    (".layer-body" (margin-left (em 3)))
+    ("ul.points" (list-style none) (padding 0) (margin (em 1 10) 0 0))
+    ("ul.points > li"
+     (position relative) (padding-left (em 1 30)) (margin (em 0 90) 0) (color (var ink)))
+    ("ul.points > li::before"
+     (content "\"→\"") (position absolute) (left 0) (color (var azure)) (font-weight 700))
+    ("ul.points b" (color (var ink)))
+    (".callout"
+     (margin (em 1 40) 0 0) (padding (em 1 30) (em 1 50))
+     (background (var bg2)) (border (px 1) solid (var line))
+     (border-left (px 4) solid (var lapis)) (border-radius 0 (px 12) (px 12) 0)
+     (box-shadow 0 (px 1) (px 3) (rgba 16 20 42 (dec 0 6))))
+    (".callout .k" (color (var lapis)) (font-weight 700) (font-size (em 0 80))
+                   (letter-spacing (em 0 8)) (text-transform uppercase))
+    (".callout p" (margin (em 0 50) 0 0) (font-size (em 1 8)))
+    (".note" (color (var dim)))
+    (".note h2" (color (var ink)) (margin 0))
+    (".note-head" (margin-bottom (em 0 80)))
+    (".note-sub"
+     (display block) (text-align center) (margin-top (em 0 30))
+     (color (var dim)) (font-size (em 0 95)))))
+
 (define page-css
   (string-append (css->string (base-styles 52))
-                 (read-file "site/why.css")
+                 (css->string why-styles)
                  (css->string (footer-styles))))
 
 (write-file "why.html"

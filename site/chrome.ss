@@ -3,7 +3,7 @@
 ;; footer, the "Built in pure Scheme" badge and the view-source overlay
 ;; are the same on every page. Rendered to a string by Goeteia.
 (library (chrome)
-  (export render-page read-file write-file base-styles footer-styles palette
+  (export render-page write-file base-styles footer-styles palette
           feat section* soft-box inline-code)
   (import (rnrs) (web html) (web css))
 
@@ -68,14 +68,8 @@
               (text-align center) (color (var dim)) (font-size (em 0 90)))))
 
   ;; ---- build-time file I/O ----
-  (define (read-file path)
-    (call-with-input-file path
-      (lambda (p)
-        (let loop ((acc '()))
-          (let ((c (read-char p)))
-            (if (eof-object? c)
-                (list->string (reverse acc))
-                (loop (cons c acc))))))))
+  ;; each page renders to its .html here; the stylesheets are now
+  ;; (web css) data in the page sources, so nothing reads raw files
   (define (write-file path s)
     (call-with-output-file path (lambda (p) (display s p))))
 
@@ -110,32 +104,47 @@
          (pre (@ (class "src-code")) (code (@ (id "src-code")) "")))))
 
   ;; ---- CSS for the badge + overlay, appended to each page's styles ----
-  (define badge-css
-    (string-append
-     ".src-badge{position:fixed;top:4.3em;right:1.2em;z-index:30;min-width:0;"
-     "border:1px solid var(--line);border-radius:6px;padding:.32em .8em;"
-     "background:var(--bg2);color:var(--dim);font-size:.8em;font-weight:400;cursor:pointer;"
-     "font-family:inherit;box-shadow:0 1px 3px rgba(16,20,42,.08)}"
-     ".src-badge:hover{border-color:var(--lapis);color:var(--lapis)}"
-     "@media (max-width:36em){.src-badge{display:none}}"
-     ".src-overlay{position:fixed;inset:0;z-index:50;background:rgba(16,20,42,.5);"
-     "display:flex;align-items:center;justify-content:center;padding:2em}"
-     ".src-overlay[hidden]{display:none}"
-     ".src-modal{background:var(--bg2);border:1px solid var(--line);border-radius:12px;"
-     "max-width:62em;width:100%;max-height:85vh;display:flex;flex-direction:column;"
-     "overflow:hidden;box-shadow:0 10px 40px rgba(16,20,42,.3)}"
-     ".src-bar{display:flex;align-items:center;justify-content:space-between;"
-     "padding:.6em 1em;border-bottom:1px solid var(--line)}"
-     ".src-title{font-family:var(--mono);font-size:.85em;color:var(--dim)}"
-     ".src-close{border:none;background:none;min-width:0;padding:0 .2em;"
-     "font-size:1.5em;font-weight:400;line-height:1;"
-     "color:var(--dim);cursor:pointer}.src-close:hover{color:var(--lapis)}"
-     ".src-code{margin:0;padding:1.2em;overflow:auto;font-family:var(--mono);"
-     "font-size:12.5px;line-height:1.5;color:var(--ink);white-space:pre}"
-     ".src-code .tok-c{color:#7a869f;font-style:italic}.src-code .tok-s{color:#1e7d34}"
-     ".src-code .tok-k{color:var(--lapis);font-weight:600}.src-code .tok-n{color:#b0483f}"
-     ".src-code .tok-l{color:#8a5cf5}.src-code .tok-p{color:var(--dim)}"
-     ".src-code .tok-h{color:var(--azure)}"))
+  ;; the source-view syntax colours (tok-*) match the live editor's,
+  ;; the same palette (hl) paints the code samples with
+  (define src-tokens
+    '((".src-code .tok-c" (color "#7a869f") (font-style italic))
+      (".src-code .tok-s" (color "#1e7d34"))
+      (".src-code .tok-k" (color (var lapis)) (font-weight 600))
+      (".src-code .tok-n" (color "#b0483f"))
+      (".src-code .tok-l" (color "#8a5cf5"))
+      (".src-code .tok-p" (color (var dim)))
+      (".src-code .tok-h" (color (var azure)))))
+  (define badge-styles
+    `((".src-badge"
+       (position fixed) (top (em 4 30)) (right (em 1 20)) (z-index 30)
+       (min-width 0) (border (px 1) solid (var line)) (border-radius (px 6))
+       (padding (em 0 32) (em 0 80)) (background (var bg2)) (color (var dim))
+       (font-size (em 0 80)) (font-weight 400) (cursor pointer)
+       (font-family inherit) (box-shadow 0 (px 1) (px 3) (rgba 16 20 42 (dec 0 8))))
+      (".src-badge:hover" (border-color (var lapis)) (color (var lapis)))
+      (@media "(max-width:36em)" (".src-badge" (display none)))
+      (".src-overlay"
+       (position fixed) (inset 0) (z-index 50) (background (rgba 16 20 42 (dec 0 50)))
+       (display flex) (align-items center) (justify-content center) (padding (em 2)))
+      (".src-overlay[hidden]" (display none))
+      (".src-modal"
+       (background (var bg2)) (border (px 1) solid (var line)) (border-radius (px 12))
+       (max-width (em 62)) (width (pct 100)) (max-height (vh 85)) (display flex)
+       (flex-direction column) (overflow hidden)
+       (box-shadow 0 (px 10) (px 40) (rgba 16 20 42 (dec 0 30))))
+      (".src-bar"
+       (display flex) (align-items center) (justify-content space-between)
+       (padding (em 0 60) (em 1)) (border-bottom (px 1) solid (var line)))
+      (".src-title" (font-family (var mono)) (font-size (em 0 85)) (color (var dim)))
+      (".src-close"
+       (border none) (background none) (min-width 0) (padding 0 (em 0 20))
+       (font-size (em 1 50)) (font-weight 400) (line-height 1)
+       (color (var dim)) (cursor pointer))
+      (".src-close:hover" (color (var lapis)))
+      (".src-code"
+       (margin 0) (padding (em 1 20)) (overflow auto) (font-family (var mono))
+       (font-size (px 12 50)) (line-height (dec 1 50)) (color (var ink)) (white-space pre))
+      ,@src-tokens))
 
   ;; ---- assemble a full document ----
   ;; body is a list of SXML nodes placed inside <div class="wrap">,
@@ -157,7 +166,7 @@
            ;; Times New Roman (a system font), so no web-font @import.
            (style ,(string-append
                     (if (string? css) css (css->string css))
-                    "\n" badge-css)))
+                    "\n" (css->string badge-styles))))
           (body
            ,(nav active)
            ,(source-badge source-file)

@@ -51,6 +51,57 @@
        (div (@ (class "meta"))
          "tools: " (code "Bash, Read, Write, Edit, Grep, Glob"))))))
 
+(define agent-styles
+  `((header (padding (em 5) 0 (em 2 50)) (text-align center))
+    (h1
+     (font-size (em 3)) (margin 0) (font-weight 650) (letter-spacing (em 0 2))
+     (background "linear-gradient(120deg, var(--lapis), var(--azure))")
+     (-webkit-background-clip text) (background-clip text) (color transparent))
+    (".tagline" (color (var dim)) (font-size (em 1 15)) (margin-top (em 0 70)))
+    (section (padding (em 2 50) 0) (border-top (px 1) solid (var line)))
+    (h2 (font-size (em 1 50)) (font-weight 600))
+    (code (font-family (var mono)) (color (var lapis)) (font-size (em 0 92)))
+    (pre
+     (background "#eef1f9") (border (px 1) solid (var line))
+     (padding (em 0 90) (em 1)) (border-radius (px 8))
+     (white-space pre-wrap) (font-family (var mono)) (font-size (px 13 50))
+     (overflow-x auto))
+    ("pre code" (color (var ink)))
+    ;; agent card
+    (".agent"
+     (background (var bg2)) (border (px 1) solid (var line))
+     (border-radius (px 14)) (padding (em 1 60) (em 1 60) (em 1 80))
+     (box-shadow 0 (px 1) (px 3) (rgba 16 20 42 (dec 0 6)))
+     (margin-top (em 1 60)))
+    (".agent-head"
+     (display flex) (align-items flex-start) (justify-content space-between)
+     (gap (em 1)) (flex-wrap wrap))
+    (".agent-head h3"
+     (margin 0) (font-size (em 1 35)) (font-weight 650)
+     (font-family (var mono)) (color (var ink)))
+    (".agent-head .role" (color (var dim)) (font-size (em 0 92)) (margin-top (em 0 20)))
+    (".agent-lead" (margin (em 1 10) 0 0) (color (var ink)))
+    (".meta" (color (var dim)) (font-size (em 0 85)) (margin-top (em 0 80)))
+    (".meta code" (color (var dim)))
+    (".feats"
+     (display grid) (grid-template-columns "repeat(auto-fit, minmax(15em, 1fr))")
+     (gap (em 0 90)) (margin (em 1 40) 0 0))
+    (".feat"
+     (border (px 1) solid (var line)) (border-radius (px 10)) (padding (em 0 90) (em 1))
+     (background (var bg)))
+    (".feat h4" (margin 0 0 (em 0 30)) (font-size (em 0 95)) (color (var lapis)))
+    (".feat p" (margin 0) (color (var dim)) (font-size (em 0 90)))
+    (".btns" (margin-top (em 1 60)) (display flex) (gap (em 0 70)) (flex-wrap wrap) (align-items center))
+    (".btn"
+     (display inline-block) (padding (em 0 60) (em 1 50)) (border-radius (px 8))
+     (border (px 1) solid (var line)) (color (var ink)) (font-weight 600) (font-size (em 0 95)))
+    (".btn:hover" (text-decoration none) (border-color (var lapis)))
+    (".btn.primary" (background (var lapis)) (color "#fff") (border-color (var lapis)))
+    (".btn.primary:hover" (filter "brightness(1.1)") (border-color (var lapis)))
+    (".btn .ic" (margin-right (em 0 45)))
+    (".install" (margin-top (em 2 20)))
+    (".install h2" (font-size (em 1 15)))))
+
 (write-file "agent.html"
   (render-page "Agents — Goeteia"
                (string-append "Agents for Goeteia. web-porter rewrites a "
@@ -58,6 +109,6 @@
                               "behavioral equivalence proved by differential testing — "
                               "download the agent definition.")
                (string-append (css->string (base-styles 52))
-                              (read-file "site/agent.css")
+                              (css->string agent-styles)
                               (css->string (footer-styles)))
                'agent "site/agent.ss" body))
