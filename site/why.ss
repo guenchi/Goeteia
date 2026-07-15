@@ -1,5 +1,5 @@
 ;; why.html — authored in Scheme, rendered to HTML by Goeteia.
-(import (web html) (web css) (chrome))
+(import (web html) (web css) (web component) (chrome))
 
 (define body
   (list
@@ -21,10 +21,8 @@
         "the one you'd pick for a human."))
 
    `(section
-     (div (@ (class "layer"))
-       (span (@ (class "n")) "1")
-       (div (h2 "Homoiconicity is the ideal substrate for generation")
-            (div (@ (class "sub")) "Code is data — generating it " (em "is") " parsing it.")))
+     ,(layer "1" "Homoiconicity is the ideal substrate for generation"
+            '("Code is data — generating it " (em "is") " parsing it."))
      (div (@ (class "layer-body"))
        (ul (@ (class "points"))
          (li (b "No text↔AST round-trip.") " An s-expression the model emits is "
@@ -45,10 +43,8 @@
              "it's least likely to botch."))))
 
    `(section
-     (div (@ (class "layer"))
-       (span (@ (class "n")) "2")
-       (div (h2 "The generate–verify loop is the real win")
-            (div (@ (class "sub")) "Untrusted output, made trustworthy by a cheap, automatic oracle.")))
+     ,(layer "2" "The generate–verify loop is the real win"
+            '("Untrusted output, made trustworthy by a cheap, automatic oracle."))
      (div (@ (class "layer-body"))
        (p "This is the part that's genuinely specific to AI. Generated code is "
           "not to be believed; it has to be " (em "proven") ". Scheme makes the proof "
@@ -71,10 +67,8 @@
              " is a correctness check the model gets for nothing."))))
 
    `(section
-     (div (@ (class "layer"))
-       (span (@ (class "n")) "3")
-       (div (h2 "The frontend program is data too — the ground Lisp stands on")
-            (div (@ (class "sub")) "The homoiconic advantage doesn't stop at logic; it covers the whole UI.")))
+     ,(layer "3" "The frontend program is data too — the ground Lisp stands on"
+            '("The homoiconic advantage doesn't stop at logic; it covers the whole UI."))
      (div (@ (class "layer-body"))
        (p "An HTML document is a tree; a stylesheet is a list of selector-and-"
           "declaration rules — the exact shapes s-expr was made for. So "
@@ -104,10 +98,8 @@
           "says to build it.")))
 
    `(section
-     (div (@ (class "layer"))
-       (span (@ (class "n")) "4")
-       (div (h2 "In networking, make the protocol verifiable data")
-            (div (@ (class "sub")) "The bugs a model ships are protocol bugs — move them earlier.")))
+     ,(layer "4" "In networking, make the protocol verifiable data"
+            '("The bugs a model ships are protocol bugs — move them earlier."))
      (div (@ (class "layer-body"))
        (p "The biggest risk in AI-written network code is the protocol: fields "
           "out of order, an encoder that doesn't match its decoder, a state machine "
@@ -156,6 +148,21 @@
 
 ;; shared base (palette + nav) from chrome, then this page's own rules,
 ;; then the shared footer
+(define-component (layer n title sub)
+  ;; a numbered layer: the badge, heading and subhead carry their css;
+  ;; the four layers intern to one class (the body is a sibling block)
+  (style
+    (display flex) (gap (em 1 10)) (align-items baseline)
+    (".n" (flex none) (font-family (var mono)) (font-weight 700) (font-size (em 1 5))
+          (color "#fff") (background (var lapis))
+          (width (em 1 90)) (height (em 1 90)) (border-radius (pct 50))
+          (display inline-flex) (align-items center) (justify-content center))
+    ("h2" (font-size (em 1 50)) (font-weight 600) (margin 0))
+    (".sub" (color (var dim)) (font-size (em 0 95)) (margin-top (em 0 15))))
+  (div
+    (span (@ (class "n")) ,n)
+    (div (h2 ,title) (div (@ (class "sub")) ,@sub))))
+
 (define why-styles
   `((header (padding (em 5) 0 (em 2 50)))
     (".head-row" (display flex) (align-items baseline) (justify-content flex-start) (gap (em 0 70)) (flex-wrap wrap))
@@ -174,15 +181,7 @@
      (padding (em 0 90) (em 1)) (border-radius (px 8)) (overflow-x auto)
      (font-family (var mono)) (font-size (px 13 50)) (line-height (dec 1 50)))
     ("pre code" (color (var ink)) (background none) (padding 0))
-    ;; numbered layers
-    (".layer" (display flex) (gap (em 1 10)) (align-items baseline))
-    (".layer .n"
-     (flex none) (font-family (var mono)) (font-weight 700) (font-size (em 1 5))
-     (color "#fff") (background (var lapis))
-     (width (em 1 90)) (height (em 1 90)) (border-radius (pct 50))
-     (display inline-flex) (align-items center) (justify-content center))
-    (".layer h2" (font-size (em 1 50)) (font-weight 600) (margin 0))
-    (".layer .sub" (color (var dim)) (font-size (em 0 95)) (margin-top (em 0 15)))
+    ;; numbered layers (the .layer badge/heading are a component now)
     (".layer-body" (margin-left (em 3)))
     ("ul.points" (list-style none) (padding 0) (margin (em 1 10) 0 0))
     ("ul.points > li"
@@ -208,6 +207,7 @@
 (define page-css
   (string-append (css->string (base-styles 52))
                  (css->string why-styles)
+                 (css->string (styled-css))
                  (css->string (footer-styles))))
 
 (write-file "why.html"
