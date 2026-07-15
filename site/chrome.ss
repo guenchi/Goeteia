@@ -5,7 +5,7 @@
 (library (chrome)
   (export render-page write-file base-styles footer-styles palette
           feat section* soft-box inline-code)
-  (import (rnrs) (web html) (web css))
+  (import (rnrs) (web html) (web css) (web component))
 
   ;; ---- reusable (web css) declaration helpers ----
   ;; the pale rounded panel used for code blocks and command chips
@@ -16,8 +16,15 @@
     '((font-family (var mono)) (color (var lapis))))
 
   ;; ---- reusable content helpers (SXML-returning) ----
-  (define (feat title . body)
-    `(div (@ (class "feat")) (h4 ,title) (p ,@body)))
+  ;; a small feature card: markup and its css together; the agent
+  ;; page's four calls intern to one class
+  (define-component (feat title . body)
+    (style
+      (border (px 1) solid (var line)) (border-radius (px 10))
+      (padding (em 0 90) (em 1)) (background (var bg))
+      ("h4" (margin 0 0 (em 0 30)) (font-size (em 0 95)) (color (var lapis)))
+      ("p" (margin 0) (color (var dim)) (font-size (em 0 90))))
+    (div (h4 ,title) (p ,@body)))
   ;; a section with a heading: (section* "What's inside" node ...)
   (define (section* id heading . body)
     `(section (@ (id ,id)) (h2 ,heading) ,@body))

@@ -1,5 +1,5 @@
 ;; agent.html — authored in Scheme, rendered to HTML by Goeteia.
-(import (web html) (web css) (chrome))
+(import (web html) (web css) (web component) (chrome))
 
 (define body
   (list
@@ -86,11 +86,6 @@
     (".feats"
      (display grid) (grid-template-columns "repeat(auto-fit, minmax(15em, 1fr))")
      (gap (em 0 90)) (margin (em 1 40) 0 0))
-    (".feat"
-     (border (px 1) solid (var line)) (border-radius (px 10)) (padding (em 0 90) (em 1))
-     (background (var bg)))
-    (".feat h4" (margin 0 0 (em 0 30)) (font-size (em 0 95)) (color (var lapis)))
-    (".feat p" (margin 0) (color (var dim)) (font-size (em 0 90)))
     (".btns" (margin-top (em 1 60)) (display flex) (gap (em 0 70)) (flex-wrap wrap) (align-items center))
     (".btn"
      (display inline-block) (padding (em 0 60) (em 1 50)) (border-radius (px 8))
@@ -110,5 +105,6 @@
                               "download the agent definition.")
                (string-append (css->string (base-styles 52))
                               (css->string agent-styles)
+                              (css->string (styled-css))
                               (css->string (footer-styles)))
                'agent "site/agent.ss" body))
