@@ -9,7 +9,7 @@ A graphics-optimized Scheme-to-WASM compiler and pure-Scheme web programming too
 Goeteia is a Scheme-to-WebAssembly compiler built on the WebAssembly
 GC extension (Wasm 3.0).  It is an independent implementation written
 from the R6RS and WebAssembly specifications, and it compiles itself:
-the compiler is written in the Scheme subset it compiles, and the
+the compiler is written in the Scheme it compiles, and the
 self-hosted build reproduces itself byte-for-byte.
 
 Scheme values live in the Wasm engine's garbage-collected heap:
