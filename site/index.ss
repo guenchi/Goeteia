@@ -195,10 +195,13 @@
               "your cursor."))
          typeset-code)
       ,(show "04" "Graphics" "3D, from s-expressions"
-         '((code "(gfx gl)") " drives WebGL 2 through a command buffer — "
-           "shadow maps, PBR, HDR bloom, SSAO, instancing, skeletal "
-           "animation from glTF — and " (code "(gfx glsl)") " renders "
-           "shaders written as s-expressions to either GLSL dialect.")
+         '("A pure-Scheme KTX2/Basis transcoder — ETC1S and UASTC, "
+           "written from the Khronos specs — decodes compressed textures "
+           "in ~12 KB gzipped, where the official C++ one ships 462 KB. "
+           "And rendering is GPU-driven: a compute shader culls the "
+           "frustum, compacts the survivors, and issues one "
+           (code "drawIndexedIndirect") " per geometry — the whole frame "
+           "is decided on the card.")
          #t
          '((h3 "This exact program runs above")
            (p "It is the sky of the " (code "skybox.ss") " tab in the live "
