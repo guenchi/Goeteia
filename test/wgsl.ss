@@ -104,4 +104,35 @@
      "@fragment fn fs(vin : VOut) -> @location(0) vec4f { "
      "var goe_out : vec4f; "
      "goe_out = textureSample(u_tex_t, u_tex_s, vin.v_uv); "
-     "return goe_out; } ")))
+     "return goe_out; } "))
+
+ ;; a compute module: structs, the storage array at binding 0, the
+ ;; uniform struct at binding 1, gid in scope, arrays indexed by (at)
+ (t (wgsl-compute->string
+     '((struct P ((vec2 pos) (float age)))
+       (storage ps (array P))
+       (uniform float dt)
+       (workgroup 64)
+       (define (h (float n)) float
+         (return (fract (* (sin n) "43758.547"))))
+       (define (main) void
+         (local uint i gid.x)
+         (if (>= i (array-length ps)) (return))
+         (local P p (at ps i))
+         (set! p.age (+ p.age dt))
+         (if (== (% i 61) 0)
+             (set! p.age (fl 0)))
+         (set! (at ps i) p))))
+    (string-append
+     "struct P { pos : vec2f, age : f32 } "
+     "@group(0) @binding(0) var<storage, read_write> ps : array<P>; "
+     "struct U { dt : f32 } @group(0) @binding(1) var<uniform> u : U; "
+     "fn h(n : f32) -> f32 { return fract((sin(n) * 43758.547)); } "
+     "@compute @workgroup_size(64) "
+     "fn cs(@builtin(global_invocation_id) gid : vec3u) { "
+     "var i : u32 = gid.x; "
+     "if ((i >= arrayLength(&ps))) { return; } "
+     "var p : P = ps[i]; "
+     "p.age = (p.age + u.dt); "
+     "if (((i % 61) == 0)) { p.age = 0.0; } "
+     "ps[i] = p; } ")))
