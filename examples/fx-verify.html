@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <title>Goeteia — real-asset pipeline verification</title>
+    <style>
+      body { font-family: system-ui; text-align: center; margin-top: 2em; background: #f2f4fa; color: #14203a; }
+      canvas { border-radius: 12px; box-shadow: 0 4px 20px rgba(16,20,42,.2); }
+      code { font-family: ui-monospace, Menlo, monospace; color: #1550c4; }
+    </style>
+  </head>
+  <body>
+    <h1>Real tool output, decoded in Scheme</h1>
+    <p>Left box: Khronos <code>Box.glb</code> as-is.  Right box: the same
+    file through <code>gltfpack&nbsp;-c</code> (EXT_meshopt_compression +
+    KHR_mesh_quantization) — the two must look identical.  The crate
+    behind wears a <code>basisu</code> UASTC KTX2, zstd-supercompressed,
+    inflated by <code>(gfx zstd)</code> and unpacked by
+    <code>(gfx uastc)</code>.  See <code>fx-verify.ss</code>.</p>
+    <canvas id="c" width="800" height="600"></canvas>
+    <script type="module">
+      import { loadGoeteia } from '../rt/web.mjs';
+      loadGoeteia('fx-verify.wasm');
+    </script>
+  </body>
+</html>

@@ -300,8 +300,10 @@
             (loop (+ i 1) (bitwise-and (+ ($shl st b) ($bbr-read br b)) mask)))))))
 
   ;; =================== literals section ===================
-  ;; decode literals at `at' into `litbuf' -> #(litbuf litLen nextAt)
-  (define ($literals at litbuf)
+  ;; decode literals at `at' into `litbuf'; `prev-huf' is the frame's
+  ;; last Huffman table (a Treeless block, type 3, reuses it instead
+  ;; of carrying its own description) -> #(litbuf litLen nextAt huf)
+  (define ($literals at litbuf prev-huf)
     (let* ((b0 ($u8 at)) (type (bitwise-and b0 3)) (sizefmt (bitwise-and ($shr b0 2) 3)))
       (cond
        ((or (= type 0) (= type 1))
@@ -313,20 +315,38 @@
           (if (= type 0)
               (begin
                 (let cp ((i 0)) (when (< i rsize) ($u8! (+ litbuf i) ($u8 (+ at hdr i))) (cp (+ i 1))))
-                (vector litbuf rsize (+ at hdr rsize)))
+                (vector litbuf rsize (+ at hdr rsize) prev-huf))
               (let ((v ($u8 (+ at hdr))))
                 (let cp ((i 0)) (when (< i rsize) ($u8! (+ litbuf i) v) (cp (+ i 1))))
-                (vector litbuf rsize (+ at hdr 1))))))
+                (vector litbuf rsize (+ at hdr 1) prev-huf)))))
        (else
+        ;; header fields assembled from bytes -- a $u32 is a bignum
+        ;; past 2^30 and bitwise ops on bignums trap
         (let*-values
             (((regen comp hdr streams4?)
-              (cond
-               ((= sizefmt 0) (let ((x ($u24 at))) (values (bitwise-and ($shr x 4) 1023) (bitwise-and ($shr x 14) 1023) 3 #f)))
-               ((= sizefmt 1) (let ((x ($u24 at))) (values (bitwise-and ($shr x 4) 1023) (bitwise-and ($shr x 14) 1023) 3 #t)))
-               ((= sizefmt 2) (let ((x ($u32 at))) (values (bitwise-and ($shr x 4) 16383) (bitwise-and ($shr x 18) 16383) 4 #t)))
-               (else (let ((x ($u32 at)) (b4 ($u8 (+ at 4)))) (values (bitwise-and ($shr x 4) 262143) (+ ($shr x 22) (* 1024 b4)) 5 #t))))))
+              (let ((b0 ($u8 at)) (b1 ($u8 (+ at 1))) (b2 ($u8 (+ at 2))))
+                (cond
+                 ((= sizefmt 0) (let ((x ($u24 at))) (values (bitwise-and ($shr x 4) 1023) (bitwise-and ($shr x 14) 1023) 3 #f)))
+                 ((= sizefmt 1) (let ((x ($u24 at))) (values (bitwise-and ($shr x 4) 1023) (bitwise-and ($shr x 14) 1023) 3 #t)))
+                 ((= sizefmt 2)
+                  (let ((b3 ($u8 (+ at 3))))
+                    (values (+ ($shr b0 4) ($shl b1 4) ($shl (bitwise-and b2 3) 12))
+                            (+ ($shr b2 2) ($shl b3 6))
+                            4 #t)))
+                 (else
+                  (let ((b3 ($u8 (+ at 3))) (b4 ($u8 (+ at 4))))
+                    (values (+ ($shr b0 4) ($shl b1 4) ($shl (bitwise-and b2 63) 12))
+                            (+ ($shr b2 6) ($shl b3 2) ($shl b4 10))
+                            5 #t)))))))
           (let* ((tstart (+ at hdr))
-                 (tw ($huf-read-weights tstart))
+                 ;; type 3 (Treeless): no table description, reuse the
+                 ;; frame's previous one
+                 (tw (if (= type 3)
+                         (begin
+                           (unless prev-huf
+                             (error 'zstd "treeless literals with no prior table"))
+                           (vector prev-huf 0))
+                         ($huf-read-weights tstart)))
                  (tbl (vector-ref tw 0))
                  (tbytes (vector-ref tw 1))
                  (pstart (+ tstart tbytes))
@@ -334,7 +354,7 @@
             (if (not streams4?)
                 (begin
                   ($huf-decode-stream tbl ($bbr pstart plen) litbuf 0 regen)
-                  (vector litbuf regen (+ at hdr comp)))
+                  (vector litbuf regen (+ at hdr comp) tbl))
                 (let* ((j1 ($u16 pstart)) (j2 ($u16 (+ pstart 2))) (j3 ($u16 (+ pstart 4)))
                        (p0 (+ pstart 6)) (total (- plen 6))
                        (j4 (- total (+ j1 j2 j3)))
@@ -344,10 +364,12 @@
                   ($huf-decode-stream tbl ($bbr (+ p0 j1) j2) litbuf seg seg)
                   ($huf-decode-stream tbl ($bbr (+ p0 j1 j2) j3) litbuf (* 2 seg) seg)
                   ($huf-decode-stream tbl ($bbr (+ p0 j1 j2 j3) j4) litbuf (* 3 seg) last)
-                  (vector litbuf regen (+ at hdr comp))))))))))
+                  (vector litbuf regen (+ at hdr comp) tbl)))))))))
 
   ;; =================== sequences ===================
-  (define ($seq-table mode dist deflog at)
+  ;; `prev' is the frame's previous decode table for this stream --
+  ;; mode 3 (Repeat) reuses it across blocks
+  (define ($seq-table mode dist deflog at prev)
     (cond
      ((= mode 0) (values ($predef dist deflog) at))
      ((= mode 1) (values (vector 0 (vector ($u8 at)) (vector 0) (vector 0)) (+ at 1)))
@@ -356,14 +378,19 @@
              (nc ($fse-decode-header r))
              (dt ($fse-build ($nc-counts nc) ($nc-nsym nc) ($nc-log nc))))
         (values dt (+ at ($fbr-bytes r)))))
-     (else (error 'zstd "repeat FSE mode unsupported"))))
+     (else
+      (unless prev (error 'zstd "repeat FSE mode with no prior table"))
+      (values prev at))))
 
-  (define ($sequences at endat litbuf litlen dpos)
+  ;; pll/pof/pml are the frame's previous FSE tables (Repeat mode);
+  ;; ir0..ir2 the offset history, which persists across blocks.
+  ;; returns #(dpos' llt oft mlt r0 r1 r2)
+  (define ($sequences at endat litbuf litlen dpos pll pof pml ir0 ir1 ir2)
     (let ((b0 ($u8 at)))
       (if (= b0 0)
           (begin
             (let cp ((i 0)) (when (< i litlen) ($u8! (+ dpos i) ($u8 (+ litbuf i))) (cp (+ i 1))))
-            (+ dpos litlen))
+            (vector (+ dpos litlen) pll pof pml ir0 ir1 ir2))
           (let-values
               (((nseq nat)
                 (cond ((< b0 128) (values b0 (+ at 1)))
@@ -374,19 +401,20 @@
                    (ofmode (bitwise-and ($shr modes 4) 3))
                    (mlmode (bitwise-and ($shr modes 2) 3))
                    (tat (+ nat 1)))
-              (let*-values (((llt tat) ($seq-table llmode $ll-dist 6 tat))
-                            ((oft tat) ($seq-table ofmode $of-dist 5 tat))
-                            ((mlt tat) ($seq-table mlmode $ml-dist 6 tat)))
+              (let*-values (((llt tat) ($seq-table llmode $ll-dist 6 tat pll))
+                            ((oft tat) ($seq-table ofmode $of-dist 5 tat pof))
+                            ((mlt tat) ($seq-table mlmode $ml-dist 6 tat pml)))
                 (let* ((br ($bbr tat (- endat tat)))
                        (lls ($bbr-read br (vector-ref llt 0)))
                        (ofs ($bbr-read br (vector-ref oft 0)))
                        (mls ($bbr-read br (vector-ref mlt 0))))
                   (let loop ((n 0) (lls lls) (ofs ofs) (mls mls)
-                             (dpos dpos) (litpos 0) (r0 1) (r1 4) (r2 8))
+                             (dpos dpos) (litpos 0)
+                             (r0 ir0) (r1 ir1) (r2 ir2))
                     (if (= n nseq)
                         (let ((rem (- litlen litpos)))
                           (let cp ((i 0)) (when (< i rem) ($u8! (+ dpos i) ($u8 (+ litbuf litpos i))) (cp (+ i 1))))
-                          (+ dpos rem))
+                          (vector (+ dpos rem) llt oft mlt r0 r1 r2))
                         (let* ((llc ($fse-peek llt lls))
                                (mlc ($fse-peek mlt mls))
                                (ofc ($fse-peek oft ofs))
@@ -442,8 +470,12 @@
             (else ($u32 p)))))
 
   (define (zstd-decode! src slen dst scratch)
+    ;; the entropy state -- the last Huffman table and the three FSE
+    ;; tables -- and the offset history persist across a frame's blocks
     (let ((cat ($frame-content-at src)))
-      (let loop ((at cat) (dpos dst))
+      (let loop ((at cat) (dpos dst)
+                 (huf #f) (llt #f) (oft #f) (mlt #f)
+                 (r0 1) (r1 4) (r2 8))
         (let* ((hd ($u24 at))
                (lastblk (bitwise-and hd 1))
                (btype (bitwise-and ($shr hd 1) 3))
@@ -452,16 +484,24 @@
           (cond
            ((= btype 0)
             (let cp ((i 0)) (when (< i bsize) ($u8! (+ dpos i) ($u8 (+ bat i))) (cp (+ i 1))))
-            (if (= lastblk 1) (- (+ dpos bsize) dst) (loop (+ bat bsize) (+ dpos bsize))))
+            (if (= lastblk 1) (- (+ dpos bsize) dst)
+                (loop (+ bat bsize) (+ dpos bsize) huf llt oft mlt r0 r1 r2)))
            ((= btype 1)
             (let ((v ($u8 bat)))
               (let cp ((i 0)) (when (< i bsize) ($u8! (+ dpos i) v) (cp (+ i 1))))
-              (if (= lastblk 1) (- (+ dpos bsize) dst) (loop (+ bat 1) (+ dpos bsize)))))
+              (if (= lastblk 1) (- (+ dpos bsize) dst)
+                  (loop (+ bat 1) (+ dpos bsize) huf llt oft mlt r0 r1 r2))))
            ((= btype 2)
-            (let* ((lit ($literals bat scratch))
+            (let* ((lit ($literals bat scratch huf))
                    (litbuf (vector-ref lit 0))
                    (litlen (vector-ref lit 1))
                    (seqat (vector-ref lit 2))
-                   (ndpos ($sequences seqat (+ bat bsize) litbuf litlen dpos)))
-              (if (= lastblk 1) (- ndpos dst) (loop (+ bat bsize) ndpos))))
+                   (nhuf (vector-ref lit 3))
+                   (sq ($sequences seqat (+ bat bsize) litbuf litlen dpos
+                                   llt oft mlt r0 r1 r2))
+                   (ndpos (vector-ref sq 0)))
+              (if (= lastblk 1) (- ndpos dst)
+                  (loop (+ bat bsize) ndpos nhuf
+                        (vector-ref sq 1) (vector-ref sq 2) (vector-ref sq 3)
+                        (vector-ref sq 4) (vector-ref sq 5) (vector-ref sq 6)))))
            (else (error 'zstd "reserved block type"))))))))
