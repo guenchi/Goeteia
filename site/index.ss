@@ -194,7 +194,7 @@
               "by " (code "(web typeset)") " — which is why they can dodge "
               "your cursor."))
          typeset-code)
-      ,(show "04" "Graphics" "3D, from s-expressions"
+      ,(show "04" "Graphics" "This exact program runs above"
          '("A pure-Scheme KTX2/Basis transcoder — ETC1S and UASTC, "
            "written from the Khronos specs — decodes compressed textures "
            "in ~12 KB gzipped, where the official C++ one ships 462 KB. "
@@ -203,7 +203,7 @@
            (code "drawIndexedIndirect") " per geometry — the whole frame "
            "is decided on the card.")
          #t
-         '((h3 "This exact program runs above")
+         '((h3 "3D, from s-expressions")
            (p "It is the sky of the " (code "skybox.ss") " tab in the live "
               "editor — switch to it, edit a form, press Run. The mirror "
               "floor of " (code "pointlight.ss") " and the WebGPU fire of "
