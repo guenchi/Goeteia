@@ -28,14 +28,39 @@
 
 ;; ---- the numbered feature showcases: kicker, title, lead, then a
 ;; text column beside a code block (flip? alternates the sides) ----
-(define (show num kick title lead flip? txt code)
-  `(div (@ (class "show"))
-     (div (@ (class "kicker")) ,(string-append num " · " kick))
-     (h2 ,title)
-     (p (@ (class "slead")) ,@lead)
-     (div (@ (class ,(if flip? "feature flip" "feature")))
-       (div (@ (class "txt")) ,@txt)
-       (pre ,(raw code)))))
+(define-component (show num kick title lead flip? txt code)
+  ;; the showcase block's whole shape -- kicker, title, the text|code
+  ;; feature grid, its responsive single-column fallback -- lives with
+  ;; it; the six calls intern to one class
+  (style
+    (padding (em 1 80) 0 (em 0 80))
+    (".kicker" (font-family (var mono)) (font-size (em 0 76)) (font-weight 600) (letter-spacing (em 0 16)) (text-transform uppercase) (color (var azure)))
+    ("h2" (font-size (em 1 55)) (margin (em 0 25) 0 (em 0 40)) (letter-spacing "-.01em"))
+    (".slead" (color (var dim)) (font-size (em 1 5)) (max-width (em 44)) (margin 0))
+    (".slead code" (font-family (var mono)) (color (var lapis)) (font-size (em 0 88)) (background "#eef1f9") (padding (em 0 5) (em 0 35)) (border-radius (px 4)))
+    (".feature .txt code" (font-family (var mono)) (color (var lapis)) (font-size (em 0 88)) (background "#eef1f9") (padding (em 0 5) (em 0 35)) (border-radius (px 4)))
+    (".feature" (display grid) (grid-template-columns "1fr 1fr") (gap (em 2 60)) (align-items center) (margin-top (em 1 40)))
+    (".feature > *" (min-width 0))
+    (".feature.flip .txt" (order 2))
+    (".feature h3" (font-size (em 1 12)) (margin 0 0 (em 0 50)))
+    (".feature p" (color (var dim)) (font-size (em 0 95)) (margin 0 0 (em 0 70)))
+    (".feature p b" (color (var ink)))
+    (".feature pre" (background (var bg2)) (border (px 1) solid (var line)) (border-radius (px 10)) (padding (em 1 10) (em 1 20)) (overflow-x auto) (font-family (var mono)) (font-size (px 12 50)) (line-height (dec 1 55)) (color (var ink)) (margin 0) (box-shadow 0 (px 1) (px 3) (rgba 16 20 42 (dec 0 6))))
+    (".feature pre .tok-c" (color "#7a869f") (font-style italic))
+    (".feature pre .tok-s" (color "#1e7d34"))
+    (".feature pre .tok-k" (color (var lapis)) (font-weight 600))
+    (".feature pre .tok-h" (color (var azure)))
+    (".feature pre .tok-n" (color "#b0483f"))
+    (@media 64
+      (".feature" (grid-template-columns "1fr") (gap (em 1 20)))
+      (".feature.flip .txt" (order 0))))
+  (div
+    (div (@ (class "kicker")) ,(string-append num " · " kick))
+    (h2 ,title)
+    (p (@ (class "slead")) ,@lead)
+    (div (@ (class ,(if flip? "feature flip" "feature")))
+      (div (@ (class "txt")) ,@txt)
+      (pre ,(raw code)))))
 
 ;; the code samples, as plain text; (hl)'s build-time highlighter
 ;; paints them with the same token classes the live editor uses
@@ -379,26 +404,6 @@ $ node rt/run.mjs fact.wasm
     (".hint code" (background "#eef1f9") (padding (em 0 10) (em 0 40)) (border-radius (px 5)) (font-family (var mono)))
     ;; the numbered feature showcases: kicker + title + text|code
     ("#showcase" (border-top (px 1) solid (var line)) (padding (em 1 20) 0 (em 2)) (max-width (em 66)) (margin 0 auto))
-    (".show" (padding (em 1 80) 0 (em 0 80)))
-    (".kicker" (font-family (var mono)) (font-size (em 0 76)) (font-weight 600) (letter-spacing (em 0 16)) (text-transform uppercase) (color (var azure)))
-    (".show h2" (font-size (em 1 55)) (margin (em 0 25) 0 (em 0 40)) (letter-spacing "-.01em"))
-    (".slead" (color (var dim)) (font-size (em 1 5)) (max-width (em 44)) (margin 0))
-    (".slead code, .feature .txt code" (font-family (var mono)) (color (var lapis)) (font-size (em 0 88)) (background "#eef1f9") (padding (em 0 5) (em 0 35)) (border-radius (px 4)))
-    (".feature" (display grid) (grid-template-columns "1fr 1fr") (gap (em 2 60)) (align-items center) (margin-top (em 1 40)))
-    (".feature > *" (min-width 0))
-    (".feature.flip .txt" (order 2))
-    (".feature h3" (font-size (em 1 12)) (margin 0 0 (em 0 50)))
-    (".feature p" (color (var dim)) (font-size (em 0 95)) (margin 0 0 (em 0 70)))
-    (".feature p b" (color (var ink)))
-    (".feature pre" (background (var bg2)) (border (px 1) solid (var line)) (border-radius (px 10)) (padding (em 1 10) (em 1 20)) (overflow-x auto) (font-family (var mono)) (font-size (px 12 50)) (line-height (dec 1 55)) (color (var ink)) (margin 0) (box-shadow 0 (px 1) (px 3) (rgba 16 20 42 (dec 0 6))))
-    (".feature pre .tok-c" (color "#7a869f") (font-style italic))
-    (".feature pre .tok-s" (color "#1e7d34"))
-    (".feature pre .tok-k" (color (var lapis)) (font-weight 600))
-    (".feature pre .tok-h" (color (var azure)))
-    (".feature pre .tok-n" (color "#b0483f"))
-    (@media "(max-width: 64em)"
-      (".feature" (grid-template-columns "1fr") (gap (em 1 20)))
-      (".feature.flip .txt" (order 0)))
     ;; informational sections below the hero
     ("#features, #quickstart" (padding (em 2 50) 0) (border-top (px 1) solid (var line)) (scroll-margin-top (em 4)))
     (h2 (font-size (em 1 50)) (font-weight 600))
