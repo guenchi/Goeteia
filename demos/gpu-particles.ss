@@ -16,7 +16,7 @@
 ;; water, bent by traveling waves, flickering in the same phase.
 ;; The CPU's whole per-frame contribution is 16 bytes of uniforms.
 ;; Needs a WebGPU browser.
-(import (rnrs) (web sx) (web js) (web dom) (gfx fx) (gfx gpu))
+(import (rnrs) (web sx) (web js) (web dom) (gfx fx) (gfx gpu) (gfx wgsl))
 
 ;; re-running (or leaving) a tab must retire the previous loop; GL
 ;; demos bump this through fx-init!, a WebGPU demo bumps it itself
@@ -42,135 +42,150 @@
     (%mem-grow (quotient (+ need 65535) 65536))))
 
 (define CS
-  (string-append
-   "struct P { pos : vec2f, vel : vec2f, age : f32, life : f32 }\n"
-   "struct Sim { dt : f32, t : f32, p1 : f32, p2 : f32 }\n"
-   "@group(0) @binding(0) var<storage, read_write> ps : array<P>;\n"
-   "@group(0) @binding(1) var<uniform> sim : Sim;\n"
-   "fn h(n : f32) -> f32 { return fract(sin(n) * 43758.547); }\n"
-   "@compute @workgroup_size(64)\n"
-   "fn cs(@builtin(global_invocation_id) id : vec3u) {\n"
-   "  let i = id.x;\n"
-   "  if (i >= arrayLength(&ps)) { return; }\n"
-   "  var p = ps[i];\n"
-   "  p.age = p.age + sim.dt;\n"
-   "  if (p.age >= p.life) {\n"
-   "    let a = h(f32(i) * 12.9898 + sim.t);\n"
-   "    let b = h(f32(i) * 78.233 + sim.t * 1.7);\n"
-   "    let c = h(f32(i) * 37.719 + sim.t * 2.3);\n"
-   "    let d = h(f32(i) * 93.989 + sim.t * 3.1);\n"
-   ;; the flame hangs in mid-air, reborn on a filled disc: uniform
-   ;; in radius, so the core is dense and the rim wispy; the disc's
-   ;; radius beats, so the base is a round blob that pulses
-   "    let R = 0.042 * (1.0 + 0.12 * sin(sim.t * 6.3)\n"
-   "                         + 0.08 * sin(sim.t * 11.7));\n"
-   "    let ang = 6.28319 * a;\n"
-   "    let rad = R * b;\n"
-   "    let x = rad * cos(ang);\n"
-   "    p.pos = vec2f(x + 0.05 * sin(sim.t * 1.1),\n"
-   "                  -0.46 + 0.8 * rad * sin(ang)\n"
-   "                  + 0.03 * sin(sim.t * 0.7));\n"
-   ;; fan outward from the small core; the contraction below reins
-   ;; it back in, so the body swells to a teardrop and closes
-   "    p.vel = vec2f(cos(ang) * 0.44 * b, 0.31 + 0.94 * d);\n"
-   ;; the rim dies young, so the profile curves to a tip
-   "    p.life = (0.35 + 1.05 * c) * (1.0 - 0.5 * b);\n"
-   "    p.age = 0.0;\n"
-   "    if (i % 61u == 0u) {\n"           ; an ember pops loose
-   "      p.life = 2.0 + c;\n"
-   "      p.vel = vec2f((a - 0.5) * 0.75, 1.1 + 1.1 * d);\n"
-   "    }\n"
-   "  } else {\n"
-   "    let k = p.age / p.life;\n"
-   "    p.vel.y = p.vel.y + (2.1 - 1.25 * k) * sim.dt;\n"
-   "    p.vel.x = p.vel.x\n"
-   "              + (1.25 * sin(p.pos.y * 5.0 + sim.t * 8.0)\n"
-   "               + 0.69 * sin(p.pos.y * 11.0 - sim.t * 13.0))\n"
-   "              * k * sim.dt;\n"
-   "    p.vel = p.vel * (1.0 - 1.6 * sim.dt);\n"
-   ;; the column narrows as it rises: contract x in POSITION --
-   ;; a spring on the velocity oscillates too slowly to taper
-   "    p.pos.x = p.pos.x * (1.0 - 2.0 * sim.dt);\n"
-   "    p.pos = p.pos + p.vel * sim.dt;\n"
-   "  }\n"
-   "  ps[i] = p;\n"
-   "}\n"))
+  (wgsl-compute->string
+   '((struct P ((vec2 pos) (vec2 vel) (float age) (float life)))
+     (storage ps (array P))
+     (uniform float dt)
+     (uniform float t)
+     (uniform float p1)
+     (uniform float p2)
+     (workgroup 64)
+     (define (h (float n)) float
+       (return (fract (* (sin n) "43758.547"))))
+     (define (main) void
+       (local uint i gid.x)
+       (if (>= i (array-length ps)) (return))
+       (local P p (at ps i))
+       (set! p.age (+ p.age dt))
+       (if-else (>= p.age p.life)
+         ((local float a (h (+ (* (float i) "12.9898") t)))
+          (local float b (h (+ (* (float i) "78.233") (* t "1.7"))))
+          (local float c (h (+ (* (float i) "37.719") (* t "2.3"))))
+          (local float d (h (+ (* (float i) "93.989") (* t "3.1"))))
+          ;; the flame hangs in mid-air, reborn on a filled disc:
+          ;; uniform in radius, so the core is dense and the rim
+          ;; wispy; the disc's radius beats, so the base pulses
+          (local float R (* "0.042" (+ (fl 1)
+                                       (* "0.12" (sin (* t "6.3")))
+                                       (* "0.08" (sin (* t "11.7"))))))
+          (local float ang (* "6.28319" a))
+          (local float rad (* R b))
+          (local float x (* rad (cos ang)))
+          (set! p.pos (vec2 (+ x (* "0.05" (sin (* t "1.1"))))
+                            (+ "-0.46" (* "0.8" (* rad (sin ang)))
+                               (* "0.03" (sin (* t "0.7"))))))
+          ;; fan outward from the small core; the contraction below
+          ;; reins it back in: the body swells to a teardrop
+          (set! p.vel (vec2 (* (cos ang) (* "0.44" b))
+                            (+ "0.31" (* "0.94" d))))
+          ;; the rim dies young, so the profile curves to a tip
+          (set! p.life (* (+ "0.35" (* "1.05" c))
+                          (- (fl 1) (* "0.5" b))))
+          (set! p.age (fl 0))
+          (if (== (% i 61) 0)             ; an ember pops loose
+              (set! p.life (+ (fl 2) c))
+              (set! p.vel (vec2 (* (- a (fl 0 50)) "0.75")
+                                (+ "1.1" (* "1.1" d))))))
+         ((local float k (/ p.age p.life))
+          (set! p.vel.y (+ p.vel.y (* (- "2.1" (* "1.25" k)) dt)))
+          (set! p.vel.x (+ p.vel.x
+                           (* (+ (* "1.25" (sin (+ (* p.pos.y (fl 5))
+                                                   (* t (fl 8)))))
+                                 (* "0.69" (sin (- (* p.pos.y (fl 11))
+                                                   (* t (fl 13))))))
+                              k dt)))
+          (set! p.vel (* p.vel (- (fl 1) (* "1.6" dt))))
+          ;; the column narrows as it rises: contract x in POSITION
+          (set! p.pos.x (* p.pos.x (- (fl 1) (* "2.0" dt))))
+          (set! p.pos (+ p.pos (* p.vel dt)))))
+       (set! (at ps i) p)))))
 
 (define RENDER
-  (string-append
-   "struct VOut { @builtin(position) pos : vec4f,\n"
-   "              @location(0) c : vec4f }\n"
-   "@vertex fn vs(@location(0) corner : vec2f,\n"
-   "              @location(1) ppos : vec2f,\n"
-   "              @location(2) pvel : vec2f,\n"
-   "              @location(3) pal : vec2f) -> VOut {\n"
-   "  var o : VOut;\n"
-   "  let k = clamp(pal.x / max(pal.y, 0.001), 0.0, 1.0);\n"
-   "  let ember = step(1.9, pal.y);\n"
-   "  let size = (0.0035 + 0.013 * (1.0 - 0.6 * k))\n"
-   "             * (1.0 - 0.7 * ember);\n"
-   "  let w = corner * size;\n"
-   ;; x * 400/720 squares the canvas back up, dots stay round
-   "  o.pos = vec4f((ppos.x + w.x) * 0.5556, ppos.y + w.y,\n"
-   ;; hotter = nearer: the young core burns through the old smoke
-   "                mix(0.1 + 0.8 * k, 0.05, ember), 1.0);\n"
-   "  let c1 = mix(vec3f(1.0, 0.96, 0.75), vec3f(1.0, 0.58, 0.10),\n"
-   "               smoothstep(0.02, 0.14, k));\n"
-   "  let c2 = mix(c1, vec3f(0.72, 0.12, 0.02),\n"
-   "               smoothstep(0.4, 0.8, k));\n"
-   "  var col = c2 * (1.0 - 0.85 * smoothstep(0.8, 1.0, k));\n"
-   "  col = mix(col, vec3f(1.0, 0.8, 0.35) * (1.0 - 0.6 * k), ember);\n"
-   "  o.c = vec4f(col, 1.0);\n"
-   "  return o;\n"
-   "}\n"
-   "@fragment fn fs(@location(0) c : vec4f) -> @location(0) vec4f {\n"
-   "  return c;\n"
-   "}\n"))
+  (wgsl->string
+   '((attribute vec2 corner)
+     (attribute vec2 ppos)
+     (attribute vec2 pvel)
+     (attribute vec2 pal)
+     (varying vec4 v_c)
+     (define (main) void
+       (local float k (clamp (/ pal.x (max pal.y "0.001"))
+                             (fl 0) (fl 1)))
+       (local float ember (step "1.9" pal.y))
+       (local float size (* (+ "0.0035" (* "0.013" (- (fl 1) (* "0.6" k))))
+                            (- (fl 1) (* "0.7" ember))))
+       (local vec2 w (* corner size))
+       ;; x * 400/720 squares the canvas back up, dots stay round;
+       ;; hotter = nearer: the young core burns through the smoke
+       (set! gl_Position (vec4 (* (+ ppos.x w.x) "0.5556")
+                               (+ ppos.y w.y)
+                               (mix (+ (fl 0 10) (* (fl 0 80) k))
+                                    "0.05" ember)
+                               (fl 1)))
+       (local vec3 c1 (mix (vec3 (fl 1) "0.96" "0.75")
+                           (vec3 (fl 1) "0.58" "0.10")
+                           (smoothstep "0.02" "0.14" k)))
+       (local vec3 c2 (mix c1 (vec3 "0.72" "0.12" "0.02")
+                           (smoothstep "0.4" "0.8" k)))
+       (local vec3 col (* c2 (- (fl 1)
+                                (* "0.85" (smoothstep "0.8" (fl 1) k)))))
+       (set! col (mix col (* (vec3 (fl 1) "0.8" "0.35")
+                             (- (fl 1) (* "0.6" k)))
+                      ember))
+       (set! v_c (vec4 col (fl 1)))))
+   '((define (main) void
+       (set! gl_FragColor v_c)))))
 
-;; the backdrop, one fullscreen quad: above the waterline, the halo
-;; the flame throws into the air; below it, rippled water carrying
-;; the flame's mirror -- a streak bent by two traveling waves --
-;; everything flickering in the same phase as the fire
 (define BG
-  (string-append
-   "struct Sim { dt : f32, t : f32, p1 : f32, p2 : f32 }\n"
-   "@group(0) @binding(0) var<uniform> sim : Sim;\n"
-   "struct VOut { @builtin(position) pos : vec4f,\n"
-   "              @location(0) w : vec2f }\n"
-   "@vertex fn vs(@location(0) p : vec2f) -> VOut {\n"
-   "  var o : VOut;\n"
-   "  o.pos = vec4f(p, 0.95, 1.0);\n"      ; behind every particle
-   "  o.w = p;\n"
-   "  return o;\n"
-   "}\n"
-   "@fragment fn fs(@location(0) w : vec2f) -> @location(0) vec4f {\n"
-   "  let t = sim.t;\n"
-   "  let flick = 0.85 + 0.10 * sin(t * 9.3) + 0.06 * sin(t * 15.7);\n"
-   "  let wx = w.x * 1.8;\n"                ; aspect-true units
-   "  let fx = 0.09 * sin(t * 1.1);\n"      ; the flame's drift, same phase
-   "  var col = vec3f(0.015, 0.008, 0.025);\n"
-   "  if (w.y > -0.68) {\n"                 ; air: the flame lights it
-   "    let dx = wx - fx;\n"
-   "    let dy = w.y + 0.30;\n"
-   "    let r2 = dx * dx * 1.3 + dy * dy * 0.7;\n"
-   "    col = col + vec3f(1.0, 0.5, 0.16)\n"
-   "              * (0.22 * flick * exp(-r2 * 4.0));\n"
-   "  } else {\n"                           ; water: ripples mirror it
-   "    let d = -0.68 - w.y;\n"             ; depth below the line
-   "    let rip = 0.020 * sin(wx * 34.0 - t * 2.6 + d * 25.0)\n"
-   "            + 0.012 * sin(wx * 61.0 + t * 4.3);\n"
-   "    let sx = wx - fx + rip * (1.0 + 8.0 * d);\n"
-   "    let streak = exp(-sx * sx / (0.015 + 0.6 * d * d));\n"
-   "    let shimmer = 0.75 + 0.25 * sin(wx * 47.0 + d * 90.0 - t * 5.0);\n"
-   "    let heat = streak * exp(-d * 4.0) * shimmer * flick;\n"
-   "    let glow = 0.30 * exp(-sx * sx * 1.5) * exp(-d * 2.5) * flick;\n"
-   "    let line = 0.35 * exp(-d * 45.0) * exp(-sx * sx * 0.8) * flick;\n"
-   "    col = vec3f(0.012, 0.02, 0.045)\n"
-   "        + vec3f(1.0, 0.60, 0.20) * heat\n"
-   "        + vec3f(1.0, 0.45, 0.15) * (glow + line);\n"
-   "  }\n"
-   "  return vec4f(col, 1.0);\n"
-   "}\n"))
+  (wgsl->string
+   '((attribute vec2 apos)
+     (uniform float dt)                  ; the Sim struct, all four
+     (uniform float t)                   ; members, so the layout
+     (uniform float p1)                  ; matches the shared buffer
+     (uniform float p2)
+     (varying vec2 v_w)
+     (define (main) void
+       (set! gl_Position (vec4 apos.x apos.y "0.95" (fl 1)))
+       (set! v_w apos)))
+   '((define (main) void
+       (local float flick (+ "0.85"
+                             (* "0.10" (sin (* t "9.3")))
+                             (* "0.06" (sin (* t "15.7")))))
+       (local float wx (* v_w.x "1.8"))  ; aspect-true units
+       (local float fx (* "0.09" (sin (* t "1.1"))))
+       (local vec3 col (vec3 "0.015" "0.008" "0.025"))
+       (if-else (> v_w.y "-0.68")
+         ;; air: the flame lights it
+         ((local float dx (- wx fx))
+          (local float dy (+ v_w.y "0.30"))
+          (local float r2 (+ (* dx dx "1.3") (* dy dy "0.7")))
+          (set! col (+ col (* (vec3 (fl 1) (fl 0 50) "0.16")
+                              (* "0.22" flick
+                                 (exp (- (* r2 (fl 4)))))))))
+         ;; water: ripples mirror it
+         ((local float d (- "-0.68" v_w.y))
+          (local float rip (+ (* "0.020" (sin (+ (- (* wx "34.0")
+                                                    (* t "2.6"))
+                                                 (* d "25.0"))))
+                              (* "0.012" (sin (+ (* wx "61.0")
+                                                 (* t "4.3"))))))
+          (local float sx (+ (- wx fx)
+                             (* rip (+ (fl 1) (* (fl 8) d)))))
+          (local float streak (exp (- (/ (* sx sx)
+                                         (+ "0.015" (* "0.6" d d))))))
+          (local float shimmer (+ "0.75"
+                                  (* "0.25" (sin (- (+ (* wx "47.0")
+                                                       (* d "90.0"))
+                                                    (* t (fl 5)))))))
+          (local float heat (* streak (exp (- (* d (fl 4))))
+                               shimmer flick))
+          (local float glow (* "0.30" (exp (- (* sx sx "1.5")))
+                               (exp (- (* d "2.5"))) flick))
+          (local float line (* "0.35" (exp (- (* d "45.0")))
+                               (exp (- (* sx sx "0.8"))) flick))
+          (set! col (+ (vec3 "0.012" "0.02" "0.045")
+                       (* (vec3 (fl 1) "0.60" "0.20") heat)
+                       (* (vec3 (fl 1) "0.45" "0.15") (+ glow line))))))
+       (set! gl_FragColor (vec4 col (fl 1)))))))
 
 ;; seed the fire mid-burn: random ages along the column, so the
 ;; flame is already standing when the first frame lands
