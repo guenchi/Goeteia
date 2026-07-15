@@ -85,6 +85,24 @@
                         (string-append "color:rgb(" (ch 0) "," (ch 1)
                                        "," (ch 2) ");")))))))))
 
+  ;; the whole text's width as the BROWSER renders it: an invisible
+  ;; nowrap probe inside the element (so font, spacing, features all
+  ;; inherit).  Canvas metrics drift from the DOM's -- Firefox
+  ;; especially -- so canvas supplies only the per-glyph PROPORTIONS
+  ;; and this supplies the absolute scale: a line the DOM fits, the
+  ;; typeset layout then fits by construction.
+  (define ($dom-text-width el text)
+    (let ((probe (create-element "span")))
+      (set-attribute! probe "style"
+        "position:absolute;visibility:hidden;white-space:nowrap")
+      (set-text! probe text)
+      (append-child! el probe)
+      (let ((w ($fl (js->number
+                     (js-get (js-method probe "getBoundingClientRect")
+                             "width")))))
+        (remove-child! el probe)
+        w)))
+
   ;; ---- the plain path: typeset re-sets the text ----
   (define ($explode-plain! el)
     (let* ((text (js->string (js-get el "textContent")))
@@ -98,14 +116,22 @@
                                 (js->string (js-get cs "fontSize")) " "
                                 (js->string (js-get cs "fontFamily"))))
            (raw (canvas-measurer font))
-           ;; per-code-point advances miss kerning; scale them so the
-           ;; pen lands where the browser's text ends
-           (whole (raw text))
-           (cpsum (string-fold-cp
-                   (lambda (acc cp start len)
-                     (fl+ acc (raw (substring text start (+ start len)))))
-                   0.0 text))
-           (factor (if (fl<? 0.0 cpsum) (fl/ whole cpsum) 1.0))
+           ;; canvas advances give the glyphs' proportions; the DOM
+           ;; probe gives the true total (kerning, features, engine
+           ;; quirks included), minus what letter-spacing adds per
+           ;; code point -- we re-add that per glyph below
+           (counted (string-fold-cp
+                     (lambda (acc cp start len)
+                       (cons (fl+ (car acc)
+                                  (raw (substring text start (+ start len))))
+                             (+ (cdr acc) 1)))
+                     (cons 0.0 0) text))
+           (cpsum (car counted))
+           (whole (fl- ($dom-text-width el text)
+                       (fl* ls (fixnum->flonum (cdr counted)))))
+           (factor (if (and (fl<? 0.0 cpsum) (fl<? 0.0 whole))
+                       (fl/ whole cpsum)
+                       1.0))
            (measure (lambda (s) (fl+ (fl* (raw s) factor) ls)))
            ;; fractional width plus slack: a shrink-to-fit element is
            ;; EXACTLY as wide as its text, and integer clientWidth or
