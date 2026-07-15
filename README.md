@@ -884,9 +884,7 @@ them byte-for-byte across every mip level.
   RGBA32 unpack.  `(gfx meshopt)` — the EXT_meshopt_compression vertex
   and index codecs plus filters, checked against `meshopt_decoder`.
   `(gfx ktx)` now decodes UASTC KTX2 end-to-end (zstd-supercompressed
-  or raw), and `(gfx gltf)` reads meshopt-compressed bufferViews.  Two
-  compiler fixes rode along: `cond`'s `(test => proc)` arrow clause,
-  and `syntax-rules` macros defined and used within one library.
+  or raw), and `(gfx gltf)` reads meshopt-compressed bufferViews.
 
 ## License
 
