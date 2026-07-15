@@ -25,7 +25,7 @@
 ;;
 ;; Copyright (c) 2026 guenchi. MIT license; see LICENSE.
 (library (gfx wgsl)
-  (export wgsl->string wgsl-layout)
+  (export wgsl->string wgsl-compute->string wgsl-layout)
   (import (rnrs) (gfx glsl))
 
   (define ($wgsl-join parts sep)
@@ -38,15 +38,18 @@
   ;; ---- type and intrinsic spellings ----
   (define ($wgsl-type t)
     (case t
-      ((float) "f32") ((int) "i32") ((bool) "bool")
+      ((float) "f32") ((int) "i32") ((uint) "u32") ((bool) "bool")
       ((vec2) "vec2f") ((vec3) "vec3f") ((vec4) "vec4f")
       ((mat3) "mat3x3f") ((mat4) "mat4x4f")
-      (else (error 'wgsl "no WGSL spelling for type" t))))
+      ;; any other symbol is a (struct ...)-declared name
+      (else (if (symbol? t)
+                (symbol->string t)
+                (error 'wgsl "no WGSL spelling for type" t)))))
 
   (define $wgsl-calls                   ; renamed constructors/casts
     '((vec2 . "vec2f") (vec3 . "vec3f") (vec4 . "vec4f")
       (mat3 . "mat3x3f") (mat4 . "mat4x4f")
-      (float . "f32") (int . "i32")))
+      (float . "f32") (int . "i32") (uint . "u32")))
 
   (define ($wgsl-vertex-format t)
     (case t
@@ -103,7 +106,12 @@
            "(" ($wgsl-join (map $wgsl-expr (cdr e))
                            (string-append " " (symbol->string op) " "))
            ")"))
-         ((memq op '(< > <= >= ==))
+         ((eq? op 'at)                  ; (at arr i) -> arr[i]
+          (string-append ($wgsl-expr (cadr e)) "["
+                         ($wgsl-expr (caddr e)) "]"))
+         ((eq? op 'array-length)        ; runtime-sized storage arrays
+          (string-append "arrayLength(&" ($wgsl-expr (cadr e)) ")"))
+         ((memq op '(< > <= >= == %))
           (string-append "(" ($wgsl-expr (cadr e)) " "
                          (symbol->string op) " "
                          ($wgsl-expr (caddr e)) ")"))
@@ -303,6 +311,80 @@
        "var goe_out : vec4f; "
        (apply string-append (map $wgsl-stmt (cdddr fs-main)))
        "return goe_out; } ")))
+
+  ;; ---- a compute module ----
+  ;; (wgsl-compute->string forms): struct declarations, ONE
+  ;; read_write storage array at binding 0, the uniform struct at
+  ;; binding 1 -- the order (gfx gpu)'s gpu-compute-group! wires --
+  ;; helper defines, and main as the cs entry point with the global
+  ;; invocation id in scope as gid (a vec3u).
+  ;;
+  ;;   (struct P ((vec2 pos) (float age)))
+  ;;   (storage ps (array P))
+  ;;   (uniform float dt) ...
+  ;;   (workgroup 64)
+  ;;   (define (main) void
+  ;;     (local uint i gid.x)
+  ;;     (if (>= i (array-length ps)) (return))
+  ;;     (local P p (at ps i)) ... (set! (at ps i) p))
+  (define (wgsl-compute->string forms)
+    (let* ((structs (filter (lambda (f) (eq? (car f) 'struct)) forms))
+           (stores (filter (lambda (f) (eq? (car f) 'storage)) forms))
+           (unis (glsl-uniforms forms))
+           (wg (let find ((fs forms))
+                 (cond ((null? fs) 64)
+                       ((eq? (caar fs) 'workgroup) (cadr (car fs)))
+                       (else (find (cdr fs))))))
+           (uni-sub (map (lambda (u)
+                           (cons (symbol->string (car u))
+                                 (string-append
+                                  "u." (symbol->string (car u)))))
+                         unis))
+           (subbed ($wgsl-subst forms uni-sub))
+           (cmain (car ($wgsl-defines subbed #t)))
+           (helpers ($wgsl-defines subbed #f)))
+      (string-append
+       (apply string-append
+              (map (lambda (s)
+                     (string-append
+                      "struct " (symbol->string (cadr s)) " { "
+                      ($wgsl-join
+                       (map (lambda (fld)
+                              (string-append (symbol->string (cadr fld))
+                                             " : "
+                                             ($wgsl-type (car fld))))
+                            (caddr s))
+                       ", ")
+                      " } "))
+                   structs))
+       (apply string-append
+              (let number ((ss stores) (b 0))
+                (if (null? ss)
+                    '()
+                    (cons (string-append
+                           "@group(0) @binding(" (number->string b)
+                           ") var<storage, read_write> "
+                           (symbol->string (cadr (car ss)))
+                           " : array<"
+                           ($wgsl-type (cadr (caddr (car ss)))) ">; ")
+                          (number (cdr ss) (+ b 1))))))
+       (if (null? unis)
+           ""
+           (string-append
+            "struct U { "
+            ($wgsl-join (map (lambda (u)
+                               (string-append (symbol->string (car u))
+                                              " : "
+                                              ($wgsl-type (cadr u))))
+                             unis)
+                        ", ")
+            " } @group(0) @binding(" (number->string (length stores))
+            ") var<uniform> u : U; "))
+       (apply string-append (map $wgsl-helper helpers))
+       "@compute @workgroup_size(" (number->string wg) ") "
+       "fn cs(@builtin(global_invocation_id) gid : vec3u) { "
+       (apply string-append (map $wgsl-stmt (cdddr cmain)))
+       "} ")))
 
   ;; the pipeline's vertex layout, from the same attribute forms
   (define (wgsl-layout vs-forms)
