@@ -163,8 +163,8 @@
           (span (@ (id "status") (class "status")) "booting the compiler…"))
         (p (@ (class "hint"))
            "No server compiles this — the page carries the whole compiler ("
-           (code "goeteia.wasm") ", ~38 KB gzipped, cached after first load), "
-           "and each Run recompiles the source above in ~15 ms.")))
+           (code "goeteia.wasm") ", ~54 KB gzipped, cached after first load), "
+           "and each Run recompiles the source above in about 80 ms.")))
 
    `(section (@ (id "showcase"))
       ,(show "01" "The language" "R6RS and syntax-case, complete — in the page"
