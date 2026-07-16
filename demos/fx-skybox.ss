@@ -369,8 +369,8 @@
        ;; at this camera; 0.06 keeps the grazing law, brighter base)
        (local float one_minus_ndv (- (fl 1) ndv))
        (local float one_minus_ndv2 (* one_minus_ndv one_minus_ndv))
-       (local float f (+ "0.06"
-                         (* "0.94"
+       (local float f (+ "0.08"
+                         (* "0.92"
                             (* (* one_minus_ndv2 one_minus_ndv2)
                                one_minus_ndv))))
        (local float crest (clamp (+ "0.50" (* v_wave "3.20"))
