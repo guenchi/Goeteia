@@ -19,6 +19,17 @@
     "void main() { x = 1.25; } ")
  (t (glsl->string '((define (main) void (set! x (fl 0 5)))))
     "void main() { x = 0.05; } ")
+ ;; a width third argument keeps leading zeros Scheme would drop:
+ ;; 2037 padded to 5 is the fraction 02037
+ (t (glsl->string '((define (main) void (set! x (fl 0 2037 5)))))
+    "void main() { x = 0.02037; } ")
+ (t (glsl->string '((define (main) void (set! x (fl 0 9 3)))))
+    "void main() { x = 0.009; } ")
+ (t (glsl->string '((define (main) void (set! x (fl 0 42 3)))))
+    "void main() { x = 0.042; } ")
+ ;; width below the natural length is a no-op; trailing zeros still go
+ (t (glsl->string '((define (main) void (set! x (fl 0 70 3)))))
+    "void main() { x = 0.07; } ")
  ;; infix arithmetic, unary minus, calls, swizzles pass through
  (t (glsl->string '((define (main) void
                       (set! gl_Position (vec4 (* p.x (fl 2)) (- p.y) (fl 0) (fl 1))))))
