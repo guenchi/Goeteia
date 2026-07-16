@@ -39,7 +39,11 @@
      (uniform mat4 u_proj)
      (uniform vec3 u_eye)
      (uniform float u_t)
-     (uniform float u_image)             ; 0 primary, 1 secondary
+     (uniform float u_fold)              ; the pass's full fold angle
+     (uniform float u_scale)             ; its demagnification
+     (uniform float u_drop)              ; its centring drop
+     (uniform float u_gate)              ; 1: far side only
+     (uniform float u_gain)              ; its brightness
      (varying float v_dopp)
      (varying float v_temp)
      (varying float v_seed)
@@ -82,17 +86,15 @@
        ;; hanging gap); the straight path keeps its density even, and
        ;; the endpoints are untouched: knee 1 is exactly the approved
        ;; interior, knee 0 the flat band
-       (local float A (mix "1.50" "-0.72" u_image))
-       (local float sa (sin A))
-       (local float ca (cos A))
+       (local float sa (sin u_fold))
+       (local float ca (cos u_fold))
        (local float cy (- pv.y bh.y))
        (local float dx (- pv.x bh.x))
        (local vec3 flat0 (vec3 dx cy (- (fl 0) D)))
        (local vec3 rot3 (vec3 dx
-                              (- (+ (* cy ca) (* D sa))
-                                 (* "1.5" (- (fl 1) u_image)))
+                              (- (+ (* cy ca) (* D sa)) u_drop)
                               (- (fl 0) (- (* D ca) (* cy sa)))))
-       (local vec3 full (* rot3 (mix (fl 1) "0.48" u_image)))
+       (local vec3 full (* rot3 u_scale))
        (local vec3 off (mix flat0 full knee))
        (set! pv (vec4 (+ bh.xyz off) pv.w))
        (local vec4 clip (* u_proj pv))
@@ -118,8 +120,8 @@
        ;; the emitted temperature falls with radius (normalized)
        (set! v_temp (mix (fl 1) "0.35" (/ (- a_r "1.5") "5.5")))
        (set! v_seed a_seed)
-       ;; the secondary image shows only the far side, and fainter
-       (set! v_fade (mix (fl 1) (* knee "0.55") u_image))
+       ;; a gated pass shows only the far side; gain scales the pass
+       (set! v_fade (* (mix (fl 1) knee u_gate) u_gain))
        ;; the disk's own radial grooves: concentric emission rings.
        ;; Edge-on they compress into the band; folded over the hole
        ;; they read face-on -- each groove a ring of the flat disk
@@ -162,17 +164,25 @@
 ;; ---- the disk: r biased inward, a thin wedge of height ----
 (define buf (fx-buffer!))
 (define data (fx-alloc! (* N 16)))
+;; a fixnum-safe LCG: 999982 * 331 stays under 2^30, so every draw is
+;; plain fixnum arithmetic (the classic 1103515245 multiplier promoted
+;; every product to a bignum -- 800k bignum ops WAS the load hang)
 (define seed 77)
 (define (rnd!)
-  (set! seed (remainder (+ (* seed 1103515245) 12345) 2147483648))
-  (fl/ (fixnum->flonum (remainder seed 100000)) 100000.0))
+  (set! seed (remainder (+ (* seed 331) 197) 999983))
+  (fl/ (fixnum->flonum seed) 999983.0))
+(define (frac x) (fl- x (flfloor x)))
 (let fill ((i 0))
   (when (< i N)
     (let* ((u (rnd!))
            (r (fl+ 1.5 (fl* 5.5 (fl* u (flsqrt u)))))
            (at (+ data (* i 16))))
       (%mem-f32-set! at r)
-      (%mem-f32-set! (+ at 4) (fl* 6.2831853 (rnd!)))
+      ;; golden-ratio azimuths: low-discrepancy, and uncorrelated with
+      ;; the LCG's radii (no Marsaglia spirals)
+      (%mem-f32-set! (+ at 4)
+                     (fl* 6.2831853
+                          (frac (fl* (fixnum->flonum i) 0.61803398875))))
       (%mem-f32-set! (+ at 8) (fl* (fl* (fl- (fl+ (rnd!) (rnd!)) 1.0)
                                         0.05)
                                    r))
@@ -184,6 +194,14 @@
 (cmd-flush!)
 
 (define proj (m4-perspective 0.8 (/ 720.0 400.0) 0.1 100.0))
+
+(define (pass! fold scale drop gate gain)
+  (fx-uniform! disk-p 'u_fold fold)
+  (fx-uniform! disk-p 'u_scale scale)
+  (fx-uniform! disk-p 'u_drop drop)
+  (fx-uniform! disk-p 'u_gate gate)
+  (fx-uniform! disk-p 'u_gain gain)
+  (cmd-draw-arrays! GL-POINTS 0 N))
 
 (fx-loop!
  (lambda (t dt)
@@ -198,9 +216,9 @@
      (fx-uniform! disk-p 'u_proj proj)
      (fx-uniform! disk-p 'u_eye (v3-x eye) (v3-y eye) (v3-z eye))
      (fx-uniform! disk-p 'u_t t)
-     ;; primary image, then the wrapped-around secondary under the hole
-     (fx-uniform! disk-p 'u_image 0.0)
-     (cmd-draw-arrays! GL-POINTS 0 N)
-     (fx-uniform! disk-p 'u_image 1.0)
-     (cmd-draw-arrays! GL-POINTS 0 N)
+     ;; three images: the primary fold, the wrapped-around secondary
+     ;; under the hole, and a fainter outer halo ringing the arch
+     (pass! 1.50 1.0 1.5 0.0 1.0)
+     (pass! -0.72 0.48 0.0 1.0 0.55)
+     (pass! 1.50 1.30 1.5 1.0 0.32)
      (cmd-blend! #f))))
