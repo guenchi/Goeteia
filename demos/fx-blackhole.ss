@@ -226,8 +226,10 @@
      ;; under the hole, and a fainter outer halo ringing the arch
      (pass! 1.50 1.0 0.0 1.5 0.0 1.0)
      (pass! -0.72 0.48 0.0 0.0 1.0 0.55)
-     ;; a THIN outer ring: the whole disk squeezed into a narrow
-     ;; shell just outside the arch (base 6.0, slope 0.10) -- a
-     ;; distinct circle of light, not a rescaled overlay
-     (pass! 1.50 0.10 6.0 1.5 1.0 0.30)
+     ;; the doubly-wrapped image: a thin ring hugging JUST outside
+     ;; the shadow, inside the arch -- higher-order wraps converge
+     ;; onto the photon ring from outside, so no lensed ring can sit
+     ;; beyond the arch (the 6.0 attempt was unphysical, and its
+     ;; view-space depth inflated into a 3D hoop)
+     (pass! 1.50 0.06 2.75 1.5 1.0 0.35)
      (cmd-blend! #f))))
