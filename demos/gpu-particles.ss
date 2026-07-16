@@ -1,4 +1,5 @@
-;; GPU-compute fire: the physics is a @compute shader, and the
+;; GPU-compute fire, five flames that gather and part: the
+;; physics is a @compute shader, and the
 ;; particle buffer never leaves the GPU.  A storage buffer holds
 ;; 100,000 (pos, vel, age, life) records; each frame one dispatch
 ;; ages the flame -- buoyancy, a pinch toward the axis, two sine
@@ -56,6 +57,15 @@
        (local uint i gid.x)
        (if (>= i (array-length ps)) (return))
        (local P p (at ps i))
+       ;; five flames: each particle belongs to one (i mod 5), the
+       ;; bases spaced on x by a breathing spread -- a ~14s cycle
+       ;; gathers them into one blaze and opens them out again
+       (local float fi (float (% i 5)))
+       (local float sp (* "0.42" (- (fl 0 50)
+                                    (* (fl 0 50) (cos (* t "0.45"))))))
+       (local float bx (+ (* (- fi (fl 2)) sp)
+                          (* "0.04" (sin (+ (* t "1.1")
+                                            (* fi "1.3"))))))
        (set! p.age (+ p.age dt))
        (if-else (>= p.age p.life)
          ((local float a (h (+ (* (float i) "12.9898") t)))
@@ -71,9 +81,9 @@
           (local float ang (* "6.28319" a))
           (local float rad (* R b))
           (local float x (* rad (cos ang)))
-          (set! p.pos (vec2 (+ x (* "0.05" (sin (* t "1.1"))))
+          (set! p.pos (vec2 (+ x bx)
                             (+ "-0.46" (* "0.8" (* rad (sin ang)))
-                               (* "0.03" (sin (* t "0.7"))))))
+                               (* "0.03" (sin (+ (* t "0.7") fi))))))
           ;; fan outward from the small core; the contraction below
           ;; reins it back in: the body swells to a teardrop
           (set! p.vel (vec2 (* (cos ang) (* "0.44" b))
@@ -90,13 +100,16 @@
           (set! p.vel.y (+ p.vel.y (* (- "2.1" (* "1.25" k)) dt)))
           (set! p.vel.x (+ p.vel.x
                            (* (+ (* "1.25" (sin (+ (* p.pos.y (fl 5))
-                                                   (* t (fl 8)))))
+                                                   (* t (fl 8))
+                                                   (* fi "2.1"))))
                                  (* "0.69" (sin (- (* p.pos.y (fl 11))
                                                    (* t (fl 13))))))
                               k dt)))
           (set! p.vel (* p.vel (- (fl 1) (* "1.6" dt))))
-          ;; the column narrows as it rises: contract x in POSITION
-          (set! p.pos.x (* p.pos.x (- (fl 1) (* "2.0" dt))))
+          ;; the column narrows as it rises: contract x toward the
+          ;; particle's OWN flame axis (not the screen centre)
+          (set! p.pos.x (+ bx (* (- p.pos.x bx)
+                                 (- (fl 1) (* "2.0" dt)))))
           (set! p.pos (+ p.pos (* p.vel dt)))))
        (set! (at ps i) p)))))
 
