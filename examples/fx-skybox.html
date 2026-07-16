@@ -17,11 +17,12 @@
     seams without an edge — computed as bytes in a Scheme loop and
     handed to <code>gl-cubemap!</code>.  The box draws with the
     camera's translation erased (a <code>w = 0</code> multiply), so
-    the sky never moves; the sea is a planar reflection: a mirrored
-    camera renders sky and ball into a texture each frame, every sea
-    fragment projects itself through that camera with a wave-shifted
-    lookup, Fresnel-blended over the deep — so the ball stands
-    upside-down in the water, riding the same swell as the clouds.  Needs
+    the sky never moves; the sea is a displaced dielectric surface: a
+    mirrored camera keeps the ball in a cached reflection texture,
+    while sky reflection comes directly from the cube map;
+    broad waves move the foreground mesh, and finer waves perturb its
+    normals before an IOR-based Fresnel mix.  The ball is partially
+    immersed in a small contact ripple while its cloud reflection fades.  Needs
     WebGL&nbsp;2.  See <code>fx-skybox.ss</code>.</p>
     <canvas id="c" width="800" height="600"></canvas>
     <script type="module">
