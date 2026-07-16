@@ -1,4 +1,4 @@
-;; A black hole's accretion disk, a million particles whose
+;; A black hole's accretion disk, two million particles whose
 ;; physics is arithmetic in the vertex shader: each particle is four
 ;; numbers (radius, phase, height, seed) and its position is a pure
 ;; function of time -- Keplerian shear, the inner disk lapping the
@@ -27,7 +27,7 @@
 
 (fx-init! (get-element-by-id "c"))
 
-(define N 1000000)
+(define N 2000000)
 
 (define disk-p
   (fx-program!
@@ -40,11 +40,7 @@
      (uniform vec3 u_eye)
      (uniform float u_t)
      (uniform float u_fold)              ; the pass's full fold angle
-     (uniform float u_scale)             ; radial slope (pure scale
-                                         ; when u_base is 0)
-     (uniform float u_base)              ; radial base: base+slope*L
-                                         ; squeezes the disk into a
-                                         ; thin shell at that radius
+     (uniform float u_scale)             ; its demagnification
      (uniform float u_drop)              ; its centring drop
      (uniform float u_gate)              ; 1: far side only
      (uniform float u_gain)              ; its brightness
@@ -98,8 +94,7 @@
        (local vec3 rot3 (vec3 dx
                               (- (+ (* cy ca) (* D sa)) u_drop)
                               (- (fl 0) (- (* D ca) (* cy sa)))))
-       (local float Lf (max (length rot3) "0.001"))
-       (local vec3 full (* rot3 (/ (+ u_base (* u_scale Lf)) Lf)))
+       (local vec3 full (* rot3 u_scale))
        (local vec3 off (mix flat0 full knee))
        (set! pv (vec4 (+ bh.xyz off) pv.w))
        (local vec4 clip (* u_proj pv))
@@ -200,10 +195,9 @@
 
 (define proj (m4-perspective 0.8 (/ 720.0 400.0) 0.1 100.0))
 
-(define (pass! fold scale base drop gate gain)
+(define (pass! fold scale drop gate gain)
   (fx-uniform! disk-p 'u_fold fold)
   (fx-uniform! disk-p 'u_scale scale)
-  (fx-uniform! disk-p 'u_base base)
   (fx-uniform! disk-p 'u_drop drop)
   (fx-uniform! disk-p 'u_gate gate)
   (fx-uniform! disk-p 'u_gain gain)
@@ -224,12 +218,7 @@
      (fx-uniform! disk-p 'u_t t)
      ;; three images: the primary fold, the wrapped-around secondary
      ;; under the hole, and a fainter outer halo ringing the arch
-     (pass! 1.50 1.0 0.0 1.5 0.0 1.0)
-     (pass! -0.72 0.48 0.0 0.0 1.0 0.55)
-     ;; the doubly-wrapped image: a thin ring hugging JUST outside
-     ;; the shadow, inside the arch -- higher-order wraps converge
-     ;; onto the photon ring from outside, so no lensed ring can sit
-     ;; beyond the arch (the 6.0 attempt was unphysical, and its
-     ;; view-space depth inflated into a 3D hoop)
-     (pass! 1.50 0.06 2.75 1.5 1.0 0.35)
+     (pass! 1.50 1.0 1.5 0.0 1.0)
+     (pass! -0.72 0.48 0.0 1.0 0.55)
+     (pass! 1.50 1.30 1.5 1.0 0.32)
      (cmd-blend! #f))))
