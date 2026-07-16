@@ -176,6 +176,9 @@
      (attribute float a_seed)
      (uniform mat4 u_view)
      (uniform mat4 u_proj)
+     (uniform float u_mode)              ; 0 primary; 1 wrapped copy
+     (uniform float u_ringb)             ; wrapped ring base radius
+     (uniform float u_rings)             ; wrapped ring thickness
      (varying float v_seed)
      (define (main) void
        (local vec4 pv (* u_view (vec4 a_dir (fl 0))))
@@ -189,14 +192,20 @@
           (local vec2 nd (/ clip.xy clip.w))
           (local vec2 aa (vec2 (* nd.x "1.8") nd.y))
           (local float bta (max (length aa) "0.0001"))
-          (local float th (* (fl 0 50)
-                             (+ bta (sqrt (+ (* bta bta) "1.54")))))
+          ;; primary image, or a wrapped copy: one more turn round
+          ;; the hole squeezes the WHOLE sky into a thin annulus --
+          ;; stacked copies are the concentric bright/dark banding
+          (local float th1 (* (fl 0 50)
+                              (+ bta (sqrt (+ (* bta bta) "1.54")))))
+          (local float thw (+ u_ringb (* u_rings (/ bta (+ (fl 1) bta)))))
+          (local float th (mix th1 thw u_mode))
           (local vec2 ab (* aa (/ th bta)))
           (set! gl_Position (vec4 (* (vec2 (/ ab.x "1.8") ab.y) clip.w)
                                   clip.z clip.w))
           (set! gl_PointSize (+ "2.0" (* a_seed "2.5")))))
        (set! v_seed a_seed)))
    '((precision mediump float)
+     (uniform float u_sgain)
      (varying float v_seed)
      (define (main) void
        (local vec2 pc (- gl_PointCoord (vec2 (fl 0 50) (fl 0 50))))
@@ -207,7 +216,8 @@
                           (vec3 (fl 1) "0.92" "0.80")
                           (fract (* v_seed "7.31"))))
        (set! gl_FragColor
-             (vec4 (* c (* fall (+ "0.90" (* "0.10" v_seed))))
+             (vec4 (* c (* (* fall (+ "0.90" (* "0.10" v_seed)))
+                           u_sgain))
                    (fl 1)))))))
 
 ;; ---- the disk: r biased inward, a thin wedge of height ----
@@ -267,6 +277,13 @@
 
 (define proj (m4-perspective 0.8 (/ 720.0 400.0) 0.1 100.0))
 
+(define (spass! mode ringb rings gain)
+  (fx-uniform! star-p 'u_mode mode)
+  (fx-uniform! star-p 'u_ringb ringb)
+  (fx-uniform! star-p 'u_rings rings)
+  (fx-uniform! star-p 'u_sgain gain)
+  (cmd-draw-arrays! GL-POINTS 0 M))
+
 (define (pass! fold scale drop gate gain)
   (fx-uniform! disk-p 'u_fold fold)
   (fx-uniform! disk-p 'u_scale scale)
@@ -299,10 +316,14 @@
      (pass! -0.72 0.48 0.0 1.0 0.55)
      (pass! 1.50 1.30 1.5 1.0 0.32)
      ;; the lensed sky LAST, screen-blended: where the disk blazes a
-     ;; star cannot add -- no stars through the band or the arch
+     ;; star cannot add -- no stars through the band or the arch.
+     ;; Three images: the primary sky, then two wrapped copies, each
+     ;; a thinner ring -- the concentric banding of the swirl
      (cmd-blend! 'screen)
      (fx-use! star-p sbuf)
      (fx-uniform! star-p 'u_view view5)
      (fx-uniform! star-p 'u_proj proj)
-     (cmd-draw-arrays! GL-POINTS 0 M)
+     (spass! 0.0 0.0 0.0 1.0)
+     (spass! 1.0 0.66 0.16 0.60)
+     (spass! 1.0 0.87 0.07 0.40)
      (cmd-blend! #f))))
