@@ -57,15 +57,24 @@
        (local uint i gid.x)
        (if (>= i (array-length ps)) (return))
        (local P p (at ps i))
-       ;; five flames: each particle belongs to one (i mod 5), the
-       ;; bases spaced on x by a breathing spread -- a ~14s cycle
-       ;; gathers them into one blaze and opens them out again
+       ;; five flames in a dance: each orbits the centre on a
+       ;; figure-eight (x = R cos th, y ~ sin 2th), the swirl's speed
+       ;; itself wobbles, and a slow 24s breath gathers all five into
+       ;; one blaze before opening the ring again -- crossing,
+       ;; overtaking, never a straight line
        (local float fi (float (% i 5)))
-       (local float sp (* "0.42" (- (fl 0 50)
-                                    (* (fl 0 50) (cos (* t "0.45"))))))
-       (local float bx (+ (* (- fi (fl 2)) sp)
-                          (* "0.04" (sin (+ (* t "1.1")
-                                            (* fi "1.3"))))))
+       (local float ph (* fi "1.25664"))
+       (local float gather (- (fl 0 50)
+                              (* (fl 0 50) (cos (* t "0.26")))))
+       (local float th (+ (* t "0.55")
+                          (* "0.8" (sin (* t "0.13"))) ph))
+       (local float R (* "0.55" gather))
+       (local float bx (+ (* R (cos th))
+                          (* "0.03" (sin (+ (* t "1.7")
+                                            (* ph (fl 3)))))))
+       (local float by (+ (* gather (+ (* "0.09" (sin (* (fl 2) th)))
+                                       "0.05"))
+                          (* "0.04" (sin (+ (* t "2.2") ph)))))
        (set! p.age (+ p.age dt))
        (if-else (>= p.age p.life)
          ((local float a (h (+ (* (float i) "12.9898") t)))
@@ -82,8 +91,8 @@
           (local float rad (* R b))
           (local float x (* rad (cos ang)))
           (set! p.pos (vec2 (+ x bx)
-                            (+ "-0.46" (* "0.8" (* rad (sin ang)))
-                               (* "0.03" (sin (+ (* t "0.7") fi))))))
+                            (+ "-0.46" by
+                               (* "0.8" (* rad (sin ang))))))
           ;; fan outward from the small core; the contraction below
           ;; reins it back in: the body swells to a teardrop
           (set! p.vel (vec2 (* (cos ang) (* "0.44" b))
