@@ -5,10 +5,12 @@
 ;; outer.  The lensing is a conformal trick: in screen space every
 ;; point slides out along r' = r + k/r, which has a minimum at 2*sqrt(k)
 ;; -- so no image lands inside the photon ring, the shadow falls out
-;; of the arithmetic, and light crowds the ring by itself.  Only the
-;; far side of the disk is deflected (that is where the geodesics
-;; bend), so the lensed far side arcs OVER the shadow while the near
-;; band crosses in front of it.  The Doppler treatment is
+;; of the arithmetic, and light crowds the ring by itself.  The
+;; strong bending is a fold: the flat disk's far side is rotated up
+;; over the hole by an angle that grows with depth, so its image is
+;; the wide arch the renderers show -- height following disk radius,
+;; joined to the flat band at the sides -- while the near band
+;; crosses in front of the shadow.  The Doppler treatment is
 ;; relativistic: Keplerian beta ~ 0.55c at the inner edge, delta =
 ;; 1/(gamma(1 - beta cos theta)), intensity delta^4 (I/nu^3 is
 ;; invariant) -- the approaching side blazes, the receding side all
@@ -46,14 +48,28 @@
        (local vec3 wp (vec3 (* a_r (cos ang)) a_h (* a_r (sin ang))))
        (local vec4 pv (* u_view (vec4 wp (fl 1))))
        (local vec4 bh (* u_view (vec4 (fl 0) (fl 0) (fl 0) (fl 1))))
+       ;; the strong-bend fold: the flat disk's far side is seen OVER
+       ;; the hole, as if folded up toward the camera -- rotate each
+       ;; behind-the-hole point about the horizontal axis by an angle
+       ;; that grows with its depth, so the arch's height follows the
+       ;; disk radius and spans the disk's whole width (at the sides
+       ;; the depth is zero and the fold hands back the flat band)
+       (local float D (- bh.z pv.z))
+       (local float fa (* "1.15" (smoothstep (fl 0) "3.0" D)))
+       (local float cy (- pv.y bh.y))
+       (local float sa (sin fa))
+       (local float ca (cos fa))
+       (set! pv (vec4 pv.x
+                      (+ bh.y (+ (* cy ca) (* D sa)))
+                      (- bh.z (- (* D ca) (* cy sa)))
+                      pv.w))
        (local vec4 clip (* u_proj pv))
-       ;; the conformal lens, aspect-corrected screen space (720/400)
+       ;; the conformal lens, aspect-corrected screen space (720/400):
+       ;; r' = r + k/r keeps every image outside the photon ring
        (local vec2 nd (/ clip.xy clip.w))
        (local vec2 aa (vec2 (* nd.x "1.8") nd.y))
        (local float d (+ (length aa) "0.0001"))
-       ;; only rays from behind the hole bend; the near band walks
-       ;; straight across the shadow
-       (local float behind (smoothstep (fl 0) "2.0" (- bh.z pv.z)))
+       (local float behind (smoothstep (fl 0) "2.0" D))
        (local float k (* "0.038" behind))
        (local float dd (+ d (/ k d)))
        (local vec2 ab (* aa (/ dd d)))
