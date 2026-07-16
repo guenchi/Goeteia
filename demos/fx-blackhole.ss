@@ -57,16 +57,19 @@
        ;; disk radius and spans the disk's whole width (at the sides
        ;; the depth is zero and the fold hands back the flat band)
        (local float D (- bh.z pv.z))
-       ;; the fold ramps by AZIMUTH (D normalized by the ring's own
-       ;; radius), so every ring completes its fold the same angular
-       ;; distance from the side -- the arc's ends bend down in a
-       ;; smooth knee, proportional to the ring, and merge tangent
-       ;; into the flat band (the hairpins of the diagrams)
-       (local float behind (smoothstep (fl 0) "0.55" (/ D a_r)))
+       ;; behind (the conformal gate, the compression blend, the
+       ;; secondary's fade) ramps by ABSOLUTE depth -- that keeps the
+       ;; image concentric on the shadow.  Only the fold ANGLE ramps
+       ;; by azimuth (D over the ring's own radius): every ring
+       ;; completes its fold the same angular distance from the side,
+       ;; so the arc ends bend down in a smooth knee proportional to
+       ;; the ring and merge tangent into the flat band
+       (local float behind (smoothstep (fl 0) "2.0" D))
+       (local float knee (smoothstep (fl 0) "0.55" (/ D a_r)))
        ;; primary folds UP to near face-on -- each far semicircle a
        ;; half-ring; the secondary (light that wrapped the other way)
        ;; folds DOWN, demagnified, under the shadow
-       (local float fa (* (mix "1.50" "-1.50" u_image) behind))
+       (local float fa (* (mix "1.50" "-1.50" u_image) knee))
        (local float cy (- pv.y bh.y))
        (local float sa (sin fa))
        (local float ca (cos fa))
