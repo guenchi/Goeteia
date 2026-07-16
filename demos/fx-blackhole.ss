@@ -169,7 +169,7 @@
 ;; holds no stars, images crowd the ring into the halo swirl, and far
 ;; from the hole the sky is untouched.  (The disk's conformal map
 ;; would sling near-axis stars to infinity -- wrong tool here.)
-(define M 10000)
+(define M 5000)
 (define star-p
   (fx-program!
    '((attribute vec3 a_dir)
