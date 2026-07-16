@@ -324,7 +324,7 @@
      (fx-uniform! star-p 'u_view view5)
      (fx-uniform! star-p 'u_proj proj)
      (spass! 0.0 0.0 0.0 1.0)
-     (spass! 1.0 0.99 0.48 0.60)
+     (spass! 1.0 0.74 0.48 0.60)
      (spass! 1.0 1.31 0.21 0.40)
      (spass! 1.0 1.65 0.30 0.25)
      (cmd-blend! #f))))
