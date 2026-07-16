@@ -169,7 +169,7 @@
 ;; holds no stars, images crowd the ring into the halo swirl, and far
 ;; from the hole the sky is untouched.  (The disk's conformal map
 ;; would sling near-axis stars to infinity -- wrong tool here.)
-(define M 2600)
+(define M 5000)
 (define star-p
   (fx-program!
    '((attribute vec3 a_dir)
@@ -207,7 +207,7 @@
                           (vec3 (fl 1) "0.92" "0.80")
                           (fract (* v_seed "7.31"))))
        (set! gl_FragColor
-             (vec4 c (* fall (+ "0.55" (* "0.45" v_seed)))))))))
+             (vec4 c (* fall (+ "0.75" (* "0.25" v_seed)))))))))
 
 ;; ---- the disk: r biased inward, a thin wedge of height ----
 (define buf (fx-buffer!))
