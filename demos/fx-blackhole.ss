@@ -61,7 +61,7 @@
        ;; primary folds UP to near face-on -- each far semicircle a
        ;; half-ring; the secondary (light that wrapped the other way)
        ;; folds DOWN, demagnified, under the shadow
-       (local float fa (* (mix "1.50" "-0.72" u_image)
+       (local float fa (* (mix "1.50" "-1.50" u_image)
                           (smoothstep (fl 0) "3.0" D)))
        (local float cy (- pv.y bh.y))
        (local float sa (sin fa))
@@ -69,13 +69,16 @@
        (local vec3 off (vec3 (- pv.x bh.x)
                              (+ (* cy ca) (* D sa))
                              (- (fl 0) (- (* D ca) (* cy sa)))))
-       ;; lower the folded image so the disk's own dark centre circle
-       ;; sits half behind the shadow: the face-on annulus centres ON
-       ;; the hole instead of standing on top of it (full size -- the
-       ;; conformal term swallows what dips inside the ring).  The
-       ;; secondary keeps its uniform 0.48
-       (set! off.y (- off.y (* (* "1.5" behind) (- (fl 1) u_image))))
-       (set! off (* off (mix (fl 1) "0.48" u_image)))
+       ;; each disk ring images as an arc CONCENTRIC with the shadow
+       ;; (the color-banded diagrams): fold to face-on, then an affine
+       ;; radial map -- inner edge at the ring, the outermost ring
+       ;; arcing to ~2.2x the ring above and ~1.8x below.  The flat
+       ;; band (behind = 0) keeps its length
+       (local float L (max (length off) "0.001"))
+       (local float L2 (+ (mix "1.5" "1.4" u_image)
+                          (* (mix "0.78" "0.58" u_image)
+                             (max (- L "1.5") (fl 0)))))
+       (set! off (* off (mix (fl 1) (/ L2 L) behind)))
        (set! pv (vec4 (+ bh.xyz off) pv.w))
        (local vec4 clip (* u_proj pv))
        ;; the conformal lens, aspect-corrected screen space (720/400):
