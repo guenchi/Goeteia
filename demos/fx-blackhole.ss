@@ -194,7 +194,7 @@
           (local vec2 ab (* aa (/ th bta)))
           (set! gl_Position (vec4 (* (vec2 (/ ab.x "1.8") ab.y) clip.w)
                                   clip.z clip.w))
-          (set! gl_PointSize (+ "1.5" (* a_seed "2.5")))))
+          (set! gl_PointSize (+ "2.0" (* a_seed "2.5")))))
        (set! v_seed a_seed)))
    '((precision mediump float)
      (varying float v_seed)
@@ -207,7 +207,7 @@
                           (vec3 (fl 1) "0.92" "0.80")
                           (fract (* v_seed "7.31"))))
        (set! gl_FragColor
-             (vec4 c (* fall (+ "0.45" (* "0.50" v_seed)))))))))
+             (vec4 c (* fall (+ "0.55" (* "0.45" v_seed)))))))))
 
 ;; ---- the disk: r biased inward, a thin wedge of height ----
 (define buf (fx-buffer!))
@@ -278,13 +278,18 @@
  (lambda (t dt)
    (let* ((a (fl* 0.045 t))
           (eye (v3 (fl* 16.0 (flsin a)) 2.1 (fl* 16.0 (flcos a))))
-          (view (m4-look-at eye (v3 0.0 0.0 0.0) (v3 0.0 1.0 0.0))))
+          (view (m4-look-at eye (v3 0.0 0.0 0.0) (v3 0.0 1.0 0.0)))
+          ;; the star dome turns at a fifth of the orbit: a separate
+          ;; view for the sky (stars only take its rotation)
+          (a5 (fl* 0.2 a))
+          (eye5 (v3 (fl* 16.0 (flsin a5)) 2.1 (fl* 16.0 (flcos a5))))
+          (view5 (m4-look-at eye5 (v3 0.0 0.0 0.0) (v3 0.0 1.0 0.0))))
      (cmd-clear! 0.004 0.004 0.012 1.0)
      (cmd-depth! #f)
      (cmd-blend! 'add)
      ;; the lensed sky first, behind everything
      (fx-use! star-p sbuf)
-     (fx-uniform! star-p 'u_view view)
+     (fx-uniform! star-p 'u_view view5)
      (fx-uniform! star-p 'u_proj proj)
      (cmd-draw-arrays! GL-POINTS 0 M)
      (fx-use! disk-p buf)
