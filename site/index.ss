@@ -230,8 +230,8 @@
          #t
          '((h3 "3D, from s-expressions")
            (p "It is the sky of the " (code "skybox.ss") " tab in the live "
-              "editor — switch to it, edit a form, press Run. The mirror "
-              "floor of " (code "pointlight.ss") " and the WebGPU fire of "
+              "editor — switch to it, edit a form, press Run. The relativistic "
+              "accretion disk of " (code "blackhole.ss") " and the WebGPU fire of "
               (code "particles.ss") " — a hundred thousand particles whose "
               "physics is a compute shader — are tabs beside it.")
            (p "Because a shader is a datum, " (b "macros can write shaders")
