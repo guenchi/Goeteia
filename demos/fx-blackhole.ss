@@ -65,7 +65,14 @@
        ;; flat band, and in between the four stay consistent, so the
        ;; arc ends bend tangent into the band and nothing ever lands
        ;; inside the shadow (a fast fold over a slow drop did)
-       (local float knee (smoothstep (fl 0) "0.55" (/ D a_r)))
+       ;; a QUINTIC ramp (zero second derivative at both ends): where
+       ;; the transition meets the saturated circle the curvature is
+       ;; continuous too, so the arcs carry no crease -- smoothstep is
+       ;; only C1 and its curvature jump drew a visible fold line.
+       ;; Wider (0.75) so the bend starts farther out
+       (local float kt (clamp (/ (/ D a_r) "0.75") (fl 0) (fl 1)))
+       (local float knee (* (* kt (* kt kt))
+                            (+ (* kt (- (* kt "6.0") "15.0")) "10.0")))
        ;; the FULL transform target -- fold at the full angle (primary
        ;; UP to face-on, the wrapped-around secondary DOWN), the
        ;; centring drop, the secondary's demagnification -- and a
