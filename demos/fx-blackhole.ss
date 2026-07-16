@@ -60,7 +60,7 @@
        ;; the secondary image (light that wrapped the other way round)
        ;; folds DOWN, and is demagnified -- a smaller arc under the
        ;; shadow, offset from the flat band
-       (local float fa (* (mix "0.88" "-0.95" u_image)
+       (local float fa (* (mix "0.88" "-0.72" u_image)
                           (smoothstep (fl 0) "3.0" D)))
        (local float cy (- pv.y bh.y))
        (local float sa (sin fa))
