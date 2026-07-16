@@ -338,7 +338,7 @@
                         (vec2 "0.998" "0.998")))
        ;; glassiness grows with distance: near water is looked INTO,
        ;; far water is a mirror
-       (local float glass (smoothstep "8.0" "60.0" v_dist))
+       (local float glass (smoothstep "8.0" "40.0" v_dist))
        ;; far water's flat mirror would only see the featureless haze
        ;; band; lift its sample toward the clouded sky so the glass
        ;; has something to mirror
