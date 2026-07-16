@@ -190,8 +190,8 @@
        ;; below the line the water is STILL a mirror: keep the
        ;; mirrored sky's detail, dimmed and shifted toward the water,
        ;; with the deep band rising through it -- not a flat gradient
-       (local vec3 wat (+ (* up.rgb (vec3 (fl 0 24) (fl 0 34) (fl 0 40)))
-                          (* dn.rgb (fl 0 28))))
+       (local vec3 wat (+ (* up.rgb (vec3 (fl 0 27) (fl 0 38) (fl 0 45)))
+                          (* dn.rgb (fl 0 32))))
        (local vec3 c (mix up.rgb wat t))
        ;; a hint of fresnel: grazing angles reflect harder
        (local float f (- (fl 1) (max (dot n e) (fl 0))))
@@ -273,7 +273,8 @@
        ;; sub-pixel octaves are filtered out before the horizon.
        (local float dnear (- (fl 1)
                              (smoothstep "12.0" "52.0" v_dist)))
-       (local float detail (* dnear dnear))
+       ;; scaled down so the mirrored sky stays coherent, not scrambled
+       (local float detail (* "0.55" (* dnear dnear)))
        ;; The slow phase warp is evaluated per vertex and interpolated.
        (local float q0 (+ (+ (+ (* v_wp.x "0.74") (* v_wp.z "0.43"))
                              (* u_time "1.37"))
@@ -363,12 +364,13 @@
        (set! reflected
              (+ reflected (* (vec3 "0.90" "0.76" "0.52")
                              (* sp "0.65"))))
-       ;; Air-to-water Schlick Fresnel, IOR 1.333: F0 = 0.02037.
-       ;; Reflection is radiance and is never multiplied by water color.
+       ;; Schlick Fresnel with the floor lifted (physical air-to-water
+       ;; F0 is 0.02037 -- too faint for the sky to read on the water
+       ;; at this camera; 0.06 keeps the grazing law, brighter base)
        (local float one_minus_ndv (- (fl 1) ndv))
        (local float one_minus_ndv2 (* one_minus_ndv one_minus_ndv))
-       (local float f (+ "0.02037"
-                         (* "0.97963"
+       (local float f (+ "0.06"
+                         (* "0.94"
                             (* (* one_minus_ndv2 one_minus_ndv2)
                                one_minus_ndv))))
        (local float crest (clamp (+ "0.50" (* v_wave "3.20"))
