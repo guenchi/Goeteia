@@ -66,23 +66,27 @@
        ;; arc ends bend tangent into the band and nothing ever lands
        ;; inside the shadow (a fast fold over a slow drop did)
        (local float knee (smoothstep (fl 0) "0.55" (/ D a_r)))
-       ;; primary folds UP to near face-on -- each far semicircle a
-       ;; half-ring; the secondary (light that wrapped the other way)
-       ;; folds DOWN, demagnified, under the shadow
-       (local float fa (* (mix "1.50" "-0.72" u_image) knee))
+       ;; the FULL transform target -- fold at the full angle (primary
+       ;; UP to face-on, the wrapped-around secondary DOWN), the
+       ;; centring drop, the secondary's demagnification -- and a
+       ;; straight LERP from the flat position to it, by the knee.
+       ;; Composing a growing rotation with a growing drop made the
+       ;; transition sag flat just above the band and then leap (the
+       ;; hanging gap); the straight path keeps its density even, and
+       ;; the endpoints are untouched: knee 1 is exactly the approved
+       ;; interior, knee 0 the flat band
+       (local float A (mix "1.50" "-0.72" u_image))
+       (local float sa (sin A))
+       (local float ca (cos A))
        (local float cy (- pv.y bh.y))
-       (local float sa (sin fa))
-       (local float ca (cos fa))
-       (local vec3 off (vec3 (- pv.x bh.x)
-                             (+ (* cy ca) (* D sa))
-                             (- (fl 0) (- (* D ca) (* cy sa)))))
-       ;; lower the folded image so the disk's own dark centre circle
-       ;; sits half behind the shadow: the face-on annulus centres ON
-       ;; the hole instead of standing on top of it (full size -- the
-       ;; conformal term swallows what dips inside the ring).  The
-       ;; secondary keeps its uniform 0.48
-       (set! off.y (- off.y (* (* "1.5" knee) (- (fl 1) u_image))))
-       (set! off (* off (mix (fl 1) "0.48" u_image)))
+       (local float dx (- pv.x bh.x))
+       (local vec3 flat0 (vec3 dx cy (- (fl 0) D)))
+       (local vec3 rot3 (vec3 dx
+                              (- (+ (* cy ca) (* D sa))
+                                 (* "1.5" (- (fl 1) u_image)))
+                              (- (fl 0) (- (* D ca) (* cy sa)))))
+       (local vec3 full (* rot3 (mix (fl 1) "0.48" u_image)))
+       (local vec3 off (mix flat0 full knee))
        (set! pv (vec4 (+ bh.xyz off) pv.w))
        (local vec4 clip (* u_proj pv))
        ;; the conformal lens, aspect-corrected screen space (720/400):
