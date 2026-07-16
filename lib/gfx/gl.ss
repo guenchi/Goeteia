@@ -375,8 +375,9 @@
      "               gl.drawArrays(m, u[p+1], u[p+2]); p += 3; break; }"
      "     case 9: gl.viewport(u[p], u[p+1], u[p+2], u[p+3]); p += 4; break;"
      "     case 10: if (u[p] === 1) { const m = u[p+1]; gl.enable(gl.BLEND);"
-     "                gl.blendFunc(m === 2 ? gl.ONE : gl.SRC_ALPHA,"
-     "                             m === 1 ? gl.ONE"
+     "                gl.blendFunc(m === 3 ? gl.ONE_MINUS_DST_COLOR"
+     "                             : m === 2 ? gl.ONE : gl.SRC_ALPHA,"
+     "                             (m === 1 || m === 3) ? gl.ONE"
      "                             : gl.ONE_MINUS_SRC_ALPHA); }"
      "              else gl.disable(gl.BLEND); p += 2; break;"
      "     case 11: gl.activeTexture(gl.TEXTURE0 + u[p]);"
@@ -718,6 +719,8 @@
       ((add)    (u! 1) (u! 1))
       ((alpha)  (u! 1) (u! 0))
       ((premul) (u! 1) (u! 2))
+      ((screen) (u! 1) (u! 3))          ; src*(1-dst)+dst: light that
+                                        ; cannot brighten what blazes
       (else     (u! 0) (u! 0))))
 
   ;; one bridge call replays the whole frame

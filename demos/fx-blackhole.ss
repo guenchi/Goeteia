@@ -190,7 +190,7 @@
           (local vec2 aa (vec2 (* nd.x "1.8") nd.y))
           (local float bta (max (length aa) "0.0001"))
           (local float th (* (fl 0 50)
-                             (+ bta (sqrt (+ (* bta bta) "0.608")))))
+                             (+ bta (sqrt (+ (* bta bta) "1.54")))))
           (local vec2 ab (* aa (/ th bta)))
           (set! gl_Position (vec4 (* (vec2 (/ ab.x "1.8") ab.y) clip.w)
                                   clip.z clip.w))
@@ -207,7 +207,8 @@
                           (vec3 (fl 1) "0.92" "0.80")
                           (fract (* v_seed "7.31"))))
        (set! gl_FragColor
-             (vec4 c (* fall (+ "0.75" (* "0.25" v_seed)))))))))
+             (vec4 (* c (* fall (+ "0.75" (* "0.25" v_seed))))
+                   (fl 1)))))))
 
 ;; ---- the disk: r biased inward, a thin wedge of height ----
 (define buf (fx-buffer!))
@@ -287,11 +288,6 @@
      (cmd-clear! 0.004 0.004 0.012 1.0)
      (cmd-depth! #f)
      (cmd-blend! 'add)
-     ;; the lensed sky first, behind everything
-     (fx-use! star-p sbuf)
-     (fx-uniform! star-p 'u_view view5)
-     (fx-uniform! star-p 'u_proj proj)
-     (cmd-draw-arrays! GL-POINTS 0 M)
      (fx-use! disk-p buf)
      (fx-uniform! disk-p 'u_view view)
      (fx-uniform! disk-p 'u_proj proj)
@@ -302,4 +298,11 @@
      (pass! 1.50 1.0 1.5 0.0 1.0)
      (pass! -0.72 0.48 0.0 1.0 0.55)
      (pass! 1.50 1.30 1.5 1.0 0.32)
+     ;; the lensed sky LAST, screen-blended: where the disk blazes a
+     ;; star cannot add -- no stars through the band or the arch
+     (cmd-blend! 'screen)
+     (fx-use! star-p sbuf)
+     (fx-uniform! star-p 'u_view view5)
+     (fx-uniform! star-p 'u_proj proj)
+     (cmd-draw-arrays! GL-POINTS 0 M)
      (cmd-blend! #f))))
