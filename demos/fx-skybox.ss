@@ -187,7 +187,12 @@
        (local vec4 dn (textureCube u_sky (vec3 r.x (- yw (fl 0 35)) r.z)))
        (local float t (smoothstep (fl 0) (fl 0 20)
                                   (- (fl 0) (+ yw (fl 0 35)))))
-       (local vec3 c (mix up.rgb dn.rgb (* t (fl 0 85))))
+       ;; below the line the water is STILL a mirror: keep the
+       ;; mirrored sky's detail, dimmed and shifted toward the water,
+       ;; with the deep band rising through it -- not a flat gradient
+       (local vec3 wat (+ (* up.rgb (vec3 (fl 0 30) (fl 0 42) (fl 0 50)))
+                          (* dn.rgb (fl 0 35))))
+       (local vec3 c (mix up.rgb wat t))
        ;; a hint of fresnel: grazing angles reflect harder
        (local float f (- (fl 1) (max (dot n e) (fl 0))))
        (set! gl_FragColor
