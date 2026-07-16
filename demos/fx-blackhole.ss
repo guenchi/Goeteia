@@ -1,4 +1,4 @@
-;; A black hole's accretion disk, twenty thousand particles whose
+;; A black hole's accretion disk, two hundred thousand particles whose
 ;; physics is arithmetic in the vertex shader: each particle is four
 ;; numbers (radius, phase, height, seed) and its position is a pure
 ;; function of time -- Keplerian shear, the inner disk lapping the
@@ -25,7 +25,7 @@
 
 (fx-init! (get-element-by-id "c"))
 
-(define N 20000)
+(define N 200000)
 
 (define disk-p
   (fx-program!
@@ -59,8 +59,8 @@
        (local vec2 ab (* aa (/ dd d)))
        (set! gl_Position (vec4 (* (vec2 (/ ab.x "1.8") ab.y) clip.w)
                                clip.z clip.w))
-       (set! gl_PointSize (min (+ (/ "30.0" clip.w) (* a_seed "1.5"))
-                               "6.0"))
+       (set! gl_PointSize (min (+ (/ "22.0" clip.w) a_seed)
+                               "4.0"))
        ;; relativistic Doppler: Keplerian beta ~ r^-1/2, ~0.55c at the
        ;; inner edge; delta = 1 / (gamma (1 - beta cos theta))
        (local vec3 tang (vec3 (- (fl 0) (sin ang)) (fl 0) (cos ang)))
@@ -87,7 +87,7 @@
        (local float flick (+ "0.85" (* "0.15"
                                        (sin (+ (* v_seed "40.0")
                                                (* u_t "3.0"))))))
-       (local float b (* (+ (* "0.11" d4) "0.02") flick))
+       (local float b (* (+ (* "0.014" d4) "0.003") flick))
        ;; spectral shift: T_obs = delta * T_emit, through a blackbody
        ;; ramp -- deep red, ember orange, white, blue-white
        (local float T (* v_temp v_dopp))
