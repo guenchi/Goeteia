@@ -1,6 +1,6 @@
 ;; GPU-compute fire: the physics is a @compute shader, and the
 ;; particle buffer never leaves the GPU.  A storage buffer holds
-;; a million (pos, vel, age, life) records; each frame one dispatch
+;; 100,000 (pos, vel, age, life) records; each frame one dispatch
 ;; ages the flame -- buoyancy, a pinch toward the axis, two sine
 ;; winds that grow with age so the tips lick -- and respawns the
 ;; dead onto a filled disc hanging in mid-air -- dense at the core,
@@ -33,7 +33,7 @@
       (sx (div (@ (class "hero"))
             (p "This demo runs the physics in a WebGPU compute shader - it needs a WebGPU browser (current Chrome / Edge / Safari).")))))
 
-(define N 1000000)
+(define N 100000)
 (define PBYTES (* N 24))                ; vec2 pos + vec2 vel + age + life
 (define UBASE 4096)
 (define PBASE 8192)
