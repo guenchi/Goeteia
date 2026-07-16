@@ -71,7 +71,7 @@
        ;; the emitted temperature falls with radius (normalized)
        (set! v_temp (mix (fl 1) "0.35" (/ (- a_r "1.5") "5.5")))
        (set! v_seed a_seed)))
-   '((precision mediump float)
+   '((precision highp float)
      (uniform float u_t)
      (varying float v_dopp)
      (varying float v_temp)
