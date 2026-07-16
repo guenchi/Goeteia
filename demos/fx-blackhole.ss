@@ -95,7 +95,16 @@
        (set! v_temp (mix (fl 1) "0.35" (/ (- a_r "1.5") "5.5")))
        (set! v_seed a_seed)
        ;; the secondary image shows only the far side, and fainter
-       (set! v_fade (mix (fl 1) (* behind "0.55") u_image))))
+       (set! v_fade (mix (fl 1) (* behind "0.55") u_image))
+       ;; the disk's own radial grooves: concentric emission rings.
+       ;; Edge-on they compress into the band; folded over the hole
+       ;; they read face-on -- each groove a ring of the flat disk
+       ;; bent into the same line of sight
+       (local float g1 (sin (* a_r "9.0")))
+       (local float g2 (sin (+ (* a_r "23.0") "1.7")))
+       (set! v_fade (* v_fade
+                       (clamp (+ (+ "0.42" (* "0.38" g1)) (* "0.20" g2))
+                              "0.15" (fl 1))))))
    '((precision highp float)
      (uniform float u_t)
      (varying float v_dopp)
