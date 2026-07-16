@@ -207,7 +207,7 @@
                           (vec3 (fl 1) "0.92" "0.80")
                           (fract (* v_seed "7.31"))))
        (set! gl_FragColor
-             (vec4 (* c (* fall (+ "0.75" (* "0.25" v_seed))))
+             (vec4 (* c (* fall (+ "0.90" (* "0.10" v_seed))))
                    (fl 1)))))))
 
 ;; ---- the disk: r biased inward, a thin wedge of height ----
