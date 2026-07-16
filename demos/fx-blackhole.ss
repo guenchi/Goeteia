@@ -39,9 +39,11 @@
      (uniform mat4 u_proj)
      (uniform vec3 u_eye)
      (uniform float u_t)
+     (uniform float u_image)             ; 0 primary, 1 secondary
      (varying float v_dopp)
      (varying float v_temp)
      (varying float v_seed)
+     (varying float v_fade)
      (define (main) void
        ;; Kepler: the angular rate falls as r^-3/2
        (local float ang (+ a_ph (/ (* u_t "2.6") (* a_r (sqrt a_r)))))
@@ -55,14 +57,19 @@
        ;; disk radius and spans the disk's whole width (at the sides
        ;; the depth is zero and the fold hands back the flat band)
        (local float D (- bh.z pv.z))
-       (local float fa (* "1.15" (smoothstep (fl 0) "3.0" D)))
+       ;; the secondary image (light that wrapped the other way round)
+       ;; folds DOWN, and is demagnified -- a smaller arc under the
+       ;; shadow, offset from the flat band
+       (local float fa (* (mix "1.15" "-0.95" u_image)
+                          (smoothstep (fl 0) "3.0" D)))
        (local float cy (- pv.y bh.y))
        (local float sa (sin fa))
        (local float ca (cos fa))
-       (set! pv (vec4 pv.x
-                      (+ bh.y (+ (* cy ca) (* D sa)))
-                      (- bh.z (- (* D ca) (* cy sa)))
-                      pv.w))
+       (local vec3 off (vec3 (- pv.x bh.x)
+                             (+ (* cy ca) (* D sa))
+                             (- (fl 0) (- (* D ca) (* cy sa)))))
+       (set! off (* off (mix (fl 1) "0.48" u_image)))
+       (set! pv (vec4 (+ bh.xyz off) pv.w))
        (local vec4 clip (* u_proj pv))
        ;; the conformal lens, aspect-corrected screen space (720/400):
        ;; r' = r + k/r keeps every image outside the photon ring
@@ -86,12 +93,15 @@
        (set! v_dopp (/ (fl 1) (* gam (- (fl 1) (* beta ct)))))
        ;; the emitted temperature falls with radius (normalized)
        (set! v_temp (mix (fl 1) "0.35" (/ (- a_r "1.5") "5.5")))
-       (set! v_seed a_seed)))
+       (set! v_seed a_seed)
+       ;; the secondary image shows only the far side, and fainter
+       (set! v_fade (mix (fl 1) (* behind "0.55") u_image))))
    '((precision highp float)
      (uniform float u_t)
      (varying float v_dopp)
      (varying float v_temp)
      (varying float v_seed)
+     (varying float v_fade)
      (define (main) void
        (local vec2 pc (- gl_PointCoord (vec2 (fl 0 50) (fl 0 50))))
        (local float d2 (dot pc pc))
@@ -103,7 +113,7 @@
        (local float flick (+ "0.85" (* "0.15"
                                        (sin (+ (* v_seed "40.0")
                                                (* u_t "3.0"))))))
-       (local float b (* (+ (* "0.11" d4) "0.02") flick))
+       (local float b (* (* (+ (* "0.11" d4) "0.02") flick) v_fade))
        ;; spectral shift: T_obs = delta * T_emit, through a blackbody
        ;; ramp -- deep red, ember orange, white, blue-white
        (local float T (* v_temp v_dopp))
@@ -155,5 +165,9 @@
      (fx-uniform! disk-p 'u_proj proj)
      (fx-uniform! disk-p 'u_eye (v3-x eye) (v3-y eye) (v3-z eye))
      (fx-uniform! disk-p 'u_t t)
+     ;; primary image, then the wrapped-around secondary under the hole
+     (fx-uniform! disk-p 'u_image 0.0)
+     (cmd-draw-arrays! GL-POINTS 0 N)
+     (fx-uniform! disk-p 'u_image 1.0)
      (cmd-draw-arrays! GL-POINTS 0 N)
      (cmd-blend! #f))))
