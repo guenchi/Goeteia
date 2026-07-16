@@ -336,7 +336,14 @@
        (local vec2 ruv (+ uv (* n.xz (* "0.038" damp))))
        (set! ruv (clamp ruv (vec2 "0.002" "0.002")
                         (vec2 "0.998" "0.998")))
-       (local vec4 envrefl (textureCube u_sky r))
+       ;; glassiness grows with distance: near water is looked INTO,
+       ;; far water is a mirror
+       (local float glass (smoothstep "8.0" "60.0" v_dist))
+       ;; far water's flat mirror would only see the featureless haze
+       ;; band; lift its sample toward the clouded sky so the glass
+       ;; has something to mirror
+       (local vec3 rsky (vec3 r.x (+ r.y (* "0.12" far)) r.z))
+       (local vec4 envrefl (textureCube u_sky rsky))
        (local vec3 reflected envrefl.rgb)
        ;; The ball occupies a stable, central ellipse in reflection UV.
        ;; Skip both 2D texture reads for the rest of the water surface.
@@ -364,13 +371,15 @@
        (set! reflected
              (+ reflected (* (vec3 "0.90" "0.76" "0.52")
                              (* sp "0.65"))))
-       ;; Schlick Fresnel with the floor lifted (physical air-to-water
-       ;; F0 is 0.02037 -- too faint for the sky to read on the water
-       ;; at this camera; 0.06 keeps the grazing law, brighter base)
+       ;; Schlick Fresnel with a distance-graded floor: near water
+       ;; keeps the physical air-to-water base (0.02, transparent --
+       ;; the eye looks INTO it), far water lifts to 0.14 so the
+       ;; mirror reads; the grazing law stands throughout
+       (local float f0 (mix "0.02" "0.14" glass))
        (local float one_minus_ndv (- (fl 1) ndv))
        (local float one_minus_ndv2 (* one_minus_ndv one_minus_ndv))
-       (local float f (+ "0.08"
-                         (* "0.92"
+       (local float f (+ f0
+                         (* (- (fl 1) f0)
                             (* (* one_minus_ndv2 one_minus_ndv2)
                                one_minus_ndv))))
        (local float crest (clamp (+ "0.50" (* v_wave "3.20"))
@@ -385,7 +394,7 @@
        (local float ringtone (+ (fl 1) (* "0.10" (* ring crp))))
        (local vec3 transmitted
               (* (mix (vec3 "0.17" "0.29" "0.37")
-                      (vec3 "0.25" "0.39" "0.47") far)
+                      (vec3 "0.21" "0.34" "0.42") far)
                  (* (* (mix "0.95" "1.05" crest) micro) ringtone)))
        ;; The two lobes share one unit of energy.
        (local vec3 c (+ (* reflected f)
