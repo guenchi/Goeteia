@@ -1,4 +1,4 @@
-;; A black hole's accretion disk, a million particles whose
+;; A black hole's accretion disk, two million particles whose
 ;; physics is arithmetic in the vertex shader: each particle is four
 ;; numbers (radius, phase, height, seed) and its position is a pure
 ;; function of time -- Keplerian shear, the inner disk lapping the
@@ -27,7 +27,7 @@
 
 (fx-init! (get-element-by-id "c"))
 
-(define N 1000000)
+(define N 2000000)
 
 (define disk-p
   (fx-program!
