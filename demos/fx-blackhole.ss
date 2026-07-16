@@ -191,7 +191,7 @@
          (local vec2 ab (* aa (/ th bta)))
          (set! gl_Position (vec4 (* (vec2 (/ ab.x "1.8") ab.y) clip.w)
                                  clip.z clip.w))
-         (set! gl_PointSize (+ (fl 1) (* a_seed "1.8"))))
+         (set! gl_PointSize (+ "1.5" (* a_seed "2.5"))))
        (set! v_seed a_seed)))
    '((precision mediump float)
      (varying float v_seed)
@@ -204,7 +204,7 @@
                           (vec3 (fl 1) "0.92" "0.80")
                           (fract (* v_seed "7.31"))))
        (set! gl_FragColor
-             (vec4 c (* fall (+ "0.10" (* "0.35" v_seed)))))))))
+             (vec4 c (* fall (+ "0.45" (* "0.50" v_seed)))))))))
 
 ;; ---- the disk: r biased inward, a thin wedge of height ----
 (define buf (fx-buffer!))
