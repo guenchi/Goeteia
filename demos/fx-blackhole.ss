@@ -161,6 +161,51 @@
                     (smoothstep "1.10" "1.80" T)))
        (set! gl_FragColor (vec4 c (* fall b)))))))
 
+;; ---- the lensed starfield: the sky behind the hole ----
+;; Stars are directions (w = 0 through the view: rotation only, no
+;; parallax).  Their bending is the POINT-LENS equation, theta =
+;; (beta + sqrt(beta^2 + 4K)) / 2 with sqrt(K) at the photon ring --
+;; a star straight behind the hole images ON the ring, so the shadow
+;; holds no stars, images crowd the ring into the halo swirl, and far
+;; from the hole the sky is untouched.  (The disk's conformal map
+;; would sling near-axis stars to infinity -- wrong tool here.)
+(define M 2600)
+(define star-p
+  (fx-program!
+   '((attribute vec3 a_dir)
+     (attribute float a_seed)
+     (uniform mat4 u_view)
+     (uniform mat4 u_proj)
+     (varying float v_seed)
+     (define (main) void
+       (local vec4 pv (* u_view (vec4 a_dir (fl 0))))
+       (if (> pv.z (- (fl 0) "0.05"))
+         ;; behind or grazing the camera: clip it away
+         (set! gl_Position (vec4 (fl 0) (fl 0) "3.0" (fl 1)))
+         (local vec4 clip (* u_proj (vec4 (* pv.xyz "50.0") (fl 1))))
+         (local vec2 nd (/ clip.xy clip.w))
+         (local vec2 aa (vec2 (* nd.x "1.8") nd.y))
+         (local float bta (max (length aa) "0.0001"))
+         (local float th (* (fl 0 50)
+                            (+ bta (sqrt (+ (* bta bta) "0.608")))))
+         (local vec2 ab (* aa (/ th bta)))
+         (set! gl_Position (vec4 (* (vec2 (/ ab.x "1.8") ab.y) clip.w)
+                                 clip.z clip.w))
+         (set! gl_PointSize (+ (fl 1) (* a_seed "1.8"))))
+       (set! v_seed a_seed)))
+   '((precision mediump float)
+     (varying float v_seed)
+     (define (main) void
+       (local vec2 pc (- gl_PointCoord (vec2 (fl 0 50) (fl 0 50))))
+       (local float fall (- (fl 1) (smoothstep "0.04" "0.25"
+                                               (dot pc pc))))
+       ;; a quiet range of star colours off the seed
+       (local vec3 c (mix (vec3 "0.75" "0.82" (fl 1))
+                          (vec3 (fl 1) "0.92" "0.80")
+                          (fract (* v_seed "7.31"))))
+       (set! gl_FragColor
+             (vec4 c (* fall (+ "0.10" (* "0.35" v_seed)))))))))
+
 ;; ---- the disk: r biased inward, a thin wedge of height ----
 (define buf (fx-buffer!))
 (define data (fx-alloc! (* N 16)))
@@ -193,6 +238,29 @@
 (cmd-buffer-data! data (* N 16))
 (cmd-flush!)
 
+;; star directions: rejection-sampled unit vectors (no trig)
+(define sbuf (fx-buffer!))
+(define sdata (fx-alloc! (* M 16)))
+(let stars ((i 0))
+  (when (< i M)
+    (let* ((x (fl- (fl* 2.0 (rnd!)) 1.0))
+           (y (fl- (fl* 2.0 (rnd!)) 1.0))
+           (z (fl- (fl* 2.0 (rnd!)) 1.0))
+           (l2 (fl+ (fl* x x) (fl+ (fl* y y) (fl* z z)))))
+      (if (or (fl<? l2 0.004) (fl<? 1.0 l2))
+          (stars i)                      ; outside the ball: redraw
+          (let ((at (+ sdata (* i 16)))
+                (l (flsqrt l2)))
+            (%mem-f32-set! at (fl/ x l))
+            (%mem-f32-set! (+ at 4) (fl/ y l))
+            (%mem-f32-set! (+ at 8) (fl/ z l))
+            (%mem-f32-set! (+ at 12) (rnd!))
+            (stars (+ i 1)))))))
+(cmd-begin!)
+(cmd-bind-buffer! sbuf)
+(cmd-buffer-data! sdata (* M 16))
+(cmd-flush!)
+
 (define proj (m4-perspective 0.8 (/ 720.0 400.0) 0.1 100.0))
 
 (define (pass! fold scale drop gate gain)
@@ -211,6 +279,11 @@
      (cmd-clear! 0.004 0.004 0.012 1.0)
      (cmd-depth! #f)
      (cmd-blend! 'add)
+     ;; the lensed sky first, behind everything
+     (fx-use! star-p sbuf)
+     (fx-uniform! star-p 'u_view view)
+     (fx-uniform! star-p 'u_proj proj)
+     (cmd-draw-arrays! GL-POINTS 0 M)
      (fx-use! disk-p buf)
      (fx-uniform! disk-p 'u_view view)
      (fx-uniform! disk-p 'u_proj proj)
