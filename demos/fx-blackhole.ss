@@ -57,10 +57,11 @@
        ;; disk radius and spans the disk's whole width (at the sides
        ;; the depth is zero and the fold hands back the flat band)
        (local float D (- bh.z pv.z))
-       ;; the secondary image (light that wrapped the other way round)
-       ;; folds DOWN, and is demagnified -- a smaller arc under the
-       ;; shadow, offset from the flat band
-       (local float fa (* (mix "0.88" "-0.72" u_image)
+       (local float behind (smoothstep (fl 0) "2.0" D))
+       ;; primary folds UP to near face-on -- each far semicircle a
+       ;; half-ring; the secondary (light that wrapped the other way)
+       ;; folds DOWN, demagnified, under the shadow
+       (local float fa (* (mix "1.50" "-0.72" u_image)
                           (smoothstep (fl 0) "3.0" D)))
        (local float cy (- pv.y bh.y))
        (local float sa (sin fa))
@@ -68,7 +69,15 @@
        (local vec3 off (vec3 (- pv.x bh.x)
                              (+ (* cy ca) (* D sa))
                              (- (fl 0) (- (* D ca) (* cy sa)))))
-       (set! off (* off (mix (fl 1) "0.48" u_image)))
+       ;; the primary's folded image compresses radially against the
+       ;; shadow -- inner edge at the ring, outer only ~1.5x out, the
+       ;; half-circle halo of the renders; the flat band (behind = 0)
+       ;; keeps its length.  The secondary keeps its uniform 0.48
+       (local float L (max (length off) "0.001"))
+       (local float L2 (+ "1.5" (* "0.42" (max (- L "1.5") (fl 0)))))
+       (local float cmp (mix (mix (fl 1) (/ L2 L) behind)
+                             "0.48" u_image))
+       (set! off (* off cmp))
        (set! pv (vec4 (+ bh.xyz off) pv.w))
        (local vec4 clip (* u_proj pv))
        ;; the conformal lens, aspect-corrected screen space (720/400):
@@ -76,7 +85,6 @@
        (local vec2 nd (/ clip.xy clip.w))
        (local vec2 aa (vec2 (* nd.x "1.8") nd.y))
        (local float d (+ (length aa) "0.0001"))
-       (local float behind (smoothstep (fl 0) "2.0" D))
        (local float k (* "0.038" behind))
        (local float dd (+ d (/ k d)))
        (local vec2 ab (* aa (/ dd d)))
