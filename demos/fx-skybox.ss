@@ -170,19 +170,24 @@
        (local vec3 n (normalize v_n))
        (local vec3 e (normalize (- u_eye v_wp)))
        (local vec3 r (reflect (- e) n))
-       ;; downward rays see the WATER, and water is itself a mirror
-       ;; at grazing angles: a shallow dive reflects the mirrored sky
-       ;; (so the waterline fuses with the upper hemisphere -- the
-       ;; blend is zero AT the horizon), and only steep rays sink
-       ;; into the sea band.  The swell wobbles the waterline.
+       ;; downward rays see the WATER, and near-grazing water is a
+       ;; mirror: the sky continues a whole band below the geometric
+       ;; horizon, so the VISIBLE waterline -- where the mirror gives
+       ;; way to looking into the sea -- sits well below the ball's
+       ;; midline (the eye rides above the ball's centre, which alone
+       ;; would put the horizon slightly high).  The line is a tight
+       ;; step, and the sea it opens into samples deep under the
+       ;; horizon so it stays dark against the bright horizon bake.
+       ;; The swell wobbles the line.
        (local float wob (* (fl 0 10) (sin (+ (* (+ v_wp.x v_wp.z) (fl 3))
                                              (* u_time (fl 1 60))))))
        (local float yw (+ r.y (* wob (smoothstep (fl 0) (fl 0 10)
                                                  (- r.y)))))
        (local vec4 up (textureCube u_sky (vec3 r.x (abs yw) r.z)))
-       (local vec4 dn (textureCube u_sky (vec3 r.x yw r.z)))
-       (local float t (smoothstep (fl 0) (fl 0 50) (- yw)))
-       (local vec3 c (mix up.rgb dn.rgb (* t (fl 0 65))))
+       (local vec4 dn (textureCube u_sky (vec3 r.x (- yw (fl 0 35)) r.z)))
+       (local float t (smoothstep (fl 0) (fl 0 20)
+                                  (- (fl 0) (+ yw (fl 0 35)))))
+       (local vec3 c (mix up.rgb dn.rgb (* t (fl 0 85))))
        ;; a hint of fresnel: grazing angles reflect harder
        (local float f (- (fl 1) (max (dot n e) (fl 0))))
        (set! gl_FragColor
