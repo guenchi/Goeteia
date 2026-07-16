@@ -160,30 +160,34 @@
        (set! gl_Position (* u_mvp (vec4 a_pos (fl 1))))
        (set! v_wp (vec3 (* u_model (vec4 a_pos (fl 1)))))
        (set! v_n (vec3 (* u_model (vec4 a_normal (fl 0)))))))
-   '((precision highp float)
+   '((precision mediump float)
      (uniform samplerCube u_sky)
      (uniform vec3 u_eye)
-     (uniform float u_reflection_pass)
+     (uniform float u_time)
      (varying vec3 v_n)
      (varying vec3 v_wp)
      (define (main) void
-        (local vec3 n (normalize v_n))
-        (local vec3 e (normalize (- u_eye v_wp)))
-        (local vec3 r (reflect (- e) n))
-        ;; A mostly literal environment reflection.  A small amount of
-        ;; upper-hemisphere radiance stands in for the water seen by the
-        ;; underside without creating a second, symmetric cloud sphere.
-        (local vec4 direct (textureCube u_sky r))
-        (local vec3 c direct.rgb)
-        ;; Upward fallback is only needed for downward-facing rays.
-        (if (< r.y (fl 0))
-          (local vec3 updir (normalize (vec3 r.x (- r.y) r.z)))
-          (local vec4 up (textureCube u_sky updir))
-          (local float below (smoothstep (fl 0) "0.65" (- r.y)))
-          (local float fold (* below (mix "0.34" "0.92"
-                                          u_reflection_pass)))
-          (set! c (mix direct.rgb up.rgb fold)))
-        (set! gl_FragColor (vec4 c (fl 1)))))))
+       (local vec3 n (normalize v_n))
+       (local vec3 e (normalize (- u_eye v_wp)))
+       (local vec3 r (reflect (- e) n))
+       ;; downward rays see the WATER, and water is itself a mirror
+       ;; at grazing angles: a shallow dive reflects the mirrored sky
+       ;; (so the waterline fuses with the upper hemisphere -- the
+       ;; blend is zero AT the horizon), and only steep rays sink
+       ;; into the sea band.  The swell wobbles the waterline.
+       (local float wob (* (fl 0 10) (sin (+ (* (+ v_wp.x v_wp.z) (fl 3))
+                                             (* u_time (fl 1 60))))))
+       (local float yw (+ r.y (* wob (smoothstep (fl 0) (fl 0 10)
+                                                 (- r.y)))))
+       (local vec4 up (textureCube u_sky (vec3 r.x (abs yw) r.z)))
+       (local vec4 dn (textureCube u_sky (vec3 r.x yw r.z)))
+       (local float t (smoothstep (fl 0) (fl 0 50) (- yw)))
+       (local vec3 c (mix up.rgb dn.rgb (* t (fl 0 65))))
+       ;; a hint of fresnel: grazing angles reflect harder
+       (local float f (- (fl 1) (max (dot n e) (fl 0))))
+       (set! gl_FragColor
+             (vec4 (* c (+ (fl 0 70) (* (fl 0 45) f)))
+                   (fl 1)))))))
 
 ;; ---- the sea: a restrained displaced dielectric surface ----
 ;; Pass 1 renders only the ball as the water sees it (the camera
@@ -393,7 +397,7 @@
 
 ;; Draw the visible world; the reflection pass omits the sky because
 ;; the sea samples that radiance directly from the cubemap.
-(define (draw-world! vp cam reflection-pass)
+(define (draw-world! vp cam reflection-pass t)
   ;; The reflection texture only needs the ball's alpha-masked radiance;
   ;; the sea samples its sky reflection directly from the cubemap.
   (when (fl=? reflection-pass 0.0)
@@ -410,7 +414,7 @@
   (fx-uniform! env-p 'u_mvp (m4-mul vp ball-m))
   (fx-uniform! env-p 'u_model ball-m)
   (fx-uniform! env-p 'u_eye (v3-x cam) (v3-y cam) (v3-z cam))
-  (fx-uniform! env-p 'u_reflection_pass reflection-pass)
+  (fx-uniform! env-p 'u_time t)
   (fx-mesh-draw! ball))
 
 (fx-loop!
@@ -436,12 +440,12 @@
          (cmd-unbind-texture! 0)        ; the sea sampled it last frame
          (fx-bind-target! refl)
          (cmd-clear! 0.0 0.0 0.0 0.0)
-         (draw-world! reflection-vp meye 1.0)))
+         (draw-world! reflection-vp meye 1.0 t)))
      (set! reflection-frame (remainder (+ reflection-frame 1) 2))
      ;; pass 2: the same world, then the sea reflecting it
      (fx-bind-canvas!)
      (cmd-clear! 0.0 0.0 0.0 1.0)
-     (draw-world! vp eye 0.0)
+     (draw-world! vp eye 0.0 t)
      (fx-mesh-use! sea-p sea)
      (cmd-bind-texture! 0 (fx-target-texture refl))
      (cmd-bind-cubemap! 1 sky-map)
