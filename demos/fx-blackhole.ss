@@ -57,20 +57,18 @@
        ;; disk radius and spans the disk's whole width (at the sides
        ;; the depth is zero and the fold hands back the flat band)
        (local float D (- bh.z pv.z))
-       ;; behind (the conformal gate, the compression blend, the
-       ;; secondary's fade) ramps by ABSOLUTE depth -- that keeps the
-       ;; image concentric on the shadow.  Only the fold ANGLE ramps
-       ;; by azimuth (D over the ring's own radius): every ring
-       ;; completes its fold the same angular distance from the side,
-       ;; so the arc ends bend down in a smooth knee proportional to
-       ;; the ring and merge tangent into the flat band
-       (local float behind (smoothstep (fl 0) "2.0" D))
+       ;; ONE transition drives everything: the knee, the fold's
+       ;; progress by azimuth (D over the ring's own radius).  Fold
+       ;; angle, the centring drop, the conformal gate and the
+       ;; secondary's fade all ride it together -- at knee 1 each
+       ;; point is exactly the approved full transform, at knee 0 the
+       ;; flat band, and in between the four stay consistent, so the
+       ;; arc ends bend tangent into the band and nothing ever lands
+       ;; inside the shadow (a fast fold over a slow drop did)
        (local float knee (smoothstep (fl 0) "0.55" (/ D a_r)))
        ;; primary folds UP to near face-on -- each far semicircle a
        ;; half-ring; the secondary (light that wrapped the other way)
-       ;; folds DOWN, demagnified, under the shadow.  The fold angle
-       ;; ramps by azimuth (the knee): each arc's ends bend smoothly
-       ;; tangent into the flat band
+       ;; folds DOWN, demagnified, under the shadow
        (local float fa (* (mix "1.50" "-0.72" u_image) knee))
        (local float cy (- pv.y bh.y))
        (local float sa (sin fa))
@@ -83,7 +81,7 @@
        ;; the hole instead of standing on top of it (full size -- the
        ;; conformal term swallows what dips inside the ring).  The
        ;; secondary keeps its uniform 0.48
-       (set! off.y (- off.y (* (* "1.5" behind) (- (fl 1) u_image))))
+       (set! off.y (- off.y (* (* "1.5" knee) (- (fl 1) u_image))))
        (set! off (* off (mix (fl 1) "0.48" u_image)))
        (set! pv (vec4 (+ bh.xyz off) pv.w))
        (local vec4 clip (* u_proj pv))
@@ -92,7 +90,7 @@
        (local vec2 nd (/ clip.xy clip.w))
        (local vec2 aa (vec2 (* nd.x "1.8") nd.y))
        (local float d (+ (length aa) "0.0001"))
-       (local float k (* "0.038" behind))
+       (local float k (* "0.038" knee))
        (local float dd (+ d (/ k d)))
        (local vec2 ab (* aa (/ dd d)))
        (set! gl_Position (vec4 (* (vec2 (/ ab.x "1.8") ab.y) clip.w)
@@ -110,7 +108,7 @@
        (set! v_temp (mix (fl 1) "0.35" (/ (- a_r "1.5") "5.5")))
        (set! v_seed a_seed)
        ;; the secondary image shows only the far side, and fainter
-       (set! v_fade (mix (fl 1) (* behind "0.55") u_image))
+       (set! v_fade (mix (fl 1) (* knee "0.55") u_image))
        ;; the disk's own radial grooves: concentric emission rings.
        ;; Edge-on they compress into the band; folded over the hole
        ;; they read face-on -- each groove a ring of the flat disk
