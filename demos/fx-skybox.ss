@@ -375,7 +375,7 @@
        ;; keeps the physical air-to-water base (0.02, transparent --
        ;; the eye looks INTO it), far water lifts to 0.14 so the
        ;; mirror reads; the grazing law stands throughout
-       (local float f0 (mix "0.02" "0.14" glass))
+       (local float f0 (mix "0.02" "0.22" glass))
        (local float one_minus_ndv (- (fl 1) ndv))
        (local float one_minus_ndv2 (* one_minus_ndv one_minus_ndv))
        (local float f (+ f0
