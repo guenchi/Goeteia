@@ -69,13 +69,19 @@
        (local float th (+ (* t "0.55")
                           (* "0.8" (sin (* t "0.13"))) ph))
        ;; the gather keeps a floor: close, never coincident
-       (local float R (+ "0.14" (* "0.41" gather)))
+       (local float R (+ "0.18" (* "0.82" gather)))
        (local float bx (+ (* R (cos th))
-                          (* "0.03" (sin (+ (* t "1.7")
+                          (* "0.05" (sin (+ (* t "1.7")
                                             (* ph (fl 3)))))))
-       (local float by (+ (* gather (+ (* "0.09" (sin (* (fl 2) th)))
-                                       "0.05"))
-                          (* "0.04" (sin (+ (* t "2.2") ph)))))
+       (local float by (max (+ (* gather
+                                  (+ (* "0.20" (sin (* (fl 2) th)))
+                                     "0.08"))
+                               (* "0.06" (sin (+ (* t "2.2") ph))))
+                            "-0.12"))
+       ;; and each flame cycles tall and short: a phase-staggered
+       ;; height factor scales its launch speed and its lifetime
+       (local float hk (+ "0.72" (* "0.48" (sin (+ (* t "0.85")
+                                                   (* ph (fl 2)))))))
        (set! p.age (+ p.age dt))
        (if-else (>= p.age p.life)
          ((local float a (h (+ (* (float i) "12.9898") t)))
@@ -97,15 +103,15 @@
           ;; fan outward from the small core; the contraction below
           ;; reins it back in: the body swells to a teardrop
           (set! p.vel (vec2 (* (cos ang) (* "0.44" b))
-                            (+ "0.31" (* "0.94" d))))
+                            (* (+ "0.31" (* "0.94" d)) hk)))
           ;; the rim dies young, so the profile curves to a tip
-          (set! p.life (* (+ "0.35" (* "1.05" c))
+          (set! p.life (* (* (+ "0.35" (* "1.05" c)) hk)
                           (- (fl 1) (* "0.5" b))))
           (set! p.age (fl 0))
           (if (== (% i 61) 0)             ; an ember pops loose
               (set! p.life (+ (fl 2) c))
               (set! p.vel (vec2 (* (- a (fl 0 50)) "0.75")
-                                (+ "1.1" (* "1.1" d))))))
+                                (* (+ "1.1" (* "1.1" d)) hk)))))
          ((local float k (/ p.age p.life))
           (set! p.vel.y (+ p.vel.y (* (- "2.1" (* "1.25" k)) dt)))
           (set! p.vel.x (+ p.vel.x
