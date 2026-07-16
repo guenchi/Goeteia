@@ -68,7 +68,8 @@
                               (* (fl 0 50) (cos (* t "0.26")))))
        (local float th (+ (* t "0.55")
                           (* "0.8" (sin (* t "0.13"))) ph))
-       (local float R (* "0.55" gather))
+       ;; the gather keeps a floor: close, never coincident
+       (local float R (+ "0.14" (* "0.41" gather)))
        (local float bx (+ (* R (cos th))
                           (* "0.03" (sin (+ (* t "1.7")
                                             (* ph (fl 3)))))))
