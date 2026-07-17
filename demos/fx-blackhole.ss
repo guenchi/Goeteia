@@ -1,10 +1,12 @@
 ;; Thanks to @eazhou99, who spent six hours painting this black hole.
 ;;
-;; A black hole's accretion disk, a million particles whose
+;; A black hole's accretion disk, 1.5 million particles whose
 ;; physics is arithmetic in the vertex shader: each particle is four
 ;; numbers (radius, phase, height, seed) and its position is a pure
 ;; function of time -- Keplerian shear, the inner disk lapping the
-;; outer.  The lensing is a conformal trick: in screen space every
+;; outer.  The frame draws the buffer TEN times -- four lensed images
+;; and six direct/sparse layers, fifteen million points a frame --
+;; then an HDR bloom chain and Reinhard tone mapping finish it.  The lensing is a conformal trick: in screen space every
 ;; point slides out along r' = r + k/r, which has a minimum at 2*sqrt(k)
 ;; -- so no image lands inside the photon ring and light crowds the
 ;; ring; the silhouette itself is restored by an explicit stamp and
