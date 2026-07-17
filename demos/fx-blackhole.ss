@@ -1,11 +1,5 @@
 ;; Thanks to @eazhou99, who spent six hours painting this black hole.
 ;;
-;; The live editor compiles every Run at -O0 for keystroke speed; this
-;; directive overrides it (last one wins) so the million-particle fill
-;; and the frame arithmetic get the full optimization passes -- phones
-;; feel the difference.
-(%opt 2)
-;;
 ;; A black hole's accretion disk, a million particles whose
 ;; physics is arithmetic in the vertex shader: each particle is four
 ;; numbers (radius, phase, height, seed) and its position is a pure
@@ -26,6 +20,7 @@
 ;; invariant) -- the approaching side blazes, the receding side all
 ;; but goes out -- and T_obs = delta T_emit walks a blackbody ramp
 ;; from deep red through white to blue-white.  Needs WebGL 2.
+(%opt 2)
 (import (rnrs) (web sx) (web js) (web dom) (gfx gl) (gfx glsl) (gfx fx)
         (gfx mat) (gfx mesh) (gfx post))
 
