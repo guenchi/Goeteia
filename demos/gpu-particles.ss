@@ -78,9 +78,10 @@
                                      "0.08"))
                                (* "0.06" (sin (+ (* t "2.2") ph))))
                             "-0.12"))
-       ;; and each flame cycles tall and short: a phase-staggered
-       ;; height factor scales its launch speed and its lifetime
-       (local float hk (+ "0.72" (* "0.48" (sin (+ (* t "0.85")
+       ;; staggered statures: the five differ in height at any moment
+       ;; (some taller, some shorter, roles slowly rotating) while
+       ;; every one keeps near its original stature -- no stumps
+       (local float hk (+ "1.05" (* "0.20" (sin (+ (* t "0.85")
                                                    (* ph (fl 2)))))))
        (set! p.age (+ p.age dt))
        (if-else (>= p.age p.life)
