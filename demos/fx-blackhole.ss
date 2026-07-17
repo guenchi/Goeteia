@@ -385,11 +385,13 @@
        ;; so the approaching side blazes and the receding side all but
        ;; goes out -- the asymmetry is the physics, not a tint
        (local float d4 (* (* v_dopp v_dopp) (* v_dopp v_dopp)))
+
        ;; delta^4 UNCLAMPED: the approaching inner edge really is an
        ;; order of magnitude brighter and the receding side really
        ;; does go out -- the asymmetry IS the physics, and Reinhard
        ;; absorbs the top end
        (local float beam d4)
+       
        (local float flick (+ "0.85" (* "0.15"
                                         (sin (+ (* v_seed "40.0")
                                                 (* u_t "3.0"))))))
@@ -404,6 +406,7 @@
        ;; spectral shift: T_obs = delta * T_emit, through a blackbody
        ;; ramp -- deep red, ember orange, white, blue-white
        (local float T (* v_temp v_dopp))
+
          (local vec3 c (mix (vec3 "0.55" "0.08" "0.02")
                             (vec3 (fl 1) "0.45" "0.12")
                             (smoothstep "0.15" "0.55" T)))
@@ -411,6 +414,7 @@
                       (smoothstep "0.55" "1.10" T)))
          (set! c (mix c (vec3 "0.72" "0.82" (fl 1))
                       (smoothstep "1.10" "1.80" T)))
+
         ;; Strongly bent far-side particles make the white lens arc;
         ;; the direct near disk stays copper instead of becoming one
         ;; uniformly white hoop.
