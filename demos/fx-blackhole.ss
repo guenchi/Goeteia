@@ -29,7 +29,7 @@
 
 (fx-init! (get-element-by-id "c"))
 
-(define N 1000000)
+(define N 1500000)
 
 ;; A sparse, cold star field sits behind the hot disk.  The centre is
 ;; explicitly masked by the photon shadow; without that mask a backdrop
