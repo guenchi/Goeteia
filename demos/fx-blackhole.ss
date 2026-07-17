@@ -4,8 +4,10 @@
 ;; function of time -- Keplerian shear, the inner disk lapping the
 ;; outer.  The lensing is a conformal trick: in screen space every
 ;; point slides out along r' = r + k/r, which has a minimum at 2*sqrt(k)
-;; -- so no image lands inside the photon ring, the shadow falls out
-;; of the arithmetic, and light crowds the ring by itself.  The
+;; -- so no image lands inside the photon ring and light crowds the
+;; ring; the silhouette itself is restored by an explicit stamp and
+;; the ring painted at the caustic radius (additive density alone
+;; cannot hold an exact edge).  The
 ;; strong bending is a fold: the flat disk's far side is rotated up
 ;; over the hole by an angle that grows with depth, so its image is
 ;; the wide arch the renderers show -- height following disk radius,
@@ -383,12 +385,13 @@
        ;; so the approaching side blazes and the receding side all but
        ;; goes out -- the asymmetry is the physics, not a tint
        (local float d4 (* (* v_dopp v_dopp) (* v_dopp v_dopp)))
-       (local float raw_beam (min d4 "5.0"))
-       ;; Keep the strong relativistic contrast on the body, but stop
-       ;; sparse outer material from disappearing on the receding side.
-       (local float outer_mode (step "1.50" u_sparse))
-       (local float beam
-              (mix raw_beam (clamp raw_beam "1.35" "3.20") outer_mode))
+
+       ;; delta^4 UNCLAMPED: the approaching inner edge really is an
+       ;; order of magnitude brighter and the receding side really
+       ;; does go out -- the asymmetry IS the physics, and Reinhard
+       ;; absorbs the top end
+       (local float beam d4)
+       
        (local float flick (+ "0.85" (* "0.15"
                                         (sin (+ (* v_seed "40.0")
                                                 (* u_t "3.0"))))))
@@ -403,13 +406,15 @@
        ;; spectral shift: T_obs = delta * T_emit, through a blackbody
        ;; ramp -- deep red, ember orange, white, blue-white
        (local float T (* v_temp v_dopp))
-         (local vec3 c (mix (vec3 "0.52" "0.48" "0.45")
-                            (vec3 (fl 1) "0.78" "0.55")
+
+         (local vec3 c (mix (vec3 "0.55" "0.08" "0.02")
+                            (vec3 (fl 1) "0.45" "0.12")
                             (smoothstep "0.15" "0.55" T)))
          (set! c (mix c (vec3 (fl 1) "0.97" "0.90")
-                      (smoothstep "0.68" "1.18" T)))
-         (set! c (mix c (vec3 "0.82" "0.90" (fl 1))
-                      (smoothstep "1.18" "1.82" T)))
+                      (smoothstep "0.55" "1.10" T)))
+         (set! c (mix c (vec3 "0.72" "0.82" (fl 1))
+                      (smoothstep "1.10" "1.80" T)))
+
         ;; Strongly bent far-side particles make the white lens arc;
         ;; the direct near disk stays copper instead of becoming one
         ;; uniformly white hoop.
