@@ -1,3 +1,5 @@
+;; Thanks to @eazhou99, who spent six hours painting this black hole.
+;;
 ;; A black hole's accretion disk, a million particles whose
 ;; physics is arithmetic in the vertex shader: each particle is four
 ;; numbers (radius, phase, height, seed) and its position is a pure
