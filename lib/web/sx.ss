@@ -85,7 +85,7 @@
   (define ($sx-set-attr el name v)
     (let ((n (symbol->string name)))
       (cond
-       ((memq name $sx-props) (js-set! el n (if (eq? v #f) (js-eval "false") v)))
+       ((memq name $sx-props) (js-set! el n v))
        ((eq? v #f) (js-method el "removeAttribute" n))
        ((eq? v #t) (set-attribute! el n ""))
        ((number? v) (set-attribute! el n (number->string v)))
