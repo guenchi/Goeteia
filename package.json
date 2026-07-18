@@ -1,6 +1,6 @@
 {
   "name": "goeteia",
-  "version": "1.5.2",
+  "version": "1.5.3",
   "description": "A graphics-optimized Scheme-to-WASM compiler and pure-Scheme web programming toolkit.",
   "type": "module",
   "bin": {
