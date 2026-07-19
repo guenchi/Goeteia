@@ -1,13 +1,7 @@
 // Render docs/manual.md into #doc with marked; fall back to raw text.
 // Copyright (c) 2026 guenchi. MIT license; see LICENSE.
 const doc = document.getElementById('doc');
-const lang = new URLSearchParams(location.search).get('lang') === 'zh-cn'
-  ? 'zh-cn' : 'en';
-const SRC = lang === 'zh-cn' ? 'docs/manual.zh-cn.md' : 'docs/manual.md';
-// highlight the active language in the switcher
-document.querySelectorAll('.langtoggle a').forEach(a => {
-  if ((a.dataset.lang || 'en') === lang) a.classList.add('active');
-});
+const SRC = 'docs/manual.md';
 
 function fail(msg) {
   doc.innerHTML =

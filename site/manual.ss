@@ -4,9 +4,6 @@
 
 (define body
   (list
-   `(div (@ (class "langtoggle"))
-      (a (@ (href "manual.html") (data-lang "en")) "English")
-      (a (@ (href "manual.html?lang=zh-cn") (data-lang "zh-cn")) "简体中文"))
    `(article (@ (id "doc") (class "doc"))
       (div (@ (class "status")) "loading the manual…"))))
 
@@ -49,15 +46,7 @@
     (".doc img" (max-width (pct 100)))
     (".doc :target" (scroll-margin-top (em 4 50)))
     (.status (padding (em 4) 0) (text-align center) (color (var dim)))
-    (".status code" (font-family (var mono)))
-    (.langtoggle (display flex) (justify-content flex-end) (gap (em 0 40))
-     (margin-top (em 1 20)))
-    (".langtoggle a" (font-size (em 0 85)) (font-weight 600)
-     (padding (em 0 40) (em 0 90)) (border (px 1) solid (var line))
-     (border-radius (px 8)) (background (var bg2)) (color (var dim)))
-    (".langtoggle a:hover" (border-color (var lapis)) (text-decoration none))
-    (".langtoggle a.active" (background (var lapis)) (color "#fff")
-     (border-color (var lapis)))))
+    (".status code" (font-family (var mono)))))
 
 (write-file "manual.html"
   (render-page "Manual — Goeteia"
