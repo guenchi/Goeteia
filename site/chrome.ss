@@ -180,7 +180,9 @@
            (div (@ (class "wrap"))
              ,@body
              (footer "Goeteia · MIT license · "
-               (a (@ (href "https://github.com/guenchi/Goeteia")) "GitHub")))
+               (a (@ (href "https://github.com/guenchi/Goeteia")) "GitHub")
+               (br)
+               "Powered by " (a (@ (href "https://goeteia.dev")) "Goeteia")))
            ,(overlay)
            ,@scripts
            (script (@ (src "viewsrc.js") (defer #t)))))))))
