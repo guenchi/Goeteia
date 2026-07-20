@@ -182,6 +182,8 @@
              (footer "Goeteia · MIT license · "
                (a (@ (href "https://github.com/guenchi/Goeteia")) "GitHub")
                (br)
+               "Built in pure " (a (@ (href "https://scheme.com")) "Scheme")
+               (br)
                "Powered by " (a (@ (href "https://goeteia.dev")) "Goeteia")))
            ,(overlay)
            ,@scripts
