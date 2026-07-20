@@ -71,8 +71,15 @@
                     (row-gap (em 0 10)) (padding (em 0 35) (em 1 20)))
         (.nav-links (gap (em 1)) (font-size (em 0 88))))))
   (define (footer-styles)
+    ;; the credit line stacks on phones; the "· " separator replaces the
+    ;; line break from the first wide breakpoint up, putting "Built in pure
+    ;; Scheme" and "Powered by Goeteia" on one line.
     '((footer (padding (em 2 50) 0 (em 3 50)) (border-top (px 1) solid (var line))
-              (text-align center) (color (var dim)) (font-size (em 0 90)))))
+              (text-align center) (color (var dim)) (font-size (em 0 90)))
+      (".fsep" (display none))
+      (@media "(min-width: 30em)"
+        (".fsep" (display inline))
+        (".fbrk" (display none)))))
 
   ;; ---- build-time file I/O ----
   ;; each page renders to its .html here; the stylesheets are now
@@ -183,7 +190,8 @@
                (a (@ (href "https://github.com/guenchi/Goeteia")) "GitHub")
                (br)
                "Built in pure " (a (@ (href "https://scheme.com")) "Scheme")
-               (br)
+               (span (@ (class "fsep")) " · ")
+               (br (@ (class "fbrk")))
                "Powered by " (a (@ (href "https://goeteia.dev")) "Goeteia")))
            ,(overlay)
            ,@scripts
