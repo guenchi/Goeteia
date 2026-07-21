@@ -115,7 +115,7 @@
              (code "define-message") " schema rather than a hand-written codec — "
              "and the test checks symmetry directly: " (code "(decode (encode x)) = x") ".")
          (li (b "Not hypothetical — it already ships.") " "
-             (a (@ (href "https://igropyr.com")) "Igropyr") ", a high-performance network "
+             (a (@ (href "https://igropyr.dev")) "Igropyr") ", a high-performance network "
              "server written in pure Scheme, already accepts s-expression payloads "
              "over the wire. The same-language, no-codec path is production, not a "
              "proposal."))

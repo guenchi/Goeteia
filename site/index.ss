@@ -240,7 +240,7 @@
          shader-code)
       ,(show "05" "Networking" "S-expressions on the wire, continuations over it"
          '("When the backend is also Scheme ("
-           (a (@ (href "https://igropyr.com")) "Igropyr")
+           (a (@ (href "https://igropyr.dev")) "Igropyr")
            "), requests and replies are s-expressions — there is no "
            "protocol to design, " (code "read") " and " (code "write")
            " are the codec. And with continuations on the server, a whole "
