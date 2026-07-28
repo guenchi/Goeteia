@@ -863,8 +863,8 @@
                 (when any (plane (+ i 1)))
                 (lane (+ k 1)
                       (or (and (vector-ref $sgl-vis k)
-                               (if (fl<? 0.0 (%mem-f32-ref
-                                              (+ res (* k 4))))
+                               (if (not (fl<? (%mem-f32-ref
+                                               (+ res (* k 4))) 0.0))
                                    #t
                                    (begin (vector-set! $sgl-vis k #f)
                                           #f)))

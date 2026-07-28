@@ -97,7 +97,7 @@
                             (v3-x ndc) (v3-y ndc) (v3-z ndc))))
    (v3~ back 1.5 0.5 -2.0))
  ;; frustum culling: a fov-1 camera at z=10 looking at the origin
- (let* ((vp (m4-mul (m4-perspective 1.0 1.0 0.1 100.0)
+  (let* ((vp (m4-mul (m4-perspective 1.0 1.0 0.1 100.0)
                     (m4-look-at (v3 0 0 10) (v3 0 0 0) (v3 0 1 0))))
         (ps (m4-frustum-planes vp)))
    (and (= (vector-length ps) 6)
@@ -108,8 +108,14 @@
         ;; at the origin plane the half-width is 10*tan(0.5) ~ 5.46
         (sphere-in-frustum? ps (v3 6 0 0) 2.0)       ; straddles right
         (not (sphere-in-frustum? ps (v3 8 0 0) 1.0)) ; fully outside
-        (sphere-in-frustum? ps (v3 0 -6 0) 2.0)
-        (not (sphere-in-frustum? ps (v3 0 -8 0) 1.0))))
+         (sphere-in-frustum? ps (v3 0 -6 0) 2.0)
+         (not (sphere-in-frustum? ps (v3 0 -8 0) 1.0))))
+  ;; A sphere tangent to a plane intersects the frustum; only a sphere
+  ;; strictly beyond the plane is outside.
+  (let* ((p (vector 1.0 0.0 0.0 0.0))
+         (ps (vector p p p p p p)))
+    (and (sphere-in-frustum-xyz? ps -1.0 0.0 0.0 1.0)
+         (not (sphere-in-frustum-xyz? ps -1.01 0.0 0.0 1.0))))
  ;; look-at from +z: axis-aligned view, eye distance in m14
  (let ((v (m4-look-at (v3 0 0 5) (v3 0 0 0) (v3 0 1 0))))
    (and (near? (vector-ref v 0) 1.0)
