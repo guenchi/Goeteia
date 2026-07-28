@@ -210,6 +210,9 @@
       (unless (= hi 0) (error 'ktx "file too large"))
       ($k-u32 at)))
 
+  (define ($k-range? off size total)
+    (and (>= off 0) (>= size 0) (<= off total) (<= size (- total off))))
+
   (define-record-type (ktx $make-ktx ktx?)
     (fields (immutable base $ktx-base)
             (immutable vkformat $ktx-vkformat)
@@ -253,6 +256,7 @@
                      #x0D #x0A #x1A #x0A))
 
   (define (ktx-parse base len)
+    (when (< len 80) (error 'ktx "truncated KTX2 header"))
     (let check ((ms $k-magic) (i 0))
       (when (pair? ms)
         (unless (= (%mem-u8-ref (+ base i)) (car ms))
@@ -267,26 +271,53 @@
            (levels (let ((n ($k-u32 (+ base 40)))) (if (= n 0) 1 n)))
            (scheme ($k-u32 (+ base 44)))
            (dfd-off ($k-u32 (+ base 48)))
+           (dfd-len ($k-u32 (+ base 52)))
+           (kvd-off ($k-u32 (+ base 56)))
+           (kvd-len ($k-u32 (+ base 60)))
            (sgd-off ($k-u64 (+ base 64)))
-           (sgd-len ($k-u64 (+ base 72)))
-           (lindex (make-vector levels #f)))
+           (sgd-len ($k-u64 (+ base 72))))
       (unless (and (= depth 0) (< layers 2) (= faces 1))
         (error 'ktx "arrays/cubes/3D not supported yet"))
-      (let lvl ((l 0))
-        (when (< l levels)
-          (let ((at (+ base 80 (* l 24))))
-            (vector-set! lindex l
-                         (vector ($k-u64 at)
-                                 ($k-u64 (+ at 8))
-                                 ($k-u64 (+ at 16)))))
-          (lvl (+ l 1))))
-      ;; the DFD's colorModel: byte 12 of the first sample-less
-      ;; header words -- vendor 0, descriptor type 0, colorModel at
-      ;; dfd + 4 (total size u32) + 8
-      (let ((color (%mem-u8-ref (+ base dfd-off 12))))
-        ($make-ktx base vkfmt w h levels scheme color lindex
-                   (and (= scheme 1)
-                        ($basis-sgd (+ base sgd-off) sgd-len levels))))))
+      (when (> levels (quotient (- len 80) 24))
+        (error 'ktx "truncated level index"))
+      (unless (and (>= dfd-len 13) ($k-range? dfd-off dfd-len len))
+        (error 'ktx "DFD outside file"))
+      (when (and (> kvd-len 0) (not ($k-range? kvd-off kvd-len len)))
+        (error 'ktx "key/value data outside file"))
+      (when (and (> sgd-len 0) (not ($k-range? sgd-off sgd-len len)))
+        (error 'ktx "supercompression data outside file"))
+      (let ((lindex (make-vector levels #f)))
+        (let lvl ((l 0))
+          (when (< l levels)
+            (let* ((at (+ base 80 (* l 24)))
+                   (off ($k-u64 at))
+                   (clen ($k-u64 (+ at 8)))
+                   (ulen ($k-u64 (+ at 16))))
+              (unless ($k-range? off clen len)
+                (error 'ktx "level payload outside file" l))
+              (vector-set! lindex l (vector off clen ulen)))
+            (lvl (+ l 1))))
+        ;; the DFD's colorModel: byte 12 of the first sample-less
+        ;; header words -- vendor 0, descriptor type 0, colorModel at
+        ;; dfd + 4 (total size u32) + 8
+        (let* ((color (%mem-u8-ref (+ base dfd-off 12)))
+               (sgd (and (= scheme 1)
+                         (begin
+                           (when (= sgd-len 0)
+                             (error 'ktx "BasisLZ file has no global data"))
+                           ($basis-sgd (+ base sgd-off) sgd-len levels)))))
+          (when sgd
+            (let slices ((l 0))
+              (when (< l levels)
+                (let* ((payload (vector-ref (vector-ref lindex l) 1))
+                       (desc (vector-ref (vector-ref sgd 3) l)))
+                  (unless (and ($k-range? (vector-ref desc 0)
+                                           (vector-ref desc 1) payload)
+                               ($k-range? (vector-ref desc 2)
+                                           (vector-ref desc 3) payload))
+                    (error 'ktx "BasisLZ slice outside level" l)))
+                (slices (+ l 1)))))
+          ($make-ktx base vkfmt w h levels scheme color lindex sgd)))))
 
   ;; ================= the BasisLZ / ETC1S decoder =================
   ;; From the Khronos bitstream specification and the reference
@@ -470,6 +501,8 @@
   ;; sgd: #(colors intens selrows imagedescs slice-tables histsize
   ;;        endpoint-count selector-count)
   (define ($basis-sgd at len levels)
+    (when (< len (+ 20 (* levels 20)))
+      (error 'ktx "truncated BasisLZ global data"))
     (let* ((epc ($k-u16 at))
            (selc ($k-u16 (+ at 2)))
            (eplen ($k-u32 (+ at 4)))
@@ -477,6 +510,8 @@
            (tablen ($k-u32 (+ at 12)))
            (descs (make-vector levels #f))
            (blob (+ at 20 (* levels 20))))
+      (when (> (+ 20 (* levels 20) eplen sellen tablen) len)
+        (error 'ktx "BasisLZ tables outside global data"))
       (let d ((l 0))
         (when (< l levels)
           (let ((e (+ at 20 (* l 20))))
