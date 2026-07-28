@@ -16,7 +16,7 @@
 (define (llen l) (let loop ((l l) (n 0)) (if (null? l) n (loop (cdr l) (+ n 1)))))
 (define (check name comp gold plainlen)
   (load! SRC comp)
-  (let ((n (zstd-decode! SRC (llen comp) DST SCRATCH)))
+  (let ((n (zstd-decode! SRC (llen comp) DST SCRATCH plainlen)))
     (if (not (= n plainlen))
         (begin (display "  ") (display name) (display ": wrote ") (display n)
                (display " want ") (display plainlen) (newline) #f)
@@ -160,7 +160,7 @@
 (define mb-ok
   (begin
     (load! SRC mb-comp)
-    (let ((n (zstd-decode! SRC (llen mb-comp) MB-DST MB-SCR)))
+    (let ((n (zstd-decode! SRC (llen mb-comp) MB-DST MB-SCR mb-len)))
       (if (not (= n mb-len))
           (begin (display "  mb: wrote ") (display n) (newline) #f)
           (let loop ((i 0) (s 0) (s2 0))
@@ -173,9 +173,17 @@
                         (remainder (+ s2 (* b (+ 1 (remainder i 251))))
                                    1000000007)))))))))
 
+(define (raw-decode-fails? slen dlen)
+  (load! SRC raw-comp)
+  (guard (e (#t #t))
+    (zstd-decode! SRC slen DST SCRATCH dlen)
+    #f))
+
 (display (and (check "rle" rle-comp rle-gold rle-len)
               (check "raw" raw-comp raw-gold raw-len)
               (check "text" text-comp text-gold text-len)
               (check "blob" blob-comp blob-gold blob-len)
+              (raw-decode-fails? (- (llen raw-comp) 1) raw-len)
+              (raw-decode-fails? (llen raw-comp) (- raw-len 1))
               mb-ok))
 (newline)
