@@ -3,6 +3,8 @@
 // Copyright (c) 2026 guenchi. MIT license; see LICENSE.
 
 import fs from 'fs';
+import path from 'path';
+import { pathToFileURL } from 'url';
 import { makeJsBridge, callMain } from './jsbridge.mjs';
 
 export async function runModule(bytes, input = []) {
@@ -76,7 +78,8 @@ export function decode(v, ex) {
     return '#<object>';
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (process.argv[1] &&
+    import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
     const file = process.argv[2];
     if (!file) {
         console.error('usage: node run.mjs <module.wasm> [input-file]');

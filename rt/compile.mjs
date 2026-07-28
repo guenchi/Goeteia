@@ -234,4 +234,5 @@ async function main() {
     }
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) main();
+if (process.argv[1] &&
+    import.meta.url === url.pathToFileURL(path.resolve(process.argv[1])).href) main();

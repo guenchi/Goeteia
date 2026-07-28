@@ -12,6 +12,7 @@
 import http from 'http';
 import fs from 'fs';
 import path from 'path';
+import { pathToFileURL } from 'url';
 import { execFileSync } from 'child_process';
 
 // Start the live-reload dev server: serve `root`, watch its sources, and
@@ -102,6 +103,7 @@ http.createServer((req, res) => {
 });
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (process.argv[1] &&
+    import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
   startDevServer({ port: Number(process.argv[2]) || 8100 });
 }
