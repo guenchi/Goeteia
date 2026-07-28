@@ -876,10 +876,28 @@
     (%f32x4-scale! (+ dst 32) (+ src 32) 1.0)
     (%f32x4-scale! (+ dst 48) (+ src 48) 1.0))
 
+  (define ($sgl-camera-key cam aspect)
+    (let ((key (make-vector 10 aspect)))
+      (let copy ((i 0))
+        (when (< i 9)
+          (vector-set! key i ($sgl-fl (vector-ref cam i)))
+          (copy (+ i 1))))
+      key))
+
+  (define ($sgl-camera-key=? key cam aspect)
+    (and (vector? key)
+         (= (vector-length key) 10)
+         (fl=? (vector-ref key 9) aspect)
+         (let same ((i 0))
+           (or (= i 9)
+               (and (fl=? (vector-ref key i)
+                          ($sgl-fl (vector-ref cam i)))
+                    (same (+ i 1)))))))
+
   ;; one group: compose every instance into candidate slots four at
   ;; a time, batch-cull them in SIMD, pack the visible down (a chunk
   ;; with nothing culled moves nothing), one upload, one draw
-  (define ($sgl-draw-igroup! prog ig planes scratch camsig)
+  (define ($sgl-draw-igroup! prog ig planes scratch cam aspect)
     (let* ((geo (vector-ref ig 0))
            (ibuf (vector-ref ig 2))
            (ibase (vector-ref ig 3))
@@ -905,13 +923,13 @@
                 (when up? (cmd-buffer-data! ibase (* n 80)))
                 (cmd-draw-elements-instanced!
                  GL-TRIANGLES ($sgl-geo-icount geo) n)))))
-      (if (and (fl=? camsig (vector-ref ig 5))
+      (if (and ($sgl-camera-key=? (vector-ref ig 5) cam aspect)
                (= gen (vector-ref ig 6))
                (>= (vector-ref ig 7) 0))
           ;; nothing moved and the frustum held: redraw the cached set
           (draw! (vector-ref ig 7) #f)
           (begin
-            (vector-set! ig 5 camsig)
+            (vector-set! ig 5 ($sgl-camera-key cam aspect))
             (vector-set! ig 6 gen)
             (%sgl-igroup-fill! ig planes scratch soa ctr ones res draw!))))
     #t)
@@ -997,15 +1015,6 @@
     (let* ((cam ($sgl-cam sc))
            (light ($sgl-light sc))
            (aspect (fl/ ($sgl-fl (fx-width)) ($sgl-fl (fx-height))))
-           ;; a cheap frustum signature: the camera fields and aspect
-           ;; weighted-summed.  Unchanged frame to frame => the frustum
-           ;; held, so static instanced groups need no re-cull/upload
-           (camsig (let loop ((i 0) (acc (fl* aspect 1000003.0)))
-                     (if (= i 9) acc
-                         (loop (+ i 1)
-                               (fl+ acc (fl* ($sgl-fl (vector-ref cam i))
-                                             (fixnum->flonum
-                                              (+ 3 (* i 7)))))))))
            (eye (v3 (vector-ref cam 3) (vector-ref cam 4)
                     (vector-ref cam 5)))
            (vp (m4-mul
@@ -1059,7 +1068,7 @@
           (cmd-use-program! (fx-program-slot p))
           (for-each (lambda (ig)
                       ($sgl-draw-igroup! p ig planes
-                                         ($sgl-iscratch sc) camsig))
+                                         ($sgl-iscratch sc) cam aspect))
                     ($sgl-igroups sc))))
       ;; opaque singles first (front to back), collecting any
       ;; translucent ones (color alpha < 1) into tr for the blended
