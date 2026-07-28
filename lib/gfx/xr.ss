@@ -118,6 +118,7 @@
     ;; the session's framebuffer, into a slot once it exists: the
     ;; first frame callback runs strictly after start resolved
     (set! $xr-fb (fx-slot!))
+    (set! $xr-fb-set #f)
     (set! $xr-session #t))
 
   (define (xr-end!)

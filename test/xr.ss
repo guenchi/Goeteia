@@ -50,6 +50,7 @@ globalThis.__xrlog = [];
     session.raf(1000, {
       getViewerPose(space){ return { views: [view(-1, 0),
                                             view(1, 400)] } } }); };
+  globalThis.__xr_next_fb = () => { layerFb.id = 'XRFB2' };
   globalThis.__xr_end = () => session.end();
 })()")
 
@@ -98,9 +99,24 @@ globalThis.__xrlog = [];
 
 (js-eval "globalThis.__xr_end()")
 
+;; A second session gets a fresh FX slot and must register its framebuffer
+;; instead of inheriting the first session's "already registered" flag.
+(js-eval "globalThis.__xr_next_fb()")
+(define restarted #f)
+(xr-start! (js-get (js-global) "__mockcanvas")
+           (lambda (t)
+             (cmd-begin!)
+             (cmd-bind-target! (xr-framebuffer))
+             (cmd-flush!)
+             (set! restarted #t))
+           (lambda () #t))
+(js-eval "globalThis.__xr_frame()")
+
 (and (eq? supported #t)
      (has? "probe:immersive-vr")
      (has? "session:immersive-vr")
      (has? "refspace:local")
      frame-ok
-     ended)
+     ended
+     restarted
+     (has? "bindFB:XRFB2"))
