@@ -16,10 +16,8 @@ export async function loadGoeteia(url) {
                 fread: () => -1, fwrite: () => {}, fclose: () => {},
             },
             js: makeJsBridge(() => exportsRef),
-        });
+    });
     exportsRef = instance.exports;
-    // expose the staging memory so Scheme can build typed-array views
-    if (instance.exports.memory) globalThis.__goeteia_mem = instance.exports.memory;
     await callMain(instance.exports);
     return instance.exports;
 }

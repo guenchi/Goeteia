@@ -8,6 +8,26 @@ export function makeJsBridge(getExports) {
     const cbStack = [];
     const utf8Decoder = new TextDecoder();
     const utf8Encoder = new TextEncoder();
+    const localGlobals = new Map();
+    const isLocalGlobal = key => typeof key === 'string' &&
+        key.startsWith('__goeteia_') && key !== '__goeteia';
+    let instanceGlobal;
+    const scopedEval = code => Function(
+        'globalThis', 'code', 'return eval(code);'
+    )(instanceGlobal, String(code));
+    instanceGlobal = new Proxy(globalThis, {
+        get(target, key) {
+            if (key === 'eval') return scopedEval;
+            if (key === '__goeteia_mem') return getExports()?.memory;
+            if (localGlobals.has(key)) return localGlobals.get(key);
+            return Reflect.get(target, key, target);
+        },
+        set(target, key, value) {
+            if (isLocalGlobal(key)) localGlobals.set(key, value);
+            else Reflect.set(target, key, value, target);
+            return true;
+        },
+    });
     const takeName = () => {
         // Goeteia strings are UTF-8 byte arrays; decode to a real JS
         // string so non-ASCII (Γ, —, →) crosses correctly
@@ -22,11 +42,12 @@ export function makeJsBridge(getExports) {
     };
     return {
         arg_byte: b => nameBuf.push(b),
-        global: () => globalThis,
+        global: () => instanceGlobal,
         get: obj => obj[takeName()],
         set: (obj, v) => { obj[takeName()] = v; },
         push: v => argStack.push(v),
-        call: (f, thisv) => f.apply(thisv, takeArgs()),
+        call: (f, thisv) => f.apply(
+            thisv === instanceGlobal ? globalThis : thisv, takeArgs()),
         new: ctor => new ctor(...takeArgs()),
         string: () => takeName(),
         str_len: s => { staged = [...utf8Encoder.encode(String(s))]; return staged.length; },
