@@ -60,7 +60,7 @@ export async function runModule(bytes, input = []) {
     // drain microtasks so promise callbacks into wasm (fetch .then
     // chains from (web rpc)) run before we report the output
     await new Promise(r => setImmediate(r));
-    return { text: Buffer.from(out).toString('latin1'), result };
+    return { text: Buffer.from(out).toString('utf8'), result };
 }
 
 export function decode(v, ex) {
