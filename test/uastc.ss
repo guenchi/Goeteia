@@ -39,5 +39,15 @@
                 (loop (+ bi 1) g bad)
                 (tx (+ i 1) (cdr g)
                     (if (= (%mem-u8-ref (+ DST i)) (car g)) bad (+ bad 1)))))))))
-(display (check))
+(define (boundary-check)
+  ;; The image ends exactly at the linear-memory boundary: a whole-level
+  ;; decode must not require an undocumented block after the destination.
+  (let ((dst (- (* 65536 (%mem-size)) 64)))
+    (uastc-decode! SRC dst 4 4)
+    (let loop ((i 0) (gold blk-gold))
+      (or (= i 64)
+          (and (= (%mem-u8-ref (+ dst i)) (car gold))
+               (loop (+ i 1) (cdr gold)))))))
+
+(display (and (check) (boundary-check)))
 (newline)
