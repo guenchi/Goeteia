@@ -29,6 +29,12 @@
     (let loop ((k k) (acc 1))
       (if (<= k 0) acc (loop (- k 1) (* acc 10)))))
 
+  ;; Parsing eventually rounds non-integral JSON numbers to a flonum, so
+  ;; larger exponents cannot add useful precision.  More importantly, a
+  ;; file-controlled exponent must never drive an unbounded bignum pow10.
+  (define $max-number-digits 4096)
+  (define $max-exponent 400)
+
   ;; ---- parser -----------------------------------------------------------
 
   (define (string->json s)
@@ -172,21 +178,26 @@
       ;; value is assembled exactly (digits / 10^frac * 10^exp as an
       ;; exact ratio) and rounded once to a flonum when fractional
       (define (digit v) (and (<= 48 v) (<= v 57) (- v 48)))
-      (define (scan-digits i)
+      (define (scan-digits i limit)
         (let loop ((j i) (acc 0) (k 0))
           (if (< j n)
               (let ((d (digit (char->integer (string-ref s j)))))
-                (if d (loop (+ j 1) (+ (* acc 10) d) (+ k 1))
+                (if d
+                    (if (= k limit)
+                        (jfail "number is too long" j)
+                        (loop (+ j 1) (+ (* acc 10) d) (+ k 1)))
                     (values acc k j)))
               (values acc k j))))
       (define (parse-number i)
         (let* ((neg (char=? (string-ref s i) #\-))
                (start (if neg (+ i 1) i)))
-          (let-values (((ip ik j0) (scan-digits start)))
+          (let-values (((ip ik j0) (scan-digits start $max-number-digits)))
             (when (= ik 0) (jfail "bad number" i))
             (let ((dot? (and (< j0 n) (char=? (string-ref s j0) #\.))))
               (let-values (((fp fk j)
-                            (if dot? (scan-digits (+ j0 1)) (values 0 0 j0))))
+                            (if dot?
+                                (scan-digits (+ j0 1) $max-number-digits)
+                                (values 0 0 j0))))
                 (when (and dot? (= fk 0)) (jfail "bad number" i))
                 (if (and (< j n) (memv (string-ref s j) '(#\e #\E)))
                     (let* ((k0 (+ j 1))
@@ -194,8 +205,10 @@
                                        (memv (string-ref s k0) '(#\+ #\-))
                                        (string-ref s k0)))
                            (k (if esign (+ k0 1) k0)))
-                      (let-values (((ep ek j2) (scan-digits k)))
-                        (when (= ek 0) (jfail "bad number" i))
+                       (let-values (((ep ek j2) (scan-digits k 3)))
+                         (when (= ek 0) (jfail "bad number" i))
+                         (when (> ep $max-exponent)
+                           (jfail "exponent out of range" k))
                         (let* ((m0 (/ (+ (* ip (pow10 fk)) fp) (pow10 fk)))
                                (mant (if neg (- m0) m0))
                                (v (if (and esign (char=? esign #\-))

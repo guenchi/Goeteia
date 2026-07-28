@@ -65,4 +65,6 @@
  (parse-fails? "\"\\ud800\"")            ; lone high surrogate
  (parse-fails? "\"\\q\"")
  (parse-fails? "tru")
+ (parse-fails? "1e999")
+ (parse-fails? (string-append "1e" (make-string 10000 #\9)))
  (parse-fails? ""))
