@@ -67,6 +67,17 @@
        (or (null? es)
            (and (check i (car es))
                 (loop (+ i 1) (cdr es)))))
+     ;; A bounded region rejects the first word that would cross its end,
+     ;; before it can overwrite adjacent staging data.
+     (begin
+       (%mem-i32-set! 8 1234567)
+       (cmd-region! 0 8)
+       (cmd-begin!)
+       (let ((failed (guard (e (#t #t))
+                       (cmd-clear! 0.0 0.0 0.0 1.0)
+                       #f)))
+         (cmd-region! 0)
+         (and failed (= (%mem-i32-ref 8) 1234567))))
      ;; a second frame reuses the region: encode fewer commands, replay
      ;; must stop at the new end, not run into stale words
      (begin (cmd-begin!)
