@@ -33,18 +33,27 @@ function topLevelSpans(text) {
 // a minimal sexpr reader for import clauses: symbols and nesting
 function parseSexpr(text) {
     let i = 0;
-    function skip() { while (i < text.length && /[\s]/.test(text[i])) i++; }
+    function skip() {
+        for (;;) {
+            while (i < text.length && /[\s]/.test(text[i])) i++;
+            if (text[i] !== ';') return;
+            while (i < text.length && text[i] !== '\n') i++;
+        }
+    }
     function one() {
         skip();
         if (text[i] === '(') {
             i++;
             const items = [];
-            for (skip(); text[i] !== ')'; skip()) items.push(one());
+            for (skip(); i < text.length && text[i] !== ')'; skip())
+                items.push(one());
+            if (i >= text.length) throw new Error('unterminated import clause');
             i++;
             return items;
         }
         const start = i;
-        while (i < text.length && !/[\s()]/.test(text[i])) i++;
+        while (i < text.length && !/[\s();]/.test(text[i])) i++;
+        if (i === start) throw new Error('invalid import clause');
         return text.slice(start, i);
     }
     return one();
