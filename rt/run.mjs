@@ -54,9 +54,6 @@ export async function runModule(bytes, input = []) {
         js: makeJsBridge(() => exportsRef),
     });
     exportsRef = instance.exports;
-    // expose the staging memory so Scheme can build typed-array views
-    // over it through the FFI ((js-get (js-global) "__goeteia_mem"))
-    if (instance.exports.memory) globalThis.__goeteia_mem = instance.exports.memory;
     const ex = instance.exports;
     const result = decode(await callMain(ex), ex);
     // drain microtasks so promise callbacks into wasm (fetch .then
