@@ -252,6 +252,30 @@
   (and (= (- (count-log "drawInst:TRI:36:2") dirty2-before) 1)
        (= (- (count-log "drawInst:TRI:36:1") dirty1-before) 1)))
 
+;; ---- camera cache keys compare every field ----
+;; These states collide under the old weighted sum: near gains 17
+;; (weight 10), while far loses 10 (weight 17).  The new near plane
+;; passes both boxes, so the cached two-instance draw must disappear.
+(define key-near (signal 1.0))
+(define key-far (signal 50.0))
+(define sc-key
+  (sgl (camera (@ (fov 0.9) (position 0.0 0.0 10.0)
+                  (look-at 0.0 0.0 0.0)
+                  (near ,(signal-ref key-near))
+                  (far ,(signal-ref key-far))))
+       (light (@ (direction 0.0 1.0 0.0) (ambient 0.25)))
+       (mesh (@ (geometry (box 1 1 1)) (position -1.0 0.0 0.0)))
+       (mesh (@ (geometry (box 1 1 1)) (position 1.0 0.0 0.0)))))
+(define key-before (count-log "drawInst:TRI:36:2"))
+(cmd-begin!) (sgl-draw! sc-key) (cmd-flush!)
+(define key-first (count-log "drawInst:TRI:36:2"))
+(signal-set! key-near 18.0)
+(signal-set! key-far 40.0)
+(cmd-begin!) (sgl-draw! sc-key) (cmd-flush!)
+(define key-ok
+  (and (= key-first (+ key-before 1))
+       (= (count-log "drawInst:TRI:36:2") key-first)))
+
 ;; ---- draw order: nearest first, whatever the declaration says ----
 ;; the far box is declared first; different geometries keep them
 ;; singles, and the sort hands the near one to the encoder first
@@ -332,5 +356,5 @@
          (> far-at mask-at)                    ; blended pass after mask off
          (< far-at near-at))))                 ; farther drawn before nearer
 
-(and frame1-ok frame2-ok mat-ok cull-ok inst-skip-ok group1-ok group2-ok
+(and frame1-ok frame2-ok mat-ok cull-ok inst-skip-ok key-ok group1-ok group2-ok
      lod-near-ok lod-far-ok chunk-ok dirty-ok order-ok weld-ok tr-ok)
