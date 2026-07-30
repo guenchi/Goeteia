@@ -10,8 +10,14 @@ export function makeJsBridge(getExports) {
     const utf8Encoder = new TextEncoder();
     const localGlobals = new Map();
     const isLocalGlobal = key => typeof key === 'string' &&
-        key.startsWith('__goeteia_') && key !== '__goeteia';
+        key.startsWith('__goeteia_');
     let instanceGlobal;
+    // eval'd code sees `globalThis` bound to this instance's proxy, so
+    // `globalThis.__goeteia_*` resolves to per-instance state. Only the
+    // `globalThis` identifier is shadowed -- a bare unqualified
+    // `__goeteia_*` inside eval would still reach the real global, but
+    // Scheme codegen always accesses globals qualified (js-get), so it
+    // never emits that form.
     const scopedEval = code => Function(
         'globalThis', 'code', 'return eval(code);'
     )(instanceGlobal, String(code));
@@ -23,9 +29,10 @@ export function makeJsBridge(getExports) {
             return Reflect.get(target, key, target);
         },
         set(target, key, value) {
-            if (isLocalGlobal(key)) localGlobals.set(key, value);
-            else Reflect.set(target, key, value, target);
-            return true;
+            if (isLocalGlobal(key)) { localGlobals.set(key, value); return true; }
+            // propagate a real failure (e.g. a non-writable global) so a
+            // strict-mode assignment throws instead of silently no-op'ing
+            return Reflect.set(target, key, value, target);
         },
     });
     const takeName = () => {

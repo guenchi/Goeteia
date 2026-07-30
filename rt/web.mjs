@@ -16,7 +16,7 @@ export async function loadGoeteia(url) {
                 fread: () => -1, fwrite: () => {}, fclose: () => {},
             },
             js: makeJsBridge(() => exportsRef),
-    });
+        });
     exportsRef = instance.exports;
     await callMain(instance.exports);
     return instance.exports;
