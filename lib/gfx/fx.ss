@@ -75,7 +75,7 @@
     ;; a fresh init retires loops from any earlier run of the page
     ;; (live editors re-run whole programs; fx-ticks! checks this)
     (js-set! (js-global) "__goeteia_fx_gen" (+ 1 ($fx-gen)))
-    (cmd-region! 0))
+    (cmd-region! 0 $fx-cmd-limit))
 
   (define (fx-slot!)
     (unless $fx-canvas (error 'fx-slot! "call fx-init! first"))

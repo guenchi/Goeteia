@@ -605,12 +605,20 @@
   ;; ---- the encoder: words into the staging memory ----
   (define $base 0)
   (define $p 0)
+  (define $limit #f)
   (define $draw-count 0)                ; draws encoded this frame
-  (define (cmd-region! base) (set! $base base))
+  (define (cmd-region! base . limit)
+    (set! $base base)
+    (set! $limit (and (pair? limit) (car limit)))
+    (when (and $limit (< $limit $base))
+      (error 'cmd-region! "limit precedes command base" $limit)))
   (define (cmd-begin!) (set! $p $base) (set! $draw-count 0))
   (define ($draw!) (set! $draw-count (+ $draw-count 1)))
-  (define (u! v) (%mem-i32-set! $p v) (set! $p (+ $p 4)))
-  (define (f! v) (%mem-f32-set! $p v) (set! $p (+ $p 4)))
+  (define ($word!)
+    (when (and $limit (> (+ $p 4) $limit))
+      (error 'cmd-region! "command region overflow" $p)))
+  (define (u! v) ($word!) (%mem-i32-set! $p v) (set! $p (+ $p 4)))
+  (define (f! v) ($word!) (%mem-f32-set! $p v) (set! $p (+ $p 4)))
 
   (define (cmd-clear! r g b a) (u! 1) (f! r) (f! g) (f! b) (f! a))
   (define (cmd-use-program! slot) (u! 2) (u! slot))
