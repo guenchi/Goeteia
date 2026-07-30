@@ -923,7 +923,10 @@
            (h (ktx-level-height k l)))
       (if (= (ktx-scheme k) 2)
           (let* ((blocks (fx-alloc! ulen))
-                 (scratch (fx-alloc! (+ ulen 65536))))
-            (zstd-decode! off clen blocks scratch ulen)
+                 (sclen (+ ulen 65536))
+                 (scratch (fx-alloc! sclen)))
+            ;; bound literal staging to the real scratch size, not the
+            ;; nominal max block -- a small ulen allocates < one block
+            (zstd-decode! off clen blocks scratch ulen sclen)
             (uastc-decode! blocks dst w h))
           (uastc-decode! off dst w h)))))

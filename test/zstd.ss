@@ -179,11 +179,27 @@
     (zstd-decode! SRC slen DST SCRATCH dlen)
     #f))
 
+;; the scratch bound tracks the caller's real scratch length: a stream
+;; that stages literals into a scratch smaller than them must error
+;; cleanly instead of overrunning it (the bound used to be a fixed
+;; 128 KB regardless of the length the caller passed).
+(define (text-scratch-ok? scratchlen)
+  (load! SRC text-comp)
+  (= (zstd-decode! SRC (llen text-comp) DST SCRATCH text-len scratchlen)
+     text-len))
+(define (text-scratch-fails? scratchlen)
+  (load! SRC text-comp)
+  (guard (e (#t #t))
+    (zstd-decode! SRC (llen text-comp) DST SCRATCH text-len scratchlen)
+    #f))
+
 (display (and (check "rle" rle-comp rle-gold rle-len)
               (check "raw" raw-comp raw-gold raw-len)
               (check "text" text-comp text-gold text-len)
               (check "blob" blob-comp blob-gold blob-len)
               (raw-decode-fails? (- (llen raw-comp) 1) raw-len)
               (raw-decode-fails? (llen raw-comp) (- raw-len 1))
+              (text-scratch-ok? 131072)   ; ample scratch -> decodes
+              (text-scratch-fails? 1)      ; 1-byte scratch -> clean error
               mb-ok))
 (newline)

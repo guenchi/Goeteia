@@ -5,11 +5,14 @@
 ;; what unwraps them.  General enough to inflate any single-frame zstd
 ;; stream that fits in memory.
 ;;
-;;   (zstd-decode! src slen dst scratch [dlen]) ; -> bytes written at dst
+;;   (zstd-decode! src slen dst scratch [dlen [scratch-len]]) ; -> bytes at dst
 ;;
-;; `scratch' is a spare region (>= one block's literal size) the
-;; decoder stages decoded literals in before the sequence stage
-;; interleaves them with back-references.
+;; `scratch' is a spare region the decoder stages decoded literals in
+;; before the sequence stage interleaves them with back-references.
+;; `scratch-len' is its size in bytes: literal writes are bounds-checked
+;; against it, so a hostile literals header cannot overrun a short
+;; scratch.  It defaults to one block's literal size ($max-block-size);
+;; a caller whose region is smaller MUST pass its real length.
 ;;
 ;; Every bitstream is little-endian.  FSE table descriptions are read
 ;; forward from a byte; Huffman and FSE payloads are read backward from
@@ -541,15 +544,21 @@
                         (vector-ref sq 4) (vector-ref sq 5) (vector-ref sq 6)))))
            (else (error 'zstd "reserved block type")))))))
 
-  (define (zstd-decode! src slen dst scratch . capacity)
+  (define (zstd-decode! src slen dst scratch . rest)
+    ;; rest = [dlen [scratch-len]] -- dlen is the output capacity (absent
+    ;; or #f -> taken from the frame header); scratch-len bounds the
+    ;; scratch region (absent -> one block, $max-block-size).
     (when (< slen 5) (error 'zstd "truncated frame header"))
     (set! $src-start src)
     (set! $src-end (+ src slen))
     (set! $dst-start dst)
     (set! $scratch-start scratch)
-    (set! $scratch-end (+ scratch $max-block-size))
+    (set! $scratch-end
+          (+ scratch (if (and (pair? rest) (pair? (cdr rest)) (cadr rest))
+                         (cadr rest)
+                         $max-block-size)))
     (guard (e (#t (set! $src-end #f) (raise e)))
-      (let ((dlen (if (pair? capacity) (car capacity)
+      (let ((dlen (if (and (pair? rest) (car rest)) (car rest)
                       (zstd-frame-size src))))
         (when (<= dlen 0)
           (error 'zstd "frame has no content size; pass a destination capacity"))
