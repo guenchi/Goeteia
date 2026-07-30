@@ -5,7 +5,7 @@
 ;; what unwraps them.  General enough to inflate any single-frame zstd
 ;; stream that fits in memory.
 ;;
-;;   (zstd-decode! src slen dst scratch)   ; -> bytes written at dst
+;;   (zstd-decode! src slen dst scratch [dlen]) ; -> bytes written at dst
 ;;
 ;; `scratch' is a spare region (>= one block's literal size) the
 ;; decoder stages decoded literals in before the sequence stage
@@ -22,8 +22,26 @@
   (export zstd-decode! zstd-frame-size)
   (import (rnrs))
 
-  (define ($u8 at) (%mem-u8-ref at))
-  (define ($u8! at v) (%mem-u8-set! at (bitwise-and v 255)))
+  (define $src-start 0)
+  (define $src-end #f)
+  (define $dst-start 0)
+  (define $dst-end 0)
+  (define $scratch-start 0)
+  (define $scratch-end 0)
+  (define $max-block-size 131072)
+  (define ($u8 at)
+    (when (and $src-end (or (< at $src-start) (>= at $src-end)))
+      (error 'zstd "truncated input"))
+    (%mem-u8-ref at))
+  (define ($mem-u8 at) (%mem-u8-ref at))
+  (define ($out-u8! at v)
+    (when (or (< at $dst-start) (>= at $dst-end))
+      (error 'zstd "output exceeds destination"))
+    (%mem-u8-set! at (bitwise-and v 255)))
+  (define ($scratch-u8! at v)
+    (when (or (< at $scratch-start) (>= at $scratch-end))
+      (error 'zstd "literal block exceeds scratch space"))
+    (%mem-u8-set! at (bitwise-and v 255)))
   (define ($u16 at) (+ ($u8 at) (* 256 ($u8 (+ at 1)))))
   (define ($u24 at) (+ ($u16 at) (* 65536 ($u8 (+ at 2)))))
   (define ($u32 at) (+ ($u24 at) (* 16777216 ($u8 (+ at 3)))))
@@ -296,7 +314,7 @@
       (let loop ((i 0) (st ($bbr-read br mx)))
         (when (< i count)
           (let ((sy (vector-ref syms st)) (b (vector-ref nbt st)))
-            ($u8! (+ base off i) sy)
+            ($scratch-u8! (+ base off i) sy)
             (loop (+ i 1) (bitwise-and (+ ($shl st b) ($bbr-read br b)) mask)))))))
 
   ;; =================== literals section ===================
@@ -314,10 +332,10 @@
                        (else (values (+ ($shr b0 4) (* 16 ($u16 (+ at 1)))) 3)))))
           (if (= type 0)
               (begin
-                (let cp ((i 0)) (when (< i rsize) ($u8! (+ litbuf i) ($u8 (+ at hdr i))) (cp (+ i 1))))
+                 (let cp ((i 0)) (when (< i rsize) ($scratch-u8! (+ litbuf i) ($u8 (+ at hdr i))) (cp (+ i 1))))
                 (vector litbuf rsize (+ at hdr rsize) prev-huf))
               (let ((v ($u8 (+ at hdr))))
-                (let cp ((i 0)) (when (< i rsize) ($u8! (+ litbuf i) v) (cp (+ i 1))))
+                 (let cp ((i 0)) (when (< i rsize) ($scratch-u8! (+ litbuf i) v) (cp (+ i 1))))
                 (vector litbuf rsize (+ at hdr 1) prev-huf)))))
        (else
         ;; header fields assembled from bytes -- a $u32 is a bignum
@@ -389,7 +407,7 @@
     (let ((b0 ($u8 at)))
       (if (= b0 0)
           (begin
-            (let cp ((i 0)) (when (< i litlen) ($u8! (+ dpos i) ($u8 (+ litbuf i))) (cp (+ i 1))))
+            (let cp ((i 0)) (when (< i litlen) ($out-u8! (+ dpos i) ($mem-u8 (+ litbuf i))) (cp (+ i 1))))
             (vector (+ dpos litlen) pll pof pml ir0 ir1 ir2))
           (let-values
               (((nseq nat)
@@ -413,7 +431,8 @@
                              (r0 ir0) (r1 ir1) (r2 ir2))
                     (if (= n nseq)
                         (let ((rem (- litlen litpos)))
-                          (let cp ((i 0)) (when (< i rem) ($u8! (+ dpos i) ($u8 (+ litbuf litpos i))) (cp (+ i 1))))
+                          (when (< rem 0) (error 'zstd "literal lengths exceed block"))
+                          (let cp ((i 0)) (when (< i rem) ($out-u8! (+ dpos i) ($mem-u8 (+ litbuf litpos i))) (cp (+ i 1))))
                           (vector (+ dpos rem) llt oft mlt r0 r1 r2))
                         (let* ((llc ($fse-peek llt lls))
                                (mlc ($fse-peek mlt mls))
@@ -432,9 +451,13 @@
                                         (cond ((= offv 1) (values r1 r1 r0 r2))
                                               ((= offv 2) (values r2 r2 r0 r1))
                                               (else (values (- r0 1) (- r0 1) r0 r1)))))))
-                            (let cp ((i 0)) (when (< i llen) ($u8! (+ dpos i) ($u8 (+ litbuf litpos i))) (cp (+ i 1))))
+                            (when (> (+ litpos llen) litlen)
+                              (error 'zstd "literal lengths exceed block"))
+                            (let cp ((i 0)) (when (< i llen) ($out-u8! (+ dpos i) ($mem-u8 (+ litbuf litpos i))) (cp (+ i 1))))
                             (let ((ms (- (+ dpos llen) offset)))
-                              (let cp ((i 0)) (when (< i mlen) ($u8! (+ dpos llen i) ($u8 (+ ms i))) (cp (+ i 1))))
+                              (when (or (<= offset 0) (< ms $dst-start))
+                                (error 'zstd "match offset precedes output"))
+                              (let cp ((i 0)) (when (< i mlen) ($out-u8! (+ dpos llen i) ($mem-u8 (+ ms i))) (cp (+ i 1))))
                               (let ((dpos (+ dpos llen mlen)) (litpos (+ litpos llen)))
                                 (if (= (+ n 1) nseq)
                                     (loop (+ n 1) lls ofs mls dpos litpos nr0 nr1 nr2)
@@ -469,7 +492,7 @@
             ((= cs-flag 2) ($u32 p))
             (else ($u32 p)))))
 
-  (define (zstd-decode! src slen dst scratch)
+  (define ($zstd-decode-bounded! src dst scratch)
     ;; the entropy state -- the last Huffman table and the three FSE
     ;; tables -- and the offset history persist across a frame's blocks
     (let ((cat ($frame-content-at src)))
@@ -483,15 +506,27 @@
                (bat (+ at 3)))
           (cond
            ((= btype 0)
-            (let cp ((i 0)) (when (< i bsize) ($u8! (+ dpos i) ($u8 (+ bat i))) (cp (+ i 1))))
+            (when (> (+ bat bsize) $src-end)
+              (error 'zstd "truncated raw block"))
+            (let cp ((i 0))
+              (when (< i bsize)
+                ($out-u8! (+ dpos i) ($u8 (+ bat i)))
+                (cp (+ i 1))))
             (if (= lastblk 1) (- (+ dpos bsize) dst)
-                (loop (+ bat bsize) (+ dpos bsize) huf llt oft mlt r0 r1 r2)))
+                (loop (+ bat bsize) (+ dpos bsize)
+                      huf llt oft mlt r0 r1 r2)))
            ((= btype 1)
             (let ((v ($u8 bat)))
-              (let cp ((i 0)) (when (< i bsize) ($u8! (+ dpos i) v) (cp (+ i 1))))
+              (let cp ((i 0))
+                (when (< i bsize)
+                  ($out-u8! (+ dpos i) v)
+                  (cp (+ i 1))))
               (if (= lastblk 1) (- (+ dpos bsize) dst)
-                  (loop (+ bat 1) (+ dpos bsize) huf llt oft mlt r0 r1 r2))))
+                  (loop (+ bat 1) (+ dpos bsize)
+                        huf llt oft mlt r0 r1 r2))))
            ((= btype 2)
+            (when (> (+ bat bsize) $src-end)
+              (error 'zstd "truncated compressed block"))
             (let* ((lit ($literals bat scratch huf))
                    (litbuf (vector-ref lit 0))
                    (litlen (vector-ref lit 1))
@@ -504,4 +539,22 @@
                   (loop (+ bat bsize) ndpos nhuf
                         (vector-ref sq 1) (vector-ref sq 2) (vector-ref sq 3)
                         (vector-ref sq 4) (vector-ref sq 5) (vector-ref sq 6)))))
-           (else (error 'zstd "reserved block type"))))))))
+           (else (error 'zstd "reserved block type")))))))
+
+  (define (zstd-decode! src slen dst scratch . capacity)
+    (when (< slen 5) (error 'zstd "truncated frame header"))
+    (set! $src-start src)
+    (set! $src-end (+ src slen))
+    (set! $dst-start dst)
+    (set! $scratch-start scratch)
+    (set! $scratch-end (+ scratch $max-block-size))
+    (guard (e (#t (set! $src-end #f) (raise e)))
+      (let ((dlen (if (pair? capacity) (car capacity)
+                      (zstd-frame-size src))))
+        (when (<= dlen 0)
+          (error 'zstd "frame has no content size; pass a destination capacity"))
+        (set! $dst-end (+ dst dlen))
+        (let ((n ($zstd-decode-bounded! src dst scratch)))
+          (set! $src-end #f)
+          n))))
+)

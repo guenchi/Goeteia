@@ -924,6 +924,6 @@
       (if (= (ktx-scheme k) 2)
           (let* ((blocks (fx-alloc! ulen))
                  (scratch (fx-alloc! (+ ulen 65536))))
-            (zstd-decode! off clen blocks scratch)
+            (zstd-decode! off clen blocks scratch ulen)
             (uastc-decode! blocks dst w h))
           (uastc-decode! off dst w h)))))
