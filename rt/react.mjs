@@ -17,21 +17,32 @@
 // remounts (dispose + fresh mount), which is the natural lifecycle
 // for a component whose interior state lives in Goeteia signals.
 
+function sameProps(a, b) {
+    const ak = Object.keys(a);
+    const bk = Object.keys(b);
+    return ak.length === bk.length &&
+        ak.every(k => Object.prototype.hasOwnProperty.call(b, k) &&
+                      Object.is(a[k], b[k]));
+}
+
 export function goeteiaComponent(React, name, opts = {}) {
     const tag = opts.tag || 'div';
     return function GoeteiaWrapper(props) {
         const ref = React.useRef(null);
+        const stableProps = React.useRef(props);
+        if (!sameProps(stableProps.current, props)) stableProps.current = props;
+        const effectProps = stableProps.current;
         React.useEffect(() => {
             let dispose, cancelled = false;
             const tryMount = () => {
                 if (cancelled) return;
                 const reg = globalThis.__goeteia;
-                if (reg && reg[name]) dispose = reg[name](ref.current, props);
+                if (reg && reg[name]) dispose = reg[name](ref.current, effectProps);
                 else setTimeout(tryMount, 10);      // module still loading
             };
             tryMount();
             return () => { cancelled = true; if (dispose) dispose(); };
-        }, Object.values(props));
+        }, [effectProps]);
         return React.createElement(tag, { ref });
     };
 }
