@@ -30,8 +30,7 @@ onmessage = async (e) => {
     const { compiler, prelude, source } = e.data;
     try {
         const harness = '\\n(define ($pg-write v) (write v) v)\\n(export $pg-write)\\n';
-        const input = [];
-        for (const ch of prelude + '\\n' + source + harness) input.push(ch.charCodeAt(0) & 0xff);
+        const input = new TextEncoder().encode(prelude + '\\n' + source + harness);
         const out = [];
         let pos = 0;
         const t0 = performance.now();
