@@ -438,4 +438,30 @@
                          bad
                          (+ bad 1))))))))
 
-(and container-ok rgba-ok etc1-ok bc1-ok alpha-ok)
+(define BAD 50000)
+(define (copy-bad!)
+  (let loop ((i 0))
+    (when (< i 590)
+      (%mem-u8-set! (+ BAD i) (%mem-u8-ref (+ BASE i)))
+      (loop (+ i 1)))))
+(define (parse-fails? base len)
+  (guard (e (#t #t))
+    (ktx-parse base len)
+    #f))
+(define bounds-ok
+  (and (parse-fails? BASE 79)
+       (begin
+         (copy-bad!)
+         ;; 255 level records cannot fit in this 590-byte container.
+         (%mem-u8-set! (+ BAD 40) 255)
+         (parse-fails? BAD 590))
+       (begin
+         (copy-bad!)
+         ;; Move level zero's payload one byte past the supplied blob.
+         (%mem-u8-set! (+ BAD 80) 79)
+         (%mem-u8-set! (+ BAD 81) 2)
+         (%mem-u8-set! (+ BAD 82) 0)
+         (%mem-u8-set! (+ BAD 83) 0)
+         (parse-fails? BAD 590))))
+
+(and container-ok rgba-ok etc1-ok bc1-ok alpha-ok bounds-ok)
