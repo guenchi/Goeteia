@@ -17,7 +17,7 @@ import { execFileSync } from 'child_process';
 // Start the live-reload dev server: serve `root`, watch its sources, and
 // run root/build.sh on every save before pushing an SSE reload.
 export function startDevServer({ port = 8100, root = process.cwd() } = {}) {
-const ROOT = root;
+const ROOT = fs.realpathSync(root);
 const PORT = port;
 const HAS_BUILD = fs.existsSync(path.join(ROOT, 'build.sh'));
 
@@ -73,11 +73,17 @@ function onChange(file) {
   clearTimeout(timer);
   timer = setTimeout(() => { console.log(`change -> ${file}`); build(); }, 60);
 }
-fs.watch(ROOT, { recursive: true }, (_e, f) => onChange(f));
+const watcher = fs.watch(ROOT, { recursive: true }, (_e, f) => onChange(f));
 
 // ---- serve ----
-http.createServer((req, res) => {
-  const url = decodeURIComponent(req.url.split('?')[0]);
+const server = http.createServer((req, res) => {
+  let url;
+  try {
+    url = decodeURIComponent(req.url.split('?')[0]);
+  } catch {
+    res.writeHead(400);
+    return res.end('bad request');
+  }
   if (url === '/livereload') {
     res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive' });
     res.write('retry: 500\n\n');
@@ -86,20 +92,36 @@ http.createServer((req, res) => {
     req.on('close', () => clients.delete(res));
     return;
   }
-  const file = path.join(ROOT, url === '/' ? 'index.html' : url);
-  if (!file.startsWith(ROOT)) { res.writeHead(403); return res.end(); }
-  fs.readFile(file, (err, buf) => {
-    if (err) { res.writeHead(404); return res.end('not found'); }
-    const ext = path.extname(file);
-    res.writeHead(200, { 'Content-Type': MIME[ext] || 'application/octet-stream', 'Cache-Control': 'no-store' });
-    if (ext === '.html') buf = Buffer.from(buf.toString().replace('</body>', RELOAD_SNIPPET + '</body>'));
-    res.end(buf);
+  const requested = url === '/' ? 'index.html' : url.replace(/^[/\\]+/, '');
+  const file = path.resolve(ROOT, requested);
+  const relative = path.relative(ROOT, file);
+  if (relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
+    res.writeHead(403);
+    return res.end('forbidden');
+  }
+  fs.realpath(file, (realErr, realFile) => {
+    if (realErr) { res.writeHead(404); return res.end('not found'); }
+    const realRelative = path.relative(ROOT, realFile);
+    if (realRelative === '..' || realRelative.startsWith(`..${path.sep}`) || path.isAbsolute(realRelative)) {
+      res.writeHead(403);
+      return res.end('forbidden');
+    }
+    fs.readFile(realFile, (err, buf) => {
+      if (err) { res.writeHead(404); return res.end('not found'); }
+      const ext = path.extname(realFile);
+      res.writeHead(200, { 'Content-Type': MIME[ext] || 'application/octet-stream', 'Cache-Control': 'no-store' });
+      if (ext === '.html') buf = Buffer.from(buf.toString().replace('</body>', RELOAD_SNIPPET + '</body>'));
+      res.end(buf);
+    });
   });
-}).listen(PORT, () => {
+});
+server.on('close', () => watcher.close());
+server.listen(PORT, () => {
   console.log(`Goeteia dev server: http://localhost:${PORT}  (cwd: ${ROOT})`);
   console.log(HAS_BUILD ? 'watching sources; ./build.sh runs on save.' : 'watching sources; no build.sh -- reload only.');
   build();
 });
+return server;
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {
