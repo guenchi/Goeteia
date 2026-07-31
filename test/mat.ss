@@ -108,8 +108,8 @@
         ;; at the origin plane the half-width is 10*tan(0.5) ~ 5.46
         (sphere-in-frustum? ps (v3 6 0 0) 2.0)       ; straddles right
         (not (sphere-in-frustum? ps (v3 8 0 0) 1.0)) ; fully outside
-         (sphere-in-frustum? ps (v3 0 -6 0) 2.0)
-         (not (sphere-in-frustum? ps (v3 0 -8 0) 1.0))))
+        (sphere-in-frustum? ps (v3 0 -6 0) 2.0)      ; straddles bottom
+        (not (sphere-in-frustum? ps (v3 0 -8 0) 1.0))))
   ;; A sphere tangent to a plane intersects the frustum; only a sphere
   ;; strictly beyond the plane is outside.
   (let* ((p (vector 1.0 0.0 0.0 0.0))

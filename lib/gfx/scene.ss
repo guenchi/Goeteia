@@ -839,7 +839,8 @@
   ;; ---- the batched cull: four spheres a pop ----
   ;; centers and radii lay out SoA -- xs ys zs rs, one f32x4 each --
   ;; and every plane tests all four in five SIMD instructions:
-  ;; xs*nx + ys*ny + zs*nz + rs + d, positive lanes still visible.
+  ;; xs*nx + ys*ny + zs*nz + rs + d, non-negative lanes still visible
+  ;; (zero is a tangent sphere, still inside).
   ;; A lane that dies stops being read; a plane that kills all four
   ;; stops the walk
   (define $sgl-vis (make-vector 4 #f))
