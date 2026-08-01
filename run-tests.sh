@@ -72,4 +72,9 @@ for t in test/*.ss; do
         fi
     fi
 done
+if ${NODE-node} test/js-backend-memory-bounds.mjs; then
+    echo "ok   test/js-backend-memory-bounds.mjs"
+else
+    echo "FAIL test/js-backend-memory-bounds.mjs"; fail=1
+fi
 exit $fail

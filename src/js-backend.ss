@@ -621,9 +621,8 @@
     ((%fwrite) (list "((IO.fwrite(" (a 0) ">>1," (a 1) ">>1)),VOID)"))
     ((%fclose) (list "((IO.fclose(" (a 0) ">>1)),VOID)"))
     ;; the linear staging memory
-    ((%mem-u8-ref) (list "(MEMU[" (a 0) ">>1]<<1)"))
-    ((%mem-u8-set!)
-     (list "((MEMU[" (a 0) ">>1]=(" (a 1) ")>>1),VOID)"))
+    ((%mem-u8-ref) (list "M8R(" (a 0) ")"))
+    ((%mem-u8-set!) (list "M8W(" (a 0) "," (a 1) ")"))
     ((%mem-i32-ref) (list "(W(MEMV.getInt32(" (a 0) ">>1,true)))"))
     ((%mem-i32-set!)
      (list "((MEMV.setInt32(" (a 0) ">>1,(" (a 1) ")>>1,true)),VOID)"))
@@ -731,6 +730,12 @@
     "new Uint8Array(nb).set(MEMU);"
     "MEMB=nb;MEMV=new DataView(nb);MEMU=new Uint8Array(nb);return old;};"
     "const MEMOBJ={get buffer(){return MEMB;}};"
+    ;; Typed-array byte access is otherwise silent out of bounds, unlike
+    ;; Wasm memory loads and stores.  The DataView-based widths already trap.
+    "const M8P=(p)=>{p>>=1;if(p<0||p>=MEMB.byteLength)"
+    "throw new RangeError('memory access out of bounds');return p;};"
+    "const M8R=(p)=>MEMU[M8P(p)]<<1;"
+    "const M8W=(p,v)=>{MEMU[M8P(p)]=v>>1;return VOID;};"
     ;; f32x4 kernels: per-lane scalar ops, one rounding per store
     "const F4=(op,d,p,q)=>{for(let i=0;i<16;i+=4){"
     "const x=MEMV.getFloat32(p+i,true),y=MEMV.getFloat32(q+i,true);"
