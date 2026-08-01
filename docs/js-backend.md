@@ -27,10 +27,10 @@ divergence is what breeds bugs, so we mirror it wherever JS allows.
 | char c          | i31ref, payload `c<<1 \| 1`   | number `c<<1\|1` |
 | #t #f () void eof | singleton structs by identity | frozen sentinel objects |
 | flonum          | struct{f64}                   | `class Fl{v}`    |
-| pair            | struct{car,cdr} mutable       | `class Pair{a,d}`|
+| pair            | struct{car,cdr} mutable       | bare array `[car,cdr]` |
 | string          | mutable i8 array              | `Uint8Array`     |
 | symbol          | struct{string}                | `class Sym{s}`   |
-| vector          | eqref array                   | JS `Array`       |
+| vector          | eqref array                   | `class Vec{v}` over a JS array |
 | bytevector      | struct{i8 array}              | `class BV{u8}`   |
 | bignum/ratio/complex | structs                  | classes, prelude-driven |
 | closure         | struct{funcref,env}, dual entry | native JS function |
@@ -52,12 +52,21 @@ Decisions and the reasoning:
    unbox/rebox; no unboxing optimization for the fallback target --
    it is a compatibility path, not the fast path.
 
-3. **Strings are byte arrays** (`Uint8Array`), exactly as in wasm --
+3. **Pairs are bare two-slot arrays**, `[car, cdr]`.  Cons is the
+   hottest allocation in Scheme code, and array literals allocate
+   markedly faster than class instances on V8 (~3-4x measured; JSC is
+   close either way).  `Array.isArray` then answers `pair?` -- which
+   is why vectors wrap in `Vec`: a two-element Scheme vector would
+   otherwise be indistinguishable from a pair, and a type predicate
+   must decide on the single cell in O(1).  Vectors are far colder;
+   they pay the one indirection.
+
+4. **Strings are byte arrays** (`Uint8Array`), exactly as in wasm --
    mutable, compared by identity, indexed by byte.  All string
    primitives are array ops; the prelude's UTF-8 handling carries over
    untouched.
 
-4. **`JSRef` stays a wrapper on the JS target.**  Tempting to drop it
+5. **`JSRef` stays a wrapper on the JS target.**  Tempting to drop it
    (the value *is* a JS value), but raw JS numbers/booleans would
    collide with the tagged representation.  Wrapping keeps `(web js)`
    -- `->js`, `string->js`, the cached boolean refs -- working
