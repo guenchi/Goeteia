@@ -97,6 +97,11 @@ if ${NODE-node} test/js-backend-memory-bounds.mjs; then
 else
     echo "FAIL test/js-backend-memory-bounds.mjs"; fail=1
 fi
+if ${NODE-node} test/js-backend-fl-conversion.mjs; then
+    echo "ok   test/js-backend-fl-conversion.mjs"
+else
+    echo "FAIL test/js-backend-fl-conversion.mjs"; fail=1
+fi
 if ${NODE-node} test/jsbridge-instance.mjs >/dev/null 2>&1; then
     echo "ok   test/jsbridge-instance.mjs"
 else
