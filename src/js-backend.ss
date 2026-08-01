@@ -749,8 +749,12 @@
     "let MEMB=MEMOBJ.buffer,MEMV=new DataView(MEMB),MEMU=new Uint8Array(MEMB);"
     "const MREF=()=>{const b=MEMOBJ.buffer;if(b!==MEMB){MEMB=b;"
     "MEMV=new DataView(b);MEMU=new Uint8Array(b);}};"
-    "const M8R=(p)=>{MREF();return MEMU[p>>1]<<1;};"
-    "const M8W=(p,v)=>{MREF();MEMU[p>>1]=v>>1;return VOID;};"
+    ;; typed-array byte access is otherwise silent out of bounds,
+    ;; unlike wasm memory loads/stores; the DataView widths already trap
+    "const M8P=(p)=>{p>>=1;if(p<0||p>=MEMB.byteLength)"
+    "throw new RangeError('memory access out of bounds');return p;};"
+    "const M8R=(p)=>{MREF();return MEMU[M8P(p)]<<1;};"
+    "const M8W=(p,v)=>{MREF();MEMU[M8P(p)]=v>>1;return VOID;};"
     "const M32R=(p)=>{MREF();return W(MEMV.getInt32(p>>1,true));};"
     "const M32W=(p,v)=>{MREF();MEMV.setInt32(p>>1,v>>1,true);return VOID;};"
     "const MF32R=(p)=>{MREF();return new Fl(MEMV.getFloat32(p>>1,true));};"
