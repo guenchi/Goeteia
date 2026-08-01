@@ -27,10 +27,10 @@ divergence is what breeds bugs, so we mirror it wherever JS allows.
 | char c          | i31ref, payload `c<<1 \| 1`   | number `c<<1\|1` |
 | #t #f () void eof | singleton structs by identity | frozen sentinel objects |
 | flonum          | struct{f64}                   | `class Fl{v}`    |
-| pair            | struct{car,cdr} mutable       | bare array `[car,cdr]` |
+| pair            | struct{car,cdr} mutable       | object literal `{t:"list",a,d}` |
 | string          | mutable i8 array              | `Uint8Array`     |
 | symbol          | struct{string}                | `class Sym{s}`   |
-| vector          | eqref array                   | `class Vec{v}` over a JS array |
+| vector          | eqref array                   | bare JS array    |
 | bytevector      | struct{i8 array}              | `class BV{u8}`   |
 | bignum/ratio/complex | structs                  | classes, prelude-driven |
 | closure         | struct{funcref,env}, dual entry | native JS function |
@@ -52,14 +52,20 @@ Decisions and the reasoning:
    unbox/rebox; no unboxing optimization for the fallback target --
    it is a compatibility path, not the fast path.
 
-3. **Pairs are bare two-slot arrays**, `[car, cdr]`.  Cons is the
-   hottest allocation in Scheme code, and array literals allocate
-   markedly faster than class instances on V8 (~3-4x measured; JSC is
-   close either way).  `Array.isArray` then answers `pair?` -- which
-   is why vectors wrap in `Vec`: a two-element Scheme vector would
-   otherwise be indistinguishable from a pair, and a type predicate
-   must decide on the single cell in O(1).  Vectors are far colder;
-   they pay the one indirection.
+3. **Pairs are tagged object literals**, `{t:"list",a,d}`.  Cons is
+   the hottest allocation in Scheme code, and at heap scale the
+   object literal wins decisively: one inline-slot allocation, where
+   a bare array is a JSArray plus a separate elements store (~28x
+   slower allocating 4M pairs on V8) and `new Pair(...)` pays the
+   construct path (~15x).  Walks and the `x.t==="list"` predicate
+   also beat array indexing and `Array.isArray` on both V8 and JSC.
+   Reading `.t` is safe on every value -- numbers box transparently,
+   every other representation lacks the property -- and the string
+   literal comparison is an interned pointer check.  Vectors are
+   bare JS arrays, `Array.isArray` answering `vector?` unambiguously
+   since pairs no longer occupy that shape.  (Closure encodings were
+   also measured and rejected: they collide with `procedure?`, which
+   cannot move out of the way, and lose 4-7x on V8.)
 
 4. **Strings are byte arrays** (`Uint8Array`), exactly as in wasm --
    mutable, compared by identity, indexed by byte.  All string

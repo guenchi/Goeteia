@@ -187,9 +187,9 @@
                         (reverse (cons m acc))
                         (split (quotient m 16384)
                                (cons (remainder m 16384) acc))))))
-      (list "(new Bignum(" (if neg "1" "0") ",new Vec(["
+      (list "(new Bignum(" (if neg "1" "0") ",["
             (jsep "," (map-in-order jtag-int limbs))
-            "])))")))
+            "]))")))
    ((flonum? d) (list "(new Fl(FB(\"" (jflonum-hex d) "\")))"))
    ((and (rational? d) (exact? d))
     (list "(new Ratio(" (jd (numerator d)) "," (jd (denominator d)) "))"))
@@ -201,7 +201,7 @@
    ((symbol? d) (jconst! 'sym d))
    ((null? d) "NIL")
    ((vector? d)
-    (list "(new Vec([" (jsep "," (map-in-order jd (vector->list d))) "]))"))
+    (list "([" (jsep "," (map-in-order jd (vector->list d))) "])"))
    ((pair? d)
     ;; flatten the spine into one array literal: nested `new Pair`
     ;; text thousands deep blows the JS parser's recursion
@@ -332,12 +332,12 @@
          (esc (assq '$escape *fns*)))
     (unless (and wv esc)
       (errorf 'goeteia "call/cc needs the $escape/$winders runtime"))
-    (list "(()=>{const " t "=[NIL,NIL]," w "="
+    (list "(()=>{const " t "={t:\"list\",a:NIL,d:NIL}," w "="
           (jvar-name (cdr wv))
           ";try{return (" (jx (cadr e) env lctx) ")((" x ")=>"
           (jfn-name '$escape (cadr esc)) "(" t "," w "," x "));}catch("
-          ex "){if(" ex " instanceof Esc&&" ex ".p[0]===" t ")return "
-          ex ".p[1];throw " ex ";}})()")))
+          ex "){if(" ex " instanceof Esc&&" ex ".p.a===" t ")return "
+          ex ".p.d;throw " ex ";}})()")))
 
 (define (jcall fcode args env lctx)
   (list fcode "("
@@ -386,7 +386,7 @@
           ((<) (list (jhelper! "JLTN") "(" (a 0) "," (a 1) ")"))
           ((zero?) (list (jhelper! "JZ") "(" (a 0) ")"))
           ((eq?) (list "(" (a 0) "===" (a 1) ")"))
-          ((pair?) (list "Array.isArray(" (a 0) ")"))
+          ((pair?) (list "((" (a 0) ".t)===\"list\")"))
           ((null?) (list "(" (a 0) "===NIL)"))
           ((string?) (list "(" (a 0) " instanceof Uint8Array)"))
           ((symbol?) (list "(" (a 0) " instanceof Sym)"))
@@ -523,12 +523,12 @@
     ((<) (list "(" (jhelper! "JLTN") "(" (a 0) "," (a 1) ")?TRUE:FALSE)"))
     ((zero?) (list "(" (jhelper! "JZ") "(" (a 0) ")?TRUE:FALSE)"))
     ((eq?) (list "((" (a 0) "===" (a 1) ")?TRUE:FALSE)"))
-    ((cons) (list "([" (a 0) "," (a 1) "])"))
-    ((car) (list "(" (a 0) "[0])"))
-    ((cdr) (list "(" (a 0) "[1])"))
-    ((set-car!) (list "((" (a 0) "[0]=" (a 1) "),VOID)"))
-    ((set-cdr!) (list "((" (a 0) "[1]=" (a 1) "),VOID)"))
-    ((pair?) (list "(Array.isArray(" (a 0) ")?TRUE:FALSE)"))
+    ((cons) (list "({t:\"list\",a:" (a 0) ",d:" (a 1) "})"))
+    ((car) (list "(" (a 0) ".a)"))
+    ((cdr) (list "(" (a 0) ".d)"))
+    ((set-car!) (list "((" (a 0) ".a=" (a 1) "),VOID)"))
+    ((set-cdr!) (list "((" (a 0) ".d=" (a 1) "),VOID)"))
+    ((pair?) (list "(((" (a 0) ".t)===\"list\")?TRUE:FALSE)"))
     ((null?) (list "((" (a 0) "===NIL)?TRUE:FALSE)"))
     ((fixnum?) (list "(KFIX(" (a 0) "))"))
     ((char?) (list "(KCHR(" (a 0) "))"))
@@ -576,12 +576,12 @@
     ((%make-symbol) (list "(new Sym(" (a 0) "))"))
     ((%interned-symbols) "(RSYMS())")
     ;; vectors and bytevectors
-    ((vector?) (list "((" (a 0) " instanceof Vec)?TRUE:FALSE)"))
+    ((vector?) (list "(Array.isArray(" (a 0) ")?TRUE:FALSE)"))
     ((%make-vector)
-     (list "(new Vec(new Array(" (a 0) ">>1).fill(" (a 1) ")))"))
-    ((vector-length) (list "(" (a 0) ".v.length<<1)"))
-    ((vector-ref) (list "(" (a 0) ".v[" (a 1) ">>1])"))
-    ((vector-set!) (list "((" (a 0) ".v[" (a 1) ">>1]=" (a 2) "),VOID)"))
+     (list "(new Array(" (a 0) ">>1).fill(" (a 1) "))"))
+    ((vector-length) (list "(" (a 0) ".length<<1)"))
+    ((vector-ref) (list "(" (a 0) "[" (a 1) ">>1])"))
+    ((vector-set!) (list "((" (a 0) "[" (a 1) ">>1]=" (a 2) "),VOID)"))
     ((bytevector?) (list "((" (a 0) " instanceof BV)?TRUE:FALSE)"))
     ((%make-bytevector)
      (list "(new BV(new Uint8Array(" (a 0) ">>1).fill(" (a 1) ">>1)))"))
@@ -682,12 +682,12 @@
 (define $js-kernel
   '("\"use strict\";"
     "const FALSE={s:0},TRUE={s:1},NIL={s:2},VOID={s:3},EOFV={s:4};"
-    ;; a pair is a bare two-slot array [car, cdr]: cons is the hottest
-    ;; allocation and array literals allocate markedly faster than
-    ;; class instances on V8 (~3-4x measured); vectors wrap in Vec so
-    ;; Array.isArray stays an unambiguous pair? answer
+    ;; a pair is the tagged object literal {t:"list",a,d}: single
+    ;; inline-slot allocation (a bare array is JSArray + a separate
+    ;; elements store, far slower at heap scale), monomorphic walks,
+    ;; and .t===\"list\" answers pair? on any value; vectors stay
+    ;; bare JS arrays, so Array.isArray answers vector?
     "class Fl{constructor(v){this.v=v;}}"
-    "class Vec{constructor(v){this.v=v;}}"
     "class Sym{constructor(s){this.s=s;}}"
     "class BV{constructor(u){this.u=u;}}"
     "class Bignum{constructor(sg,l){this.sg=sg;this.l=l;}}"
@@ -710,14 +710,14 @@
     "return dv.getFloat64(0,true);};"
     ;; JS rest array -> Scheme list
     "const L2=(xs)=>{let l=NIL;"
-    "for(let i=xs.length-1;i>=0;i--)l=[xs[i],l];return l;};"
-    "const LD=(xs,t)=>{let l=t;"
-    "for(let i=xs.length-1;i>=0;i--)l=[xs[i],l];return l;};"
+    "for(let i=xs.length-1;i>=0;i--)l={t:\"list\",a:xs[i],d:l};return l;};"
+    "const LD=(xs,tl)=>{let l=tl;"
+    "for(let i=xs.length-1;i>=0;i--)l={t:\"list\",a:xs[i],d:l};return l;};"
     ;; (apply f pre lst)
     "const A2=(f,pre,l)=>{const xs=pre;"
-    "for(;l!==NIL;l=l[1])xs.push(l[0]);return f(...xs);};"
+    "for(;l!==NIL;l=l.d)xs.push(l.a);return f(...xs);};"
     "const UNR=()=>{throw new Error('unreachable');};"
-    "const THR=(t,v)=>{throw new Esc([t,v]);};"
+    "const THR=(tk,v)=>{throw new Esc({t:\"list\",a:tk,d:v});};"
     "const KFIX=(x)=>(typeof x==='number'&&!(x&1))?TRUE:FALSE;"
     "const KCHR=(x)=>(typeof x==='number'&&(x&1)===1)?TRUE:FALSE;"
     "const KBOOL=(x)=>(x===TRUE||x===FALSE)?TRUE:FALSE;"
@@ -907,15 +907,16 @@
            ;; the interned-symbol registry: a fresh list per call, in
            ;; interning order, mirroring the wasm registry function
            (rsyms-text
-            (list "const RSYMS=()=>"
+            (list "const RSYMS=()=>("
                   (fold-left (lambda (acc e)
                                (if (eq? (caar e) 'sym)
-                                   (list "[C" (number->string (cdr e)) ","
-                                         acc "]")
+                                   (list "{t:\"list\",a:C"
+                                         (number->string (cdr e)) ",d:"
+                                         acc "}")
                                    acc))
                              "NIL"
                              *jconsts*)
-                  ";\n"))
+                  ");\n"))
            (var-decl
             (if (null? *vars*)
                 '()
