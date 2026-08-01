@@ -752,6 +752,7 @@
     ;; eval sees this instance's globalThis
     "const NB=[],CBS=[];let AS=[],STG=[];"
     "const TD=new TextDecoder(),TE=new TextEncoder();"
+    "const U=(s)=>TD.decode(S(s));"
     "const TDX=()=>{const s=TD.decode(new Uint8Array(NB));NB.length=0;"
     "return s;};"
     "const LG=new Map();"
@@ -932,7 +933,7 @@
                (let ((f (assq n *fns*)))
                  (unless f
                    (errorf 'goeteia "exported name is not a function ~s" n))
-                 (list (jstring-lit (symbol->string n)) ":"
+                 (list "[U(" (jstring-lit (symbol->string n)) ")]:"
                        (jfn-name n (cadr f)))))
              export-names)))
       (jbytes
