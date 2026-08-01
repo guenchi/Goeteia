@@ -14,10 +14,12 @@
 ;;
 ;; Known divergences from the wasm target, all confined to corners
 ;; the test suite pins down as unobservable: argument evaluation
-;; order inside a few primitives follows JS left-to-right; deep
-;; non-self tail calls consume JS stack (wasm has return_call); a
+;; order inside a few primitives follows JS left-to-right; a
 ;; top-level function referenced as a value is one stable JS
-;; function, not a fresh closure per reference.
+;; function, not a fresh closure per reference.  Non-self tail calls
+;; run in constant stack via the TC/TR trampoline (wasm:
+;; return_call); js-await still cannot suspend, and the kernel shims
+;; the JSPI probes to say so honestly.
 ;; Copyright (c) 2026 guenchi. MIT license; see LICENSE.
 
 ;;;; ------------------------------------------------------------------
@@ -240,7 +242,7 @@
          (list "((" t ")?(" c "):(" a "))")))
       ((let) (jx-let e env lctx))
       ((%loop)
-       (list "(()=>{" (without-jself (lambda () (jt e env '()))) "})()"))
+       (list "TR((()=>{" (without-jself (lambda () (jt e env '()))) "})())"))
       ((begin)
        (if (null? (cdr e))
            "VOID"
@@ -250,9 +252,9 @@
                  ")")))
       ((lambda) (jx-lambda (cadr e) (cddr e) env))
       ((set!) (jx-set e env lctx))
-      ((apply) (jx-apply e env lctx))
+      ((apply) (jx-apply e env lctx #f))
       ((call/cc call-with-current-continuation) (jx-callcc e env lctx))
-      (else (jx-app e env lctx))))
+      (else (jx-app e env lctx #f))))
    (else (errorf 'goeteia "cannot compile ~s" e))))
 
 (define (jref e env)
@@ -283,9 +285,9 @@
          (names (map-in-order (lambda (b) (jfresh!)) bs))
          (inits (map-in-order (lambda (b) (jx (cadr b) env lctx)) bs))
          (env2 (append (map2* (lambda (b n) (cons (car b) n)) bs names) env)))
-    (list "((" (jsep "," names) ")=>{"
+    (list "TR(((" (jsep "," names) ")=>{"
           (without-jself (lambda () (jt-body (cddr e) env2 '())))
-          "})(" (jsep "," (map (lambda (i) (list "(" i ")")) inits)) ")")))
+          "})(" (jsep "," (map (lambda (i) (list "(" i ")")) inits)) "))")))
 
 (define (jx-lambda formals body env)
   (let* ((rest (formals-rest formals))
@@ -310,7 +312,7 @@
     (unless v (errorf 'goeteia "set! of unbound variable ~s" (cadr e)))
     (list "((" (jvar-name (cdr v)) "=(" (jx (caddr e) env lctx) ")),VOID)")))
 
-(define (jx-apply e env lctx)
+(define (jx-apply e env lctx tail?)
   (let ((f (cadr e))
         (args (cddr e)))
     (when (null? args)
@@ -321,7 +323,9 @@
            (lead (map-in-order (lambda (a) (list "(" (jx a env lctx) ")"))
                                leading))
            (fin (jx final env lctx)))
-      (list "A2((" fc "),[" (jsep "," lead) "],(" fin "))"))))
+      (if tail?
+          (list "A2T((" fc "),[" (jsep "," lead) "],(" fin "))")
+          (list "TR(A2((" fc "),[" (jsep "," lead) "],(" fin ")))")))))
 
 (define (jx-callcc e env lctx)
   (let* ((t (jfresh!))
@@ -334,32 +338,41 @@
       (errorf 'goeteia "call/cc needs the $escape/$winders runtime"))
     (list "(()=>{const " t "={t:\"pair\",a:NIL,d:NIL}," w "="
           (jvar-name (cdr wv))
-          ";try{return IC((" (jx (cadr e) env lctx) "),[(" x ")=>"
-          (jfn-name '$escape (cadr esc)) "(" t "," w "," x ")]);}catch("
+          ";try{return TR(IC((" (jx (cadr e) env lctx) "),[(" x ")=>TR("
+          (jfn-name '$escape (cadr esc)) "(" t "," w "," x "))]));}catch("
           ex "){if(" ex " instanceof Esc&&" ex ".p.a===" t ")return "
           ex ".p.d;throw " ex ";}})()")))
 
-(define (jcall fcode args env lctx)
-  (list fcode "("
-        (jsep "," (map-in-order (lambda (a) (list "(" (jx a env lctx) ")"))
-                                args))
-        ")"))
+;; A non-tail call unwinds any trampoline the callee returns (TR); a
+;; tail call BUILDS the trampoline thunk instead of calling (TC/TCI),
+;; so non-self tail chains run in constant JS stack -- the wasm
+;; backend's return_call.  Direct calls are arity-checked at compile
+;; time (bare TC); indirect ones check at bounce time (TCI).
+(define (jcall fcode args env lctx tail?)
+  (let ((acode (jsep "," (map-in-order
+                          (lambda (a) (list "(" (jx a env lctx) ")"))
+                          args))))
+    (if tail?
+        (list "(new TC(" fcode ",[" acode "]))")
+        (list "TR(" fcode "(" acode "))"))))
 
 ;; Indirect calls carry no compile-time arity proof.  Native JS fills
 ;; missing parameters with undefined, while the Wasm adapter traps.
-(define (jicall fcode args env lctx)
-  (list "IC(" fcode ",["
-        (jsep "," (map-in-order (lambda (a) (list "(" (jx a env lctx) ")"))
-                                 args))
-        "])"))
+(define (jicall fcode args env lctx tail?)
+  (let ((acode (jsep "," (map-in-order
+                          (lambda (a) (list "(" (jx a env lctx) ")"))
+                          args))))
+    (if tail?
+        (list "TCI(" fcode ",[" acode "])")
+        (list "TR(IC(" fcode ",[" acode "]))"))))
 
-(define (jx-app e env lctx)
+(define (jx-app e env lctx tail?)
   (let* ((op (car e))
          (args (cdr e))
          (rop (and (symbol? op) (unmark op))))
     (cond
      ((and (symbol? op) (assq op env))
-      (jicall (list "(" (cdr (assq op env)) ")") args env lctx))
+      (jicall (list "(" (cdr (assq op env)) ")") args env lctx tail?))
      ((and rop (memq rop primitives) (not (assq rop *fns*)))
       (jp rop args (map-in-order (lambda (a) (jx a env lctx)) args)))
      ((and rop (assq rop *fns*))
@@ -371,11 +384,12 @@
               (errorf 'goeteia "too few arguments in ~s" e))
             (unless (= nfixed (length args))
               (errorf 'goeteia "wrong argument count in ~s" e)))
-        (jcall (jfn-name rop (car entry)) args env lctx)))
+        (jcall (jfn-name rop (car entry)) args env lctx tail?)))
      ((and rop (assq rop *vars*))
-      (jicall (list "(" (jvar-name (cdr (assq rop *vars*))) ")") args env lctx))
+      (jicall (list "(" (jvar-name (cdr (assq rop *vars*))) ")")
+              args env lctx tail?))
      ((pair? op)
-      (jicall (list "(" (jx op env lctx) ")") args env lctx))
+      (jicall (list "(" (jx op env lctx) ")") args env lctx tail?))
      (else (errorf 'goeteia "cannot call ~s" op)))))
 
 ;; test position: a raw JS boolean; the predicate set the wasm
@@ -463,8 +477,11 @@
                                                    pnames icode))
                            ";"))
                  label ":for(;;){" (jt-body body env2 lctx2) "}}")))
-        ((quote lambda set! apply call/cc call-with-current-continuation)
+        ((quote lambda set! call/cc call-with-current-continuation)
          (list "return " (jx e env lctx) ";"))
+        ((apply)
+         ;; tail apply builds the trampoline thunk (A2T)
+         (list "return " (jx-apply e env lctx #t) ";"))
         (else
          (cond
           ((and (symbol? (car e))
@@ -480,7 +497,9 @@
            ;; direct self tail call: the wasm backend's return_call,
            ;; spelled as a continue on the function's own loop
            (jt-rebind *jself* (cdr e) env lctx))
-          (else (list "return " (jx e env lctx) ";")))))
+          (else
+           ;; any other tail application returns a trampoline thunk
+           (list "return " (jx-app e env lctx #t) ";")))))
       (list "return " (jx e env lctx) ";")))
 
 (define (jt-rebind entry args env lctx)
@@ -740,8 +759,17 @@
     ;; exactly the fixed prefix for fixed and rest-argument arrows.
     "const IC=(f,xs)=>{if(xs.length<f.length)"
     "throw new TypeError('wrong argument count');return f(...xs);};"
+    ;; the trampoline: a non-self tail call returns a TC thunk instead
+    ;; of calling (wasm: return_call), and every non-tail call site
+    ;; unwinds through TR, so tail chains run in constant JS stack
+    "class TC{constructor(f,xs){this.f=f;this.xs=xs;}}"
+    "const TCI=(f,xs)=>{if(xs.length<f.length)"
+    "throw new TypeError('wrong argument count');return new TC(f,xs);};"
+    "const TR=(r)=>{while(r instanceof TC)r=r.f(...r.xs);return r;};"
     "const A2=(f,pre,l)=>{const xs=pre;"
     "for(;l!==NIL;l=l.d)xs.push(l.a);return IC(f,xs);};"
+    "const A2T=(f,pre,l)=>{const xs=pre;"
+    "for(;l!==NIL;l=l.d)xs.push(l.a);return TCI(f,xs);};"
     "const UNR=()=>{throw new Error('unreachable');};"
     "const THR=(tk,v)=>{throw new Esc({t:\"pair\",a:tk,d:v});};"
     "const KFIX=(x)=>(typeof x==='number'&&!(x&1))?TRUE:FALSE;"
@@ -811,9 +839,17 @@
     "const TDX=()=>{const s=TD.decode(new Uint8Array(NB));NB.length=0;"
     "return s;};"
     "const LG=new Map();"
-    "const SEV=(c)=>Function('globalThis','c','return eval(c);')(GPROX,String(c));"
+    ;; this target cannot suspend (js-await is the identity), so the
+    ;; JSPI probes must answer no: eval'd and js-get'd WebAssembly is
+    ;; shimmed with Suspending/promising erased
+    "const WASM_SHIM=(typeof WebAssembly!=='undefined')"
+    "?new Proxy(WebAssembly,{get:(t,k)=>"
+    "(k==='Suspending'||k==='promising')?void 0:Reflect.get(t,k,t)})"
+    ":void 0;"
+    "const SEV=(c)=>Function('globalThis','WebAssembly','c','return eval(c);')(GPROX,WASM_SHIM,String(c));"
     "const GPROX=new Proxy(globalThis,{"
     "get(t,k){if(k==='eval')return SEV;"
+    "if(k==='WebAssembly')return WASM_SHIM;"
     "if(k==='__goeteia_mem')return MEMOBJ;"
     "if(LG.has(k))return LG.get(k);"
     "return Reflect.get(t,k,t);},"
@@ -833,39 +869,39 @@
   (cond
    ((string=? name "JADD")
     (list "const JADD=(a,b)=>{if(typeof a==='number'&&typeof b==='number')"
-          "{const s=a+b;if(((s<<1)>>1)===s)return s;}return "
-          (jgeneric '$add2) "(a,b);};"))
+          "{const s=a+b;if(((s<<1)>>1)===s)return s;}return TR("
+          (jgeneric '$add2) "(a,b));};"))
    ((string=? name "JSUB")
     (list "const JSUB=(a,b)=>{if(typeof a==='number'&&typeof b==='number')"
-          "{const s=a-b;if(((s<<1)>>1)===s)return s;}return "
-          (jgeneric '$sub2) "(a,b);};"))
+          "{const s=a-b;if(((s<<1)>>1)===s)return s;}return TR("
+          (jgeneric '$sub2) "(a,b));};"))
    ((string=? name "JMUL")
     (list "const JMUL=(a,b)=>{if(typeof a==='number'&&typeof b==='number')"
-          "{const p=(a>>1)*b;if(((p<<1)>>1)===p)return p;}return "
-          (jgeneric '$mul2) "(a,b);};"))
+          "{const p=(a>>1)*b;if(((p<<1)>>1)===p)return p;}return TR("
+          (jgeneric '$mul2) "(a,b));};"))
    ((string=? name "JQUO")
     (list "const JQUO=(a,b)=>{if(typeof a==='number'&&typeof b==='number')"
           "{const d=b>>1;if(d===0)throw new RangeError('divide by zero');"
-          "return W(Math.trunc((a>>1)/d));}return "
-          (jgeneric '$quot2) "(a,b);};"))
+          "return W(Math.trunc((a>>1)/d));}return TR("
+          (jgeneric '$quot2) "(a,b));};"))
    ((string=? name "JREM")
     ;; operands stay tagged (2a % 2b = 2(a%b)); renormalize to i31
     ;; like ref.i31, with no extra shift
     (list "const JREM=(a,b)=>{if(typeof a==='number'&&typeof b==='number')"
           "{if(b===0)throw new RangeError('divide by zero');"
-          "return ((a%b)<<1)>>1;}return " (jgeneric '$rem2) "(a,b);};"))
+          "return ((a%b)<<1)>>1;}return TR(" (jgeneric '$rem2) "(a,b));};"))
    ((string=? name "JEQN")
     (list "const JEQN=(a,b)=>(typeof a==='number'&&typeof b==='number')"
-          "?a===b:(" (jgeneric '$eq2) "(a,b)!==FALSE);"))
+          "?a===b:(TR(" (jgeneric '$eq2) "(a,b))!==FALSE);"))
    ((string=? name "JLTN")
     (list "const JLTN=(a,b)=>(typeof a==='number'&&typeof b==='number')"
-          "?a<b:(" (jgeneric '$lt2) "(a,b)!==FALSE);"))
+          "?a<b:(TR(" (jgeneric '$lt2) "(a,b))!==FALSE);"))
    ((string=? name "JZ")
-    (list "const JZ=(a)=>typeof a==='number'?a===0:("
-          (jgeneric '$eq2) "(a,(0))!==FALSE);"))
+    (list "const JZ=(a)=>typeof a==='number'?a===0:(TR("
+          (jgeneric '$eq2) "(a,(0)))!==FALSE);"))
    ((string=? name "JFN")
     (list "const JFN=(clo)=>(...args)=>{const fr={args,ret:void 0};"
-          "CBS.push(fr);try{" (jgeneric '$jscb) "(clo);}finally{CBS.pop();}"
+          "CBS.push(fr);try{TR(" (jgeneric '$jscb) "(clo));}finally{CBS.pop();}"
           "return fr.ret;};"))
    (else (errorf 'goeteia "unknown glue helper ~s" name))))
 
@@ -1004,4 +1040,5 @@
         "export const rt={\"false\":FALSE,\"true\":TRUE,\"null\":NIL,"
         "\"void\":VOID,mem:MEMOBJ};\n"
         "export const xports={" (jsep "," export-name-texts) "};\n"
-        "export function main(io){if(io)IO=io;" main-text "}\n")))))
+        "export function main(io){if(io)IO=io;"
+        "return TR((()=>{" main-text "})());}\n")))))

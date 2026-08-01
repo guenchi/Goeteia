@@ -95,10 +95,13 @@ false), mirroring the wasm compare-against-`G-FALSE`.
   `{tok, val}` through native JS `throw`, matching the wasm exception
   lowering one-to-one (one-shot, upward-only, winders replayed the
   same way).
-- **Non-self tail calls**: wasm uses `return_call`; JS has no portable
-  TCO.  MVP emits plain calls and documents bounded mutual-recursion
-  depth as a limitation.  A trampoline is the escape hatch if a real
-  program hits the stack limit; do not pay for it up front.
+- **Non-self tail calls**: wasm uses `return_call`; the JS target
+  trampolines.  A non-self tail call returns a `TC` thunk instead of
+  calling, and every non-tail call site unwinds through `TR`, so tail
+  chains -- mutual recursion included -- run in constant JS stack.
+  Direct calls stay compile-time arity-checked (bare `TC`); indirect
+  ones check at bounce time (`TCI`), the same moment wasm's adapter
+  would trap.
 
 ## Runtime kernel
 
@@ -135,5 +138,8 @@ zero new fixtures.  Skips are defects, per repo policy.
 
 - Readable output (minifier-friendly is enough).
 - Unboxed-flonum performance work on the JS target.
-- Full TCO (see above).
 - SIMD performance: `%f32x4-*` is correct, not fast.
+- JSPI suspension: `js-await` hands the promise back unawaited, and
+  the kernel shims `WebAssembly.Suspending`/`promising` out of the
+  eval and `js-get` views so feature probes honestly answer no and
+  callers take their callback route.

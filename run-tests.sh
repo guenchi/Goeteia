@@ -122,6 +122,16 @@ if ${NODE-node} test/js-backend-collection-types.mjs; then
 else
     echo "FAIL test/js-backend-collection-types.mjs"; fail=1
 fi
+if ${NODE-node} test/js-backend-tco.mjs; then
+    echo "ok   test/js-backend-tco.mjs"
+else
+    echo "FAIL test/js-backend-tco.mjs"; fail=1
+fi
+if ${NODE-node} test/js-backend-jspi.mjs; then
+    echo "ok   test/js-backend-jspi.mjs"
+else
+    echo "FAIL test/js-backend-jspi.mjs"; fail=1
+fi
 if ${NODE-node} test/jsbridge-instance.mjs >/dev/null 2>&1; then
     echo "ok   test/jsbridge-instance.mjs"
 else
