@@ -104,7 +104,10 @@ false), mirroring the wasm compare-against-`G-FALSE`.
 
 A few hundred lines of JS prepended to every emitted program: the
 sentinel objects, the classes above, `%mem-*` over one basic
-`WebAssembly.Memory` (64 KB pages), `%f32x4-*` as scalar loops over a
+`WebAssembly.Memory` (64 KB pages -- real grow-failure and old-view
+detachment semantics; a host with no WebAssembly at all falls back to
+a plain-ArrayBuffer stand-in, keeping restricted embedded JS
+environments runnable), `%f32x4-*` as scalar loops over a
 `Float32Array` view, and IO hooks (`write_byte`/`read_byte`) supplied
 by the embedder exactly like the wasm `io` imports.  Everything else
 -- generic arithmetic, the numeric tower, string/list library -- is

@@ -719,8 +719,17 @@
     "const KBOOL=(x)=>(x===TRUE||x===FALSE)?TRUE:FALSE;"
     "const KREC=(x,r)=>(x instanceof Rec&&x.f[0]===r)?TRUE:FALSE;"
     ;; Basic WebAssembly.Memory gives grow its real failure and old-view
-    ;; detachment semantics even on hosts without WasmGC.
-    "const MEMOBJ=new WebAssembly.Memory({initial:1});"
+    ;; detachment semantics even on hosts without WasmGC.  Hosts with
+    ;; no WebAssembly at all (restricted embedded JS environments) get
+    ;; a plain-ArrayBuffer stand-in: same buffer/grow surface, growth
+    ;; failure still lands as -1 through MGROW's catch; only the
+    ;; detachment of old views is beyond a polyfill's reach.
+    "const MEMOBJ=(typeof WebAssembly!=='undefined'&&WebAssembly.Memory)"
+    "?new WebAssembly.Memory({initial:1})"
+    ":(()=>{let b=new ArrayBuffer(65536);return{get buffer(){return b;},"
+    "grow(n){const old=b.byteLength/65536;"
+    "const nb=new ArrayBuffer((old+(n>>>0))*65536);"
+    "new Uint8Array(nb).set(new Uint8Array(b));b=nb;return old;}};})();"
     "let MEMB=MEMOBJ.buffer,MEMV=new DataView(MEMB),MEMU=new Uint8Array(MEMB);"
     "const MREF=()=>{const b=MEMOBJ.buffer;if(b!==MEMB){MEMB=b;"
     "MEMV=new DataView(b);MEMU=new Uint8Array(b);}};"
