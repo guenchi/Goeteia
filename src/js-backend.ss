@@ -334,8 +334,8 @@
       (errorf 'goeteia "call/cc needs the $escape/$winders runtime"))
     (list "(()=>{const " t "={t:\"pair\",a:NIL,d:NIL}," w "="
           (jvar-name (cdr wv))
-          ";try{return (" (jx (cadr e) env lctx) ")((" x ")=>"
-          (jfn-name '$escape (cadr esc)) "(" t "," w "," x "));}catch("
+          ";try{return IC((" (jx (cadr e) env lctx) "),[(" x ")=>"
+          (jfn-name '$escape (cadr esc)) "(" t "," w "," x ")]);}catch("
           ex "){if(" ex " instanceof Esc&&" ex ".p.a===" t ")return "
           ex ".p.d;throw " ex ";}})()")))
 
@@ -345,13 +345,21 @@
                                 args))
         ")"))
 
+;; Indirect calls carry no compile-time arity proof.  Native JS fills
+;; missing parameters with undefined, while the Wasm adapter traps.
+(define (jicall fcode args env lctx)
+  (list "IC(" fcode ",["
+        (jsep "," (map-in-order (lambda (a) (list "(" (jx a env lctx) ")"))
+                                 args))
+        "])"))
+
 (define (jx-app e env lctx)
   (let* ((op (car e))
          (args (cdr e))
          (rop (and (symbol? op) (unmark op))))
     (cond
      ((and (symbol? op) (assq op env))
-      (jcall (list "(" (cdr (assq op env)) ")") args env lctx))
+      (jicall (list "(" (cdr (assq op env)) ")") args env lctx))
      ((and rop (memq rop primitives) (not (assq rop *fns*)))
       (jp rop args (map-in-order (lambda (a) (jx a env lctx)) args)))
      ((and rop (assq rop *fns*))
@@ -365,9 +373,9 @@
               (errorf 'goeteia "wrong argument count in ~s" e)))
         (jcall (jfn-name rop (car entry)) args env lctx)))
      ((and rop (assq rop *vars*))
-      (jcall (list "(" (jvar-name (cdr (assq rop *vars*))) ")") args env lctx))
+      (jicall (list "(" (jvar-name (cdr (assq rop *vars*))) ")") args env lctx))
      ((pair? op)
-      (jcall (list "(" (jx op env lctx) ")") args env lctx))
+      (jicall (list "(" (jx op env lctx) ")") args env lctx))
      (else (errorf 'goeteia "cannot call ~s" op)))))
 
 ;; test position: a raw JS boolean; the predicate set the wasm
@@ -713,9 +721,12 @@
     "for(let i=xs.length-1;i>=0;i--)l={t:\"pair\",a:xs[i],d:l};return l;};"
     "const LD=(xs,tl)=>{let l=tl;"
     "for(let i=xs.length-1;i>=0;i--)l={t:\"pair\",a:xs[i],d:l};return l;};"
-    ;; (apply f pre lst)
+    ;; checked indirect call / (apply f pre lst).  Function.length is
+    ;; exactly the fixed prefix for fixed and rest-argument arrows.
+    "const IC=(f,xs)=>{if(xs.length<f.length)"
+    "throw new TypeError('wrong argument count');return f(...xs);};"
     "const A2=(f,pre,l)=>{const xs=pre;"
-    "for(;l!==NIL;l=l.d)xs.push(l.a);return f(...xs);};"
+    "for(;l!==NIL;l=l.d)xs.push(l.a);return IC(f,xs);};"
     "const UNR=()=>{throw new Error('unreachable');};"
     "const THR=(tk,v)=>{throw new Esc({t:\"pair\",a:tk,d:v});};"
     "const KFIX=(x)=>(typeof x==='number'&&!(x&1))?TRUE:FALSE;"
