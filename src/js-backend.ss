@@ -561,7 +561,7 @@
     ((%fl->fx) (list "F2I(" (a 0) ".v)"))
     ;; the numeric tower's building blocks
     ((%bignum?) (list "((" (a 0) " instanceof Bignum)?TRUE:FALSE)"))
-    ((%make-bignum) (list "(new Bignum(IU(" (a 0) ")," (a 1) "))"))
+    ((%make-bignum) (list "(new Bignum(IU(" (a 0) "),VEC(" (a 1) ")))"))
     ((%bignum-sign) (list "(W(" (a 0) ".sg))"))
     ((%bignum-limbs) (list "(" (a 0) ".l)"))
     ((%ratio?) (list "((" (a 0) " instanceof Ratio)?TRUE:FALSE)"))
@@ -575,27 +575,27 @@
     ;; chars and strings
     ((char->integer) (list "(I31(" (a 0) ")&-2)"))
     ((integer->char) (list "(I31(" (a 0) ")|1)"))
-    ((string-length) (list "(" (a 0) ".length<<1)"))
-    ((string-ref) (list "((AR(" (a 0) "," (a 1) ")<<1)|1)"))
-    ((string-set!) (list "AW(" (a 0) "," (a 1) ",IU(" (a 2) "))"))
-    ((symbol->string) (list "(" (a 0) ".s)"))
+    ((string-length) (list "(STR(" (a 0) ").length<<1)"))
+    ((string-ref) (list "((AR(STR(" (a 0) ")," (a 1) ")<<1)|1)"))
+    ((string-set!) (list "AW(STR(" (a 0) ")," (a 1) ",IU(" (a 2) "))"))
+    ((symbol->string) (list "(SYMV(" (a 0) ").s)"))
     ((%make-string) (list "(new Uint8Array(IU(" (a 0) ")))"))
-    ((%make-symbol) (list "(new Sym(" (a 0) "))"))
+    ((%make-symbol) (list "(new Sym(STR(" (a 0) ")))"))
     ((%interned-symbols) "(RSYMS())")
     ;; vectors and bytevectors
     ((vector?) (list "(Array.isArray(" (a 0) ")?TRUE:FALSE)"))
     ((%make-vector)
      (list "(new Array(IU(" (a 0) ")).fill(" (a 1) "))"))
-    ((vector-length) (list "(" (a 0) ".length<<1)"))
-    ((vector-ref) (list "AR(" (a 0) "," (a 1) ")"))
-    ((vector-set!) (list "AW(" (a 0) "," (a 1) "," (a 2) ")"))
+    ((vector-length) (list "(VEC(" (a 0) ").length<<1)"))
+    ((vector-ref) (list "AR(VEC(" (a 0) ")," (a 1) ")"))
+    ((vector-set!) (list "AW(VEC(" (a 0) ")," (a 1) "," (a 2) ")"))
     ((bytevector?) (list "((" (a 0) " instanceof BV)?TRUE:FALSE)"))
     ((%make-bytevector)
      (list "(new BV(new Uint8Array(IU(" (a 0) ")).fill(IU(" (a 1) "))))"))
-    ((bytevector-length) (list "(" (a 0) ".u.length<<1)"))
-    ((bytevector-u8-ref) (list "(AR(" (a 0) ".u," (a 1) ")<<1)"))
+    ((bytevector-length) (list "(BVU(" (a 0) ").length<<1)"))
+    ((bytevector-u8-ref) (list "(AR(BVU(" (a 0) ")," (a 1) ")<<1)"))
     ((bytevector-u8-set!)
-     (list "AW(" (a 0) ".u," (a 1) ",IU(" (a 2) "))"))
+     (list "AW(BVU(" (a 0) ")," (a 1) ",IU(" (a 2) "))"))
     ;; fixnum bitwise, straight on the tagged representation
     ((bitwise-and) (list "(I31(" (a 0) ")&I31(" (a 1) "))"))
     ((bitwise-ior) (list "(I31(" (a 0) ")|I31(" (a 1) "))"))
@@ -695,6 +695,14 @@
     "throw new TypeError('expected flonum');return x.v;};"
     "class Sym{constructor(s){this.s=s;}}"
     "class BV{constructor(u){this.u=u;}}"
+    "const STR=(x)=>{if(!(x instanceof Uint8Array))"
+    "throw new TypeError('expected string');return x;};"
+    "const SYMV=(x)=>{if(!(x instanceof Sym))"
+    "throw new TypeError('expected symbol');return x;};"
+    "const VEC=(x)=>{if(!Array.isArray(x))"
+    "throw new TypeError('expected vector');return x;};"
+    "const BVU=(x)=>{if(!(x instanceof BV))"
+    "throw new TypeError('expected bytevector');return x.u;};"
     "class Bignum{constructor(sg,l){this.sg=sg;this.l=l;}}"
     "class Ratio{constructor(n,dd){this.n=n;this.dd=dd;}}"
     "class Cx{constructor(re,im){this.re=re;this.im=im;}}"
