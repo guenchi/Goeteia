@@ -392,8 +392,8 @@
           ((symbol?) (list "(" (a 0) " instanceof Sym)"))
           ((procedure?) (list "(typeof " (a 0) "==='function')"))
           ((eof-object?) (list "(" (a 0) "===EOFV)"))
-          ((fl=?) (list "((" (a 0) ".v)===(" (a 1) ".v))"))
-          ((fl<?) (list "((" (a 0) ".v)<(" (a 1) ".v))"))
+          ((fl=?) (list "(FLV(" (a 0) ")===FLV(" (a 1) "))"))
+          ((fl<?) (list "(FLV(" (a 0) ")<FLV(" (a 1) "))"))
           (else (list "((" (jx e env lctx) ")!==FALSE)"))))
       (list "((" (jx e env lctx) ")!==FALSE)")))
 
@@ -540,15 +540,15 @@
     ((eof-object) "EOFV")
     ((eof-object?) (list "((" (a 0) "===EOFV)?TRUE:FALSE)"))
     ;; flonum arithmetic, generic (boxed) spelling only
-    ((fl+) (list "(new Fl(" (a 0) ".v+" (a 1) ".v))"))
-    ((fl-) (list "(new Fl(" (a 0) ".v-" (a 1) ".v))"))
-    ((fl*) (list "(new Fl(" (a 0) ".v*" (a 1) ".v))"))
-    ((fl/) (list "(new Fl(" (a 0) ".v/" (a 1) ".v))"))
-    ((fl=?) (list "((" (a 0) ".v===" (a 1) ".v)?TRUE:FALSE)"))
-    ((fl<?) (list "((" (a 0) ".v<" (a 1) ".v)?TRUE:FALSE)"))
-    ((flsqrt) (list "(new Fl(Math.sqrt(" (a 0) ".v)))"))
-    ((flfloor) (list "(new Fl(Math.floor(" (a 0) ".v)))"))
-    ((fltruncate) (list "(new Fl(Math.trunc(" (a 0) ".v)))"))
+    ((fl+) (list "(new Fl(FLV(" (a 0) ")+FLV(" (a 1) ")))"))
+    ((fl-) (list "(new Fl(FLV(" (a 0) ")-FLV(" (a 1) ")))"))
+    ((fl*) (list "(new Fl(FLV(" (a 0) ")*FLV(" (a 1) ")))"))
+    ((fl/) (list "(new Fl(FLV(" (a 0) ")/FLV(" (a 1) ")))"))
+    ((fl=?) (list "((FLV(" (a 0) ")===FLV(" (a 1) "))?TRUE:FALSE)"))
+    ((fl<?) (list "((FLV(" (a 0) ")<FLV(" (a 1) "))?TRUE:FALSE)"))
+    ((flsqrt) (list "(new Fl(Math.sqrt(FLV(" (a 0) "))))"))
+    ((flfloor) (list "(new Fl(Math.floor(FLV(" (a 0) "))))"))
+    ((fltruncate) (list "(new Fl(Math.trunc(FLV(" (a 0) "))))"))
     ((fixnum->flonum) (list "(new Fl(" (a 0) ">>1))"))
     ((%fl->fx) (list "(W(Math.trunc(" (a 0) ".v)|0))"))
     ;; the numeric tower's building blocks
@@ -629,10 +629,10 @@
      (list "((MEMV.setInt32(" (a 0) ">>1,(" (a 1) ")>>1,true)),VOID)"))
     ((%mem-f32-ref) (list "(new Fl(MEMV.getFloat32(" (a 0) ">>1,true)))"))
     ((%mem-f32-set!)
-     (list "((MEMV.setFloat32(" (a 0) ">>1," (a 1) ".v,true)),VOID)"))
+     (list "((MEMV.setFloat32(" (a 0) ">>1,FLV(" (a 1) "),true)),VOID)"))
     ((%mem-f64-ref) (list "(new Fl(MEMV.getFloat64(" (a 0) ">>1,true)))"))
     ((%mem-f64-set!)
-     (list "((MEMV.setFloat64(" (a 0) ">>1," (a 1) ".v,true)),VOID)"))
+     (list "((MEMV.setFloat64(" (a 0) ">>1,FLV(" (a 1) "),true)),VOID)"))
     ((%mem-size) "(MSIZE())")
     ((%mem-grow) (list "(W(MGROW(" (a 0) ">>1)))"))
     ;; SIMD as scalar loops; single-rounded per lane, like f32x4
@@ -643,9 +643,9 @@
     ((%f32x4-mul!)
      (list "(F4('*'," (a 0) ">>1," (a 1) ">>1," (a 2) ">>1),VOID)"))
     ((%f32x4-scale!)
-     (list "(F4SC(" (a 0) ">>1," (a 1) ">>1," (a 2) ".v),VOID)"))
+     (list "(F4SC(" (a 0) ">>1," (a 1) ">>1,FLV(" (a 2) ")),VOID)"))
     ((%f32x4-axpy!)
-     (list "(F4AX(" (a 0) ">>1," (a 1) ">>1," (a 2) ">>1," (a 3) ".v),VOID)"))
+     (list "(F4AX(" (a 0) ">>1," (a 1) ">>1," (a 2) ">>1,FLV(" (a 3) ")),VOID)"))
     ((%f32x4-dot)
      (list "(new Fl(F4D(" (a 0) ">>1," (a 1) ">>1)))"))
     ;; JS FFI: the wasm bridge protocol, implemented natively
@@ -688,6 +688,8 @@
     ;; and .t===\"pair\" answers pair? on any value; vectors stay
     ;; bare JS arrays, so Array.isArray answers vector?
     "class Fl{constructor(v){this.v=v;}}"
+    "const FLV=(x)=>{if(!(x instanceof Fl))"
+    "throw new TypeError('expected flonum');return x.v;};"
     "class Sym{constructor(s){this.s=s;}}"
     "class BV{constructor(u){this.u=u;}}"
     "class Bignum{constructor(sg,l){this.sg=sg;this.l=l;}}"
