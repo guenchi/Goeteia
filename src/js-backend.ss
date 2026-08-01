@@ -127,7 +127,9 @@
 
 ;; JS string literal from a byte string: printable ASCII verbatim,
 ;; everything else (and quote/backslash) as \xHH -- deterministic
-;; across hosts, decoded byte-per-char by the kernel's S()
+;; across hosts, decoded byte-per-char by the kernel's S().  `<`
+;; escapes too, so no string literal can form the `</script`
+;; sequence when the module text is inlined into an HTML page.
 (define $jhex "0123456789abcdef")
 (define (jstring-lit s)
   (let ((n (string-length s)))
@@ -137,7 +139,8 @@
           (let ((b (char->integer (string-ref s i))))
             (loop (+ i 1)
                   (cons (if (and (<= 32 b) (<= b 126)
-                                 (not (= b 34)) (not (= b 92)))
+                                 (not (= b 34)) (not (= b 92))
+                                 (not (= b 60)))
                             (let ((c (make-string 1)))
                               (string-set! c 0 (integer->char b))
                               c)

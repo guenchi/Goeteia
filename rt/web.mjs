@@ -29,6 +29,40 @@ loadGoeteia._out = [];
 // window, pointer events from the canvas -- and rt/worker.mjs
 // re-dispatches them to the module's listeners.  The module finds
 // its canvas at (js-get (js-global) "__goeteia_canvas").
+// Does this engine run WasmGC?  Validate a minimal module carrying
+// one struct type -- pre-GC engines reject the typecode
+export function hasWasmGC() {
+    try {
+        return WebAssembly.validate(new Uint8Array(
+            [0, 97, 115, 109, 1, 0, 0, 0, 1, 3, 1, 95, 0]));
+    } catch { return false; }
+}
+
+// Run a --js compiled module from inline text (a single-file page
+// carries it in an inert <script> tag).  The text is an ES module;
+// scoping it through Function needs only the export keywords gone.
+export function runGoeteiaInline(text) {
+    const body = String(text).replace(/^export /gm, '');
+    const main = new Function(body + '\nreturn main;')();
+    main({
+        write_byte: b => loadGoeteia._out.push(b),
+        read_byte: () => -1,
+        path_byte: () => {}, open_read: () => -1, open_write: () => -1,
+        fread: () => -1, fwrite: () => {}, fclose: () => {},
+    });
+}
+
+// The single-file entry: the wasm module when the engine has WasmGC,
+// otherwise the inline JS fallback from `selector`'s script tag.
+// ?goeteia=js forces the fallback, for testing it on a GC engine.
+export async function loadGoeteiaAuto(url, selector = 'script[type="goeteia/js"]') {
+    const forced = new URLSearchParams(location.search).get('goeteia') === 'js';
+    if (!forced && hasWasmGC()) return loadGoeteia(url);
+    const tag = document.querySelector(selector);
+    if (!tag) throw new Error('no inline Goeteia fallback on this page');
+    return runGoeteiaInline(tag.textContent);
+}
+
 export function loadGoeteiaWorker(url, canvas) {
     const off = canvas.transferControlToOffscreen();
     const worker = new Worker(new URL('./worker.mjs', import.meta.url),
