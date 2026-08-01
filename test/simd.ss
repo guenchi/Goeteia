@@ -49,4 +49,24 @@
          (put4! C (fl/ 1.0 n) (fl/ 2.0 n) (fl/ 3.0 n) (fl/ 4.0 n))
          (near? (%f32x4-dot C C) 1.0))))
 
-(and add-ok sub-ok mul-ok scale-ok axpy-ok acc-ok dot-ok)
+;; v128.load snapshots every source before v128.store.  The scalar JS
+;; fallback must do the same when dst partially overlaps a source.
+(put4! A 1.0 10.0 100.0 1000.0)
+(put4! B 2.0 20.0 200.0 2000.0)
+(%mem-f32-set! (+ A 16) 10000.0)
+(%f32x4-add! (+ A 4) A B)
+(define overlap-add-ok (is4? (+ A 4) 3.0 30.0 300.0 3000.0))
+
+(put4! A 1.0 10.0 100.0 1000.0)
+(%mem-f32-set! (+ A 16) 10000.0)
+(%f32x4-scale! (+ A 4) A 2.0)
+(define overlap-scale-ok (is4? (+ A 4) 2.0 20.0 200.0 2000.0))
+
+(put4! A 1.0 10.0 100.0 1000.0)
+(put4! B 2.0 20.0 200.0 2000.0)
+(%mem-f32-set! (+ A 16) 10000.0)
+(%f32x4-axpy! (+ A 4) A B 2.0)
+(define overlap-axpy-ok (is4? (+ A 4) 5.0 50.0 500.0 5000.0))
+
+(and add-ok sub-ok mul-ok scale-ok axpy-ok acc-ok dot-ok
+     overlap-add-ok overlap-scale-ok overlap-axpy-ok)
