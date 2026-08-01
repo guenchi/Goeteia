@@ -27,7 +27,7 @@ divergence is what breeds bugs, so we mirror it wherever JS allows.
 | char c          | i31ref, payload `c<<1 \| 1`   | number `c<<1\|1` |
 | #t #f () void eof | singleton structs by identity | frozen sentinel objects |
 | flonum          | struct{f64}                   | `class Fl{v}`    |
-| pair            | struct{car,cdr} mutable       | object literal `{t:"list",a,d}` |
+| pair            | struct{car,cdr} mutable       | object literal `{t:"pair",a,d}` |
 | string          | mutable i8 array              | `Uint8Array`     |
 | symbol          | struct{string}                | `class Sym{s}`   |
 | vector          | eqref array                   | bare JS array    |
@@ -52,12 +52,12 @@ Decisions and the reasoning:
    unbox/rebox; no unboxing optimization for the fallback target --
    it is a compatibility path, not the fast path.
 
-3. **Pairs are tagged object literals**, `{t:"list",a,d}`.  Cons is
+3. **Pairs are tagged object literals**, `{t:"pair",a,d}`.  Cons is
    the hottest allocation in Scheme code, and at heap scale the
    object literal wins decisively: one inline-slot allocation, where
    a bare array is a JSArray plus a separate elements store (~28x
    slower allocating 4M pairs on V8) and `new Pair(...)` pays the
-   construct path (~15x).  Walks and the `x.t==="list"` predicate
+   construct path (~15x).  Walks and the `x.t==="pair"` predicate
    also beat array indexing and `Array.isArray` on both V8 and JSC.
    Reading `.t` is safe on every value -- numbers box transparently,
    every other representation lacks the property -- and the string

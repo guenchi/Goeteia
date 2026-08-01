@@ -332,7 +332,7 @@
          (esc (assq '$escape *fns*)))
     (unless (and wv esc)
       (errorf 'goeteia "call/cc needs the $escape/$winders runtime"))
-    (list "(()=>{const " t "={t:\"list\",a:NIL,d:NIL}," w "="
+    (list "(()=>{const " t "={t:\"pair\",a:NIL,d:NIL}," w "="
           (jvar-name (cdr wv))
           ";try{return (" (jx (cadr e) env lctx) ")((" x ")=>"
           (jfn-name '$escape (cadr esc)) "(" t "," w "," x "));}catch("
@@ -386,7 +386,7 @@
           ((<) (list (jhelper! "JLTN") "(" (a 0) "," (a 1) ")"))
           ((zero?) (list (jhelper! "JZ") "(" (a 0) ")"))
           ((eq?) (list "(" (a 0) "===" (a 1) ")"))
-          ((pair?) (list "((" (a 0) ".t)===\"list\")"))
+          ((pair?) (list "((" (a 0) ".t)===\"pair\")"))
           ((null?) (list "(" (a 0) "===NIL)"))
           ((string?) (list "(" (a 0) " instanceof Uint8Array)"))
           ((symbol?) (list "(" (a 0) " instanceof Sym)"))
@@ -523,12 +523,12 @@
     ((<) (list "(" (jhelper! "JLTN") "(" (a 0) "," (a 1) ")?TRUE:FALSE)"))
     ((zero?) (list "(" (jhelper! "JZ") "(" (a 0) ")?TRUE:FALSE)"))
     ((eq?) (list "((" (a 0) "===" (a 1) ")?TRUE:FALSE)"))
-    ((cons) (list "({t:\"list\",a:" (a 0) ",d:" (a 1) "})"))
+    ((cons) (list "({t:\"pair\",a:" (a 0) ",d:" (a 1) "})"))
     ((car) (list "(" (a 0) ".a)"))
     ((cdr) (list "(" (a 0) ".d)"))
     ((set-car!) (list "((" (a 0) ".a=" (a 1) "),VOID)"))
     ((set-cdr!) (list "((" (a 0) ".d=" (a 1) "),VOID)"))
-    ((pair?) (list "(((" (a 0) ".t)===\"list\")?TRUE:FALSE)"))
+    ((pair?) (list "(((" (a 0) ".t)===\"pair\")?TRUE:FALSE)"))
     ((null?) (list "((" (a 0) "===NIL)?TRUE:FALSE)"))
     ((fixnum?) (list "(KFIX(" (a 0) "))"))
     ((char?) (list "(KCHR(" (a 0) "))"))
@@ -682,10 +682,10 @@
 (define $js-kernel
   '("\"use strict\";"
     "const FALSE={s:0},TRUE={s:1},NIL={s:2},VOID={s:3},EOFV={s:4};"
-    ;; a pair is the tagged object literal {t:"list",a,d}: single
+    ;; a pair is the tagged object literal {t:"pair",a,d}: single
     ;; inline-slot allocation (a bare array is JSArray + a separate
     ;; elements store, far slower at heap scale), monomorphic walks,
-    ;; and .t===\"list\" answers pair? on any value; vectors stay
+    ;; and .t===\"pair\" answers pair? on any value; vectors stay
     ;; bare JS arrays, so Array.isArray answers vector?
     "class Fl{constructor(v){this.v=v;}}"
     "class Sym{constructor(s){this.s=s;}}"
@@ -710,14 +710,14 @@
     "return dv.getFloat64(0,true);};"
     ;; JS rest array -> Scheme list
     "const L2=(xs)=>{let l=NIL;"
-    "for(let i=xs.length-1;i>=0;i--)l={t:\"list\",a:xs[i],d:l};return l;};"
+    "for(let i=xs.length-1;i>=0;i--)l={t:\"pair\",a:xs[i],d:l};return l;};"
     "const LD=(xs,tl)=>{let l=tl;"
-    "for(let i=xs.length-1;i>=0;i--)l={t:\"list\",a:xs[i],d:l};return l;};"
+    "for(let i=xs.length-1;i>=0;i--)l={t:\"pair\",a:xs[i],d:l};return l;};"
     ;; (apply f pre lst)
     "const A2=(f,pre,l)=>{const xs=pre;"
     "for(;l!==NIL;l=l.d)xs.push(l.a);return f(...xs);};"
     "const UNR=()=>{throw new Error('unreachable');};"
-    "const THR=(tk,v)=>{throw new Esc({t:\"list\",a:tk,d:v});};"
+    "const THR=(tk,v)=>{throw new Esc({t:\"pair\",a:tk,d:v});};"
     "const KFIX=(x)=>(typeof x==='number'&&!(x&1))?TRUE:FALSE;"
     "const KCHR=(x)=>(typeof x==='number'&&(x&1)===1)?TRUE:FALSE;"
     "const KBOOL=(x)=>(x===TRUE||x===FALSE)?TRUE:FALSE;"
@@ -910,7 +910,7 @@
             (list "const RSYMS=()=>("
                   (fold-left (lambda (acc e)
                                (if (eq? (caar e) 'sym)
-                                   (list "{t:\"list\",a:C"
+                                   (list "{t:\"pair\",a:C"
                                          (number->string (cdr e)) ",d:"
                                          acc "}")
                                    acc))
