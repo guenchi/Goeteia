@@ -557,11 +557,11 @@
     ((flsqrt) (list "(new Fl(Math.sqrt(FLV(" (a 0) "))))"))
     ((flfloor) (list "(new Fl(Math.floor(FLV(" (a 0) "))))"))
     ((fltruncate) (list "(new Fl(Math.trunc(FLV(" (a 0) "))))"))
-    ((fixnum->flonum) (list "(new Fl(" (a 0) ">>1))"))
+    ((fixnum->flonum) (list "(new Fl(IU(" (a 0) ")))"))
     ((%fl->fx) (list "F2I(" (a 0) ".v)"))
     ;; the numeric tower's building blocks
     ((%bignum?) (list "((" (a 0) " instanceof Bignum)?TRUE:FALSE)"))
-    ((%make-bignum) (list "(new Bignum(" (a 0) ">>1," (a 1) "))"))
+    ((%make-bignum) (list "(new Bignum(IU(" (a 0) ")," (a 1) "))"))
     ((%bignum-sign) (list "(W(" (a 0) ".sg))"))
     ((%bignum-limbs) (list "(" (a 0) ".l)"))
     ((%ratio?) (list "((" (a 0) " instanceof Ratio)?TRUE:FALSE)"))
@@ -573,38 +573,38 @@
     ((%cx-re) (list "(" (a 0) ".re)"))
     ((%cx-im) (list "(" (a 0) ".im)"))
     ;; chars and strings
-    ((char->integer) (list "(" (a 0) "&-2)"))
-    ((integer->char) (list "(" (a 0) "|1)"))
+    ((char->integer) (list "(I31(" (a 0) ")&-2)"))
+    ((integer->char) (list "(I31(" (a 0) ")|1)"))
     ((string-length) (list "(" (a 0) ".length<<1)"))
     ((string-ref) (list "((AR(" (a 0) "," (a 1) ")<<1)|1)"))
-    ((string-set!) (list "AW(" (a 0) "," (a 1) "," (a 2) ">>1)"))
+    ((string-set!) (list "AW(" (a 0) "," (a 1) ",IU(" (a 2) "))"))
     ((symbol->string) (list "(" (a 0) ".s)"))
-    ((%make-string) (list "(new Uint8Array(" (a 0) ">>1))"))
+    ((%make-string) (list "(new Uint8Array(IU(" (a 0) ")))"))
     ((%make-symbol) (list "(new Sym(" (a 0) "))"))
     ((%interned-symbols) "(RSYMS())")
     ;; vectors and bytevectors
     ((vector?) (list "(Array.isArray(" (a 0) ")?TRUE:FALSE)"))
     ((%make-vector)
-     (list "(new Array(" (a 0) ">>1).fill(" (a 1) "))"))
+     (list "(new Array(IU(" (a 0) ")).fill(" (a 1) "))"))
     ((vector-length) (list "(" (a 0) ".length<<1)"))
     ((vector-ref) (list "AR(" (a 0) "," (a 1) ")"))
     ((vector-set!) (list "AW(" (a 0) "," (a 1) "," (a 2) ")"))
     ((bytevector?) (list "((" (a 0) " instanceof BV)?TRUE:FALSE)"))
     ((%make-bytevector)
-     (list "(new BV(new Uint8Array(" (a 0) ">>1).fill(" (a 1) ">>1)))"))
+     (list "(new BV(new Uint8Array(IU(" (a 0) ")).fill(IU(" (a 1) "))))"))
     ((bytevector-length) (list "(" (a 0) ".u.length<<1)"))
     ((bytevector-u8-ref) (list "(AR(" (a 0) ".u," (a 1) ")<<1)"))
     ((bytevector-u8-set!)
-     (list "AW(" (a 0) ".u," (a 1) "," (a 2) ">>1)"))
+     (list "AW(" (a 0) ".u," (a 1) ",IU(" (a 2) "))"))
     ;; fixnum bitwise, straight on the tagged representation
-    ((bitwise-and) (list "(" (a 0) "&" (a 1) ")"))
-    ((bitwise-ior) (list "(" (a 0) "|" (a 1) ")"))
-    ((bitwise-xor) (list "(" (a 0) "^" (a 1) ")"))
+    ((bitwise-and) (list "(I31(" (a 0) ")&I31(" (a 1) "))"))
+    ((bitwise-ior) (list "(I31(" (a 0) ")|I31(" (a 1) "))"))
+    ((bitwise-xor) (list "(I31(" (a 0) ")^I31(" (a 1) "))"))
     ((bitwise-arithmetic-shift-left)
      ;; (n<<1) << k, renormalized to i31 like ref.i31 does
-     (list "(((" (a 0) "<<(" (a 1) ">>1))<<1)>>1)"))
+     (list "(((I31(" (a 0) ")<<IU(" (a 1) "))<<1)>>1)"))
     ((bitwise-arithmetic-shift-right)
-     (list "((" (a 0) ">>(" (a 1) ">>1))&-2)"))
+     (list "((I31(" (a 0) ")>>IU(" (a 1) "))&-2)"))
     ;; records
     ((%record) (list "(new Rec([" (jsep "," trees) "]))"))
     ((%recbase?) (list "((" (a 0) " instanceof Rec)?TRUE:FALSE)"))
@@ -619,14 +619,14 @@
     ((%unreachable) "(UNR())")
     ((%throw-k) (list "(THR(" (a 0) "," (a 1) "))"))
     ;; IO
-    ((%write-byte) (list "((IO.write_byte(" (a 0) ">>1)),VOID)"))
+    ((%write-byte) (list "((IO.write_byte(IU(" (a 0) "))),VOID)"))
     ((%read-byte) "(W(IO.read_byte()))")
-    ((%path-byte) (list "((IO.path_byte(" (a 0) ">>1)),VOID)"))
+    ((%path-byte) (list "((IO.path_byte(IU(" (a 0) "))),VOID)"))
     ((%open-read) "(W(IO.open_read()))")
     ((%open-write) "(W(IO.open_write()))")
-    ((%fread) (list "(W(IO.fread(" (a 0) ">>1)))"))
-    ((%fwrite) (list "((IO.fwrite(" (a 0) ">>1," (a 1) ">>1)),VOID)"))
-    ((%fclose) (list "((IO.fclose(" (a 0) ">>1)),VOID)"))
+    ((%fread) (list "(W(IO.fread(IU(" (a 0) "))))"))
+    ((%fwrite) (list "((IO.fwrite(IU(" (a 0) "),IU(" (a 1) "))),VOID)"))
+    ((%fclose) (list "((IO.fclose(IU(" (a 0) "))),VOID)"))
     ;; the linear staging memory
     ((%mem-u8-ref) (list "M8R(" (a 0) ")"))
     ((%mem-u8-set!) (list "M8W(" (a 0) "," (a 1) ")"))
@@ -637,23 +637,23 @@
     ((%mem-f64-ref) (list "MF64R(" (a 0) ")"))
     ((%mem-f64-set!) (list "MF64W(" (a 0) "," (a 1) ")"))
     ((%mem-size) "(MSIZE())")
-    ((%mem-grow) (list "(W(MGROW(" (a 0) ">>1)))"))
+    ((%mem-grow) (list "(W(MGROW(IU(" (a 0) "))))"))
     ;; SIMD as scalar loops; single-rounded per lane, like f32x4
     ((%f32x4-add!)
-     (list "(F4('+'," (a 0) ">>1," (a 1) ">>1," (a 2) ">>1),VOID)"))
+     (list "(F4('+',IU(" (a 0) "),IU(" (a 1) "),IU(" (a 2) ")),VOID)"))
     ((%f32x4-sub!)
-     (list "(F4('-'," (a 0) ">>1," (a 1) ">>1," (a 2) ">>1),VOID)"))
+     (list "(F4('-',IU(" (a 0) "),IU(" (a 1) "),IU(" (a 2) ")),VOID)"))
     ((%f32x4-mul!)
-     (list "(F4('*'," (a 0) ">>1," (a 1) ">>1," (a 2) ">>1),VOID)"))
+     (list "(F4('*',IU(" (a 0) "),IU(" (a 1) "),IU(" (a 2) ")),VOID)"))
     ((%f32x4-scale!)
-     (list "(F4SC(" (a 0) ">>1," (a 1) ">>1,FLV(" (a 2) ")),VOID)"))
+     (list "(F4SC(IU(" (a 0) "),IU(" (a 1) "),FLV(" (a 2) ")),VOID)"))
     ((%f32x4-axpy!)
-     (list "(F4AX(" (a 0) ">>1," (a 1) ">>1," (a 2) ">>1,FLV(" (a 3) ")),VOID)"))
+     (list "(F4AX(IU(" (a 0) "),IU(" (a 1) "),IU(" (a 2) "),FLV(" (a 3) ")),VOID)"))
     ((%f32x4-dot)
-     (list "(new Fl(F4D(" (a 0) ">>1," (a 1) ">>1)))"))
+     (list "(new Fl(F4D(IU(" (a 0) "),IU(" (a 1) "))))"))
     ;; JS FFI: the wasm bridge protocol, implemented natively
     ((%js-ref?) (list "((" (a 0) " instanceof JSRef)?TRUE:FALSE)"))
-    ((%js-arg-byte) (list "((NB.push(" (a 0) ">>1)),VOID)"))
+    ((%js-arg-byte) (list "((NB.push(IU(" (a 0) "))),VOID)"))
     ((%js-global) "(new JSRef(GPROX))")
     ((%js-get) (list "(new JSRef(JGET(" (a 0) ".v)))"))
     ((%js-set!) (list "((JSET(" (a 0) ".v," (a 1) ".v)),VOID)"))
@@ -662,7 +662,7 @@
     ((%js-new) (list "(new JSRef(JNEW(" (a 0) ".v)))"))
     ((%js-string) "(new JSRef(TDX()))")
     ((%js-str-len) (list "(W(JSL(" (a 0) ".v)))"))
-    ((%js-str-byte) (list "(W(STG[" (a 0) ">>1]))"))
+    ((%js-str-byte) (list "(W(STG[IU(" (a 0) ")]))"))
     ((%js-number) (list "(new JSRef(" (a 0) ".v))"))
     ((%js-to-number) (list "(new Fl(Number(" (a 0) ".v)))"))
     ((%js-eq) (list "((" (a 0) ".v===" (a 1) ".v)?TRUE:FALSE)"))
@@ -671,7 +671,7 @@
     ((%js-fn) (list "(new JSRef(" (jhelper! "JFN") "(" (a 0) ")))"))
     ((%js-cb-argc) "(W(CBS[CBS.length-1].args.length))")
     ((%js-cb-arg)
-     (list "(new JSRef(CBS[CBS.length-1].args[" (a 0) ">>1]))"))
+     (list "(new JSRef(CBS[CBS.length-1].args[IU(" (a 0) ")]))"))
     ((%js-cb-ret)
      (list "((CBS[CBS.length-1].ret=" (a 0) ".v),VOID)"))
     ;; no JSPI on this target: the promise comes back unawaited,
@@ -713,6 +713,9 @@
     "const F2I=(x)=>{x=Math.trunc(x);if(!Number.isFinite(x)||"
     "x<-2147483648||x>2147483647)throw new RangeError('integer overflow');"
     "return W(x);};"
+    "const I31=(x)=>{if(typeof x!=='number'||(x|0)!==x)"
+    "throw new TypeError('expected i31');return x;};"
+    "const IU=(x)=>I31(x)>>1;"
     ;; byte string literal -> Uint8Array
     "const S=(s)=>{const n=s.length,u=new Uint8Array(n);"
     "for(let i=0;i<n;i++)u[i]=s.charCodeAt(i);return u;};"
@@ -740,7 +743,7 @@
     ;; JS arrays and typed arrays otherwise return undefined or silently
     ;; ignore an out-of-range write instead of trapping like Wasm.
     "const OOB=()=>{throw new RangeError('array element access out of bounds');};"
-    "const IX=(a,i)=>{i>>=1;if(i<0||i>=a.length)OOB();return i;};"
+    "const IX=(a,i)=>{i=IU(i);if(i<0||i>=a.length)OOB();return i;};"
     "const AR=(a,i)=>a[IX(a,i)];"
     "const AW=(a,i,v)=>{a[IX(a,i)]=v;return VOID;};"
     ;; Basic WebAssembly.Memory gives grow its real failure and old-view
@@ -760,16 +763,16 @@
     "MEMV=new DataView(b);MEMU=new Uint8Array(b);}};"
     ;; typed-array byte access is otherwise silent out of bounds,
     ;; unlike wasm memory loads/stores; the DataView widths already trap
-    "const M8P=(p)=>{p>>=1;if(p<0||p>=MEMB.byteLength)"
+    "const M8P=(p)=>{p=IU(p);if(p<0||p>=MEMB.byteLength)"
     "throw new RangeError('memory access out of bounds');return p;};"
     "const M8R=(p)=>{MREF();return MEMU[M8P(p)]<<1;};"
-    "const M8W=(p,v)=>{MREF();MEMU[M8P(p)]=v>>1;return VOID;};"
-    "const M32R=(p)=>{MREF();return W(MEMV.getInt32(p>>1,true));};"
-    "const M32W=(p,v)=>{MREF();MEMV.setInt32(p>>1,v>>1,true);return VOID;};"
-    "const MF32R=(p)=>{MREF();return new Fl(MEMV.getFloat32(p>>1,true));};"
-    "const MF32W=(p,v)=>{MREF();MEMV.setFloat32(p>>1,FLV(v),true);return VOID;};"
-    "const MF64R=(p)=>{MREF();return new Fl(MEMV.getFloat64(p>>1,true));};"
-    "const MF64W=(p,v)=>{MREF();MEMV.setFloat64(p>>1,FLV(v),true);return VOID;};"
+    "const M8W=(p,v)=>{MREF();MEMU[M8P(p)]=IU(v);return VOID;};"
+    "const M32R=(p)=>{MREF();return W(MEMV.getInt32(IU(p),true));};"
+    "const M32W=(p,v)=>{MREF();MEMV.setInt32(IU(p),IU(v),true);return VOID;};"
+    "const MF32R=(p)=>{MREF();return new Fl(MEMV.getFloat32(IU(p),true));};"
+    "const MF32W=(p,v)=>{MREF();MEMV.setFloat32(IU(p),FLV(v),true);return VOID;};"
+    "const MF64R=(p)=>{MREF();return new Fl(MEMV.getFloat64(IU(p),true));};"
+    "const MF64W=(p,v)=>{MREF();MEMV.setFloat64(IU(p),FLV(v),true);return VOID;};"
     "const MSIZE=()=>W(MEMOBJ.buffer.byteLength/65536);"
     "const MGROW=(n)=>{try{const old=MEMOBJ.grow(n>>>0);MREF();return old;}"
     "catch(_){return -1;}};"

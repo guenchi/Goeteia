@@ -112,6 +112,11 @@ if ${NODE-node} test/js-backend-pair-types.mjs; then
 else
     echo "FAIL test/js-backend-pair-types.mjs"; fail=1
 fi
+if ${NODE-node} test/js-backend-i31-types.mjs; then
+    echo "ok   test/js-backend-i31-types.mjs"
+else
+    echo "FAIL test/js-backend-i31-types.mjs"; fail=1
+fi
 if ${NODE-node} test/jsbridge-instance.mjs >/dev/null 2>&1; then
     echo "ok   test/jsbridge-instance.mjs"
 else
