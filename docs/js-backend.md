@@ -122,9 +122,14 @@ the prelude, compiled through the same pipeline and shared verbatim.
   `bin/goeteiac` and `rt/compile.mjs` grow a flag that injects it.
 - Output is a single ES module: kernel + program, `export function
   main(io)`.
-- `rt/loader.mjs` (~20 lines, handwritten): `WebAssembly.validate` on
-  a canned WasmGC snippet -> load `app.wasm` via the existing glue,
-  else import `app.js`.
+- `rt/web.mjs`'s `loadGoeteiaAuto`: `WebAssembly.validate` on a
+  canned WasmGC snippet -> load `app.wasm` via the existing glue,
+  else run the fallback (an inline tag or a lazily imported file).
+- `(web embed)` + `bin/goeteia-mount.mjs`: one source in, the whole
+  two-artifact mount section out -- the wasm reference (a URL, or the
+  bytes as a `data:` URI with `--embed-wasm`) plus the `--js` module
+  inline, wired to `loadGoeteiaAuto`.  The assembly lives in the
+  library so site generators splice the same fragment.
 
 ## Testing
 
