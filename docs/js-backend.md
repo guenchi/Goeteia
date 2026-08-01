@@ -72,7 +72,10 @@ false), mirroring the wasm compare-against-`G-FALSE`.
 ## Control
 
 - **Self tail calls** are already lowered to `%loop` by the front end;
-  `%loop` emits a labeled `for(;;)` with parameter reassignment.
+  `%loop` emits a labeled `for(;;)` with parameter reassignment.  A
+  top-level function's direct self tail call (wasm: `return_call`)
+  gets the same treatment: every fixed-arity function body rides a
+  labeled loop, and the call rebinds parameters and continues.
 - **Escape continuations**: `call/cc` throws/catches a sentinel
   `{tok, val}` through native JS `throw`, matching the wasm exception
   lowering one-to-one (one-shot, upward-only, winders replayed the

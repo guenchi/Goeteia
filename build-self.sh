@@ -6,7 +6,7 @@
 set -e
 cd "$(dirname "$0")"
 
-cat src/compiler.ss src/wasm-driver.ss > /tmp/goeteia-self-src.ss
+cat src/compiler.ss src/js-backend.ss src/wasm-driver.ss > /tmp/goeteia-self-src.ss
 
 echo "stage1: Chez-hosted compiler compiling the compiler..."
 ./bin/goeteiac /tmp/goeteia-self-src.ss goeteia.wasm

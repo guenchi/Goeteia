@@ -1,8 +1,9 @@
 #!/bin/sh
 # Compile and run every test, with the Chez-hosted compiler (stage0)
 # and, if goeteia.wasm is present, with the self-hosted compiler
-# (stage1).  Each test's first line declares the expected output as
-# ";; expect: <value>".
+# (stage1).  Each test also compiles and runs on the JS target, whose
+# emitted text must agree between hosts byte-for-byte.  Each test's
+# first line declares the expected output as ";; expect: <value>".
 cd "$(dirname "$0")"
 fail=0
 # enable JSPI (js-await suspension) when this node accepts the flag
@@ -16,6 +17,14 @@ run_one() { # wasmfile testfile
         ${NODE-node} $JSPI rt/run.mjs "$1" "$input"
     else
         ${NODE-node} $JSPI rt/run.mjs "$1"
+    fi
+}
+run_js() { # jsfile testfile
+    input="${2%.ss}.input"
+    if [ -f "$input" ]; then
+        ${NODE-node} rt/runjs.mjs "$1" "$input"
+    else
+        ${NODE-node} rt/runjs.mjs "$1"
     fi
 }
 for t in test/*.ss; do
@@ -42,6 +51,24 @@ for t in test/*.ss; do
         # both hosts must emit identical bytes from identical source
         if ! cmp -s /tmp/goeteia-test.wasm /tmp/goeteia-test1.wasm; then
             echo "FAIL $t (cross-host: stage0/stage1 bytes differ)"; fail=1
+        fi
+    fi
+    # the JS target answers to the same oracle
+    if ! ./bin/goeteiac --js "$t" /tmp/goeteia-test.js; then
+        echo "FAIL $t (js compile error)"; fail=1; continue
+    fi
+    got=$(run_js /tmp/goeteia-test.js "$t")
+    if [ "$got" = "$want" ]; then
+        echo "ok   $t (js)"
+    else
+        echo "FAIL $t (js: want '$want', got '$got')"; fail=1
+    fi
+    if [ -f goeteia.wasm ]; then
+        if ! ${NODE-node} rt/compile.mjs --js goeteia.wasm "$t" /tmp/goeteia-test1.js 2>/dev/null; then
+            echo "FAIL $t (stage1 js compile error)"; fail=1; continue
+        fi
+        if ! cmp -s /tmp/goeteia-test.js /tmp/goeteia-test1.js; then
+            echo "FAIL $t (cross-host: stage0/stage1 JS text differs)"; fail=1
         fi
     fi
 done

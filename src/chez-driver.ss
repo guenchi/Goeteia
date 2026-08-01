@@ -8,6 +8,7 @@
 
 (define here (path-parent (car (command-line))))
 (load (string-append here "/compiler.ss"))
+(load (string-append here "/js-backend.ss"))
 
 (define (read-forms port)
   (let ((form (read port)))
@@ -184,8 +185,10 @@
     (call-with-port (open-file-output-port out)
       (lambda (p) (put-bytevector p (u8-list->bytevector bytes))))))
 
-(let ((args (cdr (command-line))))
+(let* ((raw (cdr (command-line)))
+       (args (filter (lambda (a) (not (string=? a "--js"))) raw)))
+  (when (member "--js" raw) (set! *target* 'js))
   (if (or (null? args) (null? (cdr args)))
-      (begin (display "usage: goeteiac <input.ss> <output.wasm>\n")
+      (begin (display "usage: goeteiac [--js] <input.ss> <output.wasm|.js>\n")
              (exit 1))
       (compile-file (car args) (cadr args))))

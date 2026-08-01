@@ -3444,7 +3444,10 @@
              nf))
          forms))))
 
-(define (compile-program forms locs)
+;; the target-independent front half -- expansion, assignment
+;; conversion, inlining, DCE -- shared by every backend; returns
+;; (export-names forms fn-defs var-defs main-steps)
+(define (prepare-program forms locs)
   (set! *marks* '())
   (set! *renames* '())
   (set! *macros* '())
@@ -3483,6 +3486,24 @@
                                 `(set! ,(cadr f) ,(caddr f))
                                 f))
                           (filter (lambda (f) (not (fn-define? f))) forms))))
+    (list export-names forms fn-defs var-defs main-steps)))
+
+;; which backend emits the program; the drivers set this from a
+;; --js flag or a (%target js) stream directive
+(define *target* 'wasm)
+
+(define (compile-program forms locs)
+  (if (eq? *target* 'js)
+      (compile-program-js forms locs)
+      (compile-program-wasm forms locs)))
+
+(define (compile-program-wasm forms locs)
+  (let* ((prep (prepare-program forms locs))
+         (export-names (car prep))
+         (forms (cadr prep))
+         (fn-defs (caddr prep))
+         (var-defs (cadddr prep))
+         (main-steps (cadr (cdddr prep))))
     (set! *fns* '())
     (set! *vars* '())
     (set! *plain-ty* '())

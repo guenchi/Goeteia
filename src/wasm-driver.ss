@@ -24,6 +24,10 @@
         ;; (%opt 0) -- script mode: the optimization passes stand down
         (set! *opt-level* (cadr form))
         (loop acc locs file offset))
+       ((and (pair? form) (eq? (car form) '%target))
+        ;; (%target js) -- emit JavaScript instead of wasm
+        (set! *target* (cadr form))
+        (loop acc locs file offset))
        (else
         (loop (cons form acc)
               (cons (string-append
