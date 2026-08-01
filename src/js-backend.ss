@@ -568,9 +568,8 @@
     ((char->integer) (list "(" (a 0) "&-2)"))
     ((integer->char) (list "(" (a 0) "|1)"))
     ((string-length) (list "(" (a 0) ".length<<1)"))
-    ((string-ref) (list "(((" (a 0) "[" (a 1) ">>1])<<1)|1)"))
-    ((string-set!)
-     (list "((" (a 0) "[" (a 1) ">>1]=(" (a 2) ")>>1),VOID)"))
+    ((string-ref) (list "((AR(" (a 0) "," (a 1) ")<<1)|1)"))
+    ((string-set!) (list "AW(" (a 0) "," (a 1) "," (a 2) ">>1)"))
     ((symbol->string) (list "(" (a 0) ".s)"))
     ((%make-string) (list "(new Uint8Array(" (a 0) ">>1))"))
     ((%make-symbol) (list "(new Sym(" (a 0) "))"))
@@ -580,15 +579,15 @@
     ((%make-vector)
      (list "(new Array(" (a 0) ">>1).fill(" (a 1) "))"))
     ((vector-length) (list "(" (a 0) ".length<<1)"))
-    ((vector-ref) (list "(" (a 0) "[" (a 1) ">>1])"))
-    ((vector-set!) (list "((" (a 0) "[" (a 1) ">>1]=" (a 2) "),VOID)"))
+    ((vector-ref) (list "AR(" (a 0) "," (a 1) ")"))
+    ((vector-set!) (list "AW(" (a 0) "," (a 1) "," (a 2) ")"))
     ((bytevector?) (list "((" (a 0) " instanceof BV)?TRUE:FALSE)"))
     ((%make-bytevector)
      (list "(new BV(new Uint8Array(" (a 0) ">>1).fill(" (a 1) ">>1)))"))
     ((bytevector-length) (list "(" (a 0) ".u.length<<1)"))
-    ((bytevector-u8-ref) (list "(" (a 0) ".u[" (a 1) ">>1]<<1)"))
+    ((bytevector-u8-ref) (list "(AR(" (a 0) ".u," (a 1) ")<<1)"))
     ((bytevector-u8-set!)
-     (list "((" (a 0) ".u[" (a 1) ">>1]=(" (a 2) ")>>1),VOID)"))
+     (list "AW(" (a 0) ".u," (a 1) "," (a 2) ">>1)"))
     ;; fixnum bitwise, straight on the tagged representation
     ((bitwise-and) (list "(" (a 0) "&" (a 1) ")"))
     ((bitwise-ior) (list "(" (a 0) "|" (a 1) ")"))
@@ -722,6 +721,12 @@
     "const KCHR=(x)=>(typeof x==='number'&&(x&1)===1)?TRUE:FALSE;"
     "const KBOOL=(x)=>(x===TRUE||x===FALSE)?TRUE:FALSE;"
     "const KREC=(x,r)=>(x instanceof Rec&&x.f[0]===r)?TRUE:FALSE;"
+    ;; JS arrays and typed arrays otherwise return undefined or silently
+    ;; ignore an out-of-range write instead of trapping like Wasm.
+    "const OOB=()=>{throw new RangeError('array element access out of bounds');};"
+    "const IX=(a,i)=>{i>>=1;if(i<0||i>=a.length)OOB();return i;};"
+    "const AR=(a,i)=>a[IX(a,i)];"
+    "const AW=(a,i,v)=>{a[IX(a,i)]=v;return VOID;};"
     ;; the linear staging memory: one growable buffer of 64 KiB pages
     "let MEMB=new ArrayBuffer(65536),MEMV=new DataView(MEMB),"
     "MEMU=new Uint8Array(MEMB);"
