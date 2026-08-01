@@ -524,10 +524,10 @@
     ((zero?) (list "(" (jhelper! "JZ") "(" (a 0) ")?TRUE:FALSE)"))
     ((eq?) (list "((" (a 0) "===" (a 1) ")?TRUE:FALSE)"))
     ((cons) (list "({t:\"pair\",a:" (a 0) ",d:" (a 1) "})"))
-    ((car) (list "(" (a 0) ".a)"))
-    ((cdr) (list "(" (a 0) ".d)"))
-    ((set-car!) (list "((" (a 0) ".a=" (a 1) "),VOID)"))
-    ((set-cdr!) (list "((" (a 0) ".d=" (a 1) "),VOID)"))
+    ((car) (list "(PV(" (a 0) ").a)"))
+    ((cdr) (list "(PV(" (a 0) ").d)"))
+    ((set-car!) (list "((PV(" (a 0) ").a=" (a 1) "),VOID)"))
+    ((set-cdr!) (list "((PV(" (a 0) ").d=" (a 1) "),VOID)"))
     ((pair?) (list "(((" (a 0) ".t)===\"pair\")?TRUE:FALSE)"))
     ((null?) (list "((" (a 0) "===NIL)?TRUE:FALSE)"))
     ((fixnum?) (list "(KFIX(" (a 0) "))"))
@@ -696,6 +696,8 @@
     "class Rec{constructor(f){this.f=f;}}"
     "class JSRef{constructor(v){this.v=v;}}"
     "class Esc{constructor(p){this.p=p;}}"
+    "const PV=(x)=>{if(x?.t!=='pair')throw new TypeError('expected pair');"
+    "return x;};"
     "let IO={write_byte:()=>{},read_byte:()=>-1,path_byte:()=>{},"
     "open_read:()=>-1,open_write:()=>-1,fread:()=>-1,fwrite:()=>{},"
     "fclose:()=>{}};"
