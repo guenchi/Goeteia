@@ -789,13 +789,15 @@
           (jgeneric '$mul2) "(a,b);};"))
    ((string=? name "JQUO")
     (list "const JQUO=(a,b)=>{if(typeof a==='number'&&typeof b==='number')"
-          "return W((a>>1)/(b>>1)|0);return "
+          "{const d=b>>1;if(d===0)throw new RangeError('divide by zero');"
+          "return W(Math.trunc((a>>1)/d));}return "
           (jgeneric '$quot2) "(a,b);};"))
    ((string=? name "JREM")
     ;; operands stay tagged (2a % 2b = 2(a%b)); renormalize to i31
     ;; like ref.i31, with no extra shift
     (list "const JREM=(a,b)=>{if(typeof a==='number'&&typeof b==='number')"
-          "return ((a%b)<<1)>>1;return " (jgeneric '$rem2) "(a,b);};"))
+          "{if(b===0)throw new RangeError('divide by zero');"
+          "return ((a%b)<<1)>>1;}return " (jgeneric '$rem2) "(a,b);};"))
    ((string=? name "JEQN")
     (list "const JEQN=(a,b)=>(typeof a==='number'&&typeof b==='number')"
           "?a===b:(" (jgeneric '$eq2) "(a,b)!==FALSE);"))
