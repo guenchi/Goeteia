@@ -77,6 +77,11 @@ if ${NODE-node} test/js-backend-division.mjs; then
 else
     echo "FAIL test/js-backend-division.mjs"; fail=1
 fi
+if ${NODE-node} test/js-backend-bounds.mjs; then
+    echo "ok   test/js-backend-bounds.mjs"
+else
+    echo "FAIL test/js-backend-bounds.mjs"; fail=1
+fi
 if ${NODE-node} test/jsbridge-instance.mjs >/dev/null 2>&1; then
     echo "ok   test/jsbridge-instance.mjs"
 else
