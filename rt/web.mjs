@@ -38,28 +38,38 @@ export function hasWasmGC() {
     } catch { return false; }
 }
 
+const browserIO = () => ({
+    write_byte: b => loadGoeteia._out.push(b),
+    read_byte: () => -1,
+    path_byte: () => {}, open_read: () => -1, open_write: () => -1,
+    fread: () => -1, fwrite: () => {}, fclose: () => {},
+});
+
 // Run a --js compiled module from inline text (a single-file page
 // carries it in an inert <script> tag).  The text is an ES module;
 // scoping it through Function needs only the export keywords gone.
 export function runGoeteiaInline(text) {
     const body = String(text).replace(/^export /gm, '');
     const main = new Function(body + '\nreturn main;')();
-    main({
-        write_byte: b => loadGoeteia._out.push(b),
-        read_byte: () => -1,
-        path_byte: () => {}, open_read: () => -1, open_write: () => -1,
-        fread: () => -1, fwrite: () => {}, fclose: () => {},
-    });
+    main(browserIO());
 }
 
-// The single-file entry: the wasm module when the engine has WasmGC,
-// otherwise the inline JS fallback from `selector`'s script tag.
-// ?goeteia=js forces the fallback, for testing it on a GC engine.
-export async function loadGoeteiaAuto(url, selector = 'script[type="goeteia/js"]') {
+// The two-artifact entry: the wasm module when the engine has WasmGC,
+// otherwise the --js compiled fallback.  `fallback` is either a CSS
+// selector for an inert inline <script> tag (the single-file page,
+// zero extra requests) or a .js/.mjs URL fetched only when actually
+// needed -- the lazy shape: WasmGC users never download the fallback,
+// and the file caches independently of the page.  ?goeteia=js forces
+// the fallback, for testing it on a GC engine.
+export async function loadGoeteiaAuto(url, fallback = 'script[type="goeteia/js"]') {
     const forced = new URLSearchParams(location.search).get('goeteia') === 'js';
     if (!forced && hasWasmGC()) return loadGoeteia(url);
-    const tag = document.querySelector(selector);
-    if (!tag) throw new Error('no inline Goeteia fallback on this page');
+    if (/\.m?js([?#]|$)/.test(fallback)) {
+        const m = await import(new URL(fallback, location.href).href);
+        return m.main(browserIO());
+    }
+    const tag = document.querySelector(fallback);
+    if (!tag) throw new Error('no Goeteia fallback on this page');
     return runGoeteiaInline(tag.textContent);
 }
 
