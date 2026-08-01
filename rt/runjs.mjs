@@ -1,21 +1,23 @@
-// goeteia host runner: instantiate a compiled module, call main,
-// print whatever the program wrote followed by its decoded result.
+// goeteia JS-target runner: import an emitted ES module, call main
+// with the same io hooks run.mjs gives the wasm target, print the
+// output and the decoded result.
 // Copyright (c) 2026 guenchi. MIT license; see LICENSE.
 
 import fs from 'fs';
 import path from 'path';
 import { pathToFileURL } from 'url';
-import { makeJsBridge, callMain } from './jsbridge.mjs';
 
-export async function runModule(bytes, input = []) {
+export async function runJsModule(file, input = []) {
+    const m = await import(pathToFileURL(path.resolve(file)).href);
     const out = [];
     let pos = 0;
 
-    // file ports: path pushed byte by byte, then opened
     let pathBuf = [];
     const files = new Map();
     let nextFd = 1;
-    const fileIO = {
+    const io = {
+        write_byte: b => out.push(b),
+        read_byte: () => (pos < input.length ? input[pos++] : -1),
         path_byte: b => pathBuf.push(b),
         open_read: () => {
             const p = Buffer.from(pathBuf).toString(); pathBuf = [];
@@ -44,34 +46,20 @@ export async function runModule(bytes, input = []) {
         },
     };
 
-    let exportsRef = null;
-    const { instance } = await WebAssembly.instantiate(bytes, {
-        io: {
-            write_byte: b => out.push(b),
-            read_byte: () => (pos < input.length ? input[pos++] : -1),
-            ...fileIO,
-        },
-        js: makeJsBridge(() => exportsRef),
-    });
-    exportsRef = instance.exports;
-    const ex = instance.exports;
-    const result = decode(await callMain(ex), ex);
-    // drain microtasks so promise callbacks into wasm (fetch .then
-    // chains from (web rpc)) run before we report the output
+    const result = decode(m.main(io), m.rt);
+    // drain microtasks, mirroring the wasm runner
     await new Promise(r => setImmediate(r));
     return { text: Buffer.from(out).toString('utf8'), result };
 }
 
-export function decode(v, ex) {
-    // i31ref surfaces in JS as a number; fixnums and characters share
-    // it with a one-bit tag
+export function decode(v, rt) {
     if (typeof v === 'number') {
         return (v & 1) ? `#\\${String.fromCharCode(v >> 1)}` : String(v >> 1);
     }
-    if (v === ex.false.value) return '#f';
-    if (v === ex.true.value) return '#t';
-    if (v === ex.null.value) return '()';
-    if (v === ex.void.value) return '';
+    if (v === rt.false) return '#f';
+    if (v === rt.true) return '#t';
+    if (v === rt.null) return '()';
+    if (v === rt.void) return '';
     return '#<object>';
 }
 
@@ -79,11 +67,11 @@ if (process.argv[1] &&
     import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
     const file = process.argv[2];
     if (!file) {
-        console.error('usage: node run.mjs <module.wasm> [input-file]');
+        console.error('usage: node runjs.mjs <module.js> [input-file]');
         process.exit(1);
     }
     const input = process.argv[3] ? fs.readFileSync(process.argv[3]) : [];
-    runModule(fs.readFileSync(file), input)
+    runJsModule(file, input)
         .then(({ text, result }) => {
             if (text) process.stdout.write(text);
             if (text && !text.endsWith('\n') && result) process.stdout.write('\n');

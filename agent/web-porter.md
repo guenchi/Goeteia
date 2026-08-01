@@ -55,7 +55,8 @@ general JS-to-Scheme compiler and must not become one. When a
 differential test exposes a divergence rooted in a pathological JS
 corner this program genuinely depends on (deep `this`/prototype
 dispatch, `==` coercion chains, `var` hoisting bugs, async control
-flow with no `(web fetch)` yet), and matching it would mean building a
+flow beyond what `(web fetch)` / `rpc!` can express), and matching it
+would mean building a
 JS-semantics emulator, STOP: leave a `;; TODO(port): ...` stub with
 the failing case and report it for a human decision. A verified port
 of the mappable 95% with three honest TODOs beats a sprawling
@@ -90,13 +91,33 @@ for the mock-DOM pattern (createElement/appendChild/replaceChild/
 insertBefore/removeChild/fire). Compare tag/attribute/text-content
 trees after each event, not just at the end.
 
+**The JS target, when the page ships one.** Goeteia compiles the same
+source to a plain-JavaScript module with `--js`, and a page that
+carries that fallback runs it on every engine without Wasm GC -- so a
+port verified only on wasm is verified on only part of what ships.
+Compile the port a second time and put it through the same harness:
+
+```
+node rt/compile.mjs --js goeteia.wasm port.ss port.js && node rt/runjs.mjs port.js
+```
+
+`rt/runjs.mjs` hands the module the io hooks and result decoding
+`rt/run.mjs` gives the wasm one, so the oracle and the expected output
+are unchanged -- this is a second, engine-independent execution of the
+port, NOT a substitute for the wasm run. Run both columns. If they
+disagree, you have found a compiler bug, not a port bug: report it
+with the minimal reproducer instead of bending the port to satisfy one
+target.
+
 Keep the harness you wrote -- deliver it alongside the port as the
 evidence.
 
 ## Mapping (React / DOM -> Goeteia)
 
 Target libraries: `(web sx)`, `(web reactive)`, `(web dom)`,
-`(web js)`, `(web react)`. Read them under `lib/web/` before porting.
+`(web js)`, `(web react)`, plus `(web fetch)`, `(web rpc)` and
+`(web json)` when the source talks to a server. Read them under
+`lib/web/` before porting.
 
 | Source | Port |
 |---|---|
@@ -113,7 +134,8 @@ Target libraries: `(web sx)`, `(web reactive)`, `(web dom)`,
 | `document.getElementById(id)` | `(get-element-by-id id)` |
 | `el.addEventListener(t, f)` | `(add-event-listener! el t f)` |
 | `el.textContent = v` / `el.innerHTML = h` | `(set-text! el v)` / `(set-inner-html! el h)` |
-| `fetch(...)` / `JSON` | flag as TODO until `(web fetch)` / `(web rpc)` / `define-json` land |
+| `fetch(...)` | `(fetch url opts)` / `http-get` / `http-post` from `(web fetch)`; direct style needs JSPI -- feature-test `(fetch-direct?)`, else `(web rpc)`'s callback `rpc!` |
+| `JSON.parse` / `JSON.stringify` | `string->json` / `json->string` from `(web json)`; `json-ref` walks a path |
 
 TypeScript is a gift, not an obstacle: an `interface`/`type` becomes a
 `define-record-type` (or a `define-json` schema for external data); a
@@ -147,9 +169,12 @@ test proves this program depends on it:
   directly; flag arbitrary `this`-dependent dispatch.
 - **`var` hoisting / closure-over-loop-var**: usually a bug the author
   didn't intend -- match observed behavior, note it.
-- **`async`/`await`, Promises**: no suspension yet (call/cc is
-  escape-only). Flag as blocked on `(web fetch)`/JSPI unless the async
-  is trivially removable.
+- **`async`/`await`, Promises**: `(web fetch)` and `(web rpc)` give
+  direct-style async on an engine with JSPI -- feature-test with
+  `(fetch-direct?)` and restructure into the callback `rpc!` when it
+  is absent. The `--js` target never suspends at all (`js-await` hands
+  the promise back), and call/cc stays escape-only, so an await buried
+  in arbitrary control flow may still have no faithful port: flag it.
 
 ## Output
 
@@ -159,6 +184,12 @@ Deliver, for the one file:
 3. a short report: verified-equivalent (with the input set covered),
    divergences you could not resolve (with the exact failing case),
    and anything requiring a human decision or a not-yet-built library.
+
+Name the columns you actually ran. When the destination page ships a
+JS fallback -- inline in the page or as a separate `--js` module --
+the port is not delivered until it also compiles with `--js` and
+passes the same harness; a port that runs only on wasm leaves the
+non-WasmGC engines unverified, and saying so is part of the report.
 
 Never claim equivalence you did not run. A smaller verified port beats
 a larger unverified one.

@@ -2,7 +2,7 @@
 
 ## Introduction
 
-Goeteia is a self-hosting Scheme-to-WebAssembly-GC compiler that compiles itself and runs on any engine with Wasm GC support (Node 22+, current browsers, wasmtime). This manual documents what you need to know to build applications *on top of* Goeteia, assuming you already understand R6RS Scheme. We cover only Goeteia-specific toolchain, libraries, and behavior; standard R6RS primitives are not documented here.
+Goeteia is a self-hosting Scheme-to-WebAssembly-GC compiler that compiles itself and runs on any engine with Wasm GC support (Node 22+, current browsers, wasmtime). Where Wasm GC is missing, the same source compiles to a functionally equivalent plain-JavaScript module instead—see [Compiling to JavaScript](#compiling-to-javascript). This manual documents what you need to know to build applications *on top of* Goeteia, assuming you already understand R6RS Scheme. We cover only Goeteia-specific toolchain, libraries, and behavior; standard R6RS primitives are not documented here.
 
 ### Reading the Signatures
 
@@ -91,12 +91,28 @@ What `-O0` turns off is exactly the two post-optimizer-batch-2 whole-program ana
 
 The effect on representative site pages is roughly a 35–40% faster compile (168ms→100ms, 123ms→71ms), for output about 5% larger. Semantics are identical: `test/opt0.ss` is a differential oracle run through both compiler stages in CI, checking that the same program computes the same results at `-O0` and at full optimization. Long-running or hot code (renderers, simulations) should keep full optimization; script mode is for when compile latency outweighs runtime speed.
 
-### The Chez Path (Optional)
+### Compiling to JavaScript
 
-With [Chez Scheme](https://cisco.github.io/ChezScheme/) installed, you can compile via `./bin/schwasmc`, which may be faster locally:
+The two targets share everything but the last stage. Passing `--js` emits a plain-JavaScript ES module instead of wasm—the same program, for engines that lack Wasm GC:
 
 ```bash
-./bin/schwasmc program.ss program.wasm
+node rt/compile.mjs --js goeteia.wasm program.ss program.js
+node rt/runjs.mjs program.js            # optionally: program.js input-file
+```
+
+As with `-O0`, the flag is sugar for a stream directive: `(%target js)` at the head of the input selects the JS emitter, and any driver honors it.
+
+The artifact is a single self-contained ES module—the runtime kernel is embedded ahead of the program, so there is no glue file and nothing to import. It exports `main(io)`, which takes the same io hooks the wasm runner supplies, plus `rt` (the sentinel values, for decoding a result) and `xports` (whatever the program declared in `(export ...)`). `rt/runjs.mjs` is the JS-target counterpart of `rt/run.mjs`: same hooks, same result decoding, same printed output.
+
+Behavior is identical by construction and checked as such—`run-tests.sh` compiles every test to JS as a third column and holds it to the same `;; expect:` oracle the wasm columns answer to, and the Chez-hosted and self-hosted compilers must emit byte-identical JS text. Wasm remains the fast path; reach for the JS target when you need reach, not speed. See [Running in the Browser](#engines-without-wasm-gc) for how a page picks between the two, and [Current Limits and Planned Work](#current-limits-and-planned-work) for what the JS target costs.
+
+### The Chez Path (Optional)
+
+With [Chez Scheme](https://cisco.github.io/ChezScheme/) installed, you can compile via `./bin/goeteiac`, which may be faster locally:
+
+```bash
+./bin/goeteiac program.ss program.wasm
+./bin/goeteiac --js program.ss program.js
 ```
 
 Chez is optional—it's only used for bootstrapping and as an independent verifier of the self-hosted compiler, not a runtime dependency.
@@ -205,7 +221,7 @@ The compiler prunes unused definitions, so even if a library exports many names,
 
 ## Values and Goeteia-Specific Representation
 
-Goeteia values live in the Wasm engine's garbage-collected heap as first-class GC objects. A few aspects differ from portable Scheme:
+Goeteia values live in the host engine's garbage-collected heap as first-class objects—Wasm GC structs and arrays on the wasm target, the mirror image of them in JS objects on the JS target. A few aspects differ from portable Scheme, on both:
 
 ### Fixnum Range
 
@@ -2555,9 +2571,44 @@ The module runs in the browser main thread with full DOM access. The JS bridge (
 
 The Scheme program can then manipulate the DOM via `(web dom)` and `(web sx)`.
 
+### Engines without Wasm GC
+
+Wasm GC is not everywhere yet—older Safari, older Chrome, embedded WebViews. Compile the program a second time with `--js` (see [Compiling to JavaScript](#compiling-to-javascript)) and let the loader decide which artifact to run:
+
+```javascript
+import { loadGoeteiaAuto } from './rt/web.mjs';
+
+loadGoeteiaAuto('app.wasm', 'app.fallback.js');
+```
+
+`hasWasmGC()` decides by validating a minimal module carrying one struct type—engines from before the proposal reject the typecode. When it passes, `loadGoeteiaAuto` is just `loadGoeteia`. When it fails, it runs the fallback, which is either of two shapes:
+
+- **a `.js` or `.mjs` URL**, `import()`ed dynamically at that moment;
+- **a CSS selector** for an inert `<script type="goeteia/js">` tag holding the module text inline—the default, `script[type="goeteia/js"]`. The browser ignores a script of unknown type, so the text just sits in the document until the loader takes its `textContent`, strips the `export` keywords, and calls `main`.
+
+Append `?goeteia=js` to the page URL to force the fallback on an engine that does have Wasm GC—that is how you test it.
+
+Which shape to use is a question of *when* the fallback is fetched, not of size: a server gzips inline HTML the same as a served file. A separate file is lazy—visitors with Wasm GC never download it, and it caches under its own URL, independent of the page. Inline costs every visitor a download that few of them execute, and buys self-containment: one file to copy, with nothing fetched alongside it. Prefer the separate file for a deployed site; inline when the page itself is the unit you distribute.
+
+### Single-File Pages
+
+Inlining the fallback makes a Goeteia page one HTML file, the way an inline `<style>` makes a stylesheet part of the document:
+
+```html
+<script type="goeteia/js">
+  ...output of `./bin/goeteiac --js app.ss` pasted verbatim...
+</script>
+<script type="module">
+  import { loadGoeteiaAuto } from './rt/web.mjs';
+  loadGoeteiaAuto('app.wasm');
+</script>
+```
+
+Pasting compiler output into HTML is safe by construction: the JS emitter escapes `<` inside string literals, so no emitted literal can spell `</script` and close the tag early.
+
 ### Example
 
-See `examples/counter.html` and `examples/counter.ss`—a complete counter app. Also see `examples/react-embed.html` for embedding Goeteia widgets into a React app.
+See `examples/counter.html` and `examples/counter.ss`—a complete counter app—and `examples/counter-single.html`, the same page as one self-contained file with the `--js` fallback riding inline. Also see `examples/react-embed.html` for embedding Goeteia widgets into a React app.
 
 ## Testing
 
@@ -2579,7 +2630,8 @@ Each test file declares its expected output in the first line:
 The test runner:
 1. Compiles the test with both the Chez-hosted and self-hosted compilers (if `goeteia.wasm` exists)
 2. Runs each, capturing output
-3. Verifies the result matches the expectation
+3. Compiles it a third time with `--js` and runs that under `rt/runjs.mjs`, checking that the two hosts emitted byte-identical JS text
+4. Verifies every result matches the expectation
 
 ### Input Files
 
@@ -2634,8 +2686,9 @@ shell command.
 
 ## Current Limits and Planned Work
 
-- **`call/cc` escape-only**: continuations can jump out but not re-enter. This is a Wasm limitation; re-entrancy would require a different implementation.
-- **Async needs JSPI**: `(web fetch)` and the direct-style `(web rpc)` suspend over Wasm JSPI, so they need an engine that has it (Chrome stable; Node with `--experimental-wasm-jspi`). Elsewhere, feature-detect with `(fetch-direct?)` and use the callback `rpc!`.
+- **`call/cc` escape-only**: continuations can jump out but not re-enter. This is a Wasm limitation; re-entrancy would require a different implementation. The JS target lowers `call/cc` to native `throw`/`catch` and inherits the same restriction, so the two targets agree here as everywhere else.
+- **Async needs JSPI**: `(web fetch)` and the direct-style `(web rpc)` suspend over Wasm JSPI, so they need an engine that has it (Chrome stable; Node with `--experimental-wasm-jspi`). Elsewhere, feature-detect with `(fetch-direct?)` and use the callback `rpc!`. The JS target has no JSPI to detect: `js-await` hands the promise straight back, matching the wasm path on an engine without it, so the same feature test picks the same callback route.
+- **The JS target trades speed for reach**: it is the compatibility path, not a second fast path. A self tail call still becomes a loop, but a tail call between two functions is a plain JS call and spends stack, so deep mutual recursion is bounded by the engine's stack; flonums stay boxed; and the SIMD primitives underneath `(gfx mat)` run as scalar loops—correct, not fast.
 - **No datum labels**: the reader does not support `#0=` / `#0#` cyclic-structure notation.
 
 These are design decisions, not bugs; file issues if you have use cases that need them.

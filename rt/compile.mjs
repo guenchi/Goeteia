@@ -33,18 +33,27 @@ function topLevelSpans(text) {
 // a minimal sexpr reader for import clauses: symbols and nesting
 function parseSexpr(text) {
     let i = 0;
-    function skip() { while (i < text.length && /[\s]/.test(text[i])) i++; }
+    function skip() {
+        for (;;) {
+            while (i < text.length && /[\s]/.test(text[i])) i++;
+            if (text[i] !== ';') return;
+            while (i < text.length && text[i] !== '\n') i++;
+        }
+    }
     function one() {
         skip();
         if (text[i] === '(') {
             i++;
             const items = [];
-            for (skip(); text[i] !== ')'; skip()) items.push(one());
+            for (skip(); i < text.length && text[i] !== ')'; skip())
+                items.push(one());
+            if (i >= text.length) throw new Error('unterminated import clause');
             i++;
             return items;
         }
         const start = i;
-        while (i < text.length && !/[\s()]/.test(text[i])) i++;
+        while (i < text.length && !/[\s();]/.test(text[i])) i++;
+        if (i === start) throw new Error('invalid import clause');
         return text.slice(start, i);
     }
     return one();
@@ -175,14 +184,15 @@ async function runCompiler(input, compilerWasm) {
 // script: true compiles at -O0 -- the optimization passes stand
 // down, for callers who compile on every keystroke.
 export async function compileToBytes(sourceFile,
-    { compilerWasm = defaultCompiler, script = false } = {}) {
+    { compilerWasm = defaultCompiler, script = false, target = null } = {}) {
     const inDir = path.dirname(path.resolve(sourceFile));
     const dirs = [inDir, path.join(inDir, 'lib'), path.join(here, '../lib')];
     const preludePath = path.join(here, '../src/prelude.ss');
     const prelude = fs.readFileSync(preludePath, 'latin1');
     const source = resolveImports(fs.readFileSync(sourceFile, 'latin1'),
                                   dirs, new Set(), sourceFile);
-    const input = Buffer.from((script ? '(%opt 0)\n' : '')
+    const input = Buffer.from((target ? `(%target ${target})\n` : '')
+                              + (script ? '(%opt 0)\n' : '')
                               + locMark(preludePath, 1) + prelude
                               + '\n' + source, 'latin1');
     return runCompiler(input, compilerWasm);
@@ -214,19 +224,23 @@ async function main() {
     const argv = process.argv.slice(2);
     // --script / -O0: compile without the optimization passes
     const script = argv.some(a => a === '--script' || a === '-O0');
-    const args = argv.filter(a => a !== '--script' && a !== '-O0');
+    // --js: emit a JavaScript module instead of wasm
+    const js = argv.some(a => a === '--js');
+    const args = argv.filter(a => a !== '--script' && a !== '-O0'
+                                  && a !== '--js');
     // legacy form: compile.mjs <compiler.wasm> <input.ss> <output.wasm>
     // new form:    compile.mjs <input.ss> <output.wasm>  (bundled compiler)
     let compilerWasm, sourceFile, outFile;
     if (args.length >= 3) [compilerWasm, sourceFile, outFile] = args;
     else [sourceFile, outFile] = args;
     if (!sourceFile || !outFile) {
-        console.error('usage: node compile.mjs [--script] [<compiler.wasm>] <input.ss> <output.wasm>');
+        console.error('usage: node compile.mjs [--script] [--js] [<compiler.wasm>] <input.ss> <output.wasm|.js>');
         process.exit(1);
     }
     try {
         await compileFile(sourceFile, outFile,
-                          { ...(compilerWasm ? { compilerWasm } : {}), script });
+                          { ...(compilerWasm ? { compilerWasm } : {}), script,
+                            ...(js ? { target: 'js' } : {}) });
     } catch (e) {
         if (e.output) process.stderr.write(e.output);
         console.error(`\n${e.message}`);
@@ -234,4 +248,5 @@ async function main() {
     }
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) main();
+if (process.argv[1] &&
+    import.meta.url === url.pathToFileURL(path.resolve(process.argv[1])).href) main();
