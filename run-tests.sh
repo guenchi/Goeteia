@@ -72,4 +72,9 @@ for t in test/*.ss; do
         fi
     fi
 done
+if ${NODE-node} test/js-backend-division.mjs; then
+    echo "ok   test/js-backend-division.mjs"
+else
+    echo "FAIL test/js-backend-division.mjs"; fail=1
+fi
 exit $fail
