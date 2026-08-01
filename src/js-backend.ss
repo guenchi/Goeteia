@@ -550,7 +550,7 @@
     ((flfloor) (list "(new Fl(Math.floor(" (a 0) ".v)))"))
     ((fltruncate) (list "(new Fl(Math.trunc(" (a 0) ".v)))"))
     ((fixnum->flonum) (list "(new Fl(" (a 0) ">>1))"))
-    ((%fl->fx) (list "(W(Math.trunc(" (a 0) ".v)|0))"))
+    ((%fl->fx) (list "F2I(" (a 0) ".v)"))
     ;; the numeric tower's building blocks
     ((%bignum?) (list "((" (a 0) " instanceof Bignum)?TRUE:FALSE)"))
     ((%make-bignum) (list "(new Bignum(" (a 0) ">>1," (a 1) "))"))
@@ -701,6 +701,11 @@
     "fclose:()=>{}};"
     ;; raw int -> tagged i31 (the ref.i31 31-bit wrap)
     "const W=(r)=>(((r|0)<<1)<<1)>>1;"
+    ;; f64 -> i32.trunc_s -> tagged i31.  JavaScript's bitwise coercion
+    ;; silently maps NaN/infinity/out-of-range values instead of trapping.
+    "const F2I=(x)=>{x=Math.trunc(x);if(!Number.isFinite(x)||"
+    "x<-2147483648||x>2147483647)throw new RangeError('integer overflow');"
+    "return W(x);};"
     ;; byte string literal -> Uint8Array
     "const S=(s)=>{const n=s.length,u=new Uint8Array(n);"
     "for(let i=0;i<n;i++)u[i]=s.charCodeAt(i);return u;};"
