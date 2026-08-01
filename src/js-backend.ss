@@ -621,18 +621,14 @@
     ((%fwrite) (list "((IO.fwrite(" (a 0) ">>1," (a 1) ">>1)),VOID)"))
     ((%fclose) (list "((IO.fclose(" (a 0) ">>1)),VOID)"))
     ;; the linear staging memory
-    ((%mem-u8-ref) (list "(MEMU[" (a 0) ">>1]<<1)"))
-    ((%mem-u8-set!)
-     (list "((MEMU[" (a 0) ">>1]=(" (a 1) ")>>1),VOID)"))
-    ((%mem-i32-ref) (list "(W(MEMV.getInt32(" (a 0) ">>1,true)))"))
-    ((%mem-i32-set!)
-     (list "((MEMV.setInt32(" (a 0) ">>1,(" (a 1) ")>>1,true)),VOID)"))
-    ((%mem-f32-ref) (list "(new Fl(MEMV.getFloat32(" (a 0) ">>1,true)))"))
-    ((%mem-f32-set!)
-     (list "((MEMV.setFloat32(" (a 0) ">>1," (a 1) ".v,true)),VOID)"))
-    ((%mem-f64-ref) (list "(new Fl(MEMV.getFloat64(" (a 0) ">>1,true)))"))
-    ((%mem-f64-set!)
-     (list "((MEMV.setFloat64(" (a 0) ">>1," (a 1) ".v,true)),VOID)"))
+    ((%mem-u8-ref) (list "M8R(" (a 0) ")"))
+    ((%mem-u8-set!) (list "M8W(" (a 0) "," (a 1) ")"))
+    ((%mem-i32-ref) (list "M32R(" (a 0) ")"))
+    ((%mem-i32-set!) (list "M32W(" (a 0) "," (a 1) ")"))
+    ((%mem-f32-ref) (list "MF32R(" (a 0) ")"))
+    ((%mem-f32-set!) (list "MF32W(" (a 0) "," (a 1) ")"))
+    ((%mem-f64-ref) (list "MF64R(" (a 0) ")"))
+    ((%mem-f64-set!) (list "MF64W(" (a 0) "," (a 1) ")"))
     ((%mem-size) "(MSIZE())")
     ((%mem-grow) (list "(W(MGROW(" (a 0) ">>1)))"))
     ;; SIMD as scalar loops; single-rounded per lane, like f32x4
@@ -722,27 +718,35 @@
     "const KCHR=(x)=>(typeof x==='number'&&(x&1)===1)?TRUE:FALSE;"
     "const KBOOL=(x)=>(x===TRUE||x===FALSE)?TRUE:FALSE;"
     "const KREC=(x,r)=>(x instanceof Rec&&x.f[0]===r)?TRUE:FALSE;"
-    ;; the linear staging memory: one growable buffer of 64 KiB pages
-    "let MEMB=new ArrayBuffer(65536),MEMV=new DataView(MEMB),"
-    "MEMU=new Uint8Array(MEMB);"
-    "const MSIZE=()=>W(MEMB.byteLength/65536);"
-    "const MGROW=(n)=>{const old=MEMB.byteLength/65536;"
-    "const nb=new ArrayBuffer((old+n)*65536);"
-    "new Uint8Array(nb).set(MEMU);"
-    "MEMB=nb;MEMV=new DataView(nb);MEMU=new Uint8Array(nb);return old;};"
-    "const MEMOBJ={get buffer(){return MEMB;}};"
+    ;; Basic WebAssembly.Memory gives grow its real failure and old-view
+    ;; detachment semantics even on hosts without WasmGC.
+    "const MEMOBJ=new WebAssembly.Memory({initial:1});"
+    "let MEMB=MEMOBJ.buffer,MEMV=new DataView(MEMB),MEMU=new Uint8Array(MEMB);"
+    "const MREF=()=>{const b=MEMOBJ.buffer;if(b!==MEMB){MEMB=b;"
+    "MEMV=new DataView(b);MEMU=new Uint8Array(b);}};"
+    "const M8R=(p)=>{MREF();return MEMU[p>>1]<<1;};"
+    "const M8W=(p,v)=>{MREF();MEMU[p>>1]=v>>1;return VOID;};"
+    "const M32R=(p)=>{MREF();return W(MEMV.getInt32(p>>1,true));};"
+    "const M32W=(p,v)=>{MREF();MEMV.setInt32(p>>1,v>>1,true);return VOID;};"
+    "const MF32R=(p)=>{MREF();return new Fl(MEMV.getFloat32(p>>1,true));};"
+    "const MF32W=(p,v)=>{MREF();MEMV.setFloat32(p>>1,v.v,true);return VOID;};"
+    "const MF64R=(p)=>{MREF();return new Fl(MEMV.getFloat64(p>>1,true));};"
+    "const MF64W=(p,v)=>{MREF();MEMV.setFloat64(p>>1,v.v,true);return VOID;};"
+    "const MSIZE=()=>W(MEMOBJ.buffer.byteLength/65536);"
+    "const MGROW=(n)=>{try{const old=MEMOBJ.grow(n>>>0);MREF();return old;}"
+    "catch(_){return -1;}};"
     ;; f32x4 kernels: per-lane scalar ops, one rounding per store
-    "const F4=(op,d,p,q)=>{for(let i=0;i<16;i+=4){"
+    "const F4=(op,d,p,q)=>{MREF();for(let i=0;i<16;i+=4){"
     "const x=MEMV.getFloat32(p+i,true),y=MEMV.getFloat32(q+i,true);"
     "MEMV.setFloat32(d+i,op==='+'?x+y:op==='-'?x-y:x*y,true);}};"
-    "const F4SC=(d,p,s)=>{const sf=Math.fround(s);"
+    "const F4SC=(d,p,s)=>{MREF();const sf=Math.fround(s);"
     "for(let i=0;i<16;i+=4)"
     "MEMV.setFloat32(d+i,MEMV.getFloat32(p+i,true)*sf,true);};"
-    "const F4AX=(d,p,q,s)=>{const sf=Math.fround(s);"
+    "const F4AX=(d,p,q,s)=>{MREF();const sf=Math.fround(s);"
     "for(let i=0;i<16;i+=4)MEMV.setFloat32(d+i,"
     "MEMV.getFloat32(p+i,true)+Math.fround(MEMV.getFloat32(q+i,true)*sf),"
     "true);};"
-    "const F4D=(p,q)=>{const fr=Math.fround;let r=fr(fr(MEMV.getFloat32(p,true)*MEMV.getFloat32(q,true))+fr(MEMV.getFloat32(p+4,true)*MEMV.getFloat32(q+4,true)));"
+    "const F4D=(p,q)=>{MREF();const fr=Math.fround;let r=fr(fr(MEMV.getFloat32(p,true)*MEMV.getFloat32(q,true))+fr(MEMV.getFloat32(p+4,true)*MEMV.getFloat32(q+4,true)));"
     "r=fr(r+fr(MEMV.getFloat32(p+8,true)*MEMV.getFloat32(q+8,true)));"
     "r=fr(r+fr(MEMV.getFloat32(p+12,true)*MEMV.getFloat32(q+12,true)));"
     "return r;};"

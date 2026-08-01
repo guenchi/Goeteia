@@ -37,9 +37,17 @@
        (near? (%mem-f32-ref 40) 0.1)))
 
 ;; size and grow: starts at 1 page (64 KiB), grow returns the old size
+(define mem (js-get (js-global) "__goeteia_mem"))
+(define old-view (js-new (js-get (js-global) "Uint8Array")
+                         (js-get mem "buffer")))
 (define size-ok-1 (= (%mem-size) 1))
 (define grow-ret (%mem-grow 1))
 (define size-ok-2 (and (= grow-ret 1) (= (%mem-size) 2)))
+;; WebAssembly.Memory.grow detaches views over the previous buffer.
+(define detached-ok (= (js->number (js-get old-view "byteLength")) 0))
+;; Failed growth returns -1 and leaves the memory unchanged.
+(define failed-grow-ok
+  (and (= (%mem-grow -1) -1) (= (%mem-size) 2)))
 ;; the grown page is addressable
 (%mem-u8-set! 65536 9)
 (define grown-ok (= (%mem-u8-ref 65536) 9))
@@ -49,7 +57,6 @@
 (%mem-f32-set! 100 1.0)
 (%mem-f32-set! 104 2.5)
 (%mem-f32-set! 108 -3.25)
-(define mem (js-get (js-global) "__goeteia_mem"))
 (define view (js-new (js-get (js-global) "Float32Array")
                      (js-get mem "buffer") 100 3))
 (define (v i) (js->number (js-index view i)))
@@ -62,5 +69,5 @@
 (js-eval "new Float64Array(globalThis.__goeteia_mem.buffer, 200, 1)[0] = 6.25")
 (define js->scheme-ok (fl=? (%mem-f64-ref 200) 6.25))
 
-(and u8-ok i32-ok f64-ok f32-ok size-ok-1 size-ok-2 grown-ok
-     zero-copy-ok js->scheme-ok)
+(and u8-ok i32-ok f64-ok f32-ok size-ok-1 size-ok-2 detached-ok
+     failed-grow-ok grown-ok zero-copy-ok js->scheme-ok)
