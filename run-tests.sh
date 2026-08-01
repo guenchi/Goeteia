@@ -72,4 +72,9 @@ for t in test/*.ss; do
         fi
     fi
 done
+if ${NODE-node} test/js-backend-i31-types.mjs; then
+    echo "ok   test/js-backend-i31-types.mjs"
+else
+    echo "FAIL test/js-backend-i31-types.mjs"; fail=1
+fi
 exit $fail
