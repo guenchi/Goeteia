@@ -102,9 +102,9 @@ node rt/runjs.mjs program.js            # optionally: program.js input-file
 
 As with `-O0`, the flag is sugar for a stream directive: `(%target js)` at the head of the input selects the JS emitter, and any driver honors it.
 
-The artifact is a single self-contained ES module—the runtime kernel is embedded ahead of the program, so there is no glue file and nothing to import. It exports `main(io)`, which takes the same io hooks the wasm runner supplies, plus `rt` (the sentinel values, for decoding a result) and `xports` (whatever the program declared in `(export ...)`). `rt/runjs.mjs` is the JS-target counterpart of `rt/run.mjs`: same hooks, same result decoding, same printed output.
+The artifact is a single self-contained ES module—the runtime kernel is embedded ahead of the program, so there is no glue file and nothing to import. It exports `main(io)`, which takes the same io hooks the wasm runner supplies, plus `rt` (the sentinel values, for decoding a result) and `xports` (whatever the program declared in `(export ...)`). `rt/runjs.mjs` is the JS-target counterpart of `rt/run.mjs`: same hooks, same result decoding, same printed output. Nor does the artifact need WebAssembly to be present at all: the staging memory behind the SIMD and byte primitives prefers a real `WebAssembly.Memory` (that is what buys exact grow-failure and view-detachment semantics) but falls back to a plain `ArrayBuffer` stand-in where the constructor is missing, so a restricted embedded JavaScript environment still runs the module.
 
-Behavior is identical by construction and checked as such—`run-tests.sh` compiles every test to JS as a third column and holds it to the same `;; expect:` oracle the wasm columns answer to, and the Chez-hosted and self-hosted compilers must emit byte-identical JS text. Wasm remains the fast path; reach for the JS target when you need reach, not speed. See [Running in the Browser](#engines-without-wasm-gc) for how a page picks between the two, and [Current Limits and Planned Work](#current-limits-and-planned-work) for what the JS target costs.
+Behavior is identical by construction and checked as such—`run-tests.sh` compiles every test to JS as a third column and holds it to the same `;; expect:` oracle the wasm columns answer to, and the Chez-hosted and self-hosted compilers must emit byte-identical JS text. That identity covers *errors*, not just results: division by zero, out-of-range collection and byte-memory access, wrong operand types, invalid float conversions and arity violations all trap on the JS target where they trap on wasm, and memory growth detaches the old views and answers −1 on failure exactly as `memory.grow` does. A program that traps on wasm fails on JS at the same point, so JavaScript's usual permissiveness never turns a wasm trap into a silently different answer. Wasm remains the fast path; reach for the JS target when you need reach, not speed. See [Running in the Browser](#engines-without-wasm-gc) for how a page picks between the two, and [Current Limits and Planned Work](#current-limits-and-planned-work) for what the JS target costs.
 
 ### The Chez Path (Optional)
 
@@ -2354,7 +2354,7 @@ func -> boolean
 ```
 Feature-detect JSPI: `#t` when direct-style suspension is available.
 
-JSPI needs an engine that supports it (Chrome stable; Node with `--experimental-wasm-jspi`). Without it the underlying await import is the identity—feature-detect with `(fetch-direct?)` and fall back to the callback `rpc!` below. `js-await` is only legal on the main stack, not inside a `$jscb` callback re-entered from JS.
+JSPI needs an engine that supports it (Chrome stable; Node with `--experimental-wasm-jspi`). Without it the underlying await import is the identity—feature-detect with `(fetch-direct?)` and fall back to the callback `rpc!` below. On the `--js` target the probe always answers `#f`, whatever the browser supports: that target has no stack to suspend, and its kernel hides the JSPI constructors from the program rather than let a probe say yes to a suspension that would not happen. One feature test therefore covers both targets. `js-await` is only legal on the main stack, not inside a `$jscb` callback re-entered from JS.
 
 ### `(web rpc)`: S-Expression RPC to a Scheme Backend
 
@@ -2590,25 +2590,51 @@ Append `?goeteia=js` to the page URL to force the fallback on an engine that doe
 
 Which shape to use is a question of *when* the fallback is fetched, not of size: a server gzips inline HTML the same as a served file. A separate file is lazy—visitors with Wasm GC never download it, and it caches under its own URL, independent of the page. Inline costs every visitor a download that few of them execute, and buys self-containment: one file to copy, with nothing fetched alongside it. Prefer the separate file for a deployed site; inline when the page itself is the unit you distribute.
 
+You do not assemble the inline shape by hand—`bin/goeteia-mount.mjs` and `(web embed)` produce it; see below.
+
 ### Single-File Pages
 
-Inlining the fallback makes a Goeteia page one HTML file, the way an inline `<style>` makes a stylesheet part of the document:
+Inlining the fallback makes a Goeteia page one HTML file, the way an inline `<style>` makes a stylesheet part of the document. `bin/goeteia-mount.mjs` builds the section: it compiles one source to *both* targets and prints the fragment that mounts them.
+
+```bash
+node bin/goeteia-mount.mjs app.ss                  # fragment to stdout
+node bin/goeteia-mount.mjs app.ss -o mount.html    # ...or to a file
+```
+
+What comes out is the two-artifact mount section—the `--js` module riding inside an inert `<script type="goeteia/js">` tag, and the wasm reference handed to `loadGoeteiaAuto`:
 
 ```html
 <script type="goeteia/js">
-  ...output of `./bin/goeteiac --js app.ss` pasted verbatim...
+  ...the --js compiled module, inline...
 </script>
 <script type="module">
-  import { loadGoeteiaAuto } from './rt/web.mjs';
-  loadGoeteiaAuto('app.wasm');
+import { loadGoeteiaAuto } from './rt/web.mjs';
+loadGoeteiaAuto('app.wasm');
 </script>
 ```
 
-Pasting compiler output into HTML is safe by construction: the JS emitter escapes `<` inside string literals, so no emitted literal can spell `</script` and close the tag early.
+Paste that into a page shell, or generate the shell around it (`examples/mk-counter-single.sh` is the whole recipe: a heredoc, one `goeteia-mount` call, a heredoc).
+
+The flags say where the other pieces live:
+
+- `--wasm-url URL` — the wasm artifact's URL; defaults to the source's basename with `.wasm`, i.e. next to the page.
+- `--rt URL` — where `rt/web.mjs` sits relative to the page (default `./rt/web.mjs`).
+- `--embed-wasm` — inline the wasm module too, as a `data:application/wasm;base64,` URI. Now the page fetches nothing on either engine: truly one file, at the cost of carrying both artifacts to every visitor and losing the wasm's separate cache entry.
+
+The assembly itself is a library, so a site generator splices the same fragment without shelling out to the CLI:
+
+```
+procedure: (mount-html js-text wasm-ref rt-url)
+
+func -> string -> string -> string -> string   /   func -> string -> bytevector -> string -> string
+```
+Return the mount section. `wasm-ref` is either the wasm artifact's URL or its bytes, which embed as a data URI—the same choice `--embed-wasm` makes. `(web embed)` also exports `wasm->data-uri` and `base64-encode`.
+
+Pasting compiler output into HTML is safe by construction: the JS emitter escapes `<` inside string literals, so no emitted literal can spell `</script` and close the tag early. `mount-html` checks its input for a script terminator anyway and raises rather than emit a page that could break out of the tag.
 
 ### Example
 
-See `examples/counter.html` and `examples/counter.ss`—a complete counter app—and `examples/counter-single.html`, the same page as one self-contained file with the `--js` fallback riding inline. Also see `examples/react-embed.html` for embedding Goeteia widgets into a React app.
+See `examples/counter.html` and `examples/counter.ss`—a complete counter app—and `examples/counter-single.html`, the same page as one self-contained file with the `--js` fallback riding inline; the latter is generated, not maintained, by `examples/mk-counter-single.sh`. Also see `examples/react-embed.html` for embedding Goeteia widgets into a React app.
 
 ## Testing
 
@@ -2632,6 +2658,8 @@ The test runner:
 2. Runs each, capturing output
 3. Compiles it a third time with `--js` and runs that under `rt/runjs.mjs`, checking that the two hosts emitted byte-identical JS text
 4. Verifies every result matches the expectation
+
+Alongside the three columns it runs a set of `.mjs` cases that pin the JS target's *failure* behavior to wasm's—division by zero, collection and byte-memory bounds, dynamic arity, operand types, float conversion, memory growth, the trampoline, the JSPI probes—since an expectation line can only check the runs that succeed.
 
 ### Input Files
 
@@ -2687,8 +2715,8 @@ shell command.
 ## Current Limits and Planned Work
 
 - **`call/cc` escape-only**: continuations can jump out but not re-enter. This is a Wasm limitation; re-entrancy would require a different implementation. The JS target lowers `call/cc` to native `throw`/`catch` and inherits the same restriction, so the two targets agree here as everywhere else.
-- **Async needs JSPI**: `(web fetch)` and the direct-style `(web rpc)` suspend over Wasm JSPI, so they need an engine that has it (Chrome stable; Node with `--experimental-wasm-jspi`). Elsewhere, feature-detect with `(fetch-direct?)` and use the callback `rpc!`. The JS target has no JSPI to detect: `js-await` hands the promise straight back, matching the wasm path on an engine without it, so the same feature test picks the same callback route.
-- **The JS target trades speed for reach**: it is the compatibility path, not a second fast path. A self tail call still becomes a loop, but a tail call between two functions is a plain JS call and spends stack, so deep mutual recursion is bounded by the engine's stack; flonums stay boxed; and the SIMD primitives underneath `(gfx mat)` run as scalar loops—correct, not fast.
+- **Async needs JSPI**: `(web fetch)` and the direct-style `(web rpc)` suspend over Wasm JSPI, so they need an engine that has it (Chrome stable; Node with `--experimental-wasm-jspi`). Elsewhere, feature-detect with `(fetch-direct?)` and use the callback `rpc!`. The JS target cannot suspend at all—`js-await` hands the promise straight back—so its kernel hides `WebAssembly.Suspending`/`promising` from the program's view of the host: the probes answer no even in a JSPI-enabled browser, and the same feature test that picks the callback route on a wasm engine without JSPI picks it here, automatically. Nothing to special-case in your code.
+- **The JS target trades speed for reach**: it is the compatibility path, not a second fast path. Flonums stay boxed, and the SIMD primitives underneath `(gfx mat)` run as scalar loops—correct, not fast. Control flow costs nothing in reach, though: self tail calls become loops and non-self tail calls trampoline (the call returns a thunk the nearest non-tail frame bounces), so mutual recursion runs in constant JS stack just as `return_call` does on wasm.
 - **No datum labels**: the reader does not support `#0=` / `#0#` cyclic-structure notation.
 
 These are design decisions, not bugs; file issues if you have use cases that need them.

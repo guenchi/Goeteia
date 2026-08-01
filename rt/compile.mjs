@@ -202,14 +202,15 @@ export async function compileToBytes(sourceFile,
 // resolve against baseDir, its lib/, and the bundled lib/.
 export async function compileSource(text,
     { baseDir = process.cwd(), compilerWasm = defaultCompiler,
-      name = 'repl', script = false } = {}) {
+      name = 'repl', script = false, target = null } = {}) {
     const dirs = [baseDir, path.join(baseDir, 'lib'), path.join(here, '../lib')];
     const preludePath = path.join(here, '../src/prelude.ss');
     const prelude = fs.readFileSync(preludePath, 'latin1');
     // utf-8 text to one-byte-per-char, matching the byte reader
     const raw = Buffer.from(text, 'utf8').toString('latin1');
     const source = resolveImports(raw, dirs, new Set(), name);
-    const input = Buffer.from((script ? '(%opt 0)\n' : '')
+    const input = Buffer.from((target ? `(%target ${target})\n` : '')
+                              + (script ? '(%opt 0)\n' : '')
                               + locMark(preludePath, 1) + prelude
                               + '\n' + source, 'latin1');
     return runCompiler(input, compilerWasm);

@@ -107,7 +107,21 @@ are unchanged -- this is a second, engine-independent execution of the
 port, NOT a substitute for the wasm run. Run both columns. If they
 disagree, you have found a compiler bug, not a port bug: report it
 with the minimal reproducer instead of bending the port to satisfy one
-target.
+target. The two targets agree on failure as well as on results (a
+trap on wasm is a trap on JS, at the same point), so a divergence in
+how the two columns *fail* is a report-worthy finding too, not noise.
+
+Do not hand-write the page's script tags. The mount section -- the
+inline `--js` fallback plus the wasm reference wired to
+`loadGoeteiaAuto` -- is generated:
+
+```
+node bin/goeteia-mount.mjs port.ss              # fragment to stdout
+node bin/goeteia-mount.mjs port.ss --embed-wasm # ...wasm inlined too
+```
+
+(`(web embed)`'s `mount-html` is the same assembly as a library, for a
+site generator that splices the fragment itself.)
 
 Keep the harness you wrote -- deliver it alongside the port as the
 evidence.
@@ -173,8 +187,12 @@ test proves this program depends on it:
   direct-style async on an engine with JSPI -- feature-test with
   `(fetch-direct?)` and restructure into the callback `rpc!` when it
   is absent. The `--js` target never suspends at all (`js-await` hands
-  the promise back), and call/cc stays escape-only, so an await buried
-  in arbitrary control flow may still have no faithful port: flag it.
+  the promise back), and it makes that honest: its kernel hides the
+  JSPI constructors, so `(fetch-direct?)` answers `#f` there even in a
+  JSPI-enabled browser and the callback route is taken automatically.
+  Nothing changes for you -- one feature test still covers both
+  targets -- but call/cc stays escape-only, so an await buried in
+  arbitrary control flow may still have no faithful port: flag it.
 
 ## Output
 
@@ -190,6 +208,10 @@ JS fallback -- inline in the page or as a separate `--js` module --
 the port is not delivered until it also compiles with `--js` and
 passes the same harness; a port that runs only on wasm leaves the
 non-WasmGC engines unverified, and saying so is part of the report.
+For such a page, hand over the mount section `goeteia-mount` produced
+(or the exact command that produces it), never hand-assembled script
+tags -- the fragment is a build product like the artifacts it
+references.
 
 Never claim equivalence you did not run. A smaller verified port beats
 a larger unverified one.
