@@ -3627,6 +3627,12 @@
   (embed-guard-script! jstext)
   (string-append "<script type=\"module\">\n" jstext "main();\n</script>\n"))
 
+;; the URL form: the page references the module file, which the
+;; generator writes next to its output -- pages sharing one module
+;; let the browser cache it across them
+(define (embed-section-js-url url)
+  (string-append "<script type=\"module\" src=\"" url "\"></script>\n"))
+
 ;; wasm and auto sections carry the runtime glue inline: the page
 ;; depends on nothing beside itself.  Repeated glue across sections
 ;; is gzip-friendly; each auto section's fallback tag gets a unique
@@ -3731,13 +3737,20 @@
          (path (and (pair? head) (cadr head)))
          (file? (and path #t))
          (body (map-in-order embed-expand (embed-strip-locs (cdr rest)))))
-    (when (and file? (eq? mode 'js))
-      (errorf 'goeteia "define-js has no file form"))
     (case mode
       ((js)
-       (list 'define name
-             (embed-string-form
-              (embed-section-js (conjure-sub-compile body 'js)))))
+       (let ((jstext (conjure-sub-compile body 'js)))
+         (if file?
+             (list 'begin
+                   (list 'define name
+                         (embed-string-form (embed-section-js-url path)))
+                   (list 'with-output-to-file path
+                         (list 'lambda '()
+                               (list 'display
+                                     (embed-string-form
+                                      (string-append jstext "main();\n"))))))
+             (list 'define name
+                   (embed-string-form (embed-section-js jstext))))))
       ((wasm)
        (let ((bytes (conjure-sub-compile body 'wasm)))
          (if file?

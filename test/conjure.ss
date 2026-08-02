@@ -95,11 +95,13 @@
 (define-wasm mwi (display 2))
 (define-wasm-js mai (import (web js)) (display (if (js-truthy? (js-eval "1")) 3 0)))
 (define-wasm (mw "/tmp/goeteia-conjure-test.wasm") (display 4))
+(define-js (mjf "/tmp/goeteia-conjure-test.js") (display 5))
 (define macro-sections-ok
   (and (has? mj "main();")
        (has? mwi "loadGoeteia('data:application/wasm;base64,")
        (has? mai "loadGoeteiaAuto('data:application/wasm;base64,")
-       (has? mw "loadGoeteia('/tmp/goeteia-conjure-test.wasm')")))
+       (has? mw "loadGoeteia('/tmp/goeteia-conjure-test.wasm')")
+       (has? mjf "src=\"/tmp/goeteia-conjure-test.js\"")))
 ;; define-wasm wrote its module next to the generator's output
 (define wrote-ok
   (let ()
@@ -111,5 +113,16 @@
              (%fclose fd)
              (= b0 0))))))            ; wasm magic starts 0x00
 
+;; define-js's URL form wrote a self-running module file
+(define wrote-js-ok
+  (let ()
+    (string-for-each (lambda (c) (%path-byte (char->integer c)))
+                     "/tmp/goeteia-conjure-test.js")
+    (let ((fd (%open-read)))
+      (and (>= fd 0)
+           (let ((b0 (%fread fd)))
+             (%fclose fd)
+             (= b0 34))))))           ; module text opens "use strict"
+
 (and js-ok wasm-ok wasm-url-ok auto-ok id2-ok macro-sections-ok wrote-ok
-     lib-ok)
+     wrote-js-ok lib-ok)
