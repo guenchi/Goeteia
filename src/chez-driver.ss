@@ -165,6 +165,36 @@
                         (cdar fs))
                   acc))))))
 
+;; expand the imports at the top level of goeteia-embed bodies, each
+;; embed in a fresh import scope (the host program's libraries are
+;; spliced into the host, not into the independently compiled embed
+;; unit; nested embeds get their own scope too), mirroring
+;; rt/compile.mjs's per-block text resolution
+(define (embed-splice-imports form dirs)
+  (cond
+   ((not (pair? form)) form)
+   ((eq? (car form) 'quote) form)
+   ((eq? (car form) 'goeteia-embed)
+    (let* ((saved visited)
+           (body (begin
+                   (set! visited '())
+                   (let loop ((bs (cddr form)) (acc '()))
+                     (cond
+                      ((null? bs) (reverse acc))
+                      ((and (pair? (car bs)) (eq? (car (car bs)) 'import))
+                       (loop (cdr bs)
+                             (append (reverse (map cdr (load-specs
+                                                        (cdr (car bs)) dirs)))
+                                     acc)))
+                      (else
+                       (loop (cdr bs)
+                             (cons (embed-splice-imports (car bs) dirs)
+                                   acc))))))))
+      (set! visited saved)
+      (cons (car form) (cons (cadr form) body))))
+   (else (cons (embed-splice-imports (car form) dirs)
+               (embed-splice-imports (cdr form) dirs)))))
+
 (define (compile-file in out)
   ;; the prelude is prepended to every program; later definitions
   ;; shadow earlier ones, so user code can redefine prelude bindings
@@ -179,7 +209,11 @@
                                               (number->string (car lf)))
                                (cdr lf)))
                        (read-file-forms prelude-path))
-                  (resolve-imports (read-file-forms in) in dirs)))
+                  (list (cons "?:0" '(%prelude-end)))
+                  (map (lambda (p)
+                         (cons (car p)
+                               (embed-splice-imports (cdr p) dirs)))
+                       (resolve-imports (read-file-forms in) in dirs))))
          (bytes (compile-program (map cdr tagged) (map car tagged))))
     (when (file-exists? out) (delete-file out))
     (call-with-port (open-file-output-port out)

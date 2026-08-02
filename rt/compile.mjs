@@ -108,6 +108,51 @@ function lineAt(text, idx) {
     return n;
 }
 
+// outermost (goeteia-embed ...) blocks, lexically (same string /
+// comment / char-literal awareness as topLevelSpans); each is an
+// independent import scope resolved separately below
+function embedBlocks(text) {
+    const blocks = [];
+    let depth = 0, embedStart = -1, embedDepth = 0;
+    for (let i = 0; i < text.length; i++) {
+        const c = text[i];
+        if (c === ';') { while (i < text.length && text[i] !== '\n') i++; continue; }
+        if (c === '"') { i++; while (i < text.length && text[i] !== '"') { if (text[i] === '\\') i++; i++; } continue; }
+        if (c === '#' && text[i + 1] === '\\') { i += 2; continue; }
+        if (c === '(') {
+            if (embedStart < 0 && /^\(\s*goeteia-embed[\s(]/.test(text.slice(i, i + 20))) {
+                embedStart = i; embedDepth = depth;
+            }
+            depth++;
+        } else if (c === ')') {
+            depth--;
+            if (embedStart >= 0 && depth === embedDepth) {
+                blocks.push([embedStart, i + 1]);
+                embedStart = -1;
+            }
+        }
+    }
+    return blocks;
+}
+
+// resolve the imports inside each outermost embed block, each in a
+// fresh scope: the embed compiles as an independent unit, so the
+// host's already-spliced libraries must not deduplicate its own
+function resolveEmbedImports(text, dirs, file) {
+    let result = '', at = 0;
+    for (const [start, end] of embedBlocks(text)) {
+        const block = text.slice(start, end);
+        const open = block.indexOf('goeteia-embed') + 'goeteia-embed'.length;
+        const inner = block.slice(open, block.length - 1);
+        result += text.slice(at, start);
+        result += '(goeteia-embed'
+            + resolveImports(resolveEmbedImports(inner, dirs, file),
+                             dirs, new Set(), file + ':embed') + ')';
+        at = end;
+    }
+    return result + text.slice(at);
+}
+
 function resolveImports(text, dirs, visited = new Set(), file = 'input') {
     // replace top-level (import ...) spans with the inlined
     // libraries; every other byte passes through untouched
@@ -189,12 +234,14 @@ export async function compileToBytes(sourceFile,
     const dirs = [inDir, path.join(inDir, 'lib'), path.join(here, '../lib')];
     const preludePath = path.join(here, '../src/prelude.ss');
     const prelude = fs.readFileSync(preludePath, 'latin1');
-    const source = resolveImports(fs.readFileSync(sourceFile, 'latin1'),
-                                  dirs, new Set(), sourceFile);
+    const source = resolveImports(
+        resolveEmbedImports(fs.readFileSync(sourceFile, 'latin1'),
+                            dirs, sourceFile),
+        dirs, new Set(), sourceFile);
     const input = Buffer.from((target ? `(%target ${target})\n` : '')
                               + (script ? '(%opt 0)\n' : '')
                               + locMark(preludePath, 1) + prelude
-                              + '\n' + source, 'latin1');
+                              + '\n(%prelude-end)\n' + source, 'latin1');
     return runCompiler(input, compilerWasm);
 }
 
@@ -208,11 +255,12 @@ export async function compileSource(text,
     const prelude = fs.readFileSync(preludePath, 'latin1');
     // utf-8 text to one-byte-per-char, matching the byte reader
     const raw = Buffer.from(text, 'utf8').toString('latin1');
-    const source = resolveImports(raw, dirs, new Set(), name);
+    const source = resolveImports(resolveEmbedImports(raw, dirs, name),
+                                  dirs, new Set(), name);
     const input = Buffer.from((target ? `(%target ${target})\n` : '')
                               + (script ? '(%opt 0)\n' : '')
                               + locMark(preludePath, 1) + prelude
-                              + '\n' + source, 'latin1');
+                              + '\n(%prelude-end)\n' + source, 'latin1');
     return runCompiler(input, compilerWasm);
 }
 

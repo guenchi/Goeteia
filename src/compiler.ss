@@ -3492,10 +3492,204 @@
 ;; --js flag or a (%target js) stream directive
 (define *target* 'wasm)
 
+;;;; ------------------------------------------------------------------
+;;;; embedded programs: (goeteia-embed mode body...)
+;;
+;; A mount point inside a host program (typically a site generator):
+;; the body compiles as an INDEPENDENT program -- its own prelude,
+;; its own libraries, spliced by the drivers in a fresh import scope
+;; -- and the whole form becomes one HTML string constant in the
+;; host.  mode is js | wasm | auto, or (mode (rt "url")
+;; (wasm-url "url")): js runs the --js module inline, wasm loads the
+;; module (a data: URI unless wasm-url points at a file), auto ships
+;; both and lets rt/web.mjs's loadGoeteiaAuto pick by engine support.
+;;
+;; The drivers mark the prelude/user boundary with (%prelude-end);
+;; embed sub-compilations reuse the prelude forms ahead of the body.
+;; Sub-compilations run strictly BEFORE the host's own compilation
+;; state is built -- compile-program-js/wasm reset all global state
+;; on entry, so ordering them first is what makes re-entry safe.
+;; Embed units use a constant pseudo-location so both hosts emit
+;; identical bytes.
+
+(define *embed-prelude* '())
+(define *embed-prelude-locs* '())
+
+(define $embed-b64
+  "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/")
+
+;; byte list -> base64 string (kept in step with (web embed))
+(define (embed-base64 bytes)
+  (let* ((bv (let ((n (length bytes)))
+               (let ((v (make-bytevector n 0)))
+                 (let fill ((bs bytes) (i 0))
+                   (if (null? bs)
+                       v
+                       (begin (bytevector-u8-set! v i (car bs))
+                              (fill (cdr bs) (+ i 1))))))))
+         (n (bytevector-length bv))
+         (groups (quotient (+ n 2) 3))
+         (out (make-string (* groups 4)))
+         (enc (lambda (i) (string-ref $embed-b64 i))))
+    (let loop ((i 0) (o 0))
+      (if (>= i n)
+          out
+          (let* ((b0 (bytevector-u8-ref bv i))
+                 (b1 (if (< (+ i 1) n) (bytevector-u8-ref bv (+ i 1)) 0))
+                 (b2 (if (< (+ i 2) n) (bytevector-u8-ref bv (+ i 2)) 0)))
+            (string-set! out o (enc (quotient b0 4)))
+            (string-set! out (+ o 1)
+                         (enc (+ (* (remainder b0 4) 16) (quotient b1 16))))
+            (string-set! out (+ o 2)
+                         (if (< (+ i 1) n)
+                             (enc (+ (* (remainder b1 16) 4) (quotient b2 64)))
+                             (integer->char 61)))       ; =
+            (string-set! out (+ o 3)
+                         (if (< (+ i 2) n)
+                             (enc (remainder b2 64))
+                             (integer->char 61)))
+            (loop (+ i 3) (+ o 4)))))))
+
+(define (embed-bytes->string bytes)
+  (let* ((n (length bytes)) (s (make-string n)))
+    (let fill ((bs bytes) (i 0))
+      (if (null? bs)
+          s
+          (begin (string-set! s i (integer->char (car bs)))
+                 (fill (cdr bs) (+ i 1)))))))
+
+;; the fallback must not close its own tag (the JS emitter escapes
+;; `<` in string literals; verify rather than assume)
+(define (embed-guard-script! s)
+  (let ((n (string-length s)))
+    (let scan ((i 0))
+      (when (<= (+ i 8) n)
+        (when (let cmp ((j 0))
+                (cond
+                 ((= j 8) #t)
+                 ((let* ((c (char->integer (string-ref s (+ i j))))
+                         (c (if (and (<= 65 c) (<= c 90)) (+ c 32) c)))
+                    (= c (char->integer (string-ref "</script" j))))
+                  (cmp (+ j 1)))
+                 (else #f)))
+          (errorf 'goeteia "embed fallback contains a script terminator"))
+        (scan (+ i 1))))))
+
+(define (embed-opt opts key default)
+  (let ((e (assq key opts)))
+    (if e (cadr e) default)))
+
+(define (embed-wasm-ref bytes wurl)
+  (or wurl
+      (string-append "data:application/wasm;base64," (embed-base64 bytes))))
+
+(define (embed-section-js jstext)
+  (embed-guard-script! jstext)
+  (string-append "<script type=\"module\">\n" jstext "main();\n</script>\n"))
+
+(define (embed-section-wasm bytes wurl rt)
+  (string-append "<script type=\"module\">\n"
+                 "import { loadGoeteia } from '" rt "';\n"
+                 "loadGoeteia('" (embed-wasm-ref bytes wurl) "');\n"
+                 "</script>\n"))
+
+(define (embed-section-auto jstext bytes wurl rt)
+  (embed-guard-script! jstext)
+  (string-append "<script type=\"goeteia/js\">\n" jstext "</script>\n"
+                 "<script type=\"module\">\n"
+                 "import { loadGoeteiaAuto } from '" rt "';\n"
+                 "loadGoeteiaAuto('" (embed-wasm-ref bytes wurl) "');\n"
+                 "</script>\n"))
+
+;; drop the (%loc ...) markers the text-level driver leaves inside a
+;; resolved embed body (locations inside embeds are a constant, so
+;; both hosts emit identical bytes)
+(define (embed-strip-locs body)
+  (cond
+   ((null? body) '())
+   ((and (pair? (car body)) (eq? (car (car body)) '%loc))
+    (embed-strip-locs (cdr body)))
+   (else (cons (car body) (embed-strip-locs (cdr body))))))
+
+;; a wasm interned string initializes with array.new_fixed, whose
+;; operand count caps at 10000 -- a mount section easily exceeds
+;; that, so long results split into chunked literals rejoined once
+;; at runtime
+(define (embed-string-form s)
+  (let ((n (string-length s)))
+    (if (<= n 8000)
+        s
+        (cons 'string-append
+              (let chunk ((i 0) (acc '()))
+                (if (>= i n)
+                    (reverse acc)
+                    (let* ((end (if (< (+ i 8000) n) (+ i 8000) n))
+                           (part (substring s i end)))
+                      (chunk end (cons part acc)))))))))
+
+(define (embed-compile form)
+  ;; the text-level driver's import resolution leaves (%loc ...)
+  ;; markers anywhere in the block -- including ahead of the mode
+  ;; spec -- so strip before destructuring
+  (let* ((rest (embed-strip-locs (cdr form)))
+         (spec (car rest))
+         (mode (unmark (if (pair? spec) (car spec) spec)))
+         (opts (if (pair? spec) (cdr spec) '()))
+         (rt (embed-opt opts 'rt "./rt/web.mjs"))
+         (wurl (embed-opt opts 'wasm-url #f))
+         ;; inner embeds materialize first, then the body compiles
+         ;; as its own program over the shared prelude
+         (body (map-in-order embed-expand (embed-strip-locs (cdr rest))))
+         (sub-forms (append *embed-prelude* body))
+         (sub-locs (append *embed-prelude-locs*
+                           (map (lambda (b) "embed") body))))
+    (embed-string-form
+     (case mode
+       ((js)
+        (embed-section-js
+         (embed-bytes->string (compile-program-js sub-forms sub-locs))))
+       ((wasm)
+        (embed-section-wasm (compile-program-wasm sub-forms sub-locs)
+                            wurl rt))
+       ((auto)
+        (let* ((jstext (embed-bytes->string
+                        (compile-program-js sub-forms sub-locs)))
+               (bytes (compile-program-wasm sub-forms sub-locs)))
+          (embed-section-auto jstext bytes wurl rt)))
+       (else (errorf 'goeteia "unknown embed mode ~s" mode))))))
+
+(define (embed-expand form)
+  (cond
+   ((not (pair? form)) form)
+   ((and (symbol? (car form)) (eq? (unmark (car form)) 'quote)) form)
+   ((and (symbol? (car form)) (eq? (unmark (car form)) 'goeteia-embed))
+    (embed-compile form))
+   (else (cons (embed-expand (car form)) (embed-expand (cdr form))))))
+
 (define (compile-program forms locs)
-  (if (eq? *target* 'js)
-      (compile-program-js forms locs)
-      (compile-program-wasm forms locs)))
+  ;; split at the drivers' (%prelude-end) marker, materialize the
+  ;; user code's mount points, then hand the whole stream to the
+  ;; selected backend
+  (let split ((fs forms) (ls locs) (pf '()) (pl '()))
+    (cond
+     ((null? fs)
+      ;; no marker (an old stream): no embed support, compile as-is
+      (set! *embed-prelude* '())
+      (set! *embed-prelude-locs* '())
+      (if (eq? *target* 'js)
+          (compile-program-js forms locs)
+          (compile-program-wasm forms locs)))
+     ((and (pair? (car fs)) (eq? (car (car fs)) '%prelude-end))
+      (set! *embed-prelude* (reverse pf))
+      (set! *embed-prelude-locs* (reverse pl))
+      (let* ((user (map-in-order embed-expand (cdr fs)))
+             (all-forms (append (reverse pf) user))
+             (all-locs (append (reverse pl) (cdr ls))))
+        (if (eq? *target* 'js)
+            (compile-program-js all-forms all-locs)
+            (compile-program-wasm all-forms all-locs))))
+     (else (split (cdr fs) (cdr ls)
+                  (cons (car fs) pf) (cons (car ls) pl))))))
 
 (define (compile-program-wasm forms locs)
   (let* ((prep (prepare-program forms locs))

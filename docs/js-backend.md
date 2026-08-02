@@ -130,6 +130,22 @@ the prelude, compiled through the same pipeline and shared verbatim.
   bytes as a `data:` URI with `--embed-wasm`) plus the `--js` module
   inline, wired to `loadGoeteiaAuto`.  The assembly lives in the
   library so site generators splice the same fragment.
+- `(goeteia-embed mode body...)`: the mount point as a language
+  form.  Inside a host program the body compiles as an INDEPENDENT
+  program -- its own prelude, its own imports in a fresh scope -- and
+  the whole form becomes one HTML string constant.  `mode` is `js`
+  (the module inline, run directly), `wasm` (loaded from a `data:`
+  URI, or from `(wasm-url "...")`), or `auto` (both artifacts plus
+  the loader pick); `(rt "...")` locates rt/web.mjs.  The drivers
+  mark the prelude boundary with `(%prelude-end)` and resolve each
+  embed block's imports separately; sub-compilations run before the
+  host's own state is built (every backend entry resets state, so
+  ordering is what makes re-entry safe), and embed units use a
+  constant pseudo-location so both hosts emit identical bytes.
+  Long section strings split into chunked literals rejoined at
+  runtime (wasm's `array.new_fixed` caps at 10000 operands).  See
+  `examples/counter-page.ss` -- a site generator whose interactive
+  half compiles inside its own mount point.
 
 ## Testing
 
