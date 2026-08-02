@@ -30,12 +30,24 @@
 (define *jconst-n* 0)
 (define *jhelpers* '())         ; glue helpers actually used, by JS name
 
+;; compact counter names: base-28 digits with no vowels, no 'l', no 'x',
+;; so no suffix can spell a JS keyword after the prefix ('void') or a
+;; kernel name ('Fl', 'Cx'), and tokens stay unambiguous at a glance
+(define $jdigits "0123456789bcdfghjkmnpqrstvwz")
+(define (jb28 n)
+  (let loop ((n n) (acc '()))
+    (let ((d (string (string-ref $jdigits (remainder n 28))))
+          (q (quotient n 28)))
+      (if (= q 0)
+          (apply string-append d acc)
+          (loop q (cons d acc))))))
+
 (define (jfresh!)
   (set! *jn* (+ *jn* 1))
-  (string-append "v" (number->string *jn*)))
+  (string-append "v" (jb28 *jn*)))
 (define (jlabel!)
   (set! *jn* (+ *jn* 1))
-  (string-append "B" (number->string *jn*)))
+  (string-append "B" (jb28 *jn*)))
 
 (define (jconst! kind datum)
   (let find ((es *jconsts*))
@@ -44,9 +56,9 @@
       (let ((i *jconst-n*))
         (set! *jconst-n* (+ i 1))
         (set! *jconsts* (cons (cons (cons kind datum) i) *jconsts*))
-        (string-append "C" (number->string i))))
+        (string-append "C" (jb28 i))))
      ((and (eq? (car (caar es)) kind) (equal? (cdr (caar es)) datum))
-      (string-append "C" (number->string (cdar es))))
+      (string-append "C" (jb28 (cdar es))))
      (else (find (cdr es))))))
 
 ;; a prelude generic helper (e.g. $add2) reached from a primitive's
@@ -77,28 +89,13 @@
 ;;;; ------------------------------------------------------------------
 ;;;; names
 
-;; deterministic mangling: keep ASCII alphanumerics, everything else
-;; becomes '_'; the numeric index disambiguates collisions
-(define (jmangle s)
-  (let* ((n (string-length s))
-         (out (make-string n)))
-    (let loop ((i 0))
-      (if (= i n)
-          out
-          (let ((c (char->integer (string-ref s i))))
-            (string-set! out i
-                         (if (or (and (<= 48 c) (<= c 57))
-                                 (and (<= 65 c) (<= c 90))
-                                 (and (<= 97 c) (<= c 122)))
-                             (integer->char c)
-                             (integer->char 95)))
-            (loop (+ i 1)))))))
-
+;; the numeric index alone names a function -- readable output is a
+;; non-goal, and the Scheme name is recoverable through xports/the
+;; compiler's *fns* table when debugging
 (define (jfn-name sym idx)
-  (string-append "F" (number->string idx) "_"
-                 (jmangle (symbol->string sym))))
+  (string-append "F" (jb28 idx)))
 (define (jvar-name g)
-  (string-append "V" (number->string g)))
+  (string-append "V" (jb28 g)))
 
 ;;;; ------------------------------------------------------------------
 ;;;; text assembly: trees of strings flatten to output bytes
@@ -125,7 +122,102 @@
               (set! acc (cons (char->integer (string-ref t i)) acc))
               (loop (+ i 1))))))
        (else #f)))
-    (reverse acc)))
+    (jsquash (reverse acc))))
+
+;; The emitters parenthesize defensively, so `((x))` is systematic.
+;; One text pass deletes a paren pair whose matching pair sits
+;; DIRECTLY inside it -- always a no-op to the JS parser, since the
+;; inner pair already delimits one primary expression.  Cascades
+;; bottom-up: `(((x)))` collapses through the same last-closed check.
+;; String literals (both quote kinds, backslash escapes) are opaque.
+(define (jsquash bytes)
+  (let* ((v (list->vector bytes))
+         (n (vector-length v))
+         (del (make-vector n #f)))
+    ;; stack entries are (open-pos . top-level-comma-seen); the last
+    ;; closed pair carries its comma flag so an argument-list outer
+    ;; pair still collapses around a comma-free inner expression
+    (let scan ((i 0) (q 0) (stack '()) (lo -2) (lc -2) (lcm #f))
+      (if (< i n)
+          (let ((c (vector-ref v i)))
+            (cond
+             ((> q 0)                     ; inside a string literal
+              (cond
+               ((= c 92) (scan (+ i 2) q stack lo lc lcm))
+               ((= c q) (scan (+ i 1) 0 stack lo lc lcm))
+               (else (scan (+ i 1) q stack lo lc lcm))))
+             ((or (= c 34) (= c 39)) (scan (+ i 1) c stack lo lc lcm))
+             ((= c 40) (scan (+ i 1) 0 (cons (cons i #f) stack) lo lc lcm))
+             ((= c 44)
+              (unless (null? stack) (set-cdr! (car stack) #t))
+              (scan (+ i 1) 0 stack lo lc lcm))
+             ((= c 41)
+              ;; a '(' preceded by a name, ')' or ']' opens a call's
+              ;; argument list: collapsing it around a comma-carrying
+              ;; inner pair would split one argument into several, so
+              ;; those collapse only when the inner pair is comma-free
+              (let* ((p (car (car stack)))
+                     (b (if (> p 0) (vector-ref v (- p 1)) 32))
+                     (callee? (or (and (<= 48 b) (<= b 57))
+                                  (and (<= 65 b) (<= b 90))
+                                  (and (<= 97 b) (<= b 122))
+                                  (= b 95) (= b 36) (= b 41) (= b 93))))
+                (when (and (= lo (+ p 1)) (= lc (- i 1))
+                           (not (and callee? lcm)))
+                  (vector-set! del p #t)
+                  (vector-set! del i #t))
+                (scan (+ i 1) 0 (cdr stack) p i (cdr (car stack)))))
+             (else (scan (+ i 1) 0 stack lo lc lcm))))
+          #f))
+    ;; second pass: parens around one identifier atom drop unless
+    ;; they are an argument list (callee-ish byte before).  Digit-only
+    ;; atoms keep theirs -- `(0).t` must not become `0.t` -- and an
+    ;; identifier atom is safe bare in every emitted context
+    ;; (operand, object value, single arrow parameter, argument).
+    (let ((ident? (lambda (b)
+                    (or (and (<= 48 b) (<= b 57))
+                        (and (<= 65 b) (<= b 90))
+                        (and (<= 97 b) (<= b 122))
+                        (= b 95) (= b 36))))
+          (at (lambda (i) (if (and (>= i 0) (< i n)) (vector-ref v i) 32))))
+      (let scan2 ((i 0) (q 0))
+        (when (< i n)
+          (let ((c (vector-ref v i)))
+            (cond
+             ((> q 0)
+              (cond
+               ((= c 92) (scan2 (+ i 2) q))
+               ((= c q) (scan2 (+ i 1) 0))
+               (else (scan2 (+ i 1) q))))
+             ((or (= c 34) (= c 39)) (scan2 (+ i 1) c))
+             ((and (= c 40) (not (vector-ref del i))
+                   ;; the effective neighbor skips bytes pass one
+                   ;; deleted, or a collapsed argument list's callee
+                   ;; would touch the atom directly
+                   (let prev ((k (- i 1)))
+                     (if (and (>= k 0) (vector-ref del k))
+                         (prev (- k 1))
+                         (let ((b (at k)))
+                           (not (or (ident? b) (= b 41) (= b 93)))))))
+              ;; scan the atom: letters/digits after a non-digit start
+              (let atom ((j (+ i 1)) (nondigit #f))
+                (cond
+                 ((and (< j n) (ident? (at j)))
+                  (atom (+ j 1) (or nondigit
+                                    (let ((b (at j)))
+                                      (not (and (<= 48 b) (<= b 57)))))))
+                 ((and nondigit (> j (+ i 1)) (= (at j) 41)
+                       (not (vector-ref del j)))
+                  (vector-set! del i #t)
+                  (vector-set! del j #t)
+                  (scan2 (+ j 1) 0))
+                 (else (scan2 (+ i 1) 0)))))
+             (else (scan2 (+ i 1) 0)))))))
+    (let collect ((i (- n 1)) (acc '()))
+      (if (< i 0)
+          acc
+          (collect (- i 1)
+                   (if (vector-ref del i) acc (cons (vector-ref v i) acc)))))))
 
 ;; JS string literal from a byte string: printable ASCII verbatim,
 ;; everything else (and quote/backslash) as \xHH -- deterministic
@@ -1064,7 +1156,7 @@
                      (datum (cdar e))
                      (i (cdr e)))
                  (when (eq? kind 'sym) (jkernel! 'sym))
-                 (list "const C" (number->string i) "="
+                 (list "const C" (jb28 i) "="
                        (if (eq? kind 'str)
                            (list "S(" (jstring-lit datum) ")")
                            (list "new Sym(S("
@@ -1078,7 +1170,7 @@
                   (fold-left (lambda (acc e)
                                (if (eq? (caar e) 'sym)
                                    (list "{t:\"pair\",a:C"
-                                         (number->string (cdr e)) ",d:"
+                                         (jb28 (cdr e)) ",d:"
                                          acc "}")
                                    acc))
                              "NIL"
