@@ -1,10 +1,24 @@
-;; Build-time Scheme syntax highlighting: the token classes the live
-;; editor's highlighter (index.js) paints, computed while the page is
-;; BUILT -- so the code samples in site sources are plain text, and
-;; the spans are derived, never hand-written.
+;; Build-time Scheme syntax highlighting: markup and its colours
+;; together.  highlight computes the token spans while the page is
+;; BUILT -- so code samples in site sources stay plain text and the
+;; spans are derived, never hand-written -- and hl-styles gives the
+;; matching (web css) rules for any scope those spans land in, so the
+;; palette is defined once instead of once per place it is used.
 (library (hl)
-  (export highlight)
+  (export highlight hl-styles)
   (import (rnrs))
+
+  ;; the token colours, scoped to wherever highlighted code sits
+  ;; (a code sample, the view-source panel, ...)
+  (define (hl-styles scope)
+    (define (sel c) (string-append scope " .tok-" c))
+    `((,(sel "c") (color "#7a869f") (font-style italic))
+      (,(sel "s") (color "#1e7d34"))
+      (,(sel "k") (color (var lapis)) (font-weight 600))
+      (,(sel "n") (color "#b0483f"))
+      (,(sel "l") (color "#8a5cf5"))
+      (,(sel "p") (color (var dim)))
+      (,(sel "h") (color (var azure)))))
 
   (define $keywords
     '(define define-syntax define-record-type define-values

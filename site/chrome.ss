@@ -5,7 +5,16 @@
 (library (chrome)
   (export render-page write-file base-styles footer-styles palette
           feat section* soft-box inline-code)
-  (import (rnrs) (web html) (web css) (web component))
+  (import (rnrs) (web html) (web css) (web component) (hl))
+
+  ;; read a file whole -- the view-source panel is filled at build time
+  (define (slurp path)
+    (let ((p (open-input-file path)))
+      (let loop ((acc '()))
+        (let ((c (read-char p)))
+          (if (eof-object? c)
+              (list->string (reverse acc))
+              (loop (cons c acc)))))))
 
   ;; ---- reusable (web css) declaration helpers ----
   ;; the pale rounded panel used for code blocks and command chips
@@ -100,34 +109,33 @@
            (a (@ (class ,(nav-class active 'agent)) (href "agent.html")) "Agents")
            (a (@ (class "gh") (href "https://github.com/guenchi/Goeteia")) "GitHub")))))
 
-  ;; a floating page badge in the top-right corner (not a nav item)
+  ;; a floating page badge in the top-right corner (not a nav item).
+  ;; It is a link to the panel's fragment: :target opens the panel, so
+  ;; view-source needs no script at all.
   (define (source-badge source-file)
-    `(button (@ (class "src-badge") (type "button")
-               (data-src ,source-file)
-               (title "View the Scheme source that builds this page"))
+    `(a (@ (class "src-badge") (href "#src-overlay")
+           (title "View the Scheme source that builds this page"))
        "Built in pure Scheme"))
 
-  ;; ---- the hidden view-source overlay (filled by viewsrc.js) ----
-  (define (overlay)
-    `(div (@ (class "src-overlay") (id "src-overlay") (hidden #t))
+  ;; ---- the view-source panel, filled while the page is built ----
+  ;; The page's own Scheme source goes through the same (hl) that
+  ;; paints the code samples, so there is nothing to fetch and nothing
+  ;; to highlight at runtime.  Opening and closing are fragment links
+  ;; (:target), which is why no script is involved.
+  (define (overlay source-file)
+    `(div (@ (class "src-overlay") (id "src-overlay"))
+       (a (@ (class "src-back") (href "#_") (tabindex "-1") (aria-hidden "true")))
        (div (@ (class "src-modal"))
          (div (@ (class "src-bar"))
-           (span (@ (class "src-title") (id "src-title")) "")
-           (button (@ (class "src-close") (id "src-close")
-                      (type "button") (aria-label "Close")) "×"))
-         (pre (@ (class "src-code")) (code (@ (id "src-code")) "")))))
+           (span (@ (class "src-title")) ,source-file)
+           (a (@ (class "src-close") (href "#_") (aria-label "Close")) "×"))
+         (pre (@ (class "src-code"))
+           (code ,(raw (highlight (slurp source-file))))))))
 
-  ;; ---- CSS for the badge + overlay, appended to each page's styles ----
-  ;; the source-view syntax colours (tok-*) match the live editor's,
-  ;; the same palette (hl) paints the code samples with
-  (define src-tokens
-    '((".src-code .tok-c" (color "#7a869f") (font-style italic))
-      (".src-code .tok-s" (color "#1e7d34"))
-      (".src-code .tok-k" (color (var lapis)) (font-weight 600))
-      (".src-code .tok-n" (color "#b0483f"))
-      (".src-code .tok-l" (color "#8a5cf5"))
-      (".src-code .tok-p" (color (var dim)))
-      (".src-code .tok-h" (color (var azure)))))
+  ;; ---- CSS for the badge + panel, appended to each page's styles ----
+  ;; the panel's syntax colours come from (hl), the same palette its
+  ;; spans are painted with everywhere else
+  (define src-tokens (hl-styles ".src-code"))
   (define badge-styles
     `((".src-badge"
        (position fixed) (top (em 4 30)) (right (em 1 20)) (z-index 30)
@@ -135,13 +143,17 @@
        (padding (em 0 32) (em 0 80)) (background (var bg2)) (color (var dim))
        (font-size (em 0 80)) (font-weight 400) (cursor pointer)
        (font-family inherit) (box-shadow 0 (px 1) (px 3) (rgba 16 20 42 (dec 0 8))))
+      (".src-badge" (text-decoration none) (display inline-block))
       (".src-badge:hover" (border-color (var lapis)) (color (var lapis)))
       (@media "(max-width:36em)" (".src-badge" (display none)))
       (".src-overlay"
        (position fixed) (inset 0) (z-index 50) (background (rgba 16 20 42 (dec 0 50)))
-       (display flex) (align-items center) (justify-content center) (padding (em 2)))
-      (".src-overlay[hidden]" (display none))
+       (display none) (align-items center) (justify-content center) (padding (em 2)))
+      ;; the fragment link opens it; the backdrop and the x close it
+      (".src-overlay:target" (display flex))
+      (".src-back" (position absolute) (inset 0) (cursor default))
       (".src-modal"
+       (position relative)
        (background (var bg2)) (border (px 1) solid (var line)) (border-radius (px 12))
        (max-width (em 62)) (width (pct 100)) (max-height (vh 85)) (display flex)
        (flex-direction column) (overflow hidden)
@@ -151,7 +163,8 @@
        (padding (em 0 60) (em 1)) (border-bottom (px 1) solid (var line)))
       (".src-title" (font-family (var mono)) (font-size (em 0 85)) (color (var dim)))
       (".src-close"
-       (border none) (background none) (min-width 0) (padding 0 (em 0 20))
+       (text-decoration none) (border none) (background none)
+       (min-width 0) (padding 0 (em 0 20))
        (font-size (em 1 50)) (font-weight 400) (line-height 1)
        (color (var dim)) (cursor pointer))
       (".src-close:hover" (color (var lapis)))
@@ -193,6 +206,5 @@
                (span (@ (class "fsep")) " · ")
                (br (@ (class "fbrk")))
                "Powered by " (a (@ (href "https://goeteia.dev")) "Goeteia")))
-           ,(overlay)
-           ,@scripts
-           (script (@ (src "viewsrc.js") (defer #t)))))))))
+           ,(overlay source-file)
+           ,@scripts))))))
