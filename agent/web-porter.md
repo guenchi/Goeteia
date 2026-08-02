@@ -113,15 +113,22 @@ how the two columns *fail* is a report-worthy finding too, not noise.
 
 Do not hand-write the page's script tags. The mount section -- the
 inline `--js` fallback plus the wasm reference wired to
-`loadGoeteiaAuto` -- is generated:
+`loadGoeteiaAuto`, with the loader glue inlined beside them -- is a
+build product of the page generator, not something you assemble. The
+port lives inside a mount point in the generator:
 
-```
-node bin/goeteia-mount.mjs port.ss              # fragment to stdout
-node bin/goeteia-mount.mjs port.ss --embed-wasm # ...wasm inlined too
+```scheme
+;; in the page generator, spliced into (web html) SXML through `raw`
+,(raw (conjure auto
+        (import (web sx) (web reactive) (web dom))
+        ...the port...))
 ```
 
-(`(web embed)`'s `mount-html` is the same assembly as a library, for a
-site generator that splices the fragment itself.)
+or, as a named definition, `(define-wasm-js port ...)` -- a bare name
+keeps the wasm in the page as a `data:` URI, `(define-wasm-js (port
+"port.wasm") ...)` references the URL and writes the file when the
+generator runs. Compiling the generator compiles the body as its own
+program and yields the section string.
 
 Keep the harness you wrote -- deliver it alongside the port as the
 evidence.
@@ -208,10 +215,11 @@ JS fallback -- inline in the page or as a separate `--js` module --
 the port is not delivered until it also compiles with `--js` and
 passes the same harness; a port that runs only on wasm leaves the
 non-WasmGC engines unverified, and saying so is part of the report.
-For such a page, hand over the mount section `goeteia-mount` produced
-(or the exact command that produces it), never hand-assembled script
-tags -- the fragment is a build product like the artifacts it
-references.
+For such a page, deliver the port as the body of a `(conjure auto ...)`
+/ `define-wasm-js` mount point in the page generator (or, if you do not
+own the generator, hand over the section string it produces), never
+hand-assembled script tags -- the section is a build product like the
+artifacts it references.
 
 Never claim equivalence you did not run. A smaller verified port beats
 a larger unverified one.

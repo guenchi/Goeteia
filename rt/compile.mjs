@@ -108,6 +108,66 @@ function lineAt(text, idx) {
     return n;
 }
 
+// outermost mount points, lexically (same string / comment /
+// char-literal awareness as topLevelSpans); each is an independent
+// import scope resolved separately below.  The define- family are
+// mount points too -- keep this list in step with the chez driver's,
+// or an import inside a define-wasm body resolves on one host only
+const $mountHeads = /^\(\s*(?:conjure|define-js|define-wasm|define-wasm-js)[\s(]/;
+
+function embedBlocks(text) {
+    const blocks = [];
+    let depth = 0, embedStart = -1, embedDepth = 0;
+    for (let i = 0; i < text.length; i++) {
+        const c = text[i];
+        if (c === ';') { while (i < text.length && text[i] !== '\n') i++; continue; }
+        if (c === '"') { i++; while (i < text.length && text[i] !== '"') { if (text[i] === '\\') i++; i++; } continue; }
+        if (c === '#' && text[i + 1] === '\\') { i += 2; continue; }
+        if (c === '(') {
+            if (embedStart < 0 && $mountHeads.test(text.slice(i, i + 24))) {
+                embedStart = i; embedDepth = depth;
+            }
+            depth++;
+        } else if (c === ')') {
+            depth--;
+            if (embedStart >= 0 && depth === embedDepth) {
+                blocks.push([embedStart, i + 1]);
+                embedStart = -1;
+            }
+        }
+    }
+    return blocks;
+}
+
+// resolve the imports inside each outermost embed block, each in a
+// fresh scope: the embed compiles as an independent unit, so the
+// host's already-spliced libraries must not deduplicate its own
+function resolveEmbedImports(text, dirs, file) {
+    let result = '', at = 0;
+    for (const [start, end] of embedBlocks(text)) {
+        const block = text.slice(start, end);
+        const head = block.match(/^\(\s*([a-z-]+)/)[1];
+        const open = block.indexOf(head) + head.length;
+        const inner = block.slice(open, block.length - 1);
+        result += text.slice(at, start);
+        // leave the block untouched unless it actually imports (or
+        // nests another block that might): quoted data that merely
+        // LOOKS like a mount point -- the compiler's own sources
+        // hold such tables -- must pass through byte-for-byte, or
+        // self-compilation loses its fixed point
+        const needsWork = embedBlocks(inner).length > 0
+            || topLevelSpans(inner).some(([s2, e2]) =>
+                /^\(\s*import[\s)]/.test(inner.slice(s2, e2)));
+        result += needsWork
+            ? '(' + head
+              + resolveImports(resolveEmbedImports(inner, dirs, file),
+                               dirs, new Set(), file + ':embed') + ')'
+            : block;
+        at = end;
+    }
+    return result + text.slice(at);
+}
+
 function resolveImports(text, dirs, visited = new Set(), file = 'input') {
     // replace top-level (import ...) spans with the inlined
     // libraries; every other byte passes through untouched
@@ -137,7 +197,11 @@ function loadLibrary(spec, dirs, visited) {
     for (const d of dirs) {
         const p = path.join(d, ...spec) + '.ss';
         if (fs.existsSync(p)) {
-            const text = fs.readFileSync(p, 'latin1');
+            // a library body may itself hold mount points, whose
+            // imports resolve in their own scope (the chez driver
+            // walks library forms the same way)
+            const text = resolveEmbedImports(fs.readFileSync(p, 'latin1'),
+                                             dirs, p);
             const deps = libraryImports(text)
                 .map(s => loadLibrary(specTarget(s), dirs, visited)
                           + '\n' + specAliases(s))
@@ -148,6 +212,31 @@ function loadLibrary(spec, dirs, visited) {
     throw new Error(`library not found: (${spec.join(' ')})`);
 }
 
+
+// the runtime glue a default conjure section inlines: jsbridge +
+// web.mjs with the module plumbing stripped, non-ASCII normalized
+// (both drivers must produce the identical string)
+let conjureGlueCache = null;
+function conjureGlue() {
+    if (conjureGlueCache !== null) return conjureGlueCache;
+    const strip = t => t.split('\n')
+        .filter(l => !/^\s*import\s.*jsbridge/.test(l))
+        .join('\n')
+        .replace(/^export /gm, '');
+    const clean = t => {
+        let r = '';
+        for (const ch of t) r += ch.charCodeAt(0) > 126 ? ' ' : ch;
+        return r;
+    };
+    const jb = fs.readFileSync(path.join(here, 'jsbridge.mjs'), 'latin1');
+    const wb = fs.readFileSync(path.join(here, 'web.mjs'), 'latin1');
+    conjureGlueCache = clean(strip(jb) + '\n' + strip(wb));
+    return conjureGlueCache;
+}
+function conjureGlueDirective() {
+    const esc = conjureGlue().replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+    return '(%conjure-rt "' + esc + '")\n';
+}
 // the bundled self-hosted compiler, shipped at the package root
 const defaultCompiler = path.join(here, '../goeteia.wasm');
 
@@ -189,12 +278,14 @@ export async function compileToBytes(sourceFile,
     const dirs = [inDir, path.join(inDir, 'lib'), path.join(here, '../lib')];
     const preludePath = path.join(here, '../src/prelude.ss');
     const prelude = fs.readFileSync(preludePath, 'latin1');
-    const source = resolveImports(fs.readFileSync(sourceFile, 'latin1'),
-                                  dirs, new Set(), sourceFile);
+    const source = resolveImports(
+        resolveEmbedImports(fs.readFileSync(sourceFile, 'latin1'),
+                            dirs, sourceFile),
+        dirs, new Set(), sourceFile);
     const input = Buffer.from((target ? `(%target ${target})\n` : '')
                               + (script ? '(%opt 0)\n' : '')
                               + locMark(preludePath, 1) + prelude
-                              + '\n' + source, 'latin1');
+                              + '\n' + conjureGlueDirective() + '(%prelude-end)\n' + source, 'latin1');
     return runCompiler(input, compilerWasm);
 }
 
@@ -208,11 +299,12 @@ export async function compileSource(text,
     const prelude = fs.readFileSync(preludePath, 'latin1');
     // utf-8 text to one-byte-per-char, matching the byte reader
     const raw = Buffer.from(text, 'utf8').toString('latin1');
-    const source = resolveImports(raw, dirs, new Set(), name);
+    const source = resolveImports(resolveEmbedImports(raw, dirs, name),
+                                  dirs, new Set(), name);
     const input = Buffer.from((target ? `(%target ${target})\n` : '')
                               + (script ? '(%opt 0)\n' : '')
                               + locMark(preludePath, 1) + prelude
-                              + '\n' + source, 'latin1');
+                              + '\n' + conjureGlueDirective() + '(%prelude-end)\n' + source, 'latin1');
     return runCompiler(input, compilerWasm);
 }
 

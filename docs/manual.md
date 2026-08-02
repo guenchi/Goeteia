@@ -2590,51 +2590,77 @@ Append `?goeteia=js` to the page URL to force the fallback on an engine that doe
 
 Which shape to use is a question of *when* the fallback is fetched, not of size: a server gzips inline HTML the same as a served file. A separate file is lazy—visitors with Wasm GC never download it, and it caches under its own URL, independent of the page. Inline costs every visitor a download that few of them execute, and buys self-containment: one file to copy, with nothing fetched alongside it. Prefer the separate file for a deployed site; inline when the page itself is the unit you distribute.
 
-You do not assemble the inline shape by hand—`bin/goeteia-mount.mjs` and `(web embed)` produce it; see below.
+You do not assemble the inline shape by hand, and for a generated page you do not call `loadGoeteiaAuto` by hand either: the `conjure` mount point below compiles the section into the page and inlines this loader glue with it, so the page has no `rt/web.mjs` to import. The API above is what you reach for when you write the page shell yourself.
 
 ### Single-File Pages
 
-Inlining the fallback makes a Goeteia page one HTML file, the way an inline `<style>` makes a stylesheet part of the document. `bin/goeteia-mount.mjs` builds the section: it compiles one source to *both* targets and prints the fragment that mounts them.
-
-```bash
-node bin/goeteia-mount.mjs app.ss                  # fragment to stdout
-node bin/goeteia-mount.mjs app.ss -o mount.html    # ...or to a file
-```
-
-What comes out is the two-artifact mount section—the `--js` module riding inside an inert `<script type="goeteia/js">` tag, and the wasm reference handed to `loadGoeteiaAuto`:
-
-```html
-<script type="goeteia/js">
-  ...the --js compiled module, inline...
-</script>
-<script type="module">
-import { loadGoeteiaAuto } from './rt/web.mjs';
-loadGoeteiaAuto('app.wasm');
-</script>
-```
-
-Paste that into a page shell, or generate the shell around it (`examples/mk-counter-single.sh` is the whole recipe: a heredoc, one `goeteia-mount` call, a heredoc).
-
-The flags say where the other pieces live:
-
-- `--wasm-url URL` — the wasm artifact's URL; defaults to the source's basename with `.wasm`, i.e. next to the page.
-- `--rt URL` — where `rt/web.mjs` sits relative to the page (default `./rt/web.mjs`).
-- `--embed-wasm` — inline the wasm module too, as a `data:application/wasm;base64,` URI. Now the page fetches nothing on either engine: truly one file, at the cost of carrying both artifacts to every visitor and losing the wasm's separate cache entry.
-
-The assembly itself is a library, so a site generator splices the same fragment without shelling out to the CLI:
+Inlining the fallback makes a Goeteia page one HTML file, the way an inline `<style>` makes a stylesheet part of the document. You do not assemble that file with a separate tool: `conjure` is a *mount point*, a language-level form that puts browser code inside the program that prints the page.
 
 ```
-procedure: (mount-html js-text wasm-ref rt-url)
+syntax: (conjure mode body ...)
 
-func -> string -> string -> string -> string   /   func -> string -> bytevector -> string -> string
+mode -> body ... -> string
 ```
-Return the mount section. `wasm-ref` is either the wasm artifact's URL or its bytes, which embed as a data URI—the same choice `--embed-wasm` makes. `(web embed)` also exports `wasm->data-uri` and `base64-encode`.
+Compile `body ...` as an **independent program**—its own prelude, its own `import`s resolved in a fresh scope of their own—and yield the whole form as **one HTML string constant** in the host program. `mode` is `js`, `wasm`, or `auto`, or the list form `(mode (wasm-url "url"))`:
 
-Pasting compiler output into HTML is safe by construction: the JS emitter escapes `<` inside string literals, so no emitted literal can spell `</script` and close the tag early. `mount-html` checks its input for a script terminator anyway and raises rather than emit a page that could break out of the tag.
+- **`js`** — the `--js` module inline in a `<script type="module">`, invoked directly. Nothing to load, nothing to detect.
+- **`wasm`** — the wasm module, loaded through `loadGoeteia`. By default it rides along as a `data:application/wasm;base64,` URI; `(wasm (wasm-url "app.wasm"))` points at a file instead.
+- **`auto`** — both artifacts: the `--js` module in an inert `<script type="goeteia/js">` tag, the wasm handed to `loadGoeteiaAuto`, which picks by engine support at load time.
+
+A `wasm` or `auto` section **always inlines the runtime glue** (the JS bridge and the loader, with the module plumbing stripped)—the compiler drivers supply it, so a generated page depends on nothing beside itself and there is no `rt/web.mjs` to serve. Each `auto` section's fallback tag gets a unique, deterministic id (`goeteia-conjure-0`, `goeteia-conjure-1`, …) so several sections coexist on one page; the glue repeats verbatim across them, which is what gzip is good at.
+
+The host is a site generator, so the page around the mount point is ordinary `(web html)` SXML and the section string splices in through `raw`:
+
+```scheme
+(import (web html))
+
+(display
+ (html->document
+  `(html
+    (head (meta (@ (charset "utf-8"))) (title "Counter"))
+    (body
+     (div (@ (id "app")))
+     ,(raw
+       (conjure auto
+         (import (web reactive) (web sx) (web dom))
+         (define n (signal 0))
+         (sx-mount (get-element-by-id "app")
+           (sx (div
+                 (div (@ (id "count")) ,(signal-ref n))
+                 (button (@ (on-click ,(lambda _ (signal-update! n (lambda (v) (+ v 1))))))
+                   "+"))))))))))
+```
+
+Compile *that* program and run it: what it prints is the finished page, both artifacts and the loader inside it.
+
+Two rules follow from the staging. A mount point must appear **literally in the source**—it is resolved before macro expansion, so a user macro cannot produce one. And each block is its own import scope: the host's `(import (web html))` is not in scope inside the body, and the body's `(import (web sx))` is not in scope outside it. Nested mount points work, each with its own scope again.
+
+#### The `define-` family
+
+The three modes also come as definition forms, which dispatch on the **shape of the head** the way `define` itself does—a bare name or a pair:
+
+```
+syntax: (define-js name body ...)
+syntax: (define-wasm name body ...)
+syntax: (define-wasm (name "app.wasm") body ...)
+syntax: (define-wasm-js name body ...)
+syntax: (define-wasm-js (name "app.wasm") body ...)
+```
+Bind `name` to the section string for `body ...`. A bare `name` keeps the wasm module inside the page as a `data:` URI. The pair form `(name "app.wasm")` instead makes the section reference that URL **and writes the file**: the definition expands to the section plus a `with-output-to-file` over the module's bytes, so the generator drops `app.wasm` next to its page output when it runs. `define-js` has no pair form—there is no wasm to place. In `define-wasm-js` the name's order is the load preference: wasm first, the JS module as the fallback.
+
+```scheme
+(define-wasm-js (app "app.wasm")
+  (import (web dom))
+  (console-log "hello"))
+
+(display (html->document `(html (body ,(raw app)))))
+```
+
+Pasting compiler output into HTML is safe by construction: the JS emitter escapes `<` inside string literals, so no emitted literal can spell `</script` and close the tag early. The mount point checks its own output for a script terminator anyway and raises rather than emit a page that could break out of the tag.
 
 ### Example
 
-See `examples/counter.html` and `examples/counter.ss`—a complete counter app—and `examples/counter-single.html`, the same page as one self-contained file with the `--js` fallback riding inline; the latter is generated, not maintained, by `examples/mk-counter-single.sh`. Also see `examples/react-embed.html` for embedding Goeteia widgets into a React app.
+See `examples/counter.html` and `examples/counter.ss`—a complete counter app, page shell and program kept apart—and `examples/counter-page.ss`, the same app written as a site generator with an `auto` mount point. Running it prints `examples/counter-embedded.html`: the same page as one self-contained file, wasm module, `--js` fallback and loader all inside it, fetching nothing. That output is generated, not maintained—`examples/mk-counter-embedded.sh` is the whole recipe. Also see `examples/react-embed.html` for embedding Goeteia widgets into a React app.
 
 ## Testing
 
