@@ -1338,8 +1338,15 @@
                (let ((f (assq n *fns*)))
                  (unless f
                    (errorf 'goeteia "exported name is not a function ~s" n))
+                 ;; nothing outside the module unwinds a thunk, so an
+                 ;; export that may return one goes out through TR --
+                 ;; the rest are handed over directly, keeping their
+                 ;; arity visible to the host
                  (list "[U(" (jstring-lit (symbol->string n)) ")]:"
-                       "(...xs)=>TR(" (jfn-name n (cadr f)) "(...xs))")))
+                       (if (jbouncy? n)
+                           (list "(...xs)=>TR(" (jfn-name n (cadr f))
+                                 "(...xs))")
+                           (jfn-name n (cadr f))))))
              export-names)))
       (jbytes
        (list
