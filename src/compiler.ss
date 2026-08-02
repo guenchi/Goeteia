@@ -3170,14 +3170,28 @@
                   (cons (cdr (car stack)) (cdr stack)))
             acc))
      (else (walk (cdr stack) acc)))))
+;; A top-level initializer is pure when evaluating it can neither
+;; perform IO nor observably fail: literals, quotes, variable reads,
+;; closure creation, and known-allocating constructors over pure
+;; arguments.  Reading a variable is pure -- if the definition itself
+;; is live, the liveness walk pulls the referenced name through the
+;; definition table, so purity only decides whether an UNUSED
+;; definition may vanish.  Calls to anything else stay impure.
 (define (pure-init? e)
   (cond
    ((pair? e)
     (case (resolve-tag (car e))
-      ((quote) #t)
-      ((cons) (and (pure-init? (cadr e)) (pure-init? (caddr e))))
+      ((quote lambda) #t)
+      ((cons vector list make-vector string %record)
+       (all-true? pure-init? (cdr e)))
+      ((if begin) (all-true? pure-init? (cdr e)))
+      ((let)
+       (and (list? (cadr e))
+            (all-true? (lambda (b) (and (pair? b) (pair? (cdr b))
+                                        (pure-init? (cadr b))))
+                       (cadr e))
+            (all-true? pure-init? (cddr e))))
       (else #f)))
-   ((symbol? e) #f)
    (else #t)))
 (define (prune-dead forms extra-roots)
   (let ((table (fold-left (lambda (acc f)
