@@ -5,24 +5,6 @@
       button { font-size: 1.4em; padding: .2em 1em; margin: 0 .3em; }</style></head><body><h1>Goeteia counter</h1><p>This whole page is the output of <code>counter-page.ss</code>: the interactive part sits in a <code>(conjure auto ...)</code> mount point and was compiled to both targets when the page was generated.  Append <code>?goeteia=js</code> to force the fallback.</p><div id="app"></div><script type="goeteia/js" id="goeteia-conjure-0">
 "use strict";
 const FALSE={s:0},TRUE={s:1},NIL={s:2},VOID={s:3},EOFV={s:4};
-class Fl{constructor(v){this.v=v;}}
-const FLV=(x)=>{if(!(x instanceof Fl))
-throw new TypeError('expected flonum');return x.v;};
-class Sym{constructor(s){this.s=s;}}
-class BV{constructor(u){this.u=u;}}
-const STR=(x)=>{if(!(x instanceof Uint8Array))
-throw new TypeError('expected string');return x;};
-const SYMV=(x)=>{if(!(x instanceof Sym))
-throw new TypeError('expected symbol');return x;};
-const VEC=(x)=>{if(!Array.isArray(x))
-throw new TypeError('expected vector');return x;};
-const BVU=(x)=>{if(!(x instanceof BV))
-throw new TypeError('expected bytevector');return x.u;};
-class Bignum{constructor(sg,l){this.sg=sg;this.l=l;}}
-class Ratio{constructor(n,dd){this.n=n;this.dd=dd;}}
-class Cx{constructor(re,im){this.re=re;this.im=im;}}
-class Rec{constructor(f){this.f=f;}}
-class JSRef{constructor(v){this.v=v;}}
 class Esc{constructor(p){this.p=p;}}
 const PV=(x)=>{if(x?.t!=='pair')throw new TypeError('expected pair');
 return x;};
@@ -30,17 +12,13 @@ let IO={write_byte:()=>{},read_byte:()=>-1,path_byte:()=>{},
 open_read:()=>-1,open_write:()=>-1,fread:()=>-1,fwrite:()=>{},
 fclose:()=>{}};
 const W=(r)=>(((r|0)<<1)<<1)>>1;
-const F2I=(x)=>{x=Math.trunc(x);if(!Number.isFinite(x)||
-x<-2147483648||x>2147483647)throw new RangeError('integer overflow');
-return W(x);};
 const I31=(x)=>{if(typeof x!=='number'||(x|0)!==x)
 throw new TypeError('expected i31');return x;};
 const IU=(x)=>I31(x)>>1;
 const S=(s)=>{const n=s.length,u=new Uint8Array(n);
 for(let i=0;i<n;i++)u[i]=s.charCodeAt(i);return u;};
-const FB=(h)=>{const dv=new DataView(new ArrayBuffer(8));
-for(let i=0;i<8;i++)dv.setUint8(i,parseInt(h.substr(i*2,2),16));
-return dv.getFloat64(0,true);};
+const TD=new TextDecoder(),TE=new TextEncoder();
+const U=(s)=>TD.decode(S(s));
 const L2=(xs)=>{let l=NIL;
 for(let i=xs.length-1;i>=0;i--)l={t:"pair",a:xs[i],d:l};return l;};
 const LD=(xs,tl)=>{let l=tl;
@@ -60,11 +38,34 @@ const THR=(tk,v)=>{throw new Esc({t:"pair",a:tk,d:v});};
 const KFIX=(x)=>(typeof x==='number'&&!(x&1))?TRUE:FALSE;
 const KCHR=(x)=>(typeof x==='number'&&(x&1)===1)?TRUE:FALSE;
 const KBOOL=(x)=>(x===TRUE||x===FALSE)?TRUE:FALSE;
-const KREC=(x,r)=>(x instanceof Rec&&x.f[0]===r)?TRUE:FALSE;
 const OOB=()=>{throw new RangeError('array element access out of bounds');};
 const IX=(a,i)=>{i=IU(i);if(i<0||i>=a.length)OOB();return i;};
 const AR=(a,i)=>a[IX(a,i)];
 const AW=(a,i,v)=>{a[IX(a,i)]=v;return VOID;};
+const STR=(x)=>{if(!(x instanceof Uint8Array))
+throw new TypeError('expected string');return x;};
+const VEC=(x)=>{if(!Array.isArray(x))
+throw new TypeError('expected vector');return x;};
+class Fl{constructor(v){this.v=v;}}
+const FLV=(x)=>{if(!(x instanceof Fl))
+throw new TypeError('expected flonum');return x.v;};
+const FB=(h)=>{const dv=new DataView(new ArrayBuffer(8));
+for(let i=0;i<8;i++)dv.setUint8(i,parseInt(h.substr(i*2,2),16));
+return dv.getFloat64(0,true);};
+const F2I=(x)=>{x=Math.trunc(x);if(!Number.isFinite(x)||
+x<-2147483648||x>2147483647)throw new RangeError('integer overflow');
+return W(x);};
+class Sym{constructor(s){this.s=s;}}
+const SYMV=(x)=>{if(!(x instanceof Sym))
+throw new TypeError('expected symbol');return x;};
+class BV{constructor(u){this.u=u;}}
+const BVU=(x)=>{if(!(x instanceof BV))
+throw new TypeError('expected bytevector');return x.u;};
+class Bignum{constructor(sg,l){this.sg=sg;this.l=l;}}
+class Ratio{constructor(n,dd){this.n=n;this.dd=dd;}}
+class Cx{constructor(re,im){this.re=re;this.im=im;}}
+class Rec{constructor(f){this.f=f;}}
+const KREC=(x,r)=>(x instanceof Rec&&x.f[0]===r)?TRUE:FALSE;
 const MEMOBJ=(typeof WebAssembly!=='undefined'&&WebAssembly.Memory)
 ?new WebAssembly.Memory({initial:1})
 :(()=>{let b=new ArrayBuffer(65536);return{get buffer(){return b;},
@@ -101,9 +102,8 @@ const F4D=(p,q)=>{MREF();const fr=Math.fround;let r=fr(fr(MEMV.getFloat32(p,true
 r=fr(r+fr(MEMV.getFloat32(p+8,true)*MEMV.getFloat32(q+8,true)));
 r=fr(r+fr(MEMV.getFloat32(p+12,true)*MEMV.getFloat32(q+12,true)));
 return r;};
+class JSRef{constructor(v){this.v=v;}}
 const NB=[],CBS=[];let AS=[],STG=[];
-const TD=new TextDecoder(),TE=new TextEncoder();
-const U=(s)=>TD.decode(S(s));
 const TDX=()=>{const s=TD.decode(new Uint8Array(NB));NB.length=0;
 return s;};
 const LG=new Map();
@@ -300,7 +300,7 @@ const C61=S("0");
 const C62=S("+");
 const C63=S("counter conjured from a mount point");
 const JLTN=(a,b)=>(typeof a==='number'&&typeof b==='number')?a<b:(TR(F95__lt2(a,b))!==FALSE);const JZ=(a)=>typeof a==='number'?a===0:(TR(F96__eq2(a,(0)))!==FALSE);const JADD=(a,b)=>{if(typeof a==='number'&&typeof b==='number'){const s=a+b;if(((s<<1)>>1)===s)return s;}return TR(F90__add2(a,b));};const JSUB=(a,b)=>{if(typeof a==='number'&&typeof b==='number'){const s=a-b;if(((s<<1)>>1)===s)return s;}return TR(F91__sub2(a,b));};const JEQN=(a,b)=>(typeof a==='number'&&typeof b==='number')?a===b:(TR(F96__eq2(a,b))!==FALSE);const JQUO=(a,b)=>{if(typeof a==='number'&&typeof b==='number'){const d=b>>1;if(d===0)throw new RangeError('divide by zero');return W(Math.trunc((a>>1)/d));}return TR(F93__quot2(a,b));};const JREM=(a,b)=>{if(typeof a==='number'&&typeof b==='number'){if(b===0)throw new RangeError('divide by zero');return ((a%b)<<1)>>1;}return TR(F94__rem2(a,b));};const JMUL=(a,b)=>{if(typeof a==='number'&&typeof b==='number'){const p=(a>>1)*b;if(((p<<1)>>1)===p)return p;}return TR(F92__mul2(a,b));};const JFN=(clo)=>(...args)=>{const fr={args,ret:void 0};CBS.push(fr);try{TR(F121__jscb(clo));}finally{CBS.pop();}return fr.ret;};const RSYMS=()=>({t:"pair",a:C6,d:{t:"pair",a:C7,d:{t:"pair",a:C8,d:{t:"pair",a:C9,d:{t:"pair",a:C14,d:{t:"pair",a:C17,d:{t:"pair",a:C18,d:{t:"pair",a:C23,d:{t:"pair",a:C24,d:{t:"pair",a:C32,d:{t:"pair",a:C34,d:{t:"pair",a:C38,d:{t:"pair",a:C40,d:{t:"pair",a:C42,d:{t:"pair",a:C43,d:{t:"pair",a:C44,d:{t:"pair",a:C45,d:{t:"pair",a:C46,d:{t:"pair",a:C50,d:{t:"pair",a:C51,d:{t:"pair",a:C52,d:{t:"pair",a:C55,d:{t:"pair",a:C56,d:{t:"pair",a:C58,d:{t:"pair",a:C59,d:NIL}}}}}}}}}}}}}}}}}}}}}}}}});
-export const rt={"false":FALSE,"true":TRUE,"null":NIL,"void":VOID,mem:MEMOBJ};
+export const rt={"false":FALSE,"true":TRUE,"null":NIL,"void":VOID,mem:(typeof MEMOBJ!=='undefined'?MEMOBJ:void 0)};
 export const xports={[U("$jscb")]:F121__jscb};
 export function main(io){if(io)IO=io;return TR((()=>{(((V5=(({t:"pair",a:(C42),d:(NIL)}))),VOID));(((V6=(TR(((v791,v792,v793)=>{return (new Rec([V5,v791,v792,v793]));})((C43),((-4)),((0)))))),VOID));(((V7=(TR(((v794,v795,v796)=>{return (new Rec([V5,v794,v795,v796]));})((C6),((0)),((0)))))),VOID));(((V8=(V6)),VOID));(((V9=(V7)),VOID));(((V10=(NIL)),VOID));(((V11=(NIL)),VOID));(((V12=(({t:"pair",a:((0)),d:((0))}))),VOID));(((V13=(({t:"pair",a:(C44),d:(NIL)}))),VOID));(((V14=(TR(F76_vector(((2)),((4)),((8)),((16)),((32)),((64)),((128)),((256)),((512)),((1024)),((2048)),((4096)),((8192)),((16384)))))),VOID));(((V15=(({t:"pair",a:(C45),d:(NIL)}))),VOID));(((V16=(({t:"pair",a:(C46),d:(NIL)}))),VOID));(((V17=(FALSE)),VOID));(((V18=((0))),VOID));(((V19=(NIL)),VOID));(((V20=(TR(((v797)=>{return (new TC(F124_js_call,[(TR(F122_js_get((TR(F117_js_global())),(C48)))),(TR(F117_js_global())),(v797)]));})((C47))))),VOID));(((V21=(TR(((v798)=>{return (new TC(F124_js_call,[(TR(F122_js_get((TR(F117_js_global())),(C48)))),(TR(F117_js_global())),(v798)]));})((C49))))),VOID));(((V22=(L2([C50,C51,C52]))),VOID));(((V23=(TR(((v799)=>{return (new TC(F110__make_sig,[(v799),(NIL)]));})(((0)))))),VOID));(TR(F133_sx_mount((TR(((v800)=>{return (new TC(F125_js_method,[(TR(F126_document())),(C54),(v800)]));})((C53)))),(TR(F132__sx_build((L2([C55,L2([C55,L2([C38,L2([C56,C57])]),LD([C34],(0))]),L2([C58,L2([C38,L2([C59,LD([C32],(0))])]),C60]),L2([C58,L2([C38,L2([C59,LD([C32],(2))])]),C61]),L2([C58,L2([C38,L2([C59,LD([C32],(4))])]),C62])])),(TR(F39_list((TR(F134_bump(((-2))))),(((...v801)=>{const v802=L2(v801);return (new TC(F112_signal_set_,[(V23),((0))]));})),(TR(F134_bump(((2)))))))),(TR(F39_list(((()=>{return (new TC(F111_signal_ref,[(V23)]));})))))))))));return (new TC(F127_console_log,[(C63)]));})());}
 </script>

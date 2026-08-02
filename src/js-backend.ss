@@ -189,18 +189,23 @@
                         (reverse (cons m acc))
                         (split (quotient m 16384)
                                (cons (remainder m 16384) acc))))))
+      (jkernel! 'num)
       (list "(new Bignum(" (if neg "1" "0") ",["
             (jsep "," (map-in-order jtag-int limbs))
             "]))")))
-   ((flonum? d) (list "(new Fl(FB(\"" (jflonum-hex d) "\")))"))
+   ((flonum? d)
+    (jkernel! 'fl)
+    (list "(new Fl(FB(\"" (jflonum-hex d) "\")))"))
    ((and (rational? d) (exact? d))
+    (jkernel! 'num)
     (list "(new Ratio(" (jd (numerator d)) "," (jd (denominator d)) "))"))
    ((and (number? d) (not (real? d)))
+    (jkernel! 'num)
     (list "(new Cx(" (jd (real-part d)) "," (jd (imag-part d)) "))"))
    ((boolean? d) (if d "TRUE" "FALSE"))
    ((char? d) (jtag-char d))
    ((string? d) (jconst! 'str d))
-   ((symbol? d) (jconst! 'sym d))
+   ((symbol? d) (jkernel! 'sym) (jconst! 'sym d))
    ((null? d) "NIL")
    ((vector? d)
     (list "([" (jsep "," (map-in-order jd (vector->list d))) "])"))
@@ -403,6 +408,7 @@
              (and expect (= (length (cdr e)) (cdr expect)))))
       (let ((rop (unmark (car e)))
             (a (lambda (i) (list "(" (jx (list-ref (cdr e) i) env lctx) ")"))))
+        (jkernel-for-op! rop)
         (case rop
           ((=) (list (jhelper! "JEQN") "(" (a 0) "," (a 1) ")"))
           ((<) (list (jhelper! "JLTN") "(" (a 0) "," (a 1) ")"))
@@ -524,8 +530,36 @@
 ;; trees are the argument expressions, already compiled in source
 ;; order.  args (the raw forms) are consulted only where the wasm
 ;; backend also needs literals (%record-ref field indices).
+;; which kernel groups a primitive reaches; consulted at emission so
+;; DCE-pruned primitives never register anything
+(define $jp-kernel-groups
+  '((fl fl+ fl- fl* fl/ fl=? fl<? flsqrt flfloor fltruncate
+        fixnum->flonum %fl->fx flonum?)
+    (num %bignum? %make-bignum %bignum-sign %bignum-limbs
+         %ratio? %make-ratio %ratio-num %ratio-den
+         %complex? %make-complex %cx-re %cx-im)
+    (sym symbol? symbol->string %make-symbol %interned-symbols)
+    (bv bytevector? %make-bytevector bytevector-length
+        bytevector-u8-ref bytevector-u8-set!)
+    (rec %record %record? %record-ref %record-set! %recbase? %record-rtd)
+    (mem %mem-u8-ref %mem-u8-set! %mem-i32-ref %mem-i32-set!
+         %mem-f32-ref %mem-f32-set! %mem-f64-ref %mem-f64-set!
+         %mem-size %mem-grow
+         %f32x4-add! %f32x4-sub! %f32x4-mul! %f32x4-scale!
+         %f32x4-axpy! %f32x4-dot)
+    (ffi %js-ref? %js-arg-byte %js-global %js-get %js-set! %js-push
+         %js-call %js-new %js-string %js-str-len %js-str-byte
+         %js-number %js-to-number %js-eq %js-bool %js-undefined
+         %js-fn %js-cb-argc %js-cb-arg %js-cb-ret)))
+
+(define (jkernel-for-op! op)
+  (for-each (lambda (e)
+              (when (memq op (cdr e)) (jkernel! (car e))))
+            $jp-kernel-groups))
+
 (define (jp op args trees)
   (define (a i) (list "(" (list-ref trees i) ")"))
+  (jkernel-for-op! op)
   (let ((expect (assq op prim-arity)))
     (when (and expect
                (not (memq op '(+ - *)))
@@ -701,32 +735,26 @@
 ;;;; ------------------------------------------------------------------
 ;;;; the runtime kernel
 
-(define $js-kernel
-  '("\"use strict\";"
+(define *jkernels* '())        ; kernel groups the program reaches
+(define (jkernel! g)
+  (unless (memq g *jkernels*)
+    (set! *jkernels* (cons g *jkernels*)))
+  g)
+
+;; The runtime kernel, grouped so a program only carries what it
+;; reaches: a page section that never touches the FFI or the staging
+;; memory ships without them.  Groups list their dependencies; core
+;; is always emitted.  Registration happens at emission, so anything
+;; DCE pruned from the prelude never drags its group in.
+(define $js-kernel-groups
+  '((core ()
+    "\"use strict\";"
     "const FALSE={s:0},TRUE={s:1},NIL={s:2},VOID={s:3},EOFV={s:4};"
     ;; a pair is the tagged object literal {t:"pair",a,d}: single
     ;; inline-slot allocation (a bare array is JSArray + a separate
     ;; elements store, far slower at heap scale), monomorphic walks,
     ;; and .t===\"pair\" answers pair? on any value; vectors stay
     ;; bare JS arrays, so Array.isArray answers vector?
-    "class Fl{constructor(v){this.v=v;}}"
-    "const FLV=(x)=>{if(!(x instanceof Fl))"
-    "throw new TypeError('expected flonum');return x.v;};"
-    "class Sym{constructor(s){this.s=s;}}"
-    "class BV{constructor(u){this.u=u;}}"
-    "const STR=(x)=>{if(!(x instanceof Uint8Array))"
-    "throw new TypeError('expected string');return x;};"
-    "const SYMV=(x)=>{if(!(x instanceof Sym))"
-    "throw new TypeError('expected symbol');return x;};"
-    "const VEC=(x)=>{if(!Array.isArray(x))"
-    "throw new TypeError('expected vector');return x;};"
-    "const BVU=(x)=>{if(!(x instanceof BV))"
-    "throw new TypeError('expected bytevector');return x.u;};"
-    "class Bignum{constructor(sg,l){this.sg=sg;this.l=l;}}"
-    "class Ratio{constructor(n,dd){this.n=n;this.dd=dd;}}"
-    "class Cx{constructor(re,im){this.re=re;this.im=im;}}"
-    "class Rec{constructor(f){this.f=f;}}"
-    "class JSRef{constructor(v){this.v=v;}}"
     "class Esc{constructor(p){this.p=p;}}"
     "const PV=(x)=>{if(x?.t!=='pair')throw new TypeError('expected pair');"
     "return x;};"
@@ -735,28 +763,19 @@
     "fclose:()=>{}};"
     ;; raw int -> tagged i31 (the ref.i31 31-bit wrap)
     "const W=(r)=>(((r|0)<<1)<<1)>>1;"
-    ;; f64 -> i32.trunc_s -> tagged i31.  JavaScript's bitwise coercion
-    ;; silently maps NaN/infinity/out-of-range values instead of trapping.
-    "const F2I=(x)=>{x=Math.trunc(x);if(!Number.isFinite(x)||"
-    "x<-2147483648||x>2147483647)throw new RangeError('integer overflow');"
-    "return W(x);};"
     "const I31=(x)=>{if(typeof x!=='number'||(x|0)!==x)"
     "throw new TypeError('expected i31');return x;};"
     "const IU=(x)=>I31(x)>>1;"
     ;; byte string literal -> Uint8Array
     "const S=(s)=>{const n=s.length,u=new Uint8Array(n);"
     "for(let i=0;i<n;i++)u[i]=s.charCodeAt(i);return u;};"
-    ;; 16 hex chars (little-endian ieee bytes) -> f64
-    "const FB=(h)=>{const dv=new DataView(new ArrayBuffer(8));"
-    "for(let i=0;i<8;i++)dv.setUint8(i,parseInt(h.substr(i*2,2),16));"
-    "return dv.getFloat64(0,true);};"
+    "const TD=new TextDecoder(),TE=new TextEncoder();"
+    "const U=(s)=>TD.decode(S(s));"
     ;; JS rest array -> Scheme list
     "const L2=(xs)=>{let l=NIL;"
     "for(let i=xs.length-1;i>=0;i--)l={t:\"pair\",a:xs[i],d:l};return l;};"
     "const LD=(xs,tl)=>{let l=tl;"
     "for(let i=xs.length-1;i>=0;i--)l={t:\"pair\",a:xs[i],d:l};return l;};"
-    ;; checked indirect call / (apply f pre lst).  Function.length is
-    ;; exactly the fixed prefix for fixed and rest-argument arrows.
     "const IC=(f,xs)=>{if(xs.length<f.length)"
     "throw new TypeError('wrong argument count');return f(...xs);};"
     ;; the trampoline: a non-self tail call returns a TC thunk instead
@@ -775,13 +794,45 @@
     "const KFIX=(x)=>(typeof x==='number'&&!(x&1))?TRUE:FALSE;"
     "const KCHR=(x)=>(typeof x==='number'&&(x&1)===1)?TRUE:FALSE;"
     "const KBOOL=(x)=>(x===TRUE||x===FALSE)?TRUE:FALSE;"
-    "const KREC=(x,r)=>(x instanceof Rec&&x.f[0]===r)?TRUE:FALSE;"
     ;; JS arrays and typed arrays otherwise return undefined or silently
     ;; ignore an out-of-range write instead of trapping like Wasm.
     "const OOB=()=>{throw new RangeError('array element access out of bounds');};"
     "const IX=(a,i)=>{i=IU(i);if(i<0||i>=a.length)OOB();return i;};"
     "const AR=(a,i)=>a[IX(a,i)];"
     "const AW=(a,i,v)=>{a[IX(a,i)]=v;return VOID;};"
+    "const STR=(x)=>{if(!(x instanceof Uint8Array))"
+    "throw new TypeError('expected string');return x;};"
+    "const VEC=(x)=>{if(!Array.isArray(x))"
+    "throw new TypeError('expected vector');return x;};")
+    (fl (core)
+    "class Fl{constructor(v){this.v=v;}}"
+    "const FLV=(x)=>{if(!(x instanceof Fl))"
+    "throw new TypeError('expected flonum');return x.v;};"
+    ;; 16 hex chars (little-endian ieee bytes) -> f64
+    "const FB=(h)=>{const dv=new DataView(new ArrayBuffer(8));"
+    "for(let i=0;i<8;i++)dv.setUint8(i,parseInt(h.substr(i*2,2),16));"
+    "return dv.getFloat64(0,true);};"
+    ;; f64 -> i32.trunc_s -> tagged i31.  JavaScript's bitwise coercion
+    ;; silently maps NaN/infinity/out-of-range values instead of trapping.
+    "const F2I=(x)=>{x=Math.trunc(x);if(!Number.isFinite(x)||"
+    "x<-2147483648||x>2147483647)throw new RangeError('integer overflow');"
+    "return W(x);};")
+    (sym (core)
+    "class Sym{constructor(s){this.s=s;}}"
+    "const SYMV=(x)=>{if(!(x instanceof Sym))"
+    "throw new TypeError('expected symbol');return x;};")
+    (bv (core)
+    "class BV{constructor(u){this.u=u;}}"
+    "const BVU=(x)=>{if(!(x instanceof BV))"
+    "throw new TypeError('expected bytevector');return x.u;};")
+    (num (core)
+    "class Bignum{constructor(sg,l){this.sg=sg;this.l=l;}}"
+    "class Ratio{constructor(n,dd){this.n=n;this.dd=dd;}}"
+    "class Cx{constructor(re,im){this.re=re;this.im=im;}}")
+    (rec (core)
+    "class Rec{constructor(f){this.f=f;}}"
+    "const KREC=(x,r)=>(x instanceof Rec&&x.f[0]===r)?TRUE:FALSE;")
+    (mem (core fl)
     ;; Basic WebAssembly.Memory gives grow its real failure and old-view
     ;; detachment semantics even on hosts without WasmGC.  Hosts with
     ;; no WebAssembly at all (restricted embedded JS environments) get
@@ -828,14 +879,14 @@
     "const F4D=(p,q)=>{MREF();const fr=Math.fround;let r=fr(fr(MEMV.getFloat32(p,true)*MEMV.getFloat32(q,true))+fr(MEMV.getFloat32(p+4,true)*MEMV.getFloat32(q+4,true)));"
     "r=fr(r+fr(MEMV.getFloat32(p+8,true)*MEMV.getFloat32(q+8,true)));"
     "r=fr(r+fr(MEMV.getFloat32(p+12,true)*MEMV.getFloat32(q+12,true)));"
-    "return r;};"
+    "return r;};")
+    (ffi (mem fl)
+    "class JSRef{constructor(v){this.v=v;}}"
     ;; JS FFI: nameBuf/argStack protocol, implemented natively.  The
     ;; instance global mirrors the wasm host bridge: __goeteia_*
     ;; resolve per-instance, __goeteia_mem is the staging memory,
     ;; eval sees this instance's globalThis
     "const NB=[],CBS=[];let AS=[],STG=[];"
-    "const TD=new TextDecoder(),TE=new TextEncoder();"
-    "const U=(s)=>TD.decode(S(s));"
     "const TDX=()=>{const s=TD.decode(new Uint8Array(NB));NB.length=0;"
     "return s;};"
     "const LG=new Map();"
@@ -861,7 +912,26 @@
     "const JCALL=(f,t)=>{const g=AS;AS=[];"
     "return f.apply(t===GPROX?globalThis:t,g);};"
     "const JNEW=(c)=>{const g=AS;AS=[];return new c(...g);};"
-    "const JSL=(s)=>{STG=TE.encode(String(s));return STG.length;};"))
+    "const JSL=(s)=>{STG=TE.encode(String(s));return STG.length;};")))
+
+;; the reached groups, dependency-closed, in table order
+(define (jkernel-lines)
+  (let closure ((gs *jkernels*))
+    (let ((more (fold-left
+                 (lambda (acc g)
+                   (fold-left (lambda (a d) (if (memq d a) a (cons d a)))
+                              acc
+                              (cadr (assq g $js-kernel-groups))))
+                 gs gs)))
+      (if (= (length more) (length gs))
+          (let emit ((table $js-kernel-groups) (acc '()))
+            (if (null? table)
+                (reverse acc)
+                (emit (cdr table)
+                      (if (memq (car (car table)) gs)
+                          (cons (cddr (car table)) acc)
+                          acc))))
+          (closure more)))))
 
 ;; glue helpers: emitted only when used, resolving prelude generics
 ;; by their compiled names
@@ -954,6 +1024,7 @@
     (set! *jconsts* '())
     (set! *jconst-n* 0)
     (set! *jhelpers* '())
+    (set! *jkernels* '(core))
     ;; the same deterministic numbering the wasm backend uses
     (let number ((ds fn-defs) (i N-IMPORTS))
       (unless (null? ds)
@@ -991,6 +1062,7 @@
                (let ((kind (caar e))
                      (datum (cdar e))
                      (i (cdr e)))
+                 (when (eq? kind 'sym) (jkernel! 'sym))
                  (list "const C" (number->string i) "="
                        (if (eq? kind 'str)
                            (list "S(" (jstring-lit datum) ")")
@@ -1031,14 +1103,16 @@
              export-names)))
       (jbytes
        (list
-        (map (lambda (l) (list l "\n")) $js-kernel)
+        (map (lambda (grp)
+               (map (lambda (l) (list l "\n")) grp))
+             (jkernel-lines))
         var-decl
         fn-texts
         const-texts
         glue-texts
         rsyms-text
         "export const rt={\"false\":FALSE,\"true\":TRUE,\"null\":NIL,"
-        "\"void\":VOID,mem:MEMOBJ};\n"
+        "\"void\":VOID,mem:(typeof MEMOBJ!=='undefined'?MEMOBJ:void 0)};\n"
         "export const xports={" (jsep "," export-name-texts) "};\n"
         "export function main(io){if(io)IO=io;"
         "return TR((()=>{" main-text "})());}\n")))))
