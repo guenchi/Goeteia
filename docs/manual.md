@@ -2540,17 +2540,11 @@ Data model: object → alist with string keys, array → vector, string → stri
 
 ## Running in the Browser
 
-The `rt/web.mjs` loader instantiates a compiled module and runs it:
+For a page you generate, this section is mostly *background*: the mount points of [Single-File Pages](#single-file-pages) compile the section into the page with the loader glue inlined beside it, `define-wasm-js` emits the JS fallback from the same source, and a capability gate reaches the loader through the `globalThis.__goeteia_load` handle the glue publishes. Nothing below is written by hand on that path.
 
-```javascript
-import { loadGoeteia } from './rt/web.mjs';
+You reach for the API directly in one situation: **embedding a compiled module into a page you do not generate**—an existing site, another framework's tree (see `examples/react-embed.html`). Deploy `rt/web.mjs` and `rt/jsbridge.mjs` next to the page; the loader instantiates the module and runs it on the main thread with full DOM access:
 
-loadGoeteia('app.wasm');
-```
-
-The module runs in the browser main thread with full DOM access. The JS bridge (`rt/jsbridge.mjs`) handles all marshaling.
-
-### Minimal HTML
+### A Hand-Written Shell
 
 ```html
 <!DOCTYPE html>
@@ -2573,7 +2567,7 @@ The Scheme program can then manipulate the DOM via `(web dom)` and `(web sx)`.
 
 ### Engines without Wasm GC
 
-Wasm GC is not everywhere yet—older Safari, older Chrome, embedded WebViews. Compile the program a second time with `--js` (see [Compiling to JavaScript](#compiling-to-javascript)) and let the loader decide which artifact to run:
+Wasm GC is not everywhere yet—older Safari, older Chrome, embedded WebViews. On the generated-page path `(define-wasm-js (app "app.wasm" "app.js") ...)` produces the pair and the deciding loader in one build. On a hand-written shell you compile the second artifact yourself with `--js` (see [Compiling to JavaScript](#compiling-to-javascript)) and call the same decision point:
 
 ```javascript
 import { loadGoeteiaAuto } from './rt/web.mjs';
@@ -2590,7 +2584,7 @@ Append `?goeteia=js` to the page URL to force the fallback on an engine that doe
 
 Which shape to use is a question of *when* the fallback is fetched, not of size: a server gzips inline HTML the same as a served file. A separate file is lazy—visitors with Wasm GC never download it, and it caches under its own URL, independent of the page. Inline costs every visitor a download that few of them execute, and buys self-containment: one file to copy, with nothing fetched alongside it. Prefer the separate file for a deployed site; inline when the page itself is the unit you distribute.
 
-You do not assemble the inline shape by hand, and for a generated page you do not call `loadGoeteiaAuto` by hand either: the `conjure` mount point below compiles the section into the page and inlines this loader glue with it, so the page has no `rt/web.mjs` to import. The API above is what you reach for when you write the page shell yourself.
+Either way the glue also publishes the loader as `globalThis.__goeteia_load`, which is how a `define-js` gating section (capability degradation—see [Fallback Is Two Questions](#fallback-is-two-questions)) starts a heavy module without importing anything.
 
 ### Single-File Pages
 
