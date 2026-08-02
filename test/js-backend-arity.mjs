@@ -33,6 +33,16 @@ try {
     await bothReject(
         'callcc-arity',
         '(call/cc (lambda (k missing) 42))\n');
+    {
+        const sourceFile = path.join(dir, 'unused-unbound.ss');
+        fs.writeFileSync(sourceFile, '(define unused missing)\n42\n', 'utf8');
+        await assert.rejects(
+            () => compileToBytes(sourceFile, { script: true }),
+            undefined, 'unused unbound initializer: wasm compile');
+        await assert.rejects(
+            () => compileToBytes(sourceFile, { script: true, target: 'js' }),
+            undefined, 'unused unbound initializer: js compile');
+    }
 } finally {
     fs.rmSync(dir, { recursive: true, force: true });
 }

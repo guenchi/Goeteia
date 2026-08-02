@@ -3189,25 +3189,34 @@
 ;; A top-level initializer is pure when evaluating it can neither
 ;; perform IO nor observably fail: literals, quotes, variable reads,
 ;; closure creation, and known-allocating constructors over pure
-;; arguments.  Reading a variable is pure -- if the definition itself
-;; is live, the liveness walk pulls the referenced name through the
-;; definition table, so purity only decides whether an UNUSED
-;; definition may vanish.  Calls to anything else stay impure.
-(define (pure-init? e)
+;; arguments.  A variable read is pure only when it resolves to a
+;; top-level definition, primitive, or enclosing let binding; otherwise
+;; keeping the initializer lets normal name resolution report the error.
+;; Calls to anything else stay impure.
+(define (pure-init? e known)
   (cond
    ((pair? e)
     (case (resolve-tag (car e))
       ((quote lambda) #t)
       ((cons vector list make-vector string %record)
-       (all-true? pure-init? (cdr e)))
-      ((if begin) (all-true? pure-init? (cdr e)))
+       (all-true? (lambda (x) (pure-init? x known)) (cdr e)))
+      ((if begin)
+       (all-true? (lambda (x) (pure-init? x known)) (cdr e)))
       ((let)
        (and (list? (cadr e))
             (all-true? (lambda (b) (and (pair? b) (pair? (cdr b))
-                                        (pure-init? (cadr b))))
+                                        (pure-init? (cadr b) known)))
                        (cadr e))
-            (all-true? pure-init? (cddr e))))
+            (let ((body-known
+                   (append (map-in-order
+                            (lambda (b) (unmark (car b)))
+                            (cadr e))
+                           known)))
+              (all-true? (lambda (x) (pure-init? x body-known))
+                         (cddr e)))))
       (else #f)))
+   ((symbol? e)
+    (or (memq (unmark e) known) (memq (unmark e) primitives)))
    (else #t)))
 (define (prune-dead forms extra-roots)
   (let ((table (fold-left (lambda (acc f)
@@ -3229,7 +3238,8 @@
                                 (cons '< '(begin $lt2))
                                 (cons 'zero? '(begin $eq2)))
                           forms)))
-    (let grow ((live '())
+    (let ((known (map-in-order (lambda (e) (unmark (car e))) table)))
+      (let grow ((live '())
                ;; roots: program expressions, exported names, plus the
                ;; initializers of top-level variables kept for their
                ;; side effects
@@ -3238,7 +3248,7 @@
                                     ((not (define-form? f)) (form-refs f acc))
                                     ((and (var-define? f)
                                           (pair? (cddr f))
-                                          (not (pure-init? (caddr f))))
+                                          (not (pure-init? (caddr f) known)))
                                      (form-refs (caddr f) acc))
                                     (else acc)))
                                  extra-roots
@@ -3251,7 +3261,7 @@
                       ;; keep variables whose initializer has effects
                       (and (var-define? f)
                            (pair? (cddr f))
-                           (not (pure-init? (caddr f))))))
+                           (not (pure-init? (caddr f) known)))))
                 forms))
        ((memq (car queue) live) (grow live (cdr queue)))
        (else
@@ -3259,7 +3269,7 @@
           (if entry
               (grow (cons (car queue) live)
                     (form-refs (cdr entry) (cdr queue)))
-              (grow live (cdr queue)))))))))
+              (grow live (cdr queue))))))))))
 
 ;; ---- a conservative inliner ----
 ;; A small, once-defined, fixed-arity top-level function whose body
