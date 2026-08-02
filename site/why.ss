@@ -210,6 +210,35 @@
                  (css->string (styled-css))
                  (css->string (footer-styles))))
 
+;; ---- the page's browser-side half ----------------------------------
+;; Every heading's glyphs dodge the cursor.  The machinery lives in
+;; (web glyphs) -- plain headings are re-set by (web typeset),
+;; marked-up ones exploded by DOM Range with layout untouched -- so
+;; this only picks the elements and starts the loop.  It is a mount
+;; point: compiled to wasm while this page is generated, written out
+;; as why-fx.wasm, and referenced by the section string below -- the
+;; loader glue rides inline, so the page needs nothing else served.
+(define-wasm (why-fx "why-fx.wasm")
+  (import (rnrs) (web js) (web dom) (web glyphs))
+
+  (define (plain? el)                   ; markup goes the Range way
+    (= 0 (js->number (js-get el "childElementCount"))))
+
+  ;; a reader who asked for still text gets still text
+  (unless (js-truthy? (js-get (js-method (js-global) "matchMedia"
+                                         "(prefers-reduced-motion: reduce)")
+                              "matches"))
+    (let* ((els (js-method (document) "querySelectorAll"
+                           "h1, h2, .era, .lede, .note-sub, .sub"))
+           (n (js->number (js-get els "length"))))
+      (let loop ((i 0) (groups '()))
+        (if (< i n)
+            (let ((el (js-index els i)))
+              (loop (+ i 1)
+                    (cons (if (plain? el) (glyphs! el) (glyphs-mixed! el))
+                          groups)))
+            (glyphs-dodge! groups))))))
+
 (write-file "why.html"
   (render-page "Why Scheme? — Goeteia"
                (string-append "Why Scheme is the optimal substrate for AI-generated code: "
@@ -218,6 +247,4 @@
                               "instead of assuming it.")
                page-css
                'why "site/why.ss" body
-               ;; the typeset effect: heading glyphs that dodge the
-               ;; cursor (why-fx.ss, precompiled to why-fx.wasm)
-               (list '(script (@ (type "module") (src "why-fx.js"))))))
+               (list (raw why-fx))))
