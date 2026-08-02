@@ -375,9 +375,8 @@
      "               gl.drawArrays(m, u[p+1], u[p+2]); p += 3; break; }"
      "     case 9: gl.viewport(u[p], u[p+1], u[p+2], u[p+3]); p += 4; break;"
      "     case 10: if (u[p] === 1) { const m = u[p+1]; gl.enable(gl.BLEND);"
-     "                gl.blendFunc(m === 3 ? gl.ONE_MINUS_DST_COLOR"
-     "                             : m === 2 ? gl.ONE : gl.SRC_ALPHA,"
-     "                             (m === 1 || m === 3) ? gl.ONE"
+     "                gl.blendFunc(m === 2 ? gl.ONE : gl.SRC_ALPHA,"
+     "                             m === 1 ? gl.ONE"
      "                             : gl.ONE_MINUS_SRC_ALPHA); }"
      "              else gl.disable(gl.BLEND); p += 2; break;"
      "     case 11: gl.activeTexture(gl.TEXTURE0 + u[p]);"
@@ -606,12 +605,20 @@
   ;; ---- the encoder: words into the staging memory ----
   (define $base 0)
   (define $p 0)
+  (define $limit #f)
   (define $draw-count 0)                ; draws encoded this frame
-  (define (cmd-region! base) (set! $base base))
+  (define (cmd-region! base . limit)
+    (set! $base base)
+    (set! $limit (and (pair? limit) (car limit)))
+    (when (and $limit (< $limit $base))
+      (error 'cmd-region! "limit precedes command base" $limit)))
   (define (cmd-begin!) (set! $p $base) (set! $draw-count 0))
   (define ($draw!) (set! $draw-count (+ $draw-count 1)))
-  (define (u! v) (%mem-i32-set! $p v) (set! $p (+ $p 4)))
-  (define (f! v) (%mem-f32-set! $p v) (set! $p (+ $p 4)))
+  (define ($word!)
+    (when (and $limit (> (+ $p 4) $limit))
+      (error 'cmd-region! "command region overflow" $p)))
+  (define (u! v) ($word!) (%mem-i32-set! $p v) (set! $p (+ $p 4)))
+  (define (f! v) ($word!) (%mem-f32-set! $p v) (set! $p (+ $p 4)))
 
   (define (cmd-clear! r g b a) (u! 1) (f! r) (f! g) (f! b) (f! a))
   (define (cmd-use-program! slot) (u! 2) (u! slot))
@@ -719,8 +726,6 @@
       ((add)    (u! 1) (u! 1))
       ((alpha)  (u! 1) (u! 0))
       ((premul) (u! 1) (u! 2))
-      ((screen) (u! 1) (u! 3))          ; src*(1-dst)+dst: light that
-                                        ; cannot brighten what blazes
       (else     (u! 0) (u! 0))))
 
   ;; one bridge call replays the whole frame
