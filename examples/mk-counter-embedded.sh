@@ -1,7 +1,7 @@
 #!/bin/sh
 # Regenerate counter-embedded.html by running the site-generator
 # program: the page's interactive part compiles inside its
-# (goeteia-embed auto ...) mount point at generation time.
+# (conjure auto ...) mount point at generation time.
 set -e
 cd "$(dirname "$0")/.."
 ./bin/goeteiac examples/counter-page.ss /tmp/counter-page.wasm

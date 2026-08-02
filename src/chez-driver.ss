@@ -165,7 +165,7 @@
                         (cdar fs))
                   acc))))))
 
-;; expand the imports at the top level of goeteia-embed bodies, each
+;; expand the imports at the top level of conjure bodies, each
 ;; embed in a fresh import scope (the host program's libraries are
 ;; spliced into the host, not into the independently compiled embed
 ;; unit; nested embeds get their own scope too), mirroring
@@ -174,7 +174,7 @@
   (cond
    ((not (pair? form)) form)
    ((eq? (car form) 'quote) form)
-   ((eq? (car form) 'goeteia-embed)
+   ((eq? (car form) 'conjure)
     (let* ((saved visited)
            (body (begin
                    (set! visited '())
@@ -195,6 +195,78 @@
    (else (cons (embed-splice-imports (car form) dirs)
                (embed-splice-imports (cdr form) dirs)))))
 
+;; the runtime glue a conjure section inlines: jsbridge + web.mjs
+;; with the module plumbing stripped, non-ASCII normalized -- must
+;; produce the identical string to rt/compile.mjs's conjureGlue
+(define (conjure-glue-text)
+  (define (read-bytes path)
+    (call-with-port (open-file-input-port path) get-bytevector-all))
+  (define (import-line? bv i)
+    ;; a line starting (after whitespace) with "import" and
+    ;; containing "jsbridge"
+    (let scan ((j i) (seen-import #f) (seen-bridge #f))
+      (if (or (>= j (bytevector-length bv))
+              (= (bytevector-u8-ref bv j) 10))
+          (and seen-import seen-bridge)
+          (let ((b (bytevector-u8-ref bv j)))
+            (cond
+             ((and (not seen-import)
+                   (or (= b 32) (= b 9)))
+              (scan (+ j 1) seen-import seen-bridge))
+             ((and (not seen-import) (= b 105)  ; i
+                   (< (+ j 5) (bytevector-length bv))
+                   (= (bytevector-u8-ref bv (+ j 1)) 109)
+                   (= (bytevector-u8-ref bv (+ j 2)) 112)
+                   (= (bytevector-u8-ref bv (+ j 3)) 111)
+                   (= (bytevector-u8-ref bv (+ j 4)) 114)
+                   (= (bytevector-u8-ref bv (+ j 5)) 116))
+              (scan (+ j 6) #t seen-bridge))
+             ((not seen-import) #f)
+             ((and (= b 106)                    ; j
+                   (< (+ j 7) (bytevector-length bv))
+                   (= (bytevector-u8-ref bv (+ j 1)) 115)
+                   (= (bytevector-u8-ref bv (+ j 2)) 98)
+                   (= (bytevector-u8-ref bv (+ j 3)) 114)
+                   (= (bytevector-u8-ref bv (+ j 4)) 105)
+                   (= (bytevector-u8-ref bv (+ j 5)) 100)
+                   (= (bytevector-u8-ref bv (+ j 6)) 103)
+                   (= (bytevector-u8-ref bv (+ j 7)) 101))
+              (scan (+ j 8) seen-import #t))
+             (else (scan (+ j 1) seen-import seen-bridge)))))))
+  (define (line-start-of bv i)
+    ;; is i at a line start followed by "export "?
+    (and (< (+ i 6) (bytevector-length bv))
+         (= (bytevector-u8-ref bv i) 101)
+         (= (bytevector-u8-ref bv (+ i 1)) 120)
+         (= (bytevector-u8-ref bv (+ i 2)) 112)
+         (= (bytevector-u8-ref bv (+ i 3)) 111)
+         (= (bytevector-u8-ref bv (+ i 4)) 114)
+         (= (bytevector-u8-ref bv (+ i 5)) 116)
+         (= (bytevector-u8-ref bv (+ i 6)) 32)))
+  (define (process bv out at-line-start)
+    (let ((n (bytevector-length bv)))
+      (let loop ((i 0) (bol #t))
+        (when (< i n)
+          (cond
+           ((and bol (import-line? bv i))
+            ;; skip the whole line including its newline
+            (let eat ((j i))
+              (cond
+               ((>= j n) (loop n #f))
+               ((= (bytevector-u8-ref bv j) 10) (loop (+ j 1) #t))
+               (else (eat (+ j 1))))))
+           ((and bol (line-start-of bv i))
+            (loop (+ i 7) #f))            ; drop "export "
+           (else
+            (let ((b (bytevector-u8-ref bv i)))
+              (put-char out (integer->char (if (> b 126) 32 b)))
+              (loop (+ i 1) (= b 10)))))))))
+  (let ((out (open-output-string)))
+    (process (read-bytes (string-append here "/../rt/jsbridge.mjs")) out #t)
+    (put-char out #\newline)
+    (process (read-bytes (string-append here "/../rt/web.mjs")) out #t)
+    (get-output-string out)))
+
 (define (compile-file in out)
   ;; the prelude is prepended to every program; later definitions
   ;; shadow earlier ones, so user code can redefine prelude bindings
@@ -209,7 +281,8 @@
                                               (number->string (car lf)))
                                (cdr lf)))
                        (read-file-forms prelude-path))
-                  (list (cons "?:0" '(%prelude-end)))
+                  (list (cons "?:0" (list '%conjure-rt (conjure-glue-text)))
+                        (cons "?:0" '(%prelude-end)))
                   (map (lambda (p)
                          (cons (car p)
                                (embed-splice-imports (cdr p) dirs)))

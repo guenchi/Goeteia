@@ -108,7 +108,7 @@ function lineAt(text, idx) {
     return n;
 }
 
-// outermost (goeteia-embed ...) blocks, lexically (same string /
+// outermost (conjure ...) blocks, lexically (same string /
 // comment / char-literal awareness as topLevelSpans); each is an
 // independent import scope resolved separately below
 function embedBlocks(text) {
@@ -120,7 +120,7 @@ function embedBlocks(text) {
         if (c === '"') { i++; while (i < text.length && text[i] !== '"') { if (text[i] === '\\') i++; i++; } continue; }
         if (c === '#' && text[i + 1] === '\\') { i += 2; continue; }
         if (c === '(') {
-            if (embedStart < 0 && /^\(\s*goeteia-embed[\s(]/.test(text.slice(i, i + 20))) {
+            if (embedStart < 0 && /^\(\s*conjure[\s(]/.test(text.slice(i, i + 20))) {
                 embedStart = i; embedDepth = depth;
             }
             depth++;
@@ -142,10 +142,10 @@ function resolveEmbedImports(text, dirs, file) {
     let result = '', at = 0;
     for (const [start, end] of embedBlocks(text)) {
         const block = text.slice(start, end);
-        const open = block.indexOf('goeteia-embed') + 'goeteia-embed'.length;
+        const open = block.indexOf('conjure') + 'conjure'.length;
         const inner = block.slice(open, block.length - 1);
         result += text.slice(at, start);
-        result += '(goeteia-embed'
+        result += '(conjure'
             + resolveImports(resolveEmbedImports(inner, dirs, file),
                              dirs, new Set(), file + ':embed') + ')';
         at = end;
@@ -193,6 +193,31 @@ function loadLibrary(spec, dirs, visited) {
     throw new Error(`library not found: (${spec.join(' ')})`);
 }
 
+
+// the runtime glue a default conjure section inlines: jsbridge +
+// web.mjs with the module plumbing stripped, non-ASCII normalized
+// (both drivers must produce the identical string)
+let conjureGlueCache = null;
+function conjureGlue() {
+    if (conjureGlueCache !== null) return conjureGlueCache;
+    const strip = t => t.split('\n')
+        .filter(l => !/^\s*import\s.*jsbridge/.test(l))
+        .join('\n')
+        .replace(/^export /gm, '');
+    const clean = t => {
+        let r = '';
+        for (const ch of t) r += ch.charCodeAt(0) > 126 ? ' ' : ch;
+        return r;
+    };
+    const jb = fs.readFileSync(path.join(here, 'jsbridge.mjs'), 'latin1');
+    const wb = fs.readFileSync(path.join(here, 'web.mjs'), 'latin1');
+    conjureGlueCache = clean(strip(jb) + '\n' + strip(wb));
+    return conjureGlueCache;
+}
+function conjureGlueDirective() {
+    const esc = conjureGlue().replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+    return '(%conjure-rt "' + esc + '")\n';
+}
 // the bundled self-hosted compiler, shipped at the package root
 const defaultCompiler = path.join(here, '../goeteia.wasm');
 
@@ -241,7 +266,7 @@ export async function compileToBytes(sourceFile,
     const input = Buffer.from((target ? `(%target ${target})\n` : '')
                               + (script ? '(%opt 0)\n' : '')
                               + locMark(preludePath, 1) + prelude
-                              + '\n(%prelude-end)\n' + source, 'latin1');
+                              + '\n' + conjureGlueDirective() + '(%prelude-end)\n' + source, 'latin1');
     return runCompiler(input, compilerWasm);
 }
 
@@ -260,7 +285,7 @@ export async function compileSource(text,
     const input = Buffer.from((target ? `(%target ${target})\n` : '')
                               + (script ? '(%opt 0)\n' : '')
                               + locMark(preludePath, 1) + prelude
-                              + '\n(%prelude-end)\n' + source, 'latin1');
+                              + '\n' + conjureGlueDirective() + '(%prelude-end)\n' + source, 'latin1');
     return runCompiler(input, compilerWasm);
 }
 

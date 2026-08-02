@@ -3493,7 +3493,7 @@
 (define *target* 'wasm)
 
 ;;;; ------------------------------------------------------------------
-;;;; embedded programs: (goeteia-embed mode body...)
+;;;; embedded programs: (conjure mode body...)
 ;;
 ;; A mount point inside a host program (typically a site generator):
 ;; the body compiles as an INDEPENDENT program -- its own prelude,
@@ -3514,6 +3514,16 @@
 
 (define *embed-prelude* '())
 (define *embed-prelude-locs* '())
+(define *conjure-glue* #f)      ; runtime glue text, driver-supplied
+(define *conjure-n* 0)          ; per-program section counter (ids)
+
+(define (conjure-glue!)
+  (or *conjure-glue*
+      (errorf 'goeteia "conjure needs the driver-supplied runtime glue")))
+(define (conjure-id!)
+  (let ((i *conjure-n*))
+    (set! *conjure-n* (+ i 1))
+    (string-append "goeteia-conjure-" (number->string i))))
 
 (define $embed-b64
   "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/")
@@ -3587,19 +3597,24 @@
   (embed-guard-script! jstext)
   (string-append "<script type=\"module\">\n" jstext "main();\n</script>\n"))
 
-(define (embed-section-wasm bytes wurl rt)
-  (string-append "<script type=\"module\">\n"
-                 "import { loadGoeteia } from '" rt "';\n"
-                 "loadGoeteia('" (embed-wasm-ref bytes wurl) "');\n"
+;; wasm and auto sections carry the runtime glue inline: the page
+;; depends on nothing beside itself.  Repeated glue across sections
+;; is gzip-friendly; each auto section's fallback tag gets a unique
+;; id so several sections coexist on one page.
+(define (embed-section-wasm bytes wurl)
+  (string-append "<script type=\"module\">\n" (conjure-glue!)
+                 "\nloadGoeteia('" (embed-wasm-ref bytes wurl) "');\n"
                  "</script>\n"))
 
-(define (embed-section-auto jstext bytes wurl rt)
+(define (embed-section-auto jstext bytes wurl)
   (embed-guard-script! jstext)
-  (string-append "<script type=\"goeteia/js\">\n" jstext "</script>\n"
-                 "<script type=\"module\">\n"
-                 "import { loadGoeteiaAuto } from '" rt "';\n"
-                 "loadGoeteiaAuto('" (embed-wasm-ref bytes wurl) "');\n"
-                 "</script>\n"))
+  (let ((id (conjure-id!)))
+    (string-append "<script type=\"goeteia/js\" id=\"" id "\">\n"
+                   jstext "</script>\n"
+                   "<script type=\"module\">\n" (conjure-glue!)
+                   "\nloadGoeteiaAuto('" (embed-wasm-ref bytes wurl)
+                   "', '#" id "');\n"
+                   "</script>\n")))
 
 ;; drop the (%loc ...) markers the text-level driver leaves inside a
 ;; resolved embed body (locations inside embeds are a constant, so
@@ -3635,7 +3650,6 @@
          (spec (car rest))
          (mode (unmark (if (pair? spec) (car spec) spec)))
          (opts (if (pair? spec) (cdr spec) '()))
-         (rt (embed-opt opts 'rt "./rt/web.mjs"))
          (wurl (embed-opt opts 'wasm-url #f))
          ;; inner embeds materialize first, then the body compiles
          ;; as its own program over the shared prelude
@@ -3650,19 +3664,19 @@
          (embed-bytes->string (compile-program-js sub-forms sub-locs))))
        ((wasm)
         (embed-section-wasm (compile-program-wasm sub-forms sub-locs)
-                            wurl rt))
+                            wurl))
        ((auto)
         (let* ((jstext (embed-bytes->string
                         (compile-program-js sub-forms sub-locs)))
                (bytes (compile-program-wasm sub-forms sub-locs)))
-          (embed-section-auto jstext bytes wurl rt)))
+          (embed-section-auto jstext bytes wurl)))
        (else (errorf 'goeteia "unknown embed mode ~s" mode))))))
 
 (define (embed-expand form)
   (cond
    ((not (pair? form)) form)
    ((and (symbol? (car form)) (eq? (unmark (car form)) 'quote)) form)
-   ((and (symbol? (car form)) (eq? (unmark (car form)) 'goeteia-embed))
+   ((and (symbol? (car form)) (eq? (unmark (car form)) 'conjure))
     (embed-compile form))
    (else (cons (embed-expand (car form)) (embed-expand (cdr form))))))
 
@@ -3670,8 +3684,14 @@
   ;; split at the drivers' (%prelude-end) marker, materialize the
   ;; user code's mount points, then hand the whole stream to the
   ;; selected backend
+  (set! *conjure-glue* #f)
+  (set! *conjure-n* 0)
   (let split ((fs forms) (ls locs) (pf '()) (pl '()))
     (cond
+     ((and (pair? fs) (pair? (car fs))
+           (eq? (car (car fs)) '%conjure-rt))
+      (set! *conjure-glue* (cadr (car fs)))
+      (split (cdr fs) (cdr ls) pf pl))
      ((null? fs)
       ;; no marker (an old stream): no embed support, compile as-is
       (set! *embed-prelude* '())
