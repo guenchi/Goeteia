@@ -163,25 +163,55 @@ function resolveImports(text, file) {
 // compile Scheme source to a wasm module (pure; no DOM, safe to call
 // often).  The editor compiles at -O0 (script mode): on every press
 // of Run, latency beats the last drop of runtime speed.
+//
+// ONE compiler instance serves every compile.  A fresh instance per
+// call left the previous one -- and the hundreds of MB its heap grew
+// to on a big demo -- waiting on the engine's lazy GC, so a few demo
+// switches ratcheted the tab toward a gigabyte.  Re-entry is safe by
+// design (the compiler's entry resets all its state) and verified
+// byte-for-byte against fresh instances; the io handlers route
+// through this mutable channel because wasm imports are fixed at
+// instantiation.
+let compilerInstance = null;
+let compilerIO = null;
+async function compilerMain(input) {
+    if (!compilerInstance) {
+        ({ instance: compilerInstance } =
+            await WebAssembly.instantiate(compilerBytes, {
+                io: {
+                    write_byte: b => compilerIO.out.push(b),
+                    read_byte: () => (compilerIO.pos < compilerIO.input.length
+                                      ? compilerIO.input[compilerIO.pos++] : -1),
+                    ...stubs,
+                },
+                js: jsBridgeStubs,  // the compiler itself never calls JS
+            }));
+    }
+    compilerIO = { input, pos: 0, out: [] };
+    compilerInstance.exports.main();
+    return compilerIO.out;
+}
+
+// compiled modules, keyed by exact source text: switching back to an
+// unedited tab costs nothing at all
+const moduleCache = new Map();
+const MODULE_CACHE_MAX = 8;
+
 export async function compile(userSource) {
+    const hit = moduleCache.get(userSource);
+    if (hit) return { wasm: hit, ms: 0 };
     const input = enc.encode('(%opt 0)\n'
                              + locMark('prelude', 1) + preludeText + '\n'
                              + resolveImports(userSource, 'editor'));
-    const out = [];
-    let pos = 0;
-    const { instance } = await WebAssembly.instantiate(compilerBytes, {
-        io: {
-            write_byte: b => out.push(b),
-            read_byte: () => (pos < input.length ? input[pos++] : -1),
-            ...stubs,
-        },
-        js: jsBridgeStubs,          // the compiler itself never calls JS
-    });
     const t0 = performance.now();
-    instance.exports.main();
+    const out = await compilerMain(input);
     const t1 = performance.now();
     if (out.length === 0) throw new Error('compile produced no output');
-    return { wasm: new Uint8Array(out), ms: t1 - t0 };
+    const wasm = new Uint8Array(out);
+    if (moduleCache.size >= MODULE_CACHE_MAX)
+        moduleCache.delete(moduleCache.keys().next().value);
+    moduleCache.set(userSource, wasm);
+    return { wasm, ms: t1 - t0 };
 }
 
 // compile + instantiate against a real DOM bridge + run: the module's
