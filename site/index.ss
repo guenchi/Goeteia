@@ -275,7 +275,11 @@
            " to plain JavaScript, and inlines the loader that probes the "
            "engine and picks. No WasmGC — an older Safari, a restricted "
            "embedded engine — and the page runs the JS twin. Nobody "
-           "hand-maintains a second implementation, so nothing drifts.")
+           "hand-maintains a second implementation, so nothing drifts. "
+           "And the twin carries only the runtime it actually reaches — "
+           "the kernel ships by group, unreached library code never "
+           "compiles in — so the fallback costs what the page uses, not "
+           "what the libraries hold.")
          #t
          '((h3 "Two questions, two answers")
            (p (b "Engine fallback") " is automatic: the twin is compiled "
