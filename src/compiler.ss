@@ -3752,6 +3752,9 @@
     (cond
      ((and (pair? fs) (pair? (car fs))
            (eq? (car (car fs)) '%conjure-rt))
+      ;; the glue is inlined into a script element, so it is held to
+      ;; the same rule as a section's own text
+      (embed-guard-script! (cadr (car fs)))
       (set! *conjure-glue* (cadr (car fs)))
       (split (cdr fs) (cdr ls) pf pl))
      ((null? fs)
