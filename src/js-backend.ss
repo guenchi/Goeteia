@@ -69,6 +69,11 @@
     (unless f (errorf 'goeteia "missing generic helper ~s" name))
     (jfn-name name (cadr f))))
 
+;; a glue call into a prelude generic: TR only when it may bounce
+(define (jgeneric-tr name argstr)
+  (let ((call (list (jgeneric name) "(" argstr ")")))
+    (if (jbouncy? name) (list "TR(" call ")") call)))
+
 (define (jhelper! name) ; record a used glue helper (emitted at the end)
   (unless (member name *jhelpers*)
     (set! *jhelpers* (cons name *jhelpers*)))
@@ -430,18 +435,158 @@
           ex "){if(" ex " instanceof Esc&&" ex ".p.a===" t ")return "
           ex ".p.d;throw " ex ";}})()")))
 
+
+;;;; ------------------------------------------------------------------
+;;;; trampoline elision
+;;
+;; A tail call must stay a TC thunk only when the callee's tail
+;; chain can reach a cycle (mutual recursion, or a variadic
+;; function's self call, which has no rebind loop): an acyclic chain
+;; of direct tail calls is bounded by the static function count, so
+;; calling straight through costs constant stack.  A non-tail call
+;; needs its TR unwind only when the callee may actually return a
+;; thunk.  Closures always ride the indirect protocol (TCI builds
+;; the thunk, IC sites keep TR), so only the top-level graph is
+;; analyzed.
+
+(define *jdanger* (make-eq-hashtable)) ; tail calls to it stay thunks
+(define *jbouncy* (make-eq-hashtable)) ; calls to it keep the TR unwind
+
+(define (jdanger? n) (hashtable-contains? *jdanger* n))
+(define (jbouncy? n) (hashtable-contains? *jbouncy* n))
+
+(define (jscan-trampolines! fn-defs)
+  (set! *jdanger* (make-eq-hashtable))
+  (set! *jbouncy* (make-eq-hashtable))
+  (let ((out (make-eq-hashtable))     ; name -> distinct tail targets
+        (rev (make-eq-hashtable))     ; target -> callers
+        (base (make-eq-hashtable))    ; has an indirect/apply tail
+        (names '()))
+    (define (edge! f g)
+      (let ((ts (hashtable-ref out f '())))
+        (unless (memq g ts)
+          (hashtable-set! out f (cons g ts))
+          (hashtable-set! rev g (cons f (hashtable-ref rev g '()))))))
+    ;; mirror jt's tail skeleton; lambda bodies are separate frames
+    (define (scan-tail f e bound lnames self)
+      (when (pair? e)
+        (case (resolve-tag (car e))
+          ((quote lambda set! call/cc call-with-current-continuation) #f)
+          ((if)
+           (scan-tail f (caddr e) bound lnames self)
+           (unless (null? (cdddr e))
+             (scan-tail f (cadddr e) bound lnames self)))
+          ((begin) (scan-last f (cdr e) bound lnames self))
+          ((let)
+           (scan-last f (cddr e)
+                      (append (map-in-order car (cadr e)) bound)
+                      lnames self))
+          ((%loop)
+           (scan-last f (cdr (cdddr e))
+                      (append (caddr e) bound)
+                      (cons (cadr e) lnames) self))
+          ((apply) (hashtable-set! base f #t))
+          (else
+           (let ((op (car e)))
+             (cond
+              ((not (symbol? op)) (hashtable-set! base f #t))
+              ((memq op bound) (hashtable-set! base f #t))
+              ((memq op lnames) #f)          ; loop rebind, no thunk
+              (else
+               (let ((r (unmark op)))
+                 (cond
+                  ((and self (eq? r (car self))
+                        (= (length (cdr e)) (cdr self)))
+                   #f)                       ; label rebind, no thunk
+                  ((assq r *fns*) (edge! f r))
+                  ((memq r primitives) #f)
+                  (else (hashtable-set! base f #t)))))))))))
+    (define (scan-last f xs bound lnames self)
+      (cond ((null? xs) #f)
+            ((null? (cdr xs)) (scan-tail f (car xs) bound lnames self))
+            (else (scan-last f (cdr xs) bound lnames self))))
+    (let loop ((ds fn-defs) (i N-IMPORTS))
+      (unless (null? ds)
+        (let* ((d (car ds))
+               (name (unmark (def-name d)))
+               (formals (cdadr d))
+               (rest (formals-rest formals))
+               (fixed (formals-fixed formals))
+               (entry (assq name *fns*))
+               ;; the rebind label exists only in the definition call
+               ;; sites resolve to, and never in a variadic body
+               (self (and (not rest) entry (= (cadr entry) i)
+                          (cons name (length fixed)))))
+          (unless (memq name names) (set! names (cons name names)))
+          (scan-last name (cddr d) '() '() self))
+        (loop (cdr ds) (+ i 1))))
+    ;; safe fixpoint: safe iff every tail edge target is safe (a
+    ;; Kahn drain over pending target counts); cycles never qualify,
+    ;; the rest is danger
+    (let ((safe (make-eq-hashtable))
+          (pending (make-eq-hashtable)))
+      (for-each (lambda (n)
+                  (hashtable-set! pending n
+                                  (length (hashtable-ref out n '()))))
+                names)
+      (let drain ((q (filter (lambda (n)
+                               (= 0 (hashtable-ref pending n 1)))
+                             names)))
+        (unless (null? q)
+          (let ((g (car q)))
+            (hashtable-set! safe g #t)
+            (drain
+             (fold-left
+              (lambda (acc f)
+                (let ((c (- (hashtable-ref pending f 1) 1)))
+                  (hashtable-set! pending f c)
+                  (if (= c 0) (cons f acc) acc)))
+              (cdr q)
+              (hashtable-ref rev g '()))))))
+      (for-each (lambda (n)
+                  (unless (hashtable-contains? safe n)
+                    (hashtable-set! *jdanger* n #t)))
+                names))
+    ;; bouncy fixpoint: seeded by indirect/apply tails and by kept
+    ;; thunk edges (a tail call to a danger node); a straight tail
+    ;; call passes the callee's thunk through, so it propagates up
+    ;; the reverse edges
+    (let ((q '()))
+      (define (mark! f)
+        (unless (hashtable-contains? *jbouncy* f)
+          (hashtable-set! *jbouncy* f #t)
+          (set! q (cons f q))))
+      (for-each
+       (lambda (n)
+         (when (or (hashtable-contains? base n)
+                   (let some ((ts (hashtable-ref out n '())))
+                     (and (pair? ts)
+                          (or (jdanger? (car ts)) (some (cdr ts))))))
+           (mark! n)))
+       names)
+      (let drain ()
+        (unless (null? q)
+          (let ((g (car q)))
+            (set! q (cdr q))
+            (for-each mark! (hashtable-ref rev g '()))
+            (drain)))))))
+
 ;; A non-tail call unwinds any trampoline the callee returns (TR); a
 ;; tail call BUILDS the trampoline thunk instead of calling (TC/TCI),
 ;; so non-self tail chains run in constant JS stack -- the wasm
 ;; backend's return_call.  Direct calls are arity-checked at compile
 ;; time (bare TC); indirect ones check at bounce time (TCI).
-(define (jcall fcode args env lctx tail?)
+(define (jcall gname fcode args env lctx tail?)
   (let ((acode (jsep "," (map-in-order
                           (lambda (a) (list "(" (jx a env lctx) ")"))
                           args))))
     (if tail?
-        (list "(new TC(" fcode ",[" acode "]))")
-        (list "TR(" fcode "(" acode "))"))))
+        (if (jdanger? gname)
+            (list "(new TC(" fcode ",[" acode "]))")
+            (list fcode "(" acode ")"))
+        (if (jbouncy? gname)
+            (list "TR(" fcode "(" acode "))")
+            (list fcode "(" acode ")")))))
 
 ;; Indirect calls carry no compile-time arity proof.  Native JS fills
 ;; missing parameters with undefined, while the Wasm adapter traps.
@@ -471,7 +616,7 @@
               (errorf 'goeteia "too few arguments in ~s" e))
             (unless (= nfixed (length args))
               (errorf 'goeteia "wrong argument count in ~s" e)))
-        (jcall (jfn-name rop (car entry)) args env lctx tail?)))
+        (jcall rop (jfn-name rop (car entry)) args env lctx tail?)))
      ((and rop (assq rop *vars*))
       (jicall (list "(" (jvar-name (cdr (assq rop *vars*))) ")")
               args env lctx tail?))
@@ -1033,39 +1178,39 @@
           "(b>=-1073741824n&&b<=1073741823n)?(Number(b)<<1):b;"))
    ((string=? name "JADD")
     (list "const JADD=(a,b)=>{if(typeof a==='number'&&typeof b==='number')"
-          "{const s=a+b;if(((s<<1)>>1)===s)return s;}return TR("
-          (jgeneric '$add2) "(a,b));};"))
+          "{const s=a+b;if(((s<<1)>>1)===s)return s;}return "
+          (jgeneric-tr '$add2 "a,b") ";};"))
    ((string=? name "JSUB")
     (list "const JSUB=(a,b)=>{if(typeof a==='number'&&typeof b==='number')"
-          "{const s=a-b;if(((s<<1)>>1)===s)return s;}return TR("
-          (jgeneric '$sub2) "(a,b));};"))
+          "{const s=a-b;if(((s<<1)>>1)===s)return s;}return "
+          (jgeneric-tr '$sub2 "a,b") ";};"))
    ((string=? name "JMUL")
     (list "const JMUL=(a,b)=>{if(typeof a==='number'&&typeof b==='number')"
-          "{const p=(a>>1)*b;if(((p<<1)>>1)===p)return p;}return TR("
-          (jgeneric '$mul2) "(a,b));};"))
+          "{const p=(a>>1)*b;if(((p<<1)>>1)===p)return p;}return "
+          (jgeneric-tr '$mul2 "a,b") ";};"))
    ((string=? name "JQUO")
     (list "const JQUO=(a,b)=>{if(typeof a==='number'&&typeof b==='number')"
           "{const d=b>>1;if(d===0)throw new RangeError('divide by zero');"
-          "return W(Math.trunc((a>>1)/d));}return TR("
-          (jgeneric '$quot2) "(a,b));};"))
+          "return W(Math.trunc((a>>1)/d));}return "
+          (jgeneric-tr '$quot2 "a,b") ";};"))
    ((string=? name "JREM")
     ;; operands stay tagged (2a % 2b = 2(a%b)); renormalize to i31
     ;; like ref.i31, with no extra shift
     (list "const JREM=(a,b)=>{if(typeof a==='number'&&typeof b==='number')"
           "{if(b===0)throw new RangeError('divide by zero');"
-          "return ((a%b)<<1)>>1;}return TR(" (jgeneric '$rem2) "(a,b));};"))
+          "return ((a%b)<<1)>>1;}return " (jgeneric-tr '$rem2 "a,b") ";};"))
    ((string=? name "JEQN")
     (list "const JEQN=(a,b)=>(typeof a==='number'&&typeof b==='number')"
-          "?a===b:(TR(" (jgeneric '$eq2) "(a,b))!==FALSE);"))
+          "?a===b:((" (jgeneric-tr '$eq2 "a,b") ")!==FALSE);"))
    ((string=? name "JLTN")
     (list "const JLTN=(a,b)=>(typeof a==='number'&&typeof b==='number')"
-          "?a<b:(TR(" (jgeneric '$lt2) "(a,b))!==FALSE);"))
+          "?a<b:((" (jgeneric-tr '$lt2 "a,b") ")!==FALSE);"))
    ((string=? name "JZ")
-    (list "const JZ=(a)=>typeof a==='number'?a===0:(TR("
-          (jgeneric '$eq2) "(a,(0)))!==FALSE);"))
+    (list "const JZ=(a)=>typeof a==='number'?a===0:(("
+          (jgeneric-tr '$eq2 "a,(0)") ")!==FALSE);"))
    ((string=? name "JFN")
     (list "const JFN=(clo)=>(...args)=>{const fr={args,ret:void 0};"
-          "CBS.push(fr);try{TR(" (jgeneric '$jscb) "(clo));}finally{CBS.pop();}"
+          "CBS.push(fr);try{" (jgeneric-tr '$jscb "clo") ";}finally{CBS.pop();}"
           "return fr.ret;};"))
    (else (errorf 'goeteia "unknown glue helper ~s" name))))
 
@@ -1133,6 +1278,7 @@
       (unless (null? ds)
         (set! *vars* (cons (cons (cadr (car ds)) g) *vars*))
         (number (cdr ds) (+ g 1))))
+    (jscan-trampolines! fn-defs)
     (let* ((fn-texts (let go ((ds fn-defs) (i N-IMPORTS) (acc '()))
                        (if (null? ds)
                            (reverse acc)
