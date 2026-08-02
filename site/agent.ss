@@ -49,6 +49,54 @@
             "diverges and what needs a human decision."))
 
        (div (@ (class "meta"))
+         "tools: " (code "Bash, Read, Write, Edit, Grep, Glob"))))
+
+   `(section
+     (h2 "web-builder")
+     (p (@ (class "hint") (style "color:var(--dim)"))
+        "Describe a page and it builds the whole thing in Goeteia Scheme — "
+        "HTML and CSS written by a generator at build time, the interactive "
+        "half compiled inside mount points in the same source: wasm, the "
+        "generated JS fallback and the loader, with 3D and networking when "
+        "the page calls for them. It never hand-writes JavaScript.")
+
+     (div (@ (class "agent"))
+       (div (@ (class "agent-head"))
+         (div (h3 "web-builder")
+              (div (@ (class "role"))
+                   "one source" ,(raw "&nbsp;") "→" ,(raw "&nbsp;")
+                   "page + wasm + fallback · every behavior smoke-tested"))
+         (a (@ (class "btn primary") (href "agent/web-builder.md") (download #t))
+            (span (@ (class "ic")) "↓") "Download web-builder.md"))
+
+       (p (@ (class "agent-lead"))
+          "The generator " (em "is") " the build: one " (code ".ss")
+          " runs at build time, writes the page, and its mount points emit "
+          "every artifact the page needs. Engine fallback (no WasmGC) is "
+          "generated, never maintained; capability degradation (no WebGL2, "
+          "nothing should even be fetched) is written as a Scheme gating "
+          "mount that probes, reveals, loads — and rolls back.")
+
+       (div (@ (class "feats"))
+         ,(feat "The whole stack, one language"
+            '(code "(web html)") " and " '(code "(web css)")
+            " as data, " '(code "define-component") " for shared styles, "
+            '(code "(web reactive)") " signals for state, "
+            '(code "(gfx)") " for WebGL, " '(code "(web rpc)")
+            " for datum-on-the-wire networking.")
+         ,(feat "Fallback, both questions"
+            '(code "define-wasm-js") " automates the engine twin from one "
+            "source; degradation gates are their own "
+            '(code "define-js") " mounts reaching the published loader handle.")
+         ,(feat "Zero hand-written JS"
+            "Everything the browser runs is compiled from the same Scheme "
+            "tree that generated the page around it.")
+         ,(feat "Driven, not asserted"
+            "Generator smoke, node-side smoke of every degradation road, and "
+            "dual-backend agreement plus absolute value checks — a diff test "
+            "alone passes when both sides are wrong the same way."))
+
+       (div (@ (class "meta"))
          "tools: " (code "Bash, Read, Write, Edit, Grep, Glob"))))))
 
 (define agent-styles
@@ -101,8 +149,10 @@
   (render-page "Agents — Goeteia"
                (string-append "Agents for Goeteia. web-porter rewrites a "
                               "JavaScript/TypeScript web file into Goeteia Scheme with "
-                              "behavioral equivalence proved by differential testing — "
-                              "download the agent definition.")
+                              "behavioral equivalence proved by differential testing; "
+                              "web-builder builds a page from scratch — HTML, CSS, wasm, "
+                              "generated JS fallback, 3D and RPC in one source — "
+                              "download the agent definitions.")
                (string-append (css->string (base-styles 52))
                               (css->string agent-styles)
                               (css->string (styled-css))
