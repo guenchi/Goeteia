@@ -55,6 +55,20 @@ export async function compileGoeteia(source, compilerUrl = 'goeteia.wasm') {
     return new Uint8Array(out);
 }
 
+// The whole browser-compiler cycle: fetch a source list in parallel,
+// concatenate in order (dependencies before dependents -- the compiler
+// splices each (library ...) and treats (import ...) as a no-op), and
+// compile.  This is what a page that ships sources instead of a binary
+// actually calls.
+export async function compileGoeteiaFrom(urls, compilerUrl = 'goeteia.wasm') {
+    const texts = await Promise.all(
+        urls.map(u => fetch(u).then(r => {
+            if (!r.ok) throw new Error(`Goeteia: ${u} not found`);
+            return r.text();
+        })));
+    return compileGoeteia(texts.join('\n'), compilerUrl);
+}
+
 export async function loadGoeteia(url) {
     return runGoeteiaBytes(await (await fetch(url)).arrayBuffer());
 }
@@ -68,6 +82,7 @@ loadGoeteia._out = [];
 globalThis.__goeteia_load = loadGoeteia;
 globalThis.__goeteia_run = runGoeteiaBytes;
 globalThis.__goeteia_compile = compileGoeteia;
+globalThis.__goeteia_compile_from = compileGoeteiaFrom;
 
 // Run a module in a Worker over an OffscreenCanvas: the render loop
 // leaves the main thread entirely (a busy main thread no longer
