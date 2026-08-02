@@ -50,7 +50,19 @@ export async function compileGoeteia(source, compilerUrl = 'goeteia.wasm') {
             },
             js: jsBridgeStubs,          // the compiler never calls out to JS
         });
-    instance.exports.main();
+    try {
+        instance.exports.main();
+    } catch (cause) {
+        // Compiler diagnostics share stdout with successful module bytes.
+        // Preserve them when main traps instead of reducing every source
+        // error to the Wasm engine's unhelpful "unreachable" message.
+        const output = new TextDecoder().decode(new Uint8Array(out)).trim();
+        const error = new Error(
+            output || `Goeteia: compile failed: ${cause.message}`);
+        error.cause = cause;
+        error.output = output;
+        throw error;
+    }
     if (out.length === 0) throw new Error('Goeteia: compile produced no output');
     return new Uint8Array(out);
 }
