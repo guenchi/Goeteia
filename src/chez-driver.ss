@@ -174,7 +174,8 @@
   (cond
    ((not (pair? form)) form)
    ((eq? (car form) 'quote) form)
-   ((eq? (car form) 'conjure)
+   ((memq (car form) '(conjure define-js define-wasm define-wasm-inline
+                       define-wasm-js define-wasm-js-inline))
     (let* ((saved visited)
            (body (begin
                    (set! visited '())

@@ -142,12 +142,23 @@ function resolveEmbedImports(text, dirs, file) {
     let result = '', at = 0;
     for (const [start, end] of embedBlocks(text)) {
         const block = text.slice(start, end);
-        const open = block.indexOf('conjure') + 'conjure'.length;
+        const head = block.match(/^\(\s*([a-z-]+)/)[1];
+        const open = block.indexOf(head) + head.length;
         const inner = block.slice(open, block.length - 1);
         result += text.slice(at, start);
-        result += '(conjure'
-            + resolveImports(resolveEmbedImports(inner, dirs, file),
-                             dirs, new Set(), file + ':embed') + ')';
+        // leave the block untouched unless it actually imports (or
+        // nests another block that might): quoted data that merely
+        // LOOKS like a mount point -- the compiler's own sources
+        // hold such tables -- must pass through byte-for-byte, or
+        // self-compilation loses its fixed point
+        const needsWork = embedBlocks(inner).length > 0
+            || topLevelSpans(inner).some(([s2, e2]) =>
+                /^\(\s*import[\s)]/.test(inner.slice(s2, e2)));
+        result += needsWork
+            ? '(' + head
+              + resolveImports(resolveEmbedImports(inner, dirs, file),
+                               dirs, new Set(), file + ':embed') + ')'
+            : block;
         at = end;
     }
     return result + text.slice(at);

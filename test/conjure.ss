@@ -58,4 +58,25 @@
 (define auto2 (conjure auto (display 2)))
 (define id2-ok (has? auto2 "id=\"goeteia-conjure-1\""))
 
-(and js-ok wasm-ok wasm-url-ok auto-ok id2-ok)
+;; the define- family wraps the modes into named definitions
+(define-js mj (display 1))
+(define-wasm-inline mwi (display 2))
+(define-wasm-js-inline mai (display 3))
+(define-wasm (mw "/tmp/goeteia-conjure-test.wasm") (display 4))
+(define macro-sections-ok
+  (and (has? mj "main();")
+       (has? mwi "loadGoeteia('data:application/wasm;base64,")
+       (has? mai "loadGoeteiaAuto('data:application/wasm;base64,")
+       (has? mw "loadGoeteia('/tmp/goeteia-conjure-test.wasm')")))
+;; define-wasm wrote its module next to the generator's output
+(define wrote-ok
+  (let ()
+    (string-for-each (lambda (c) (%path-byte (char->integer c)))
+                     "/tmp/goeteia-conjure-test.wasm")
+    (let ((fd (%open-read)))
+      (and (>= fd 0)
+           (let ((b0 (%fread fd)))
+             (%fclose fd)
+             (= b0 0))))))            ; wasm magic starts 0x00
+
+(and js-ok wasm-ok wasm-url-ok auto-ok id2-ok macro-sections-ok wrote-ok)
