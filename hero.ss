@@ -292,13 +292,16 @@
 (define front buf-a)
 (define back buf-b)
 (define t 0.0)
-(define (frame!)
-  (set! t (fl+ t 0.016))
+(define (frame! dt0)
+  ;; real dt from fx-ticks!, clamped: fixed 0.016 per callback ran the
+  ;; timeline at double speed on 120Hz displays
+  (define dt (if (fl<? dt0 0.05) dt0 0.05))
+  (set! t (fl+ t dt))
   (when (fl<? 3768.0 t) (set! t (fl- t 3768.0)))  ; 314 cycles, f32-safe
   (cmd-begin!)
   (fx-use! update-p front)
   (fx-uniform! update-p 'u_mouse mx my)
-  (fx-uniform! update-p 'u_dt 0.016)
+  (fx-uniform! update-p 'u_dt dt)
   (fx-uniform! update-p 'u_t t)
   (cmd-tf-buffer! back)
   (cmd-tf-begin!)
@@ -319,4 +322,4 @@
 ;; over the stage.  A private counter kept this loop alive after a demo
 ;; switch: a zombie doing transform-feedback into a detached canvas
 ;; every frame, pinning the old instance and its GL context forever.
-(fx-ticks! (lambda _ (frame!)))
+(fx-ticks! (lambda (el dt) (frame! dt)))
