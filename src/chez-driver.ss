@@ -170,11 +170,22 @@
 ;; spliced into the host, not into the independently compiled embed
 ;; unit; nested embeds get their own scope too), mirroring
 ;; rt/compile.mjs's per-block text resolution
-(define (embed-splice-imports form dirs)
+;; mount-shaped DATA gets no import scope: quote suppresses it
+;; outright, quasiquote by nesting depth with unquote resuming --
+;; the same rule the compiler's embed-expand and rt/compile.mjs's
+;; embedBlocks apply, and all three must agree
+(define (embed-splice-imports form dirs) (embed-splice-imports* form dirs 0))
+(define (embed-splice-imports* form dirs qq)
   (cond
    ((not (pair? form)) form)
    ((eq? (car form) 'quote) form)
-   ((memq (car form) '(conjure define-js define-wasm define-wasm-js))
+   ((and (eq? (car form) 'quasiquote) (pair? (cdr form)) (null? (cddr form)))
+    (list (car form) (embed-splice-imports* (cadr form) dirs (+ qq 1))))
+   ((and (memq (car form) '(unquote unquote-splicing))
+         (pair? (cdr form)) (null? (cddr form)) (> qq 0))
+    (list (car form) (embed-splice-imports* (cadr form) dirs (- qq 1))))
+   ((and (= qq 0)
+         (memq (car form) '(conjure define-js define-wasm define-wasm-js)))
     (let* ((saved visited)
            (body (begin
                    (set! visited '())
@@ -188,12 +199,12 @@
                                      acc)))
                       (else
                        (loop (cdr bs)
-                             (cons (embed-splice-imports (car bs) dirs)
+                             (cons (embed-splice-imports* (car bs) dirs 0)
                                    acc))))))))
       (set! visited saved)
       (cons (car form) (cons (cadr form) body))))
-   (else (cons (embed-splice-imports (car form) dirs)
-               (embed-splice-imports (cdr form) dirs)))))
+   (else (cons (embed-splice-imports* (car form) dirs qq)
+               (embed-splice-imports* (cdr form) dirs qq)))))
 
 ;; the runtime glue a conjure section inlines: jsbridge + web.mjs
 ;; with the module plumbing stripped, non-ASCII normalized -- must

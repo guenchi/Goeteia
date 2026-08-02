@@ -94,6 +94,18 @@
   (and (equal? (caddr quoted-short) '(import (mountlib)))
        (equal? (caddr quoted-long) '(import (web js)))))
 
+;; Quasiquote suspends mounting by nesting depth; unquote resumes it.
+;; All three resolvers (the compiler's embed-expand, the Chez driver's
+;; form walk, the mjs driver's text scan) must agree, or one host
+;; compiles a mount point where the other keeps a list.
+(define qq-data `(conjure js (import (web js)) (display 1)))
+(define qq-nested `(a `(define-wasm-js inner (import (web js)) (display 1)) b))
+(define qq-mount `(div ,(conjure js (display 1)) (p "x")))
+(define quasi-ok
+  (and (equal? (caddr qq-data) '(import (web js)))   ; data, not a section
+       (pair? (cadr qq-nested))                      ; still a list at depth 2
+       (string? (cadr qq-mount))))                   ; unquoted: a real section
+
 ;; a second auto section gets the next id
 (define auto2 (conjure auto (display 2)))
 (define id2-ok
@@ -138,4 +150,4 @@
              (= b0 34))))))           ; module text opens "use strict"
 
 (and js-ok wasm-ok wasm-url-ok auto-ok id2-ok macro-sections-ok wrote-ok
-     wrote-js-ok lib-ok quoted-ok)
+     wrote-js-ok lib-ok quoted-ok quasi-ok)

@@ -3779,17 +3779,31 @@
     (define-wasm . wasm)
     (define-wasm-js . auto)))
 
-(define (embed-expand form)
+;; Mount-shaped DATA is data.  quote suppresses materialization
+;; outright; under quasiquote it is suspended by nesting depth and
+;; resumes inside unquote, so `(div ,(conjure ...)) still mounts
+;; while `(conjure ...) stays a list.
+(define (embed-expand form) (embed-expand* form 0))
+(define (embed-expand* form qq)
   (cond
    ((not (pair? form)) form)
    ((and (symbol? (car form)) (eq? (unmark (car form)) 'quote)) form)
+   ((and (symbol? (car form)) (eq? (unmark (car form)) 'quasiquote)
+         (pair? (cdr form)) (null? (cddr form)))
+    (list (car form) (embed-expand* (cadr form) (+ qq 1))))
    ((and (symbol? (car form))
+         (memq (unmark (car form)) '(unquote unquote-splicing))
+         (pair? (cdr form)) (null? (cddr form)) (> qq 0))
+    (list (car form) (embed-expand* (cadr form) (- qq 1))))
+   ((and (= qq 0)
+         (symbol? (car form))
          (assq (unmark (car form)) $conjure-forms))
     (let ((e (assq (unmark (car form)) $conjure-forms)))
       (if (cdr e)
           (conjure-define form (cdr e))
           (embed-compile form))))
-   (else (cons (embed-expand (car form)) (embed-expand (cdr form))))))
+   (else (cons (embed-expand* (car form) qq)
+               (embed-expand* (cdr form) qq)))))
 
 (define (compile-program forms locs)
   ;; split at the drivers' (%prelude-end) marker, materialize the
