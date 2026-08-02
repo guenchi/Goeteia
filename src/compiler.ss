@@ -3198,7 +3198,9 @@
    ((pair? e)
     (case (resolve-tag (car e))
       ((quote lambda) #t)
-      ((cons vector list make-vector string %record)
+      ;; Variable-sized allocation can reject an invalid length, so
+      ;; make-vector must remain observable even when its result is dead.
+      ((cons vector list string %record)
        (all-true? pure-init? (cdr e)))
       ((if begin) (all-true? pure-init? (cdr e)))
       ((let)

@@ -37,6 +37,9 @@ try {
     await bothReject(
         'bytevector-set',
         '(let ((v (make-bytevector 1))) (bytevector-u8-set! v 1 2))');
+    await bothReject(
+        'unused-negative-vector',
+        '(define unused (make-vector -1))\n42');
 } finally {
     fs.rmSync(dir, { recursive: true, force: true });
 }
