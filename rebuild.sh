@@ -8,7 +8,7 @@
 set -e
 cd "$(dirname "$0")"
 
-cat src/compiler.ss src/wasm-driver.ss > /tmp/goeteia-self-src.ss
+cat src/compiler.ss src/js-backend.ss src/wasm-driver.ss > /tmp/goeteia-self-src.ss
 
 echo "candidate: current snapshot compiling the source..."
 ${NODE-node} rt/compile.mjs goeteia.wasm /tmp/goeteia-self-src.ss /tmp/goeteia-candidate.wasm

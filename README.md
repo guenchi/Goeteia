@@ -149,7 +149,24 @@ The UI, text and network stack over the JS bridge, in `lib/web/`:
   — `js` runs the plain-JS module inline, `wasm` loads the module (a
   `data:` URI unless `(wasm-url "...")` points at a file), `auto`
   ships both and picks by engine support.  The output depends on
-  nothing beside itself.  See `examples/counter-page.ss`.
+  nothing beside itself.  `define-js` / `define-wasm` /
+  `define-wasm-js` wrap the modes into named definitions and dispatch
+  on the head's shape the way `define` does: a bare name keeps the
+  module inline, `(name "app.wasm")` references the URL and writes the
+  file when the generator runs.  See `examples/counter-page.ss`.
+
+`examples/counter.html` is a page scripted entirely in Goeteia;
+`examples/counter-embedded.html` is that page as ONE self-contained
+file, generated from `examples/counter-page.ss` by
+`examples/mk-counter-embedded.sh`; `examples/react-embed.html` is a
+React app with Goeteia widgets inside.
+
+## Graphics & Games
+
+The rendering and game stack — raw WebGL/WebGPU through a command
+buffer, shaders as s-expressions, and everything over them — in
+`lib/gfx/`:
+
 - `(gfx gl)` — raw WebGL through a command buffer: Scheme encodes a
   frame of GL commands as words in the shared linear memory and one
   bridge call replays them; vertex data uploads zero-copy from the
@@ -811,8 +828,15 @@ reach: boxed flonums, scalar SIMD.
 `WebAssembly.Suspending`/`promising` from the program's view of the
 host -- `(fetch-direct?)`-style probes answer no even on a
 JSPI-enabled browser, and callers take their callback route instead
-of a route that would silently not suspend.  `docs/js-backend.md` has
-the design in full.
+of a route that would silently not suspend.
+
+Both artifacts reach a page through `conjure`, the mount point: the
+form compiles its body as an independent program and becomes one HTML
+string constant in the host, so a site generator emits the wasm
+module, the JS fallback and the loader glue as part of the page it
+prints -- `examples/counter-page.ss` generates
+`examples/counter-embedded.html`, which loads nothing.
+`docs/js-backend.md` has the design in full.
 
 ### Libraries
 

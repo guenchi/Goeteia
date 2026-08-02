@@ -108,9 +108,13 @@ function lineAt(text, idx) {
     return n;
 }
 
-// outermost (conjure ...) blocks, lexically (same string /
-// comment / char-literal awareness as topLevelSpans); each is an
-// independent import scope resolved separately below
+// outermost mount points, lexically (same string / comment /
+// char-literal awareness as topLevelSpans); each is an independent
+// import scope resolved separately below.  The define- family are
+// mount points too -- keep this list in step with the chez driver's,
+// or an import inside a define-wasm body resolves on one host only
+const $mountHeads = /^\(\s*(?:conjure|define-js|define-wasm|define-wasm-js)[\s(]/;
+
 function embedBlocks(text) {
     const blocks = [];
     let depth = 0, embedStart = -1, embedDepth = 0;
@@ -120,7 +124,7 @@ function embedBlocks(text) {
         if (c === '"') { i++; while (i < text.length && text[i] !== '"') { if (text[i] === '\\') i++; i++; } continue; }
         if (c === '#' && text[i + 1] === '\\') { i += 2; continue; }
         if (c === '(') {
-            if (embedStart < 0 && /^\(\s*conjure[\s(]/.test(text.slice(i, i + 20))) {
+            if (embedStart < 0 && $mountHeads.test(text.slice(i, i + 24))) {
                 embedStart = i; embedDepth = depth;
             }
             depth++;
@@ -193,7 +197,11 @@ function loadLibrary(spec, dirs, visited) {
     for (const d of dirs) {
         const p = path.join(d, ...spec) + '.ss';
         if (fs.existsSync(p)) {
-            const text = fs.readFileSync(p, 'latin1');
+            // a library body may itself hold mount points, whose
+            // imports resolve in their own scope (the chez driver
+            // walks library forms the same way)
+            const text = resolveEmbedImports(fs.readFileSync(p, 'latin1'),
+                                             dirs, p);
             const deps = libraryImports(text)
                 .map(s => loadLibrary(specTarget(s), dirs, visited)
                           + '\n' + specAliases(s))

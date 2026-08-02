@@ -131,7 +131,11 @@ the prelude, compiled through the same pipeline and shared verbatim.
   the whole form becomes one HTML string constant.  `mode` is `js`
   (the module inline, run directly), `wasm` (loaded from a `data:`
   URI, or from `(wasm-url "...")`), or `auto` (both artifacts plus
-  the loader pick); `(rt "...")` locates rt/web.mjs.  The drivers
+  the loader pick).  wasm and auto sections inline the runtime glue
+  (jsbridge + web.mjs, module plumbing stripped) that the drivers
+  supply through a `(%conjure-rt ...)` stream directive, so the page
+  depends on nothing beside itself and each auto section's fallback
+  tag gets a unique `goeteia-conjure-N` id.  The drivers
   mark the prelude boundary with `(%prelude-end)` and resolve each
   embed block's imports separately; sub-compilations run before the
   host's own state is built (every backend entry resets state, so

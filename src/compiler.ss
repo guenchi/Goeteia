@@ -3499,10 +3499,10 @@
 ;; the body compiles as an INDEPENDENT program -- its own prelude,
 ;; its own libraries, spliced by the drivers in a fresh import scope
 ;; -- and the whole form becomes one HTML string constant in the
-;; host.  mode is js | wasm | auto, or (mode (rt "url")
-;; (wasm-url "url")): js runs the --js module inline, wasm loads the
-;; module (a data: URI unless wasm-url points at a file), auto ships
-;; both and lets rt/web.mjs's loadGoeteiaAuto pick by engine support.
+;; host.  mode is js | wasm | auto, or (mode (wasm-url "url")): js
+;; runs the --js module inline, wasm loads the module (a data: URI
+;; unless wasm-url points at a file), auto ships both and lets the
+;; inlined loadGoeteiaAuto pick by engine support.
 ;;
 ;; The drivers mark the prelude/user boundary with (%prelude-end);
 ;; embed sub-compilations reuse the prelude forms ahead of the body.
@@ -3528,7 +3528,7 @@
 (define $embed-b64
   "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/")
 
-;; byte list -> base64 string (kept in step with (web embed))
+;; byte list -> base64 string (the data: URI a wasm section carries)
 (define (embed-base64 bytes)
   (let* ((bv (let ((n (length bytes)))
                (let ((v (make-bytevector n 0)))
