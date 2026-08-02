@@ -137,4 +137,24 @@ if ${NODE-node} test/jsbridge-instance.mjs >/dev/null 2>&1; then
 else
     echo "FAIL test/jsbridge-instance.mjs"; fail=1
 fi
+if ${NODE-node} test/fx-loop-generation.mjs >/dev/null 2>&1; then
+    echo "ok   test/fx-loop-generation.mjs"
+else
+    echo "FAIL test/fx-loop-generation.mjs"; fail=1
+fi
+if ${NODE-node} test/web-compile-diagnostics.mjs >/dev/null 2>&1; then
+    echo "ok   test/web-compile-diagnostics.mjs"
+else
+    echo "FAIL test/web-compile-diagnostics.mjs"; fail=1
+fi
+if ${NODE-node} test/glyphs-listener-cleanup.mjs >/dev/null 2>&1; then
+    echo "ok   test/glyphs-listener-cleanup.mjs"
+else
+    echo "FAIL test/glyphs-listener-cleanup.mjs"; fail=1
+fi
+if ${NODE-node} test/glyphs-loop-generation.mjs >/dev/null 2>&1; then
+    echo "ok   test/glyphs-loop-generation.mjs"
+else
+    echo "FAIL test/glyphs-loop-generation.mjs"; fail=1
+fi
 exit $fail

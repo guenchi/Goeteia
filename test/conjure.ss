@@ -161,7 +161,8 @@
 ;; both artifacts external: the fallback module is imported by the
 ;; loader (which calls m.main() itself), so the written .js keeps its
 ;; export and gains no self-running call
-(define-wasm-js (mboth "/tmp/goeteia-conjure-b.wasm" "/tmp/goeteia-conjure-b.js")
+(define-wasm-js (mboth "/tmp/goeteia-conjure-b#%.wasm"
+                       "/tmp/goeteia-conjure-b#%.js")
   (display 7))
 ;; the URL form's filesystem path is percent-encoded before it lands
 ;; in an HTML attribute, so URL delimiters still name literal files
@@ -175,7 +176,7 @@
        (has? mjq
              "src=\"/tmp/goeteia-conjure-%22%26%23%3f%25.js\"")
        (has? mboth
-             "loadGoeteiaAuto('/tmp/goeteia-conjure-b.wasm', '/tmp/goeteia-conjure-b.js')")
+             "loadGoeteiaAuto('/tmp/goeteia-conjure-b%23%25.wasm', '/tmp/goeteia-conjure-b%23%25.js')")
        ;; no inline fallback TAG in this shape (the glue's default
        ;; selector string still mentions the type, so match the tag)
        (not (has? mboth "<script type=\"goeteia/js\""))
@@ -196,16 +197,18 @@
 ;; the two-file form wrote both artifacts; the fallback keeps its
 ;; export (the loader imports it) and must NOT self-run
 (define wrote-both-ok
+  ;; #41's artifact checks over #45's URL-delimiter path: the file on
+  ;; disk carries the literal name, the attribute the encoded one
   (let ((wasm-ok
          (let ()
            (string-for-each (lambda (c) (%path-byte (char->integer c)))
-                            "/tmp/goeteia-conjure-b.wasm")
+                            "/tmp/goeteia-conjure-b#%.wasm")
            (let ((fd (%open-read)))
              (and (>= fd 0)
                   (let ((b0 (%fread fd)))
                     (%fclose fd)
                     (= b0 0))))))
-        (js (file-text "/tmp/goeteia-conjure-b.js")))
+        (js (file-text "/tmp/goeteia-conjure-b#%.js")))
     (and wasm-ok js
          (has? js "export function main")
          (not (has? js "\nmain();\n")))))

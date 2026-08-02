@@ -3719,8 +3719,9 @@
 ;; caches independently of the page
 (define (embed-section-auto-js-url wurl jurl)
   (string-append "<script type=\"module\">\n" (conjure-glue!)
-                 "\nloadGoeteiaAuto(" (embed-js-string-lit wurl)
-                 ", " (embed-js-string-lit jurl) ");\n"
+                 "\nloadGoeteiaAuto("
+                 (embed-js-string-lit (embed-url-path wurl))
+                 ", " (embed-js-string-lit (embed-url-path jurl)) ");\n"
                  "</script>\n"))
 
 (define (embed-section-auto jstext bytes wurl)
