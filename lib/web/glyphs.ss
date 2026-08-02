@@ -342,14 +342,16 @@
   ;; another one forever
   (define (glyphs-dodge! groups)
     (glyphs-track! groups)
-    (let ((g (js-get (js-global) "__goeteia_glyphs_gen")))
-      (js-set! (js-global) "__goeteia_glyphs_gen"
+    ;; __goeteia_* properties belong to one compiled module instance;
+    ;; this counter must cross instances so a new Run can retire the old.
+    (let ((g (js-get (js-global) "goeteiaGlyphsGeneration")))
+      (js-set! (js-global) "goeteiaGlyphsGeneration"
                (+ 1 (if (js-truthy? g) (js->number g) 0))))
-    (let ((gen (js->number (js-get (js-global) "__goeteia_glyphs_gen"))))
+    (let ((gen (js->number (js-get (js-global) "goeteiaGlyphsGeneration"))))
       (letrec ((tick (lambda (t)
                        (when (= gen (js->number
                                      (js-get (js-global)
-                                             "__goeteia_glyphs_gen")))
+                                             "goeteiaGlyphsGeneration")))
                          (for-each glyphs-step! groups)
                          (js-method (js-global) "requestAnimationFrame" tick))
                        (js-undefined))))
