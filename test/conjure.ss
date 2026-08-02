@@ -81,6 +81,19 @@
   (and (has? lib-section "<script type=\"goeteia/js\"")
        (has? lib-section "loadGoeteiaAuto('data:application/wasm;base64,")))
 
+;; Mount-looking quoted data is data, even when its body contains an
+;; import.  The text-level driver must agree with the Chez reader and
+;; leave both quote spellings untouched.
+(define quoted-short
+  '(conjure js (import (mountlib)) (display lib-section)))
+(define quoted-long
+  (quote (define-wasm-js quoted-section
+           (import (web js))
+           (display 1))))
+(define quoted-ok
+  (and (equal? (caddr quoted-short) '(import (mountlib)))
+       (equal? (caddr quoted-long) '(import (web js)))))
+
 ;; a second auto section gets the next id
 (define auto2 (conjure auto (display 2)))
 (define id2-ok
@@ -125,4 +138,4 @@
              (= b0 34))))))           ; module text opens "use strict"
 
 (and js-ok wasm-ok wasm-url-ok auto-ok id2-ok macro-sections-ok wrote-ok
-     wrote-js-ok lib-ok)
+     wrote-js-ok lib-ok quoted-ok)

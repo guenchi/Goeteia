@@ -115,6 +115,49 @@ function lineAt(text, idx) {
 // or an import inside a define-wasm body resolves on one host only
 const $mountHeads = /^\(\s*(?:conjure|define-js|define-wasm|define-wasm-js)[\s(]/;
 
+// Skip a complete quoted datum without disturbing the surrounding
+// parenthesis depth: mount-shaped data must never become an import scope.
+function listDatumEnd(text, open) {
+    let depth = 0;
+    for (let i = open; i < text.length; i++) {
+        const c = text[i];
+        if (c === ';') { while (i < text.length && text[i] !== '\n') i++; continue; }
+        if (c === '"') { i++; while (i < text.length && text[i] !== '"') { if (text[i] === '\\') i++; i++; } continue; }
+        if (c === '#' && text[i + 1] === '\\') { i += 2; continue; }
+        if (c === '(') depth++;
+        else if (c === ')' && --depth === 0) return i + 1;
+    }
+    return text.length;
+}
+
+function datumEnd(text, at) {
+    let i = at;
+    for (;;) {
+        while (i < text.length && /[\s]/.test(text[i])) i++;
+        if (text[i] !== ';') break;
+        while (i < text.length && text[i] !== '\n') i++;
+    }
+    if (i >= text.length) return i;
+    if (text[i] === '\'' || text[i] === '`') return datumEnd(text, i + 1);
+    if (text[i] === ',') return datumEnd(text, i + (text[i + 1] === '@' ? 2 : 1));
+    if (text[i] === '"') {
+        for (i++; i < text.length && text[i] !== '"'; i++)
+            if (text[i] === '\\') i++;
+        return Math.min(i + 1, text.length);
+    }
+    if (text[i] === '#' && text[i + 1] === '\\') {
+        i += 2;
+        if (i < text.length && /[\s()]/.test(text[i])) return i + 1;
+        while (i < text.length && !/[\s();]/.test(text[i])) i++;
+        return i;
+    }
+    if (text[i] === '(') return listDatumEnd(text, i);
+    if (text.startsWith('#(', i)) return listDatumEnd(text, i + 1);
+    if (text.startsWith('#vu8(', i)) return listDatumEnd(text, i + 4);
+    while (i < text.length && !/[\s();]/.test(text[i])) i++;
+    return i;
+}
+
 function embedBlocks(text) {
     const blocks = [];
     let depth = 0, embedStart = -1, embedDepth = 0;
@@ -123,7 +166,12 @@ function embedBlocks(text) {
         if (c === ';') { while (i < text.length && text[i] !== '\n') i++; continue; }
         if (c === '"') { i++; while (i < text.length && text[i] !== '"') { if (text[i] === '\\') i++; i++; } continue; }
         if (c === '#' && text[i + 1] === '\\') { i += 2; continue; }
+        if (c === '\'') { i = datumEnd(text, i + 1) - 1; continue; }
         if (c === '(') {
+            if (/^\(\s*quote[\s(]/.test(text.slice(i, i + 16))) {
+                i = datumEnd(text, i) - 1;
+                continue;
+            }
             if (embedStart < 0 && $mountHeads.test(text.slice(i, i + 24))) {
                 embedStart = i; embedDepth = depth;
             }
