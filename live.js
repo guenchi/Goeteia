@@ -189,6 +189,15 @@ export async function compile(userSource) {
 // because Workers have no DOM. `liveEl` is cleared first (unmount).
 export async function render(userSource, liveEl) {
     const { wasm, ms } = await compile(userSource);
+    // Free the previous render's GPU memory NOW, not at some future GC:
+    // each render mounts a fresh canvas, and a heavy demo's context (HDR
+    // targets, big buffers) otherwise lingers until the old instance is
+    // collected -- a few blackhole round-trips exhaust the GPU and drag
+    // the whole machine.  Losing the context releases it immediately.
+    for (const c of liveEl.querySelectorAll('canvas')) {
+        const gl = c.getContext('webgl2') || c.getContext('webgl');
+        gl?.getExtension('WEBGL_lose_context')?.loseContext();
+    }
     liveEl.textContent = '';                    // unmount the previous render
     let ex;
     const io = { write_byte: () => {}, read_byte: () => -1, ...stubs };

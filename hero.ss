@@ -314,13 +314,9 @@
   (glyphs-step! sub-glyphs)
   (let ((tmp front)) (set! front back) (set! back tmp)))
 
-;; re-running this source bumps the generation; the old loop lets go
-(let ((v (js-get (js-global) "__hero_gen")))
-  (js-set! (js-global) "__hero_gen"
-           (+ 1 (if (js-truthy? v) (js->number v) 0))))
-(define gen (js->number (js-get (js-global) "__hero_gen")))
-(letrec ((tick (lambda _
-                 (when (= gen (js->number (js-get (js-global) "__hero_gen")))
-                   (frame!)
-                   (js-method (js-global) "requestAnimationFrame" tick)))))
-  (js-method (js-global) "requestAnimationFrame" tick))
+;; Ride the SHARED fx generation, not a private one: fx-ticks! retires
+;; this loop on the next fx-init! -- ours on a re-run, or a demo taking
+;; over the stage.  A private counter kept this loop alive after a demo
+;; switch: a zombie doing transform-feedback into a detached canvas
+;; every frame, pinning the old instance and its GL context forever.
+(fx-ticks! (lambda _ (frame!)))
