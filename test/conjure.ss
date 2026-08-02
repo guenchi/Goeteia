@@ -103,8 +103,9 @@
 (define qq-mount `(div ,(conjure js (display 1)) (p "x")))
 (define quasi-ok
   (and (equal? (caddr qq-data) '(import (web js)))   ; data, not a section
+       (equal? (car qq-data) 'conjure)               ; head survives verbatim
        (pair? (cadr qq-nested))                      ; still a list at depth 2
-       (string? (cadr qq-mount))))                   ; unquoted: a real section
+       (has? (cadr qq-mount) "main();")))            ; unquoted: a real section
 
 ;; a second auto section gets the next id
 (define auto2 (conjure auto (display 2)))
