@@ -314,11 +314,21 @@
                                       (number->string ndy) "px)"))))
           (each (+ i 1))))))
 
-  ;; the standalone driver: listeners plus an own rAF loop
+  ;; the standalone driver: listeners plus an own rAF loop.  The loop
+  ;; rides a generation counter so re-running the program (a live page
+  ;; recompiling on Run) retires the previous loop instead of stacking
+  ;; another one forever
   (define (glyphs-dodge! groups)
     (glyphs-track! groups)
-    (letrec ((tick (lambda (t)
-                     (for-each glyphs-step! groups)
-                     (js-method (js-global) "requestAnimationFrame" tick)
-                     (js-undefined))))
-      (js-method (js-global) "requestAnimationFrame" tick))))
+    (let ((g (js-get (js-global) "__goeteia_glyphs_gen")))
+      (js-set! (js-global) "__goeteia_glyphs_gen"
+               (+ 1 (if (js-truthy? g) (js->number g) 0))))
+    (let ((gen (js->number (js-get (js-global) "__goeteia_glyphs_gen"))))
+      (letrec ((tick (lambda (t)
+                       (when (= gen (js->number
+                                     (js-get (js-global)
+                                             "__goeteia_glyphs_gen")))
+                         (for-each glyphs-step! groups)
+                         (js-method (js-global) "requestAnimationFrame" tick))
+                       (js-undefined))))
+        (js-method (js-global) "requestAnimationFrame" tick)))))
