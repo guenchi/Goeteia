@@ -121,7 +121,20 @@
   ;; The page's own Scheme source goes through the same (hl) that
   ;; paints the code samples, so there is nothing to fetch and nothing
   ;; to highlight at runtime.  Opening and closing are fragment links
-  ;; (:target), which is why no script is involved.
+  ;; (:target); the one script on the page is the Esc key below,
+  ;; itself Scheme in a define-js mount point.
+
+  ;; Esc closes the panel: undo the :target the badge link set, the
+  ;; same hash the backdrop and the x navigate to.
+  (define-js esc-close
+    (import (rnrs) (web js) (web dom))
+    (add-event-listener! (document) "keydown"
+      (lambda (e)
+        (when (string=? "Escape" (js->string (js-get e "key")))
+          (let ((loc (js-get (js-global) "location")))
+            (when (string=? "#src-overlay" (js->string (js-get loc "hash")))
+              (js-set! loc "hash" "#_"))))
+        (js-undefined))))
   (define (overlay source-file)
     `(div (@ (class "src-overlay") (id "src-overlay"))
        (a (@ (class "src-back") (href "#_") (tabindex "-1") (aria-hidden "true")))
@@ -207,4 +220,5 @@
                (br (@ (class "fbrk")))
                "Powered by " (a (@ (href "https://goeteia.dev")) "Goeteia")))
            ,(overlay source-file)
-           ,@scripts))))))
+           ,@scripts
+           ,(raw esc-close)))))))
