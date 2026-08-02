@@ -33,7 +33,17 @@ try {
     await bothReject('bytevector-length', '(bytevector-length #f)\n');
     await bothReject('bytevector-ref', '(bytevector-u8-ref #f 0)\n');
     await bothReject('bytevector-set', '(bytevector-u8-set! #f 0 1)\n');
-    await bothReject('bignum-limbs', '(%make-bignum 0 #f)\n');
+    // %make-bignum is wasm-only: the js target rides native BigInt
+    // and rejects the limb constructor at compile time
+    {
+        const sourceFile = path.join(dir, 'bignum-limbs.ss');
+        fs.writeFileSync(sourceFile, '(%make-bignum 0 #f)\n', 'utf8');
+        const wasm = await compileToBytes(sourceFile, { script: true });
+        await assert.rejects(() => runModule(wasm), undefined, 'bignum-limbs: wasm');
+        await assert.rejects(
+            () => compileToBytes(sourceFile, { script: true, target: 'js' }),
+            undefined, 'bignum-limbs: js compile');
+    }
 } finally {
     fs.rmSync(dir, { recursive: true, force: true });
 }

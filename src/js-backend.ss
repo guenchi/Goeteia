@@ -273,18 +273,8 @@
   (cond
    ((and (integer? d) (exact? d) (fits-fixnum? d)) (jtag-int d))
    ((and (integer? d) (exact? d))
-    ;; bignum literal: same 14-bit limb split as the wasm backend
-    (let* ((neg (< d 0))
-           (mag (if neg (- 0 d) d))
-           (limbs (let split ((m mag) (acc '()))
-                    (if (and (fits-fixnum? m) (< m 16384))
-                        (reverse (cons m acc))
-                        (split (quotient m 16384)
-                               (cons (remainder m 16384) acc))))))
-      (jkernel! 'num)
-      (list "(new Bignum(" (if neg "1" "0") ",["
-            (jsep "," (map-in-order jtag-int limbs))
-            "]))")))
+    ;; bignum literal: the host's own arbitrary-precision integers
+    (list "(" (number->string d) "n)"))
    ((flonum? d)
     (jkernel! 'fl)
     (list "(new Fl(FB(\"" (jflonum-hex d) "\")))"))
@@ -626,9 +616,8 @@
 ;; DCE-pruned primitives never register anything
 (define $jp-kernel-groups
   '((fl fl+ fl- fl* fl/ fl=? fl<? flsqrt flfloor fltruncate
-        fixnum->flonum %fl->fx flonum? %js-to-number)
-    (num %bignum? %make-bignum %bignum-sign %bignum-limbs
-         %ratio? %make-ratio %ratio-num %ratio-den
+        fixnum->flonum %fl->fx flonum? %js-to-number %big->fl)
+    (num %ratio? %make-ratio %ratio-num %ratio-den
          %complex? %make-complex %cx-re %cx-im)
     (sym symbol? symbol->string %make-symbol %interned-symbols)
     (bv bytevector? %make-bytevector bytevector-length
@@ -705,10 +694,20 @@
     ((fixnum->flonum) (list "(new Fl(IU(" (a 0) ")))"))
     ((%fl->fx) (list "F2I(" (a 0) ".v)"))
     ;; the numeric tower's building blocks
-    ((%bignum?) (list "((" (a 0) " instanceof Bignum)?TRUE:FALSE)"))
-    ((%make-bignum) (list "(new Bignum(IU(" (a 0) "),VEC(" (a 1) ")))"))
-    ((%bignum-sign) (list "(W(" (a 0) ".sg))"))
-    ((%bignum-limbs) (list "(" (a 0) ".l)"))
+    ((%bignum?) (list "((typeof " (a 0) "==='bigint')?TRUE:FALSE)"))
+    ((%big-add) (list "(" (a 0) "+" (a 1) ")"))
+    ((%big-neg) (list "(-" (a 0) ")"))
+    ((%big-mul) (list "(" (a 0) "*" (a 1) ")"))
+    ((%big-quot) (list "(" (a 0) "/" (a 1) ")"))
+    ((%big-rem) (list "(" (a 0) "%" (a 1) ")"))
+    ((%big-lt) (list "((" (a 0) "<" (a 1) ")?TRUE:FALSE)"))
+    ((%big-eq) (list "((" (a 0) "===" (a 1) ")?TRUE:FALSE)"))
+    ;; back to a tagged fixnum when the value fits i31
+    ((%big-norm)
+     (list "(" (jhelper! "BNRM") "(" (a 0) "))"))
+    ((%fx->big) (list "(BigInt(IU(" (a 0) ")))"))
+    ((%big->fl) (list "(new Fl(Number(" (a 0) ")))"))
+    ((%big->str) (list "(S(String(" (a 0) ")))"))
     ((%ratio?) (list "((" (a 0) " instanceof Ratio)?TRUE:FALSE)"))
     ((%make-ratio) (list "(new Ratio(" (a 0) "," (a 1) "))"))
     ((%ratio-num) (list "(" (a 0) ".n)"))
@@ -918,7 +917,6 @@
     "const BVU=(x)=>{if(!(x instanceof BV))"
     "throw new TypeError('expected bytevector');return x.u;};")
     (num (core)
-    "class Bignum{constructor(sg,l){this.sg=sg;this.l=l;}}"
     "class Ratio{constructor(n,dd){this.n=n;this.dd=dd;}}"
     "class Cx{constructor(re,im){this.re=re;this.im=im;}}")
     (rec (core)
@@ -1030,6 +1028,9 @@
 ;; by their compiled names
 (define (jglue name)
   (cond
+   ((string=? name "BNRM")
+    (list "const BNRM=(b)=>"
+          "(b>=-1073741824n&&b<=1073741823n)?(Number(b)<<1):b;"))
    ((string=? name "JADD")
     (list "const JADD=(a,b)=>{if(typeof a==='number'&&typeof b==='number')"
           "{const s=a+b;if(((s<<1)>>1)===s)return s;}return TR("

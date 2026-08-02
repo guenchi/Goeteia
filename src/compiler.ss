@@ -324,6 +324,17 @@
         ((not) `(if ,(xpand (cadr e)) #f #t))
         ((when) (xpand `(if ,(cadr e) (begin . ,(cddr e)) (begin))))
         ((unless) (xpand `(if ,(cadr e) (begin) (begin . ,(cddr e)))))
+        ((%target-case)
+         ;; (%target-case (js form...) (wasm form...)): the branch
+         ;; matching the compiling backend splices as a begin, the
+         ;; others never expand -- so a branch may use primitives the
+         ;; other backend does not know
+         (let pick ((cs (cdr e)))
+           (cond
+            ((null? cs) (xpand '(begin)))
+            ((eq? (resolve-tag (car (car cs))) *target*)
+             (xpand `(begin . ,(cdr (car cs)))))
+            (else (pick (cdr cs))))))
         ((cond) (xpand-cond (cdr e)))
         ((let*)
          (let ((bs (cadr e)))
@@ -1300,6 +1311,9 @@
     (%mem-size . 0) (%mem-grow . 1)
     (%f32x4-add! . 3) (%f32x4-sub! . 3) (%f32x4-mul! . 3)
     (%f32x4-scale! . 3) (%f32x4-axpy! . 4) (%f32x4-dot . 2)
+    (%big-add . 2) (%big-neg . 1) (%big-mul . 2)
+    (%big-quot . 2) (%big-rem . 2) (%big-lt . 2) (%big-eq . 2)
+    (%big-norm . 1) (%fx->big . 1) (%big->fl . 1) (%big->str . 1)
     (%js-await . 1)))
 
 (define primitives
@@ -1308,6 +1322,8 @@
     flonum? fl+ fl- fl* fl/ fl=? fl<? flsqrt flfloor fltruncate
     fixnum->flonum %fl->fx
     %bignum? %make-bignum %bignum-sign %bignum-limbs
+    %big-add %big-neg %big-mul %big-quot %big-rem
+    %big-lt %big-eq %big-norm %fx->big %big->fl %big->str
     %ratio? %make-ratio %ratio-num %ratio-den
     %complex? %make-complex %cx-re %cx-im
     %path-byte %open-read %open-write %fread %fwrite %fclose
@@ -3691,10 +3707,16 @@
 (define (conjure-sub-compile body which)
   (let* ((sub-forms (append *embed-prelude* body))
          (sub-locs (append *embed-prelude-locs*
-                           (map (lambda (b) "embed") body))))
-    (if (eq? which 'js)
-        (embed-bytes->string (compile-program-js sub-forms sub-locs))
-        (compile-program-wasm sub-forms sub-locs))))
+                           (map (lambda (b) "embed") body)))
+         ;; the sub-program's target drives %target-case expansion,
+         ;; independent of what the host program compiles to
+         (saved *target*))
+    (set! *target* (if (eq? which 'js) 'js 'wasm))
+    (let ((r (if (eq? which 'js)
+                 (embed-bytes->string (compile-program-js sub-forms sub-locs))
+                 (compile-program-wasm sub-forms sub-locs))))
+      (set! *target* saved)
+      r)))
 
 (define (conjure-write-form path bytes)
   (list 'with-output-to-file path
