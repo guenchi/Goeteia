@@ -1175,7 +1175,7 @@
   (cond
    ((string=? name "BNRM")
     (list "const BNRM=(b)=>"
-          "(b>=-1073741824n&&b<=1073741823n)?(Number(b)<<1):b;"))
+          "(b>=-536870912n&&b<=536870911n)?(Number(b)<<1):b;"))
    ((string=? name "JADD")
     (list "const JADD=(a,b)=>{if(typeof a==='number'&&typeof b==='number')"
           "{const s=a+b;if(((s<<1)>>1)===s)return s;}return "
