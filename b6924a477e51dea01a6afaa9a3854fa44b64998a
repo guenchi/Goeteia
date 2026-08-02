@@ -1,0 +1,4 @@
+This is the merge of PR #38 (pure-init? must keep make-vector observable).
+The placeholder subject was a mistake on my part; the reasoning for
+both #37 and #38 is written up in the following merge commit b9f267e,
+which resolved the two PRs' overlapping edit to the same predicate.
