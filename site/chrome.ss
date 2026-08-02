@@ -126,7 +126,7 @@
 
   ;; Esc closes the panel: undo the :target the badge link set, the
   ;; same hash the backdrop and the x navigate to.
-  (define-js esc-close
+  (define-js (esc-close "esc.js")
     (import (rnrs) (web js) (web dom))
     (add-event-listener! (document) "keydown"
       (lambda (e)
