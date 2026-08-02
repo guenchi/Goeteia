@@ -3668,9 +3668,29 @@
      s)
     (get-output-string out)))
 
-(define (embed-section-js-url url)
+;; The URL form writes this same string as a filesystem path.  Encode
+;; every byte outside an unreserved URL path (preserving '/') so a '#',
+;; '?', or '%' in the filename cannot become a fragment, query, or escape.
+(define (embed-url-path s)
+  (let ((out (open-output-string)))
+    (string-for-each
+     (lambda (c)
+       (let ((b (char->integer c)))
+         (if (or (and (<= 48 b) (<= b 57))
+                 (and (<= 65 b) (<= b 90))
+                 (and (<= 97 b) (<= b 122))
+                 (memv b '(45 46 47 95 126)))
+             (write-char c out)
+             (begin
+               (write-char #\% out)
+               (write-char (string-ref $embed-hex (quotient b 16)) out)
+               (write-char (string-ref $embed-hex (remainder b 16)) out)))))
+     s)
+    (get-output-string out)))
+
+(define (embed-section-js-url path)
   (string-append "<script type=\"module\" src=\""
-                 (embed-attr-lit url) "\"></script>\n"))
+                 (embed-attr-lit (embed-url-path path)) "\"></script>\n"))
 
 ;; wasm and auto sections carry the runtime glue inline: the page
 ;; depends on nothing beside itself.  Repeated glue across sections

@@ -131,16 +131,17 @@
 (define-wasm-js mai (import (web js)) (display (if (js-truthy? (js-eval "1")) 3 0)))
 (define-wasm (mw "/tmp/goeteia-conjure-test.wasm") (display 4))
 (define-js (mjf "/tmp/goeteia-conjure-test.js") (display 5))
-;; the URL form's path lands in an HTML attribute, so it takes the
-;; markup escapes rather than the JS-literal ones the loaders use
-(define-js (mjq "/tmp/goeteia-conjure-\"&.js") (display 6))
+;; the URL form's filesystem path is percent-encoded before it lands
+;; in an HTML attribute, so URL delimiters still name literal files
+(define-js (mjq "/tmp/goeteia-conjure-\"&#?%.js") (display 6))
 (define macro-sections-ok
   (and (has? mj "main();")
        (has? mwi "loadGoeteia('data:application/wasm;base64,")
        (has? mai "loadGoeteiaAuto('data:application/wasm;base64,")
        (has? mw "loadGoeteia('/tmp/goeteia-conjure-test.wasm')")
        (has? mjf "src=\"/tmp/goeteia-conjure-test.js\"")
-       (has? mjq "src=\"/tmp/goeteia-conjure-&quot;&amp;.js\"")))
+       (has? mjq
+             "src=\"/tmp/goeteia-conjure-%22%26%23%3f%25.js\"")))
 ;; define-wasm wrote its module next to the generator's output
 (define wrote-ok
   (let ()
