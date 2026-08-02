@@ -3650,8 +3650,27 @@
 ;; the URL form: the page references the module file, which the
 ;; generator writes next to its output -- pages sharing one module
 ;; let the browser cache it across them
+;; This URL lands in an HTML attribute, not a JS literal, so it needs
+;; the markup escapes rather than embed-js-string-lit's: a quote would
+;; close the attribute and a '<' could start a tag.
+(define (embed-attr-lit s)
+  (let ((out (open-output-string)))
+    (string-for-each
+     (lambda (c)
+       (let ((b (char->integer c)))
+         (cond
+          ((= b 38) (display "&amp;" out))
+          ((= b 34) (display "&quot;" out))
+          ((= b 39) (display "&#39;" out))
+          ((= b 60) (display "&lt;" out))
+          ((= b 62) (display "&gt;" out))
+          (else (write-char c out)))))
+     s)
+    (get-output-string out)))
+
 (define (embed-section-js-url url)
-  (string-append "<script type=\"module\" src=\"" url "\"></script>\n"))
+  (string-append "<script type=\"module\" src=\""
+                 (embed-attr-lit url) "\"></script>\n"))
 
 ;; wasm and auto sections carry the runtime glue inline: the page
 ;; depends on nothing beside itself.  Repeated glue across sections
