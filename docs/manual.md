@@ -2641,12 +2641,14 @@ The three modes also come as definition forms, which dispatch on the **shape of 
 
 ```
 syntax: (define-js name body ...)
+syntax: (define-js (name "app.js") body ...)
 syntax: (define-wasm name body ...)
 syntax: (define-wasm (name "app.wasm") body ...)
 syntax: (define-wasm-js name body ...)
 syntax: (define-wasm-js (name "app.wasm") body ...)
+syntax: (define-wasm-js (name "app.wasm" "app.js") body ...)
 ```
-Bind `name` to the section string for `body ...`. A bare `name` keeps the wasm module inside the page as a `data:` URI. The pair form `(name "app.wasm")` instead makes the section reference that URL **and writes the file**: the definition expands to the section plus a `with-output-to-file` over the module's bytes, so the generator drops `app.wasm` next to its page output when it runs. `define-js` has no pair form—there is no wasm to place. In `define-wasm-js` the name's order is the load preference: wasm first, the JS module as the fallback.
+Bind `name` to the section string for `body ...`. A bare `name` keeps the artifact inside the page—the wasm module as a `data:` URI, the JS module as an inline script. A file form makes the section reference the URL **and writes the file**: the definition expands to the section plus a `with-output-to-file`, so the generator drops the artifact next to its page output when it runs. Pages sharing one module this way let the browser cache it across them. In `define-wasm-js` the name's order is the load preference: wasm first, the JS module as the fallback. Its three-element form writes *both* artifacts as files and the section carries only the loader call; the fallback is then **lazy**—an engine with WasmGC never downloads it, and the file caches independently of the page. (That fallback module is imported by the loader, which calls its `main` itself; `define-js`'s own URL form writes a *self-running* module instead, since a `<script src>` has no caller.)
 
 ```scheme
 (define-wasm-js (app "app.wasm")
@@ -2657,6 +2659,28 @@ Bind `name` to the section string for `body ...`. A bare `name` keeps the wasm m
 ```
 
 Pasting compiler output into HTML is safe by construction: the JS emitter escapes `<` inside string literals, so no emitted literal can spell `</script` and close the tag early. The mount point checks its own output for a script terminator anyway and raises rather than emit a page that could break out of the tag.
+
+#### Fallback Is Two Questions
+
+The word *fallback* hides two different questions, and the mount points split them deliberately.
+
+**Engine fallback** asks: *what if the engine cannot run WasmGC?* The answer is mechanical—run the same program compiled to JavaScript—so `define-wasm-js` automates it entirely. The twin is generated from the same source on every build; nobody maintains it, so it cannot drift, and a differential test can hold the two backends to identical behaviour.
+
+**Capability degradation** asks: *what if the feature itself should not run here?* No WebGL2, a canvas with no layout box yet, a multi-megabyte module that should not even be fetched on this device. That answer is application logic—reveal the canvas *before* measuring it, probe, and only then load; undo the reveal if anything on that road fails—so no compiler can generate it. It is not macro clauses either (a `require`/`on-fail` vocabulary could never express the *ordering*). It is simply **another mount point**: a `define-js` section that orchestrates probes, loads and rollback in Scheme.
+
+The one piece of plumbing that makes the composition work: every wasm/auto section's inlined glue publishes its loader as `globalThis.__goeteia_load`. A gating section reaches it through the FFI—
+
+```scheme
+(define-js gate
+  (import (web js) (web dom))
+  (when (js-truthy? (js-method canvas "getContext" "webgl2"))
+    (js-method (js-call (js-get (js-global) "__goeteia_load")
+                        (js-undefined) "/heavy.wasm")
+               "catch"
+               (lambda (e) (roll-back!) (js-undefined)))))
+```
+
+—and document order guarantees the handle exists: module scripts run in sequence, and any wasm/auto mount earlier in the page has already set it synchronously. A page whose only mounts are `define-js` has no glue and no handle, but such a page has no wasm to load either.
 
 ### Example
 

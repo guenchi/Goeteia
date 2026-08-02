@@ -127,8 +127,26 @@ port lives inside a mount point in the generator:
 or, as a named definition, `(define-wasm-js port ...)` -- a bare name
 keeps the wasm in the page as a `data:` URI, `(define-wasm-js (port
 "port.wasm") ...)` references the URL and writes the file when the
-generator runs. Compiling the generator compiles the body as its own
-program and yields the section string.
+generator runs, and `(define-wasm-js (port "port.wasm" "port.js")
+...)` writes both artifacts as files so the JS twin loads lazily and
+caches apart from the page. Compiling the generator compiles the body
+as its own program and yields the section string.
+
+When you port a hand-written loader, first split what it does along
+the fallback line. "No WasmGC -> run the JS version" is ENGINE
+fallback: the mount point above already automates it, so a
+hand-maintained JS twin of the ported logic is not something to port
+-- it is something to DELETE, replaced by the generated one (repoint
+the old differential test at the generated module: same harness, and
+it now proves the two backends of one source agree). "No WebGL2 /
+no layout box / do not even fetch this here" is CAPABILITY
+degradation: that is application logic, and it becomes its own
+`define-js` mount -- probe, reveal, measure, load, roll back, in
+Scheme. The loader handle is published by any wasm/auto section's
+glue as `globalThis.__goeteia_load`; reach it through the FFI, and
+rely on document order (the gating section goes after a wasm/auto
+mount) for it to exist. What stays hand-written JS at the end of
+such a port: nothing.
 
 Keep the harness you wrote -- deliver it alongside the port as the
 evidence.

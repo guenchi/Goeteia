@@ -123,6 +123,19 @@
      (define (main) void
        (set! gl_FragColor (textureCube u_sky v_dir))))))"))
 
+(define fallback-code (highlight
+";; one source -> wasm AND its JS fallback, loader inlined
+(define-wasm-js (app \"app.wasm\")
+  (import (app))
+  (run-app))
+
+;; capability gate: another mount point, in Scheme too
+(define-js hero-gate
+  (import (web js) (web dom))
+  (when (webgl2? canvas)               ; probe, reveal, measure
+    (js-call (js-get (js-global) \"__goeteia_load\")
+             (js-undefined) \"/anim.wasm\")))"))
+
 (define rpc-code (highlight
 ";; (web rpc): the wire carries a datum
 (rpc \"/rpc\" '(add 1 2 1/2))     ; => (ok 7/2) -- exact
@@ -254,7 +267,28 @@
               "intact; " (code "(web ws)") " and " (code "(web sse)")
               " push datum streams; " (code "(web json)") " covers every "
               "other backend."))
-         rpc-code))
+         rpc-code)
+
+      ,(show "06" "Fallback" "The page carries its own retreat — generated, not maintained"
+         '("One mount point, two artifacts: " (code "define-wasm-js")
+           " compiles the same Scheme to WebAssembly " (em "and")
+           " to plain JavaScript, and inlines the loader that probes the "
+           "engine and picks. No WasmGC — an older Safari, a restricted "
+           "embedded engine — and the page runs the JS twin. Nobody "
+           "hand-maintains a second implementation, so nothing drifts.")
+         #t
+         '((h3 "Two questions, two answers")
+           (p (b "Engine fallback") " is automatic: the twin is compiled "
+              "from the same source, so a differential test can hold the "
+              "two backends to " (em "identical") " behaviour.")
+           (p (b "Capability degradation") " — no WebGL2, no layout box, "
+              "a 4.6 MB module that should not even be fetched — is "
+              "application logic, so it is written, not generated: "
+              "another mount point, " (code "define-js") ", probing and "
+              "revealing and rolling back in Scheme, reaching the "
+              "loader through the handle the glue publishes. "
+              "The page ends up with zero hand-written JavaScript."))
+         fallback-code))
 
    (section* "features" "What's inside"
       `(div (@ (class "grid"))
