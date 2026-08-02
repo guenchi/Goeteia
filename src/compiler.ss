@@ -3664,12 +3664,13 @@
           (embed-section-auto jstext bytes wurl)))
        (else (errorf 'goeteia "unknown embed mode ~s" mode))))))
 
-;; the define- family wraps conjure into named definitions:
-;;   (define-js name body...)
-;;   (define-wasm (name "app.wasm") body...)            ; + writes the file
-;;   (define-wasm-inline name body...)                  ; data: URI
-;;   (define-wasm-js (name "app.wasm") body...)          ; + fallback
-;;   (define-wasm-js-inline name body...)
+;; the define- family wraps conjure into named definitions, the
+;; head's shape picking the wasm's home (like define itself):
+;;   (define-js name body...)               ; the plain-JS module inline
+;;   (define-wasm name body...)             ; wasm as a data: URI
+;;   (define-wasm (name "app.wasm") body...)  ; wasm by URL + the file
+;;   (define-wasm-js name body...)            ; wasm + fallback, inline
+;;   (define-wasm-js (name "app.wasm") body...)  ; by URL + the file
 ;; A file-writing form expands to (begin (define name section)
 ;; (with-output-to-file path (lambda () (display bytes)))) -- the
 ;; generator writes the .wasm when it runs, next to its page output.
@@ -3687,15 +3688,15 @@
               (list 'display
                     (embed-string-form (embed-bytes->string bytes))))))
 
-(define (conjure-define form mode file?)
+(define (conjure-define form mode)
   (let* ((rest (embed-strip-locs (cdr form)))
          (head (car rest))
          (name (if (pair? head) (car head) head))
          (path (and (pair? head) (cadr head)))
+         (file? (and path #t))
          (body (map-in-order embed-expand (embed-strip-locs (cdr rest)))))
-    (when (and file? (not path))
-      (errorf 'goeteia "~s needs (name \"file.wasm\") to name its module"
-              (unmark (car form))))
+    (when (and file? (eq? mode 'js))
+      (errorf 'goeteia "define-js has no file form"))
     (case mode
       ((js)
        (list 'define name
@@ -3725,11 +3726,9 @@
 
 (define $conjure-forms
   '((conjure . #f)
-    (define-js . (js #f))
-    (define-wasm . (wasm #t))
-    (define-wasm-inline . (wasm #f))
-    (define-wasm-js . (auto #t))
-    (define-wasm-js-inline . (auto #f))))
+    (define-js . js)
+    (define-wasm . wasm)
+    (define-wasm-js . auto)))
 
 (define (embed-expand form)
   (cond
@@ -3739,7 +3738,7 @@
          (assq (unmark (car form)) $conjure-forms))
     (let ((e (assq (unmark (car form)) $conjure-forms)))
       (if (cdr e)
-          (conjure-define form (car (cdr e)) (cadr (cdr e)))
+          (conjure-define form (cdr e))
           (embed-compile form))))
    (else (cons (embed-expand (car form)) (embed-expand (cdr form))))))
 

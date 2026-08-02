@@ -141,14 +141,13 @@ the prelude, compiled through the same pipeline and shared verbatim.
   runtime (wasm's `array.new_fixed` caps at 10000 operands).  See
   `examples/counter-page.ss` -- a site generator whose interactive
   half compiles inside its own mount point.
-- The define- family wraps the modes into named definitions:
-  `(define-js name body...)`, `(define-wasm (name "app.wasm")
-  body...)` (writes the module file when the generator runs),
-  `(define-wasm-inline name body...)` (`data:` URI), and
-  `(define-wasm-js (name "app.wasm")...)` /
-  `(define-wasm-js-inline name ...)` shipping the wasm-plus-fallback
-  pair.  `-inline` always means the wasm rides in the section; the
-  `wasm-js` order is the load preference.
+- The define- family wraps the modes into named definitions, the
+  head's shape picking the wasm's home, like `define` itself:
+  `(define-js name body...)`; `(define-wasm name body...)` embeds
+  the module as a `data:` URI while `(define-wasm (name "app.wasm")
+  body...)` references the URL and writes the file when the
+  generator runs; `define-wasm-js` does the same and adds the JS
+  fallback -- the name's order is the load preference.
 
 ## Testing
 

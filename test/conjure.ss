@@ -60,8 +60,8 @@
 
 ;; the define- family wraps the modes into named definitions
 (define-js mj (display 1))
-(define-wasm-inline mwi (display 2))
-(define-wasm-js-inline mai (display 3))
+(define-wasm mwi (display 2))
+(define-wasm-js mai (display 3))
 (define-wasm (mw "/tmp/goeteia-conjure-test.wasm") (display 4))
 (define macro-sections-ok
   (and (has? mj "main();")
