@@ -110,11 +110,23 @@
 (define qq-data `(conjure js (import (web js)) (display 1)))
 (define qq-nested `(a `(define-wasm-js inner (import (web js)) (display 1)) b))
 (define qq-mount `(div ,(conjure js (display 1)) (p "x")))
+(define qq-atom `atom)
+(define qq-after-atom
+  (conjure js
+    (import (web js))
+    (display (if (js-truthy? (js-eval "1")) 1 0))))
+(define qq-value 1)
+(define qq-unquote-atom
+  `(,qq-value
+    (conjure js (import (missing atomic-library)) (display 1))))
 (define quasi-ok
   (and (equal? (caddr qq-data) '(import (web js)))   ; data, not a section
        (equal? (car qq-data) 'conjure)               ; head survives verbatim
        (pair? (cadr qq-nested))                      ; still a list at depth 2
-       (has? (cadr qq-mount) "main();")))            ; unquoted: a real section
+       (has? (cadr qq-mount) "main();")              ; unquoted: a real section
+       (eq? qq-atom 'atom)
+       (has? qq-after-atom "main();")                 ; `atom expired
+       (eq? (car (cadr qq-unquote-atom)) 'conjure)))  ; ,atom expired
 
 ;; a second auto section gets the next id
 (define auto2 (conjure auto (display 2)))
