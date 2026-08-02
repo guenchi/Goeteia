@@ -13,6 +13,8 @@
      (= (remainder f20 7) (remainder 2432902008176640000 7))
      ;; crossing the fixnum boundary and coming back
      (= (- (+ 536870911 5) 5) 536870911)
+     (not (fixnum? (+ 536870911 1)))
+     (not (fixnum? (- -536870912 1)))
      (fixnum? (- (+ 536870911 1) 1))
      ;; negative bignums
      (= (- 0 f20) -2432902008176640000)
