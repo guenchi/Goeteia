@@ -72,36 +72,6 @@ const MEMOBJ=(typeof WebAssembly!=='undefined'&&WebAssembly.Memory)
 grow(n){const old=b.byteLength/65536;
 const nb=new ArrayBuffer((old+(n>>>0))*65536);
 new Uint8Array(nb).set(new Uint8Array(b));b=nb;return old;}};})();
-let MEMB=MEMOBJ.buffer,MEMV=new DataView(MEMB),MEMU=new Uint8Array(MEMB);
-const MREF=()=>{const b=MEMOBJ.buffer;if(b!==MEMB){MEMB=b;
-MEMV=new DataView(b);MEMU=new Uint8Array(b);}};
-const M8P=(p)=>{p=IU(p);if(p<0||p>=MEMB.byteLength)
-throw new RangeError('memory access out of bounds');return p;};
-const M8R=(p)=>{MREF();return MEMU[M8P(p)]<<1;};
-const M8W=(p,v)=>{MREF();MEMU[M8P(p)]=IU(v);return VOID;};
-const M32R=(p)=>{MREF();return W(MEMV.getInt32(IU(p),true));};
-const M32W=(p,v)=>{MREF();MEMV.setInt32(IU(p),IU(v),true);return VOID;};
-const MF32R=(p)=>{MREF();return new Fl(MEMV.getFloat32(IU(p),true));};
-const MF32W=(p,v)=>{MREF();MEMV.setFloat32(IU(p),FLV(v),true);return VOID;};
-const MF64R=(p)=>{MREF();return new Fl(MEMV.getFloat64(IU(p),true));};
-const MF64W=(p,v)=>{MREF();MEMV.setFloat64(IU(p),FLV(v),true);return VOID;};
-const MSIZE=()=>W(MEMOBJ.buffer.byteLength/65536);
-const MGROW=(n)=>{try{const old=MEMOBJ.grow(n>>>0);MREF();return old;}
-catch(_){return -1;}};
-const FV=(p)=>[MEMV.getFloat32(p,true),MEMV.getFloat32(p+4,true),
-MEMV.getFloat32(p+8,true),MEMV.getFloat32(p+12,true)];
-const F4=(op,d,p,q)=>{MREF();const x=FV(p),y=FV(q);
-for(let i=0;i<4;i++)MEMV.setFloat32(d+i*4,
-op==='+'?x[i]+y[i]:op==='-'?x[i]-y[i]:x[i]*y[i],true);};
-const F4SC=(d,p,s)=>{MREF();const sf=Math.fround(s),x=FV(p);
-for(let i=0;i<4;i++)MEMV.setFloat32(d+i*4,x[i]*sf,true);};
-const F4AX=(d,p,q,s)=>{MREF();const sf=Math.fround(s),x=FV(p),y=FV(q);
-for(let i=0;i<4;i++)MEMV.setFloat32(d+i*4,
-x[i]+Math.fround(y[i]*sf),true);};
-const F4D=(p,q)=>{MREF();const fr=Math.fround;let r=fr(fr(MEMV.getFloat32(p,true)*MEMV.getFloat32(q,true))+fr(MEMV.getFloat32(p+4,true)*MEMV.getFloat32(q+4,true)));
-r=fr(r+fr(MEMV.getFloat32(p+8,true)*MEMV.getFloat32(q+8,true)));
-r=fr(r+fr(MEMV.getFloat32(p+12,true)*MEMV.getFloat32(q+12,true)));
-return r;};
 class JSRef{constructor(v){this.v=v;}}
 const NB=[],CBS=[];let AS=[],STG=[];
 const TDX=()=>{const s=TD.decode(new Uint8Array(NB));NB.length=0;

@@ -105,16 +105,31 @@ false), mirroring the wasm compare-against-`G-FALSE`.
 
 ## Runtime kernel
 
-A few hundred lines of JS prepended to every emitted program: the
-sentinel objects, the classes above, `%mem-*` over one basic
-`WebAssembly.Memory` (64 KB pages -- real grow-failure and old-view
-detachment semantics; a host with no WebAssembly at all falls back to
-a plain-ArrayBuffer stand-in, keeping restricted embedded JS
-environments runnable), `%f32x4-*` as scalar loops over a
-`Float32Array` view, and IO hooks (`write_byte`/`read_byte`) supplied
-by the embedder exactly like the wasm `io` imports.  Everything else
--- generic arithmetic, the numeric tower, string/list library -- is
-the prelude, compiled through the same pipeline and shared verbatim.
+A few hundred lines of JS prepended to the emitted program -- but
+only the parts the program reaches.  The kernel is split into groups
+with declared dependencies:
+
+| group    | contents                                            | deps        |
+|----------|-----------------------------------------------------|-------------|
+| `core`   | sentinels, pair/vector/string ops, control (Esc, trampoline), checks | always      |
+| `fl`     | `Fl` box, flonum checks/conversions                 | core        |
+| `sym`    | `Sym`, symbol checks                                | core        |
+| `bv`     | `BV`, bytevector checks                             | core        |
+| `num`    | `Bignum`/`Ratio`/`Cx` tower classes                 | core        |
+| `rec`    | `Rec`, record literals                              | core        |
+| `membuf` | the `WebAssembly.Memory` object (64 KB pages -- real grow-failure and old-view detachment; hosts with no WebAssembly at all get a plain-ArrayBuffer stand-in, keeping restricted embedded JS environments runnable) | core        |
+| `mem`    | `%mem-*` accessors, `%f32x4-*` scalar loops over a `Float32Array` view | membuf, fl  |
+| `ffi`    | `JSRef`, the `(web js)` bridge, `globalThis` proxy  | membuf      |
+
+Emission registers the groups each surviving primitive or literal
+uses (registration happens after DCE, so dead code pulls nothing),
+and the module ships exactly that closure -- a page script that never
+touches the FFI carries no `JSRef`, a numeric program no bridge, and
+only staging-memory users pay for the memory accessors.  IO hooks
+(`write_byte`/`read_byte`) are supplied by the embedder exactly like
+the wasm `io` imports.  Everything else -- generic arithmetic, the
+numeric tower's algorithms, string/list library -- is the prelude,
+compiled through the same pipeline and shared verbatim.
 
 ## Drivers and artifacts
 

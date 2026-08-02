@@ -534,7 +534,7 @@
 ;; DCE-pruned primitives never register anything
 (define $jp-kernel-groups
   '((fl fl+ fl- fl* fl/ fl=? fl<? flsqrt flfloor fltruncate
-        fixnum->flonum %fl->fx flonum?)
+        fixnum->flonum %fl->fx flonum? %js-to-number)
     (num %bignum? %make-bignum %bignum-sign %bignum-limbs
          %ratio? %make-ratio %ratio-num %ratio-den
          %complex? %make-complex %cx-re %cx-im)
@@ -832,7 +832,7 @@
     (rec (core)
     "class Rec{constructor(f){this.f=f;}}"
     "const KREC=(x,r)=>(x instanceof Rec&&x.f[0]===r)?TRUE:FALSE;")
-    (mem (core fl)
+    (membuf (core)
     ;; Basic WebAssembly.Memory gives grow its real failure and old-view
     ;; detachment semantics even on hosts without WasmGC.  Hosts with
     ;; no WebAssembly at all (restricted embedded JS environments) get
@@ -844,7 +844,8 @@
     ":(()=>{let b=new ArrayBuffer(65536);return{get buffer(){return b;},"
     "grow(n){const old=b.byteLength/65536;"
     "const nb=new ArrayBuffer((old+(n>>>0))*65536);"
-    "new Uint8Array(nb).set(new Uint8Array(b));b=nb;return old;}};})();"
+    "new Uint8Array(nb).set(new Uint8Array(b));b=nb;return old;}};})();")
+    (mem (membuf fl)
     "let MEMB=MEMOBJ.buffer,MEMV=new DataView(MEMB),MEMU=new Uint8Array(MEMB);"
     "const MREF=()=>{const b=MEMOBJ.buffer;if(b!==MEMB){MEMB=b;"
     "MEMV=new DataView(b);MEMU=new Uint8Array(b);}};"
@@ -880,7 +881,7 @@
     "r=fr(r+fr(MEMV.getFloat32(p+8,true)*MEMV.getFloat32(q+8,true)));"
     "r=fr(r+fr(MEMV.getFloat32(p+12,true)*MEMV.getFloat32(q+12,true)));"
     "return r;};")
-    (ffi (mem fl)
+    (ffi (membuf)
     "class JSRef{constructor(v){this.v=v;}}"
     ;; JS FFI: nameBuf/argStack protocol, implemented natively.  The
     ;; instance global mirrors the wasm host bridge: __goeteia_*
