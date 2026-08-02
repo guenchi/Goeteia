@@ -3714,6 +3714,15 @@
                                      (embed-wasm-ref bytes wurl)) ");\n"
                  "</script>\n"))
 
+;; the two-external-files shape: the fallback is a .js URL the loader
+;; imports lazily -- a WasmGC engine never downloads it, and the file
+;; caches independently of the page
+(define (embed-section-auto-js-url wurl jurl)
+  (string-append "<script type=\"module\">\n" (conjure-glue!)
+                 "\nloadGoeteiaAuto(" (embed-js-string-lit wurl)
+                 ", " (embed-js-string-lit jurl) ");\n"
+                 "</script>\n"))
+
 (define (embed-section-auto jstext bytes wurl)
   (embed-guard-script! jstext)
   (let ((id (conjure-id!)))
@@ -3780,6 +3789,9 @@
 ;;   (define-wasm (name "app.wasm") body...)  ; wasm by URL + the file
 ;;   (define-wasm-js name body...)            ; wasm + fallback, inline
 ;;   (define-wasm-js (name "app.wasm") body...)  ; by URL + the file
+;;   (define-wasm-js (name "app.wasm" "app.js") body...)
+;;                          ; both artifacts external: the fallback is
+;;                          ; imported lazily, cached apart from the page
 ;; A file-writing form expands to (begin (define name section)
 ;; (with-output-to-file path (lambda () (display bytes)))) -- the
 ;; generator writes the .wasm when it runs, next to its page output.
@@ -3809,7 +3821,10 @@
          (name (if (pair? head) (car head) head))
          (path (and (pair? head) (cadr head)))
          (file? (and path #t))
+         (jspath (and (pair? head) (pair? (cddr head)) (car (cddr head))))
          (body (map-in-order embed-expand (embed-strip-locs (cdr rest)))))
+    (when (and jspath (not (eq? mode 'auto)))
+      (errorf 'goeteia "a fallback file needs define-wasm-js: ~s" head))
     (case mode
       ((js)
        (let ((jstext (conjure-sub-compile body 'js)))
@@ -3836,15 +3851,29 @@
       ((auto)
        (let* ((jstext (conjure-sub-compile body 'js))
               (bytes (conjure-sub-compile body 'wasm)))
-         (if file?
-             (list 'begin
-                   (list 'define name
-                         (embed-string-form
-                          (embed-section-auto jstext bytes path)))
-                   (conjure-write-form path bytes))
-             (list 'define name
-                   (embed-string-form
-                    (embed-section-auto jstext bytes #f)))))))))
+         (cond
+          (jspath
+           ;; the loader imports this module and calls m.main() itself,
+           ;; so the file keeps its export and no self-running call is
+           ;; appended -- the opposite of define-js's URL form
+           (list 'begin
+                 (list 'define name
+                       (embed-string-form
+                        (embed-section-auto-js-url path jspath)))
+                 (conjure-write-form path bytes)
+                 (list 'with-output-to-file jspath
+                       (list 'lambda '()
+                             (list 'display (embed-string-form jstext))))))
+          (file?
+           (list 'begin
+                 (list 'define name
+                       (embed-string-form
+                        (embed-section-auto jstext bytes path)))
+                 (conjure-write-form path bytes)))
+          (else
+           (list 'define name
+                 (embed-string-form
+                  (embed-section-auto jstext bytes #f))))))))))
 
 (define $conjure-forms
   '((conjure . #f)

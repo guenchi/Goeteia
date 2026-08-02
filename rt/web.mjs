@@ -22,6 +22,13 @@ export async function loadGoeteia(url) {
     return instance.exports;
 }
 loadGoeteia._out = [];
+// A page-global handle: a define-js section (a JS-target Scheme
+// program, e.g. capability-gating logic deciding whether a heavy
+// module should load at all) has no other way to reach this loader,
+// which lives in the glue's module scope.  Any wasm/auto section's
+// glue runs before later scripts in document order, so the handle is
+// set by the time such a section needs it.
+globalThis.__goeteia_load = loadGoeteia;
 
 // Run a module in a Worker over an OffscreenCanvas: the render loop
 // leaves the main thread entirely (a busy main thread no longer

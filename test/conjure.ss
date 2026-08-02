@@ -143,6 +143,11 @@
 (define-wasm-js mai (import (web js)) (display (if (js-truthy? (js-eval "1")) 3 0)))
 (define-wasm (mw "/tmp/goeteia-conjure-test.wasm") (display 4))
 (define-js (mjf "/tmp/goeteia-conjure-test.js") (display 5))
+;; both artifacts external: the fallback module is imported by the
+;; loader (which calls m.main() itself), so the written .js keeps its
+;; export and gains no self-running call
+(define-wasm-js (mboth "/tmp/goeteia-conjure-b.wasm" "/tmp/goeteia-conjure-b.js")
+  (display 7))
 ;; the URL form's filesystem path is percent-encoded before it lands
 ;; in an HTML attribute, so URL delimiters still name literal files
 (define-js (mjq "/tmp/goeteia-conjure-\"&#?%.js") (display 6))
@@ -153,7 +158,15 @@
        (has? mw "loadGoeteia('/tmp/goeteia-conjure-test.wasm')")
        (has? mjf "src=\"/tmp/goeteia-conjure-test.js\"")
        (has? mjq
-             "src=\"/tmp/goeteia-conjure-%22%26%23%3f%25.js\"")))
+             "src=\"/tmp/goeteia-conjure-%22%26%23%3f%25.js\"")
+       (has? mboth
+             "loadGoeteiaAuto('/tmp/goeteia-conjure-b.wasm', '/tmp/goeteia-conjure-b.js')")
+       ;; no inline fallback TAG in this shape (the glue's default
+       ;; selector string still mentions the type, so match the tag)
+       (not (has? mboth "<script type=\"goeteia/js\""))
+       ;; every wasm/auto section's glue publishes the loader handle
+       ;; define-js gating sections reach it through
+       (has? mboth "globalThis.__goeteia_load")))
 ;; define-wasm wrote its module next to the generator's output
 (define wrote-ok
   (let ()
@@ -164,6 +177,18 @@
            (let ((b0 (%fread fd)))
              (%fclose fd)
              (= b0 0))))))            ; wasm magic starts 0x00
+
+;; the two-file form wrote both artifacts; the fallback keeps its
+;; export (the loader imports it) and must NOT self-run
+(define wrote-both-ok
+  (let ()
+    (string-for-each (lambda (c) (%path-byte (char->integer c)))
+                     "/tmp/goeteia-conjure-b.wasm")
+    (let ((fd (%open-read)))
+      (and (>= fd 0)
+           (let ((b0 (%fread fd)))
+             (%fclose fd)
+             (= b0 0))))))
 
 ;; define-js's URL form wrote a self-running module file
 (define wrote-js-ok
