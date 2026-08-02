@@ -268,15 +268,37 @@
   (define $py -9999.0)
 
   (define (glyphs-track! groups)
-    (add-event-listener! (js-global) "pointermove"
-      (lambda (e)
-        (set! $px ($fl (js->number (js-get e "clientX"))))
-        (set! $py ($fl (js->number (js-get e "clientY"))))
-        (js-undefined)))
-    (add-event-listener! (js-global) "scroll"
-      (lambda (e) (for-each $rect! groups) (js-undefined)))
-    (add-event-listener! (js-global) "resize"
-      (lambda (e) (for-each glyphs-rebuild! groups) (js-undefined))))
+    (let* ((global (js-global))
+           ;; This key deliberately does not start with __goeteia_: the
+           ;; bridge keeps that namespace private to one module instance,
+           ;; while listener cleanup must survive a page-level re-run.
+           (old (js-get global "goeteiaGlyphsListenerCleanup")))
+      (when (js-truthy? old) (js-call old global))
+      ;; Cache the JS wrappers: removeEventListener needs the exact same
+      ;; function objects that addEventListener received.
+      (let ((pointer
+             (->js
+              (lambda (e)
+                (set! $px ($fl (js->number (js-get e "clientX"))))
+                (set! $py ($fl (js->number (js-get e "clientY"))))
+                (js-undefined))))
+            (scroll
+             (->js
+              (lambda (e) (for-each $rect! groups) (js-undefined))))
+            (resize
+             (->js
+              (lambda (e)
+                (for-each glyphs-rebuild! groups)
+                (js-undefined)))))
+        (add-event-listener! global "pointermove" pointer)
+        (add-event-listener! global "scroll" scroll)
+        (add-event-listener! global "resize" resize)
+        (js-set! global "goeteiaGlyphsListenerCleanup"
+          (lambda ()
+            (js-method global "removeEventListener" "pointermove" pointer)
+            (js-method global "removeEventListener" "scroll" scroll)
+            (js-method global "removeEventListener" "resize" resize)
+            (js-undefined))))))
 
   ;; one spring step: repulsion within ~110px of the pointer, a
   ;; spring home, critical-ish damping; the DOM is touched only
