@@ -125,16 +125,39 @@
   ;; itself Scheme in a define-js mount point.
 
   ;; Esc closes the panel: undo the :target the badge link set, the
-  ;; same hash the backdrop and the x navigate to.
+  ;; same hash the backdrop and the x navigate to.  Closing has to
+  ;; navigate somewhere that matches nothing, so #_ is left sitting in
+  ;; the address bar -- once it has done its work the script rewrites
+  ;; the URL without it.  replaceState does not renavigate, so the
+  ;; panel stays shut, and with no script the page still opens and
+  ;; closes, just with the fragment showing.
   (define-js (esc-close "esc.js")
     (import (rnrs) (web js) (web dom))
+
+    (define (closed-hash? loc)
+      (string=? "#_" (js->string (js-get loc "hash"))))
+
+    (define (drop-closed-hash!)
+      (let ((loc (js-get (js-global) "location")))
+        (when (closed-hash? loc)
+          (js-method (js-get (js-global) "history") "replaceState"
+                     (js-undefined) ""
+                     (string-append (js->string (js-get loc "pathname"))
+                                    (js->string (js-get loc "search")))))))
+
     (add-event-listener! (document) "keydown"
       (lambda (e)
         (when (string=? "Escape" (js->string (js-get e "key")))
           (let ((loc (js-get (js-global) "location")))
             (when (string=? "#src-overlay" (js->string (js-get loc "hash")))
               (js-set! loc "hash" "#_"))))
-        (js-undefined))))
+        (js-undefined)))
+
+    ;; the backdrop, the x and Esc all land on #_, so one listener
+    ;; cleans up after every route out of the panel
+    (add-event-listener! (window) "hashchange"
+      (lambda (e) (drop-closed-hash!) (js-undefined)))
+    (drop-closed-hash!))                ; a #_ URL opened directly
   (define (overlay source-file)
     `(div (@ (class "src-overlay") (id "src-overlay"))
        (a (@ (class "src-back") (href "#_") (tabindex "-1") (aria-hidden "true")))
