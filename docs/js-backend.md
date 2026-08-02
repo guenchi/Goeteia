@@ -32,7 +32,8 @@ divergence is what breeds bugs, so we mirror it wherever JS allows.
 | symbol          | struct{string}                | `class Sym{s}`   |
 | vector          | eqref array                   | bare JS array    |
 | bytevector      | struct{i8 array}              | `class BV{u8}`   |
-| bignum/ratio/complex | structs                  | classes, prelude-driven |
+| bignum          | struct{limb vector}           | native `BigInt`  |
+| ratio/complex   | structs                       | classes, prelude-driven |
 | closure         | struct{funcref,env}, dual entry | native JS function |
 | record          | RECBASE struct                | `class Rec{rtd,f[]}` |
 | JS ref (FFI)    | struct{externref}             | `class JSRef{v}` |
@@ -96,12 +97,17 @@ false), mirroring the wasm compare-against-`G-FALSE`.
   lowering one-to-one (one-shot, upward-only, winders replayed the
   same way).
 - **Non-self tail calls**: wasm uses `return_call`; the JS target
-  trampolines.  A non-self tail call returns a `TC` thunk instead of
-  calling, and every non-tail call site unwinds through `TR`, so tail
-  chains -- mutual recursion included -- run in constant JS stack.
-  Direct calls stay compile-time arity-checked (bare `TC`); indirect
-  ones check at bounce time (`TCI`), the same moment wasm's adapter
-  would trap.
+  trampolines -- but only where it must.  A pre-emission fixpoint
+  over the top-level tail-call graph finds the callees whose tail
+  chains can reach a cycle (mutual recursion, variadic self calls);
+  tail calls to those return a `TC` thunk, and call sites keep their
+  `TR` unwind only for callees that may actually return one.
+  Everything else calls straight through: an acyclic chain of direct
+  tail calls is bounded by the static function count, so constant
+  stack survives.  Closures always ride the indirect protocol
+  (`TCI` builds the thunk, `IC` sites keep `TR`).  Direct calls stay
+  compile-time arity-checked; indirect ones check at bounce time,
+  the same moment wasm's adapter would trap.
 
 ## Runtime kernel
 
@@ -115,7 +121,7 @@ with declared dependencies:
 | `fl`     | `Fl` box, flonum checks/conversions                 | core        |
 | `sym`    | `Sym`, symbol checks                                | core        |
 | `bv`     | `BV`, bytevector checks                             | core        |
-| `num`    | `Bignum`/`Ratio`/`Cx` tower classes                 | core        |
+| `num`    | `Ratio`/`Cx` classes (bignums are native `BigInt`)  | core        |
 | `rec`    | `Rec`, record literals                              | core        |
 | `membuf` | the `WebAssembly.Memory` object (64 KB pages -- real grow-failure and old-view detachment; hosts with no WebAssembly at all get a plain-ArrayBuffer stand-in, keeping restricted embedded JS environments runnable) | core        |
 | `mem`    | `%mem-*` accessors, `%f32x4-*` scalar loops over a `Float32Array` view | membuf, fl  |
@@ -129,7 +135,18 @@ only staging-memory users pay for the memory accessors.  IO hooks
 (`write_byte`/`read_byte`) are supplied by the embedder exactly like
 the wasm `io` imports.  Everything else -- generic arithmetic, the
 numeric tower's algorithms, string/list library -- is the prelude,
-compiled through the same pipeline and shared verbatim.
+compiled through the same pipeline; a `%target-case` expansion form
+lets the prelude fork where the hosts differ (only the branch for
+the compiling backend expands), which is how the integer layer rides
+native `BigInt` here while wasm keeps its limb arithmetic: bignums
+ARE host bigints (`typeof` dispatch, literals emit as `123n`, `BNRM`
+renormalizes into the i31 range), and the limb machinery never
+reaches a js module.  DCE also drops top-level definitions whose
+initializers are pure construction, so unused prelude tables cost
+nothing.  The emitted text itself is compact by construction: short
+deterministic names (the Scheme names stay recoverable through
+`xports`), defensive parentheses squashed by a string-safe text
+pass.
 
 ## Drivers and artifacts
 
@@ -161,12 +178,15 @@ compiled through the same pipeline and shared verbatim.
   `examples/counter-page.ss` -- a site generator whose interactive
   half compiles inside its own mount point.
 - The define- family wraps the modes into named definitions, the
-  head's shape picking the wasm's home, like `define` itself:
-  `(define-js name body...)`; `(define-wasm name body...)` embeds
-  the module as a `data:` URI while `(define-wasm (name "app.wasm")
-  body...)` references the URL and writes the file when the
-  generator runs; `define-wasm-js` does the same and adds the JS
-  fallback -- the name's order is the load preference.
+  head's shape picking the artifact's home, like `define` itself:
+  `(define-js name body...)` embeds the module inline while
+  `(define-js (name "app.js") body...)` references the URL and
+  writes the self-running module file when the generator runs --
+  pages sharing one module let the browser cache it across them;
+  `(define-wasm name body...)` embeds the module as a `data:` URI
+  while `(define-wasm (name "app.wasm") body...)` references the
+  URL and writes the file; `define-wasm-js` does the same and adds
+  the JS fallback -- the name's order is the load preference.
 
 ## Testing
 
