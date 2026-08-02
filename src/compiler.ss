@@ -3593,6 +3593,26 @@
   (or wurl
       (string-append "data:application/wasm;base64," (embed-base64 bytes))))
 
+(define $embed-hex "0123456789abcdef")
+(define (embed-js-string-lit s)
+  ;; Single-quoted JavaScript literal safe inside a script element.
+  ;; Escaping '<' prevents a URL from spelling an HTML end tag.
+  (let ((out (open-output-string)))
+    (write-char #\' out)
+    (string-for-each
+     (lambda (c)
+       (let ((b (char->integer c)))
+         (if (or (< b 32) (= b 39) (= b 60) (= b 92) (= b 127))
+             (begin
+               (write-char (integer->char 92) out)       ; backslash
+               (write-char #\x out)
+               (write-char (string-ref $embed-hex (quotient b 16)) out)
+               (write-char (string-ref $embed-hex (remainder b 16)) out))
+             (write-char c out))))
+     s)
+    (write-char #\' out)
+    (get-output-string out)))
+
 (define (embed-section-js jstext)
   (embed-guard-script! jstext)
   (string-append "<script type=\"module\">\n" jstext "main();\n</script>\n"))
@@ -3603,7 +3623,8 @@
 ;; id so several sections coexist on one page.
 (define (embed-section-wasm bytes wurl)
   (string-append "<script type=\"module\">\n" (conjure-glue!)
-                 "\nloadGoeteia('" (embed-wasm-ref bytes wurl) "');\n"
+                 "\nloadGoeteia(" (embed-js-string-lit
+                                     (embed-wasm-ref bytes wurl)) ");\n"
                  "</script>\n"))
 
 (define (embed-section-auto jstext bytes wurl)
@@ -3612,8 +3633,9 @@
     (string-append "<script type=\"goeteia/js\" id=\"" id "\">\n"
                    jstext "</script>\n"
                    "<script type=\"module\">\n" (conjure-glue!)
-                   "\nloadGoeteiaAuto('" (embed-wasm-ref bytes wurl)
-                   "', '#" id "');\n"
+                   "\nloadGoeteiaAuto(" (embed-js-string-lit
+                                         (embed-wasm-ref bytes wurl))
+                   ", '#" id "');\n"
                    "</script>\n")))
 
 ;; drop the (%loc ...) markers the text-level driver leaves inside a

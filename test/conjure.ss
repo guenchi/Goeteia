@@ -55,9 +55,18 @@
        (not (has? wasm-section "import { loadGoeteia }"))))
 
 (define wasm-url-section
-  (conjure (wasm (wasm-url "app.wasm"))
+  (conjure (wasm (wasm-url "app's</script>.wasm"))
     (display 1)))
-(define wasm-url-ok (has? wasm-url-section "loadGoeteia('app.wasm')"))
+(define wasm-url-ok
+  (has? wasm-url-section
+        "loadGoeteia('app\\x27s\\x3c/script>.wasm')"))
+
+(define auto-url-section
+  (conjure (auto (wasm-url "auto's</script>.wasm"))
+    (display 1)))
+(define auto-url-ok
+  (has? auto-url-section
+        "loadGoeteiaAuto('auto\\x27s\\x3c/script>.wasm',"))
 
 ;; auto: fallback tag with a unique id, glue inline, loader picks;
 ;; the body may import libraries in its own scope
@@ -111,5 +120,5 @@
              (%fclose fd)
              (= b0 0))))))            ; wasm magic starts 0x00
 
-(and js-ok wasm-ok wasm-url-ok auto-ok id2-ok macro-sections-ok wrote-ok
-     lib-ok)
+(and js-ok wasm-ok wasm-url-ok auto-url-ok auto-ok id2-ok macro-sections-ok
+     wrote-ok lib-ok)
