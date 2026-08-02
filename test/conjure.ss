@@ -35,6 +35,21 @@
              #t)
             (else (scan (+ i 1)))))))
 
+(define (file-text path)
+  (string-for-each (lambda (c) (%path-byte (char->integer c))) path)
+  (let ((fd (%open-read)))
+    (and (>= fd 0)
+         (let ((out (open-output-string)))
+           (let read ()
+             (let ((b (%fread fd)))
+               (if (< b 0)
+                   (begin
+                     (%fclose fd)
+                     (get-output-string out))
+                   (begin
+                     (write-char (integer->char b) out)
+                     (read)))))))))
+
 ;; js: the module text inline, invoked directly, no glue needed
 (define js-section
   (conjure js
@@ -181,14 +196,19 @@
 ;; the two-file form wrote both artifacts; the fallback keeps its
 ;; export (the loader imports it) and must NOT self-run
 (define wrote-both-ok
-  (let ()
-    (string-for-each (lambda (c) (%path-byte (char->integer c)))
-                     "/tmp/goeteia-conjure-b.wasm")
-    (let ((fd (%open-read)))
-      (and (>= fd 0)
-           (let ((b0 (%fread fd)))
-             (%fclose fd)
-             (= b0 0))))))
+  (let ((wasm-ok
+         (let ()
+           (string-for-each (lambda (c) (%path-byte (char->integer c)))
+                            "/tmp/goeteia-conjure-b.wasm")
+           (let ((fd (%open-read)))
+             (and (>= fd 0)
+                  (let ((b0 (%fread fd)))
+                    (%fclose fd)
+                    (= b0 0))))))
+        (js (file-text "/tmp/goeteia-conjure-b.js")))
+    (and wasm-ok js
+         (has? js "export function main")
+         (not (has? js "\nmain();\n")))))
 
 ;; define-js's URL form wrote a self-running module file
 (define wrote-js-ok
@@ -202,4 +222,4 @@
              (= b0 34))))))           ; module text opens "use strict"
 
 (and js-ok wasm-ok wasm-url-ok auto-url-ok auto-ok id2-ok macro-sections-ok
-     wrote-ok wrote-js-ok lib-ok quoted-ok quasi-ok)
+     wrote-ok wrote-both-ok wrote-js-ok lib-ok quoted-ok quasi-ok)
