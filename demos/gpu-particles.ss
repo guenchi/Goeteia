@@ -20,8 +20,11 @@
 (import (rnrs) (web sx) (web js) (web dom) (gfx fx) (gfx gpu) (gfx wgsl))
 
 ;; re-running (or leaving) a tab must retire the previous loop; GL
-;; demos bump this through fx-init!, a WebGPU demo bumps it itself
-(js-eval "globalThis.__goeteia_fx_gen = (globalThis.__goeteia_fx_gen || 0) + 1")
+;; demos bump this through fx-init!, a WebGPU demo bumps it itself.
+;; The key stays out of the __goeteia_ namespace, which the bridge
+;; keeps private per module instance -- a counter there could not
+;; retire the loop of the demo this one is replacing.
+(js-eval "globalThis.goeteiaFxGeneration = (globalThis.goeteiaFxGeneration || 0) + 1")
 
 ;; the demo mounts its own canvas where the hero usually lives --
 ;; or, without WebGPU, says what it would have shown
