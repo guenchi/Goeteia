@@ -1100,7 +1100,7 @@
                  (unless f
                    (errorf 'goeteia "exported name is not a function ~s" n))
                  (list "[U(" (jstring-lit (symbol->string n)) ")]:"
-                       (jfn-name n (cadr f)))))
+                       "(...xs)=>TR(" (jfn-name n (cadr f)) "(...xs))")))
              export-names)))
       (jbytes
        (list

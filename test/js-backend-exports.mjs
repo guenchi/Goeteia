@@ -15,7 +15,8 @@ try {
     fs.writeFileSync(
         sourceFile,
         `(export ${exportName})\n` +
-        `(define (${exportName} x) x)\n` +
+        `(define targets (vector (lambda (x) x)))\n` +
+        `(define (${exportName} x) ((vector-ref targets 0) x))\n` +
         `(${exportName} 1)\n`,
         'utf8');
 
@@ -29,6 +30,9 @@ try {
     assert.ok(wasmNames.includes(exportName));
     const js = await import(pathToFileURL(jsFile).href);
     assert.deepEqual(Object.keys(js.xports), [exportName]);
+    js.main();
+    assert.equal(js.xports[exportName](2), 2,
+        'host calls must unwind exported tail-call thunks');
 } finally {
     fs.rmSync(dir, { recursive: true, force: true });
 }
