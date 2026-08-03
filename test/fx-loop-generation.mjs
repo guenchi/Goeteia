@@ -34,12 +34,19 @@ const glStub = new Proxy({}, { get: (_, p) =>
     : /Location$/.test(p) ? () => 0
     : () => undefined });
 globalThis.__log = log;
-globalThis.__c = { getContext: () => glStub };
+// Each run gets a canvas in a FRESH parent, the way a live page builds
+// a new subtree per render.  The earlier version reused one detached
+// canvas, so a scope keyed on anything the run creates would still have
+// looked shared -- and this test passed against a change that
+// reintroduced the leak.
+const freshCanvas = () => ({ parentNode: { mark: 'new subtree' },
+                             getContext: () => glStub });
 globalThis.requestAnimationFrame = (cb) => rafs.push(cb);
 const io = { write_byte() {}, read_byte: () => -1, path_byte() {},
              open_read: () => -1, open_write: () => -1,
              fread: () => -1, fwrite() {}, fclose() {} };
 async function load(file) {
+    globalThis.__c = freshCanvas();
     let ex;
     const { instance } = await WebAssembly.instantiate(
         fs.readFileSync(file), { io, js: makeJsBridge(() => ex) });
