@@ -167,4 +167,9 @@ if ${NODE-node} test/glyphs-loop-generation.mjs >/dev/null 2>&1; then
 else
     echo "FAIL test/glyphs-loop-generation.mjs"; fail=1
 fi
+if ${NODE-node} test/glyphs-scope-dispose.mjs >/dev/null 2>&1; then
+    echo "ok   test/glyphs-scope-dispose.mjs"
+else
+    echo "FAIL test/glyphs-scope-dispose.mjs"; fail=1
+fi
 exit $fail
