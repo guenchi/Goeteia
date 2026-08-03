@@ -142,6 +142,11 @@ if ${NODE-node} test/fx-loop-generation.mjs >/dev/null 2>&1; then
 else
     echo "FAIL test/fx-loop-generation.mjs"; fail=1
 fi
+if ${NODE-node} test/fx-loop-coexistence.mjs >/dev/null 2>&1; then
+    echo "ok   test/fx-loop-coexistence.mjs"
+else
+    echo "FAIL test/fx-loop-coexistence.mjs"; fail=1
+fi
 if ${NODE-node} test/web-compile-diagnostics.mjs >/dev/null 2>&1; then
     echo "ok   test/web-compile-diagnostics.mjs"
 else

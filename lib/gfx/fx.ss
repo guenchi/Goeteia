@@ -56,29 +56,39 @@
   (define $fx-canvas #f)
   (define $fx-slot 0)
   (define $fx-heap 65536)
+  (define $fx-owner (js-global))
 
-  (define ($fx-gen)
-    (let ((g (js-get (js-global) "goeteiaFxGeneration")))
+  (define ($fx-gen owner)
+    (let ((g (js-get owner "goeteiaFxGeneration")))
       (if (js-truthy? g) (js->number g) 0)))
 
   ;; the VAO cache: (program, buffer, instance buffer) -> vao slot
   (define $fx-vaos (make-eq-hashtable))
 
-  (define (fx-init! canvas)
+  ;; The optional owner scopes loop retirement.  By default the canvas's
+  ;; parent is the stable mount point used by live editors; a detached
+  ;; canvas owns itself.  Separate mounts therefore keep independent loops,
+  ;; while reinitializing one mount still retires its previous instance.
+  (define (fx-init! canvas . owner)
     (set! $fx-canvas canvas)
+    (set! $fx-owner
+          (if (pair? owner)
+              (car owner)
+              (let ((parent (js-get canvas "parentNode")))
+                (if (js-truthy? parent) parent canvas))))
     (gl-attach! canvas)
     (set! $fx-slot 0)
     (set! $fx-heap $fx-cmd-limit)
     (set! $fx-vaos (make-eq-hashtable))
     ;; 128 bytes of scratch turn every m4-mul into wasm SIMD
     (m4-scratch! (fx-alloc! 128))
-    ;; a fresh init retires loops from any earlier run of the page
+    ;; a fresh init retires loops from any earlier run of this mount
     ;; (live editors re-run whole programs; fx-ticks! checks this).
     ;; The key is deliberately OUTSIDE the __goeteia_ namespace: the
     ;; bridge keeps that private per module instance, so a counter
     ;; living there could never retire a previous instance's loop --
     ;; exactly the case a live page hits on every demo switch.
-    (js-set! (js-global) "goeteiaFxGeneration" (+ 1 ($fx-gen)))
+    (js-set! $fx-owner "goeteiaFxGeneration" (+ 1 ($fx-gen $fx-owner)))
     (cmd-region! 0 $fx-cmd-limit))
 
   (define (fx-slot!)
@@ -407,9 +417,10 @@
   ;; proc gets (t dt) in seconds; no GL side effects, so a Three.js
   ;; render loop can use it directly
   (define (fx-ticks! proc)
-    (let ((t0 -1.0) (last 0.0) (gen ($fx-gen)))
+    (let ((t0 -1.0) (last 0.0)
+          (owner $fx-owner) (gen ($fx-gen $fx-owner)))
       (letrec ((tick (lambda args
-                       (when (= gen ($fx-gen))
+                       (when (= gen ($fx-gen owner))
                          (let ((s (fl/ ($fx-fl (js->number (car args)))
                                        1000.0)))
                            (when (fl<? t0 0.0)
