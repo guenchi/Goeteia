@@ -25,11 +25,11 @@
 ;;
 ;; Then either hand the groups over --
 ;;
-;;   (glyphs-dodge! groups)   listeners + an own rAF loop
+;;   (glyphs-dodge! groups)   listeners + an own rAF loop; returns a disposer
 ;;
 ;; -- or drive the steps from a loop you already run:
 ;;
-;;   (glyphs-track! groups)   pointer/scroll/resize listeners only
+;;   (glyphs-track! groups)   listeners only; also returns a disposer
 ;;   (glyphs-step! group)     one spring step, call it per frame
 ;;
 ;; (glyphs-rebuild! group) restores the original markup and explodes
@@ -267,38 +267,95 @@
   (define $px -9999.0)
   (define $py -9999.0)
 
-  (define (glyphs-track! groups)
+  ;; Each tracking set owns its cleanup slot.  The first glyph root is the
+  ;; default; callers with a longer-lived mount can pass it as a second
+  ;; argument.  Empty sets retain the page-global behavior used by simple
+  ;; one-shot programs.
+  (define ($glyphs-owner groups owner)
+    (cond ((pair? owner) (car owner))
+          ((pair? groups) ($g-el (car groups)))
+          (else (js-global))))
+  (define ($glyphs-gen owner)
+    (let ((g (js-get owner "goeteiaGlyphsGeneration")))
+      (if (js-truthy? g) (js->number g) 0)))
+  (define ($glyphs-all-detached? groups)
+    (and (pair? groups)
+         (let loop ((gs groups))
+           (or (null? gs)
+               (and (not (js-truthy? (js-get ($g-el (car gs))
+                                             "isConnected")))
+                    (loop (cdr gs)))))))
+
+  ;; Install the listeners and optional animation loop, returning one
+  ;; idempotent disposer for both. A MutationObserver invokes it when all
+  ;; tracked roots leave the document, including a switch to non-glyph UI.
+  (define ($glyphs-start! groups owner* animate?)
     (let* ((global (js-global))
-           ;; This key deliberately does not start with __goeteia_: the
-           ;; bridge keeps that namespace private to one module instance,
-           ;; while listener cleanup must survive a page-level re-run.
-           (old (js-get global "goeteiaGlyphsListenerCleanup")))
-      (when (js-truthy? old) (js-call old global))
-      ;; Cache the JS wrappers: removeEventListener needs the exact same
-      ;; function objects that addEventListener received.
-      (let ((pointer
-             (->js
-              (lambda (e)
-                (set! $px ($fl (js->number (js-get e "clientX"))))
-                (set! $py ($fl (js->number (js-get e "clientY"))))
-                (js-undefined))))
-            (scroll
-             (->js
-              (lambda (e) (for-each $rect! groups) (js-undefined))))
-            (resize
-             (->js
-              (lambda (e)
-                (for-each glyphs-rebuild! groups)
-                (js-undefined)))))
+           (owner ($glyphs-owner groups owner*))
+           ;; These keys deliberately stay outside __goeteia_: cleanup must
+           ;; cross compiled module instances that share the same DOM root.
+           (old (js-get owner "goeteiaGlyphsListenerCleanup")))
+      (when (js-truthy? old) (js-call old owner))
+      (let* ((gen (+ 1 ($glyphs-gen owner)))
+             (stop #f)
+             (pointer
+              (->js
+               (lambda (e)
+                 (set! $px ($fl (js->number (js-get e "clientX"))))
+                 (set! $py ($fl (js->number (js-get e "clientY"))))
+                 (js-undefined))))
+             (scroll
+              (->js
+               (lambda (e) (for-each $rect! groups) (js-undefined))))
+             (resize
+              (->js
+               (lambda (e)
+                 (for-each glyphs-rebuild! groups)
+                 (js-undefined))))
+             (observer-ctor (js-get global "MutationObserver"))
+             (observer
+              (and (pair? groups) (js-truthy? observer-ctor)
+                   (js-new
+                    observer-ctor
+                    (->js
+                     (lambda args
+                       (when ($glyphs-all-detached? groups) (stop))
+                       (js-undefined))))))
+             (stopped #f))
+        (js-set! owner "goeteiaGlyphsGeneration" gen)
         (add-event-listener! global "pointermove" pointer)
         (add-event-listener! global "scroll" scroll)
         (add-event-listener! global "resize" resize)
-        (js-set! global "goeteiaGlyphsListenerCleanup"
+        (when observer
+          (js-method observer "observe" (js-get global "document")
+                     (js-eval "({childList:true,subtree:true})")))
+        (set! stop
           (lambda ()
-            (js-method global "removeEventListener" "pointermove" pointer)
-            (js-method global "removeEventListener" "scroll" scroll)
-            (js-method global "removeEventListener" "resize" resize)
-            (js-undefined))))))
+            (unless stopped
+              (set! stopped #t)
+              (js-method global "removeEventListener" "pointermove" pointer)
+              (js-method global "removeEventListener" "scroll" scroll)
+              (js-method global "removeEventListener" "resize" resize)
+              (when observer (js-method observer "disconnect"))
+              ;; A stale disposer may remove only its own listeners; it must
+              ;; not clear or retire a newer run installed on the same root.
+              (when (= gen ($glyphs-gen owner))
+                (js-set! owner "goeteiaGlyphsGeneration" (+ gen 1))
+                (js-set! owner "goeteiaGlyphsListenerCleanup"
+                         (js-undefined))))
+            (js-undefined)))
+        (js-set! owner "goeteiaGlyphsListenerCleanup" stop)
+        (when animate?
+          (letrec ((tick (lambda (t)
+                           (when (= gen ($glyphs-gen owner))
+                             (for-each glyphs-step! groups)
+                             (js-method global "requestAnimationFrame" tick))
+                           (js-undefined))))
+            (js-method global "requestAnimationFrame" tick)))
+        stop)))
+
+  (define (glyphs-track! groups . owner)
+    ($glyphs-start! groups owner #f))
 
   ;; one spring step: repulsion within ~110px of the pointer, a
   ;; spring home, critical-ish damping; the DOM is touched only
@@ -336,23 +393,6 @@
                                       (number->string ndy) "px)"))))
           (each (+ i 1))))))
 
-  ;; the standalone driver: listeners plus an own rAF loop.  The loop
-  ;; rides a generation counter so re-running the program (a live page
-  ;; recompiling on Run) retires the previous loop instead of stacking
-  ;; another one forever
-  (define (glyphs-dodge! groups)
-    (glyphs-track! groups)
-    ;; __goeteia_* properties belong to one compiled module instance;
-    ;; this counter must cross instances so a new Run can retire the old.
-    (let ((g (js-get (js-global) "goeteiaGlyphsGeneration")))
-      (js-set! (js-global) "goeteiaGlyphsGeneration"
-               (+ 1 (if (js-truthy? g) (js->number g) 0))))
-    (let ((gen (js->number (js-get (js-global) "goeteiaGlyphsGeneration"))))
-      (letrec ((tick (lambda (t)
-                       (when (= gen (js->number
-                                     (js-get (js-global)
-                                             "goeteiaGlyphsGeneration")))
-                         (for-each glyphs-step! groups)
-                         (js-method (js-global) "requestAnimationFrame" tick))
-                       (js-undefined))))
-        (js-method (js-global) "requestAnimationFrame" tick)))))
+  ;; the standalone driver: listeners plus an own rAF loop
+  (define (glyphs-dodge! groups . owner)
+    ($glyphs-start! groups owner #t)))
