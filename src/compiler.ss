@@ -3200,7 +3200,9 @@
       ((quote lambda) #t)
       ;; Variable-sized allocation can reject an invalid length, so
       ;; make-vector must remain observable even when its result is dead.
-      ((cons vector list string %record)
+      ;; `string` validates that every argument is a character, so even
+      ;; though it only allocates on success its failure is observable.
+      ((cons vector list %record)
        (all-true? (lambda (x) (pure-init? x known)) (cdr e)))
       ((if begin)
        (all-true? (lambda (x) (pure-init? x known)) (cdr e)))
