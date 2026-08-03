@@ -22,6 +22,16 @@ async function bothReject(name, source) {
     await assert.rejects(() => runJsModule(jsFile), undefined, `${name}: js`);
 }
 
+async function bothRejectOptimized(name, source) {
+    const sourceFile = path.join(dir, `${name}.ss`);
+    const jsFile = path.join(dir, `${name}.mjs`);
+    fs.writeFileSync(sourceFile, source, 'utf8');
+    const wasm = await compileToBytes(sourceFile);
+    fs.writeFileSync(jsFile, await compileToBytes(sourceFile, { target: 'js' }));
+    await assert.rejects(() => runModule(wasm), undefined, `${name}: wasm`);
+    await assert.rejects(() => runJsModule(jsFile), undefined, `${name}: js`);
+}
+
 try {
     await bothReject(
         'fixed-arity',
@@ -33,6 +43,9 @@ try {
     await bothReject(
         'callcc-arity',
         '(call/cc (lambda (k missing) 42))\n');
+    await bothRejectOptimized(
+        'unused-invalid-string',
+        '(define unused (string #f))\n(display 42)\n');
     {
         const sourceFile = path.join(dir, 'unused-unbound.ss');
         fs.writeFileSync(sourceFile, '(define unused missing)\n42\n', 'utf8');
