@@ -223,6 +223,7 @@
      (attribute float a_seed)
      (attribute float a_block)
      (uniform vec2 u_res)
+     (uniform float u_t)
      (varying float v_hx)
      (varying float v_speed)
      (varying float v_block)
@@ -233,7 +234,16 @@
                    (fl 0) (fl 1)))
        (set! gl_PointSize (+ (- "3.0" (* (min a_block (fl 1)) "1.5"))
                              (* a_seed "0.7")))
-       (set! v_hx (/ a_homea.x u_res.x))
+       ;; Colour follows the home the particle is CURRENTLY heading for,
+       ;; the same blend the physics uses.  Keying it to homeA alone made
+       ;; the gradient exact while the Latin word was shown and mottled
+       ;; while the Greek one was: the two spellings pair by index, so a
+       ;; particle standing in the Greek word wore the colour of wherever
+       ;; it had sat in the Latin one.
+       (local float dcyc (fract (/ u_t (fl 12))))
+       (local float dm (* (smoothstep "0.38" "0.5" dcyc)
+                          (- (fl 1) (smoothstep "0.88" (fl 1) dcyc))))
+       (set! v_hx (/ (mix a_homea.x a_homeb.x dm) u_res.x))
        (set! v_speed (length a_vel))
        (set! v_block a_block)))
    '((precision mediump float)
@@ -312,6 +322,7 @@
   (cmd-blend! 'alpha)
   (fx-use! draw-p back)
   (fx-uniform! draw-p 'u_res 720.0 230.0)
+  (fx-uniform! draw-p 'u_t t)
   (cmd-draw-arrays! GL-POINTS 0 count)
   (cmd-flush!)
   (glyphs-step! sub-glyphs)
