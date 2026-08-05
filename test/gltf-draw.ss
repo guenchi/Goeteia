@@ -187,14 +187,17 @@
 (gltf-load-textures! gs (lambda (g2) (set! done #t)))
 
 ;; every optional slot owns a value -- including base color, whose
-;; unit 0 would otherwise keep the previous primitive's image
+;; unit 0 would otherwise keep the previous primitive's image.  But
+;; the fallback must not erase the ASSET-level fact: gprim-textured?
+;; still answers "did the material declare a base color image", the
+;; question a renderer picks a shader with.  gs's material declares
+;; none.
 (define defaults-ok
-  (and done
-       (gprim-ntex (car (gltf-prims gs)))
-       (gprim-etex (car (gltf-prims gs)))
-       (gprim-otex (car (gltf-prims gs)))
-       (gprim-tex (car (gltf-prims gs)))
-       #t))
+  (let ((p (car (gltf-prims gs))))
+    (and done
+         (gprim-ntex p) (gprim-etex p) (gprim-otex p)
+         (gprim-tex p)                  ; a bindable fallback ...
+         (not (gprim-textured? p)))))   ; ... but not a real image
 
 (cmd-begin!)
 (gltf-draw! gs s-prog (m4-identity))
@@ -268,6 +271,10 @@
 (define nmap-only-prog (fx-program! tex-vs nmap-only-fs))
 (define t-done #f)
 (gltf-load-textures! gt (lambda (g2) (set! t-done #t)))
+;; gt's material DOES declare a base color image
+(define textured-pred-ok
+  (and t-done (gprim-textured? (car (gltf-prims gt)))))
+
 (define base-tex-optional-ok
   (and t-done
        (guard (e (#t #f))
@@ -433,4 +440,4 @@
      nmap-bound-ok combinator-layout-ok base-tex-optional-ok
      animated-world-ok matrix-node-ok matrix-reset-ok
      prim-world-split-ok skinned-prim-world-ok
-     no-u-model-ok)
+     no-u-model-ok textured-pred-ok)
