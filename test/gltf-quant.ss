@@ -99,10 +99,12 @@
      (u16! 0) (u16! 1) (u16! 2)            ; indices
      (pad-to! (+ bin 52))
      (v3! 10.0 0.0 0.0) (v3! 10.0 0.0 0.0) (v3! 10.0 0.0 0.0)
-     ;; target 1 is normalized i8: 127 -> 1.0 per component
+     ;; target 1 is normalized i8: 127 -> 1.0 per component.  The
+     ;; three vertices differ (and include a negative) so a decoder
+     ;; that never advances past vertex 0 cannot pass.
      (i8! 0) (i8! 127) (i8! 0)
-     (i8! 0) (i8! 127) (i8! 0)
-     (i8! 0) (i8! 127) (i8! 0))))
+     (i8! 127) (i8! 0) (i8! -127)
+     (i8! -127) (i8! 64) (i8! 127))))
 
 ;; ---- W: morph weights animated through a strided accessor ----
 ;; BIN: 0 pos(36) | 36 idx(6) | 44 times(8) | 52 weights(32) |
@@ -224,9 +226,15 @@
 ;; denormals, and a float-strided read walks off the 9-byte view
 (define morph-target-quant-ok
   (let ((d (vector-ref (vector-ref (gprim-morph pq) 1) 1)))
-    (and (near? (vector-ref d 1) 1.0)
-         (near? (vector-ref d 4) 1.0)
-         (near? (vector-ref d 0) 0.0))))
+    (and (near? (vector-ref d 0) 0.0)      ; v0 = (0, 1, 0)
+         (near? (vector-ref d 1) 1.0)
+         (near? (vector-ref d 2) 0.0)
+         (near? (vector-ref d 3) 1.0)      ; v1 = (1, 0, -1)
+         (near? (vector-ref d 4) 0.0)
+         (near? (vector-ref d 5) -1.0)
+         (near? (vector-ref d 6) -1.0)     ; v2 = (-1, .504, 1)
+         (near? (vector-ref d 7) 0.504)
+         (near? (vector-ref d 8) 1.0))))
 
 ;; morph weights crossfade through the same two-pose scheme as the
 ;; node TRS: "w" poses them at (.5,.25) and "move" does not drive

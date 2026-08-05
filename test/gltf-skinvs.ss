@@ -178,6 +178,30 @@
                           (else (loop (+ i 1)))))))
     (and (> main-at 0) (> decl-at 0) (< decl-at main-at))))
 
+;; the loader's interleave is a fixed order; a shader declaring the
+;; same attributes in another order can never match it, so say so
+;; at compose time rather than handing back a program that only
+;; fails once something tries to draw with it
+(define canonical-order-ok
+  (and (errors? (lambda ()
+                  (gltf-skin-shader
+                   '((attribute vec3 a_pos)
+                     (attribute vec4 a_color)
+                     (attribute vec4 a_tangent)
+                     (define (main) void
+                       (set! gl_Position (vec4 a_pos (fl 1))))))))
+       ;; ... while the canonical order composes fine
+       (equal? (map car
+                    (glsl-attributes
+                     (gltf-skin-shader
+                      '((attribute vec3 a_pos)
+                        (attribute vec4 a_tangent)
+                        (attribute vec4 a_color)
+                        (define (main) void
+                          (set! gl_Position (vec4 a_pos (fl 1))))))))
+               '(a_pos a_normal a_uv a_tangent a_color
+                 a_joints a_weights))))
+
 (define collision-ok
   (and (errors? (lambda ()
                   (gltf-skin-shader
@@ -226,5 +250,5 @@
                    (set! gl_Position (vec4 a_pos (fl 1))))))))))
 
 (and nmap-ok tex-ok weird-ok no-uv-ok no-uv-order-ok no-normal-ok
-     cross-class-ok name-space-ok decl-order-ok collision-ok near-ok
-     degenerate-ok)
+     cross-class-ok name-space-ok decl-order-ok canonical-order-ok
+     collision-ok near-ok degenerate-ok)

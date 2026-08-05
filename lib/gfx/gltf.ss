@@ -52,6 +52,10 @@
 ;;   * A clip poses the nodes it touches (wholesale, at bind for the
 ;;     paths it does not drive); nodes outside the clip keep their
 ;;     values, so clips over disjoint body parts compose.
+;;   * A clip's loop phase is t - dur*floor(t/dur).  When dur is
+;;     many orders of magnitude below the elapsed time the quotient
+;;     is huge and the phase loses its significance -- a clip a
+;;     microsecond long is not usefully playable minutes in.
 ;;   * anim-machine carries ONE transition.  Interrupting a live
 ;;     fade releases the clip being faded out of (its nodes return
 ;;     to bind) and starts the new fade from the incoming clip's own
@@ -72,7 +76,7 @@
           gprim-icount gprim-index-u32? gprim-color
           gprim-metallic gprim-roughness
           gprim-world gltf-prim-world
-          gprim-stride gprim-layout gprim-tex
+          gprim-stride gprim-layout gprim-tex gprim-textured?
           gprim-normal-img gprim-emissive-img gprim-occlusion-img
           gprim-emissive gprim-ntex gprim-etex gprim-otex)
   (import (rnrs) (web js) (gfx gl) (gfx glsl) (gfx fx) (gfx mat)
@@ -1233,6 +1237,26 @@
                  ;; the padding slots, only where they get injected
                  (if (memq 'a_normal names) '() '(a_normal))
                  (if (memq 'a_uv names) '() '(a_uv)))))
+      ;; The loader's interleave is a fixed order, so a shader that
+      ;; declares the recognized attributes in another one can never
+      ;; match a primitive.  Say so here rather than handing back a
+      ;; program that only fails when something tries to draw.
+      (let* ((canon '(a_pos a_normal a_uv a_tangent a_color
+                      a_joints a_weights))
+             (known (let keep ((ns names) (acc '()))
+                      (cond ((null? ns) (reverse acc))
+                            ((memq (car ns) canon)
+                             (keep (cdr ns) (cons (car ns) acc)))
+                            (else (keep (cdr ns) acc)))))
+             (want (let keep ((cs canon) (acc '()))
+                     (cond ((null? cs) (reverse acc))
+                           ((memq (car cs) known)
+                            (keep (cdr cs) (cons (car cs) acc)))
+                           (else (keep (cdr cs) acc))))))
+        (unless (equal? known want)
+          (error 'gltf-skin-shader
+                 "attributes are not in the loader's interleave order"
+                 known want)))
       ;; the g_* locals go into main's body, so they must be free
       ;; anywhere in the input -- a local of the same name would be
       ;; a redeclaration in the same scope
@@ -1752,6 +1776,14 @@
                    (when (= pending 0) (resolve!))
                    (js-undefined))))
               (load (+ i 1)))))))
+
+  ;; Did the MATERIAL declare a base color image?  After
+  ;; gltf-load-textures! every primitive owns a bindable slot in
+  ;; gprim-tex -- a 1x1 white one when the material has no image --
+  ;; so gprim-tex answers "what do I bind", not "what does the asset
+  ;; have".  A renderer choosing between a textured and an
+  ;; untextured program wants this predicate.
+  (define (gprim-textured? p) (and ($gprim-tex-img p) #t))
 
   ;; A primitive's CURRENT model matrix -- what gltf-draw! feeds
   ;; u_model, so a renderer driving its own shaders wants this one

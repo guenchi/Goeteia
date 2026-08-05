@@ -304,7 +304,7 @@
 (v4! 0.0 0.0 1.0 0.0)                     ;      180 deg about z
 (v3! 0.0 0.0 0.0) (v3! 5.0 0.0 0.0)       ; ta values
 (f32! 0.0) (f32! 0.0) (f32! 1.0)          ; dup times: t0 == t1
-(v3! 3.0 0.0 0.0) (v3! 3.0 0.0 0.0) (v3! 7.0 0.0 0.0)
+(v3! 3.0 0.0 0.0) (v3! 5.0 0.0 0.0) (v3! 9.0 0.0 0.0)
 
 (define g2 (gltf-parse base2 total2))
 
@@ -362,9 +362,11 @@
 
 ;; a duplicated timestamp gives a zero span at k /= k1.  It is a
 ;; validator error but a common exporter artifact, and it must
-;; degrade to holding the left key -- dividing by the zero span
-;; would put a NaN in the node TRS, and every descendant's
-;; u_mvp/u_model inherits it.
+;; degrade to HOLDING THE LEFT KEY -- the two keys carry different
+;; values (3 and 5) so that is distinguishable from taking the
+;; right one, and from any interpolation weight in between.
+;; Dividing by the zero span would instead put a NaN in the node
+;; TRS, which every descendant's u_mvp/u_model inherits.
 (define dup-time-ok
   (begin
     (gltf-animate! g2 3 0.0)
@@ -394,19 +396,25 @@
     (near? (vector-ref (joint2-m) 12) 4.75)))
 
 ;; interrupting a live transition must not abandon the clip being
-;; faded OUT of.  "ta" drives node 1; states b and c both run "n0",
-;; which drives node 0 only.  Going ta -> b and then, mid-fade,
-;; b -> c means NOTHING touches node 1 again -- so unless the
-;; interrupted source is released, node 1 keeps ta's last blended
-;; value forever instead of returning to bind.
+;; faded OUT of.  "ta", "n0" and "dup" are three distinct clips.
+;; Going
+;; The state assertion plus the distinct settled value keep a goto
+;; that silently refused mid-fade from passing.
 (define interrupt-ok
-  (let ((m (anim-machine g2 '((a . 2) (b . 4) (c . 4)) 1.0)))
-    (anim-update! m 0.5)                 ; "ta": node1 translation
+  (let ((m (anim-machine g2 '((a . 2) (b . 4) (c . 3)) 1.0)))
+    (anim-update! m 0.5)                 ; "ta": node1 = 2.5
     (anim-goto! m 'b)
     (anim-update! m 0.25)                ; mid-fade into n0
     (anim-goto! m 'c)                    ; interrupt: source dropped
-    (anim-update! m 2.0)                 ; settle
-    (near? (vector-ref (joint2-m) 12) 7.0)))
+    (and (eq? (anim-state m) 'c)
+         (begin
+           (anim-update! m 2.0)          ; settle on "dup"
+           ;; settling on "dup" puts node 1 at 3.0.  A goto that
+           ;; silently refused mid-fade would instead finish the
+           ;; original ta -> n0 fade and leave node 1 at bind, 7.0
+           ;; -- so the value distinguishes the two, which a shared
+           ;; clip for b and c could not.
+           (near? (vector-ref (joint2-m) 12) 3.0)))))
 
 ;; an instant transition (fade 0) settles on the very first update,
 ;; so it must release the outgoing clip just like a timed one --
