@@ -1243,6 +1243,11 @@
       ;; program that only fails when something tries to draw.
       (let* ((canon '(a_pos a_normal a_uv a_tangent a_color
                       a_joints a_weights))
+             ;; attributes outside the canonical set are the
+             ;; caller's own -- a program fed from somewhere else
+             ;; may legitimately carry them -- so this checks the
+             ;; RELATIVE order of the ones the loader fills and
+             ;; leaves the rest to gltf-draw!'s name check
              (known (let keep ((ns names) (acc '()))
                       (cond ((null? ns) (reverse acc))
                             ((memq (car ns) canon)
@@ -1281,14 +1286,16 @@
                                      (eq? (caddr (car fs)) name))
                                 i
                                 found))))))
-             ;; the last attribute BEFORE the first function: every
-             ;; global must be declared ahead of the code using it,
-             ;; and an input may declare an attribute after main
-             (first-def
+             ;; the last attribute BEFORE main: the injected globals
+             ;; go there, because main's body references them and
+             ;; GLSL wants a declaration first.  Helper functions
+             ;; may sit anywhere -- only main bounds the insertion.
+             (main-at
               (let scan ((fs vs) (i 0))
                 (cond ((null? fs) i)
                       ((and (pair? (car fs))
-                            (eq? (caar fs) 'define))
+                            (eq? (caar fs) 'define)
+                            (equal? (cadr (car fs)) '(main)))
                        i)
                       (else (scan (cdr fs) (+ i 1))))))
              (last-attr
@@ -1298,7 +1305,7 @@
                     (scan (cdr fs) (+ i 1)
                           (if (and (pair? (car fs))
                                    (eq? (caar fs) 'attribute)
-                                   (< i first-def))
+                                   (< i main-at))
                               i
                               last)))))
              ;; the canonical prefix is position normal uv; whatever
@@ -1306,6 +1313,11 @@
              ;; the last piece it does declare
              (pad-after (let ((n (attr-at 'a_normal)))
                           (if (< n 0) (attr-at 'a_pos) n))))
+        ;; main uses a_pos, so a_pos has to precede it -- and with
+        ;; it every attribute the interleave depends on
+        (when (< last-attr 0)
+          (error 'gltf-skin-shader
+                 "attributes must be declared before main"))
         (let loop ((fs vs) (i 0) (out '()))
           (if (null? fs)
               (reverse out)
@@ -1777,12 +1789,18 @@
                    (js-undefined))))
               (load (+ i 1)))))))
 
-  ;; Did the MATERIAL declare a base color image?  After
+  ;; Does this primitive have a base color IMAGE to sample?  After
   ;; gltf-load-textures! every primitive owns a bindable slot in
-  ;; gprim-tex -- a 1x1 white one when the material has no image --
-  ;; so gprim-tex answers "what do I bind", not "what does the asset
-  ;; have".  A renderer choosing between a textured and an
-  ;; untextured program wants this predicate.
+  ;; gprim-tex -- a 1x1 white one when it has no image -- so
+  ;; gprim-tex answers "what do I bind", not "what does the asset
+  ;; have"; this answers the latter.
+  ;;
+  ;; It is NOT the way to choose a program: the uv slot follows
+  ;; TEXCOORD_0, not the material, so a material with a base color
+  ;; image on a mesh without uvs reads #t while gprim-layout carries
+  ;; no uv (and the reverse happens too).  gprim-layout is the
+  ;; contract a program must match; use this to decide whether the
+  ;; sample is worth taking.
   (define (gprim-textured? p) (and ($gprim-tex-img p) #t))
 
   ;; A primitive's CURRENT model matrix -- what gltf-draw! feeds

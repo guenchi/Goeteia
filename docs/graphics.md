@@ -383,8 +383,12 @@ form — padding the slots the interleave always carries, rewriting
 `a_pos`/`a_normal`/`a_tangent` through the joint matrix, and leaving the
 varyings alone so the same fragment shader still pairs. A renderer
 driving its own shaders reads `gltf-prim-world` for a primitive's
-current model matrix (`gprim-world` is the bind pose, and neither
-follows the optional root). Animation is sampled and blended:
+current model matrix — the identity for a skinned one, since glTF has
+a skinned mesh ignore its node transform and the palette already
+carries the pose (`gprim-world` is the bind pose, and neither follows
+the optional root). `gprim-textured?` says whether there is a base
+color image to sample, which is a different question from what layout
+a program must declare. Animation is sampled and blended:
 `gltf-animate!` poses a clip completely each frame (looping, nlerp
 rotations; the nodes a clip touches return to bind first, so a channel
 the clip does not drive reads as bind rather than as whatever ran
