@@ -96,6 +96,63 @@
 (define (errors? thunk)
   (guard (e (#t #t)) (thunk) #f))
 
+;; ---- widths matter as much as names ----
+;; the loader gives COLOR_0 16 bytes whatever the accessor said (a
+;; VEC3 colour fills alpha with 1), so a shader declaring vec3
+;; a_color computes a 76-byte stride against the loader's 80 and
+;; misreads every vertex past the first.  Names alone cannot catch
+;; that, so the canonical attributes carry a type contract.
+(define width-ok
+  (and (errors? (lambda ()
+                  (gltf-skin-shader
+                   '((attribute vec3 a_pos)
+                     (attribute vec3 a_normal)
+                     (attribute vec2 a_uv)
+                     (attribute vec3 a_color)
+                     (define (main) void
+                       (set! gl_Position (vec4 a_pos (fl 1))))))))
+       (errors? (lambda ()
+                  (gltf-skin-shader
+                   '((attribute vec2 a_pos)
+                     (define (main) void
+                       (set! gl_Position (vec4 a_pos (fl 0) (fl 1))))))))
+       ;; the right widths still compose
+       (equal? (map car
+                    (glsl-attributes
+                     (gltf-skin-shader
+                      '((attribute vec3 a_pos)
+                        (attribute vec3 a_normal)
+                        (attribute vec2 a_uv)
+                        (attribute vec4 a_color)
+                        (define (main) void
+                          (set! gl_Position (vec4 a_pos (fl 1))))))))
+               '(a_pos a_normal a_uv a_color a_joints a_weights))))
+
+;; ---- the after-main rule only binds attributes the loader feeds ----
+;; a caller's own attribute is not read by the injected body, does
+;; not take part in padding, and is fed from elsewhere -- refusing
+;; it contradicts the rule two lines up that leaves such names alone
+(define after-main-scope-ok
+  (and (guard (e (#t #f))
+         (equal? (map car
+                      (glsl-attributes
+                       (gltf-skin-shader
+                        '((attribute vec3 a_pos)
+                          (uniform mat4 u_mvp)
+                          (define (main) void
+                            (set! gl_Position
+                                  (* u_mvp (vec4 a_pos (fl 1)))))
+                          (attribute vec3 a_custom)))))
+                 '(a_pos a_normal a_uv a_joints a_weights a_custom)))
+       ;; ... while a canonical one after main is still refused
+       (errors? (lambda ()
+                  (gltf-skin-shader
+                   '((attribute vec3 a_pos)
+                     (uniform mat4 u_mvp)
+                     (define (main) void
+                       (set! gl_Position (* u_mvp (vec4 a_pos (fl 1)))))
+                     (attribute vec3 a_normal)))))))
+
 ;; only MAIN bounds where the injected globals go -- a helper
 ;; function declared ahead of the attributes is legal GLSL and must
 ;; still compose (an earlier bound on "the first define" made the
@@ -329,5 +386,6 @@
 
 (and nmap-ok tex-ok weird-ok no-uv-ok no-uv-order-ok no-normal-ok
      cross-class-ok name-space-ok decl-order-ok canonical-order-ok
+     width-ok after-main-scope-ok
      helper-first-ok attrs-before-main-ok
      collision-ok near-ok degenerate-ok)

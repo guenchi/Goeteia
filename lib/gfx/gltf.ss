@@ -966,9 +966,11 @@
           (begin
             ($am-tprev! m (fl+ ($am-tprev m) dt))
             ($am-k! m (fl+ ($am-k m) dt))
-            (let ((w (if (fl<? ($am-len m) 0.000001)
-                         1.0
-                         (fl/ ($am-k m) ($am-len m))))
+            ;; only a zero or negative fade settles at once; any
+            ;; positive length interpolates, however short
+            (let ((w (if (fl<? 0.0 ($am-len m))
+                         (fl/ ($am-k m) ($am-len m))
+                         1.0))
                   (pi (cdr (assq ($am-prev m) ($am-states m)))))
               (if (fl<? w 1.0)
                   (gltf-animate-blend! g pi ($am-tprev m) ci ($am-tcur m) w)
@@ -1320,21 +1322,42 @@
              ;; the last piece it does declare
              (pad-after (let ((n (attr-at 'a_normal)))
                           (if (< n 0) (attr-at 'a_pos) n))))
-        ;; Every attribute has to precede main: main's injected body
-        ;; reads a_pos/a_normal/a_tangent, and the padding lands
+        ;; A CANONICAL attribute has to precede main: main's injected
+        ;; body reads a_pos/a_normal/a_tangent, and the padding lands
         ;; beside whichever of them the input declares -- so one
-        ;; declared after main puts a declaration below its use.
-        ;; (Helper FUNCTIONS may sit anywhere; only attributes are
-        ;; constrained.)
+        ;; declared after main puts a declaration below its use.  An
+        ;; attribute of the caller's own is fed from elsewhere and
+        ;; read by nothing this injects, so where it sits is the
+        ;; caller's business.  (Helper functions may sit anywhere.)
         (let scan ((fs vs) (i 0))
           (cond ((null? fs) #t)
                 ((and (pair? (car fs))
                       (eq? (caar fs) 'attribute)
+                      (memq (caddr (car fs))
+                            '(a_pos a_normal a_uv a_tangent a_color
+                              a_joints a_weights))
                       (> i main-at))
                  (error 'gltf-skin-shader
                         "attribute declared after main"
                         (caddr (car fs))))
                 (else (scan (cdr fs) (+ i 1)))))
+        ;; The loader's interleave fixes each canonical attribute's
+        ;; width -- COLOR_0 always occupies 16 bytes even when the
+        ;; accessor was VEC3 (alpha fills with 1).  A shader
+        ;; declaring vec3 a_color computes a stride 4 bytes short and
+        ;; misreads every vertex past the first, and comparing names
+        ;; alone would never catch it.
+        (let ((want '((a_pos . vec3) (a_normal . vec3) (a_uv . vec2)
+                      (a_tangent . vec4) (a_color . vec4)
+                      (a_joints . vec4) (a_weights . vec4))))
+          (for-each
+           (lambda (a)
+             (let ((spec (assq (car a) want)))
+               (when (and spec (not (eq? (cadr a) (cdr spec))))
+                 (error 'gltf-skin-shader
+                        "attribute has the wrong width for the interleave"
+                        (car a) (cadr a) (cdr spec)))))
+           (glsl-attributes vs)))
         (when (< last-attr 0)
           (error 'gltf-skin-shader
                  "attributes must be declared before main"))

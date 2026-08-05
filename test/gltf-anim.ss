@@ -232,7 +232,8 @@
    "{\"asset\":{\"version\":\"2.0\"},\"scene\":0,"
    "\"scenes\":[{\"nodes\":[0,1]}],"
    "\"nodes\":[{\"mesh\":0,\"skin\":0},"
-   "{\"name\":\"j\",\"translation\":[7,0,0],\"scale\":[1,3,4]}],"
+   "{\"name\":\"j\",\"translation\":[7,0,0],\"scale\":[1,3,4],"
+   "\"rotation\":[0.2,0.3,0.1,0.9273618]}],"
    "\"skins\":[{\"joints\":[1]}],"
    "\"meshes\":[{\"primitives\":[{\"attributes\":"
    "{\"POSITION\":0,\"JOINTS_0\":1,\"WEIGHTS_0\":2},\"indices\":3}]}],"
@@ -255,7 +256,7 @@
    "{\"name\":\"sc\",\"samplers\":[{\"input\":6,\"output\":11,"
    "\"interpolation\":\"LINEAR\"}],\"channels\":[{\"sampler\":0,"
    "\"target\":{\"node\":1,\"path\":\"scale\"}}]}],"
-   "\"buffers\":[{\"byteLength\":248}],"
+   "\"buffers\":[{\"byteLength\":272}],"
    "\"bufferViews\":["
    "{\"buffer\":0,\"byteOffset\":0,\"byteLength\":36},"
    "{\"buffer\":0,\"byteOffset\":36,\"byteLength\":12},"
@@ -343,13 +344,27 @@
 ;; not just translation: the copy loops are bounded by a literal,
 ;; and an off-by-one there would be invisible to the m[12] and
 ;; m[0]/m[1] reads every other case makes
-(define bind-scale-ok
+;; every TRS slot round-trips through the bind snapshot and reset --
+;; scale AND all four quaternion components.  The bind rotation is
+;; deliberately off-axis (0.2,0.3,0.1,0.927) so dropping any single
+;; slot changes the matrix; an axis-aligned one would hide a missing
+;; qw behind m4-from-quat's identity case.
+(define bind-trs-ok
   (begin
-    (gltf-animate! g2 5 0.5)              ; "sc" drives scale to 1.5
-    (gltf-animate! g2 2 0.5)              ; "ta" drives translation
-    (let ((m (joint2-m)))                 ; scale rides the diagonal
-      (and (near? (vector-ref m 5) 3.0)   ; back to the ASSET bind,
-           (near? (vector-ref m 10) 4.0)  ; not 1.5 and not 0
+    (gltf-animate! g2 5 0.5)              ; "sc" drives scale
+    (gltf-animate! g2 1 0.5)              ; "rot" drives rotation
+    (gltf-animate! g2 2 0.5)              ; "ta" drives translation only
+    (let ((m (joint2-m)))
+      ;; the bind pose: R(0.2,0.3,0.1,0.927) with scale (1,3,4)
+      (and (near? (vector-ref m 0) 0.8)
+           (near? (vector-ref m 1) 0.30547)
+           (near? (vector-ref m 2) -0.51642)
+           (near? (vector-ref m 4) -0.19642)
+           (near? (vector-ref m 5) 2.7)
+           (near? (vector-ref m 6) 1.29283)
+           (near? (vector-ref m 8) 2.38567)
+           (near? (vector-ref m 9) -1.24378)
+           (near? (vector-ref m 10) 2.96)
            (near? (vector-ref m 12) 2.5)))))
 
 (define complete-pose-ok
@@ -487,6 +502,17 @@
     ;; of the way is 6.75 -- a carried-over k of .5 would give 6.5.
     (near? (vector-ref (joint2-m) 12) 6.75)))
 
+;; a legal POSITIVE fade, however short, still interpolates: the
+;; settle shortcut is for zero and negative only.  At half of a
+;; 5e-7 fade node 1 must sit halfway between ta's pose (2.5) and
+;; bind (7), i.e. 4.75 -- not snapped to 7.
+(define tiny-fade-ok
+  (let ((m (anim-machine g2 '((a . 2) (b . 4)) 1.0)))
+    (anim-update! m 0.5)
+    (anim-goto! m 'b 0.0000005)
+    (anim-update! m 0.00000025)
+    (near? (vector-ref (joint2-m) 12) 4.75)))
+
 (define same-state-ok
   (let ((m (anim-machine g2 '((a . 2) (b . 4)) 1.0)))
     (anim-update! m 0.5)
@@ -496,7 +522,8 @@
       (anim-goto! m 'b)                  ; already there: a no-op
       (near? (vector-ref (joint2-m) 12) mid))))
 
-(and bind-scale-ok instant-fade-ok negative-fade-ok interrupt-clock-ok
+(and bind-trs-ok instant-fade-ok negative-fade-ok tiny-fade-ok
+     interrupt-clock-ok
      same-state-ok interrupt-release-ok
      interrupt-effect-ok union-dedup-ok
      weights-ok lin-ok stp-ok cub-ok cubr-ok cubw-ok
