@@ -377,9 +377,12 @@ material: position+normal alone is 24 bytes, a `TEXCOORD_0` (or
 anything past it) adds the 8-byte uv slot, and `TANGENT`, `COLOR_0`
 and the skin inputs add 16, 16 and 32. `gprim-layout` names what is
 present, in interleave order — that, not `gprim-textured?`, is the
-contract `gltf-draw!` matches a program against, and it checks widths
-as well as names (a `vec3 a_color` against the always-16-byte colour
-slot would otherwise misread every vertex).
+contract `gltf-draw!` matches a program against: it compares name AND
+component count per attribute, because wrong widths can cancel out in
+the total (a `vec2` position beside a `vec4` normal spans the same 24
+bytes as two `vec3`s while every offset past the first is wrong). A
+program declaring per-instance `i_*` attributes is refused too — this
+entry point binds no instance buffer, so the shader would read zeros.
 Skinning is a dimension rather than a shader variant:
 `(gltf-skin-shader vs)` turns any static vertex shader into its skinned
 form — padding the slots the interleave always carries, rewriting

@@ -80,7 +80,7 @@
           gprim-normal-img gprim-emissive-img gprim-occlusion-img
           gprim-emissive gprim-ntex gprim-etex gprim-otex)
   (import (rnrs) (web js) (gfx gl) (gfx glsl) (gfx fx) (gfx mat)
-          (web json) (gfx meshopt))
+          (gfx mesh) (web json) (gfx meshopt))
 
   (define ($gltf-fl v) (if (flonum? v) v (exact->inexact v)))
 
@@ -1101,25 +1101,13 @@
 
   ;; the skinning vertex shader: 4 joints x 4 weights per vertex,
   ;; pair with mesh-tex-fs (or mesh-lit-fs won't match the varyings)
-  (define gltf-skin-vs
-    '((attribute vec3 a_pos)
-      (attribute vec3 a_normal)
-      (attribute vec2 a_uv)
-      (attribute vec4 a_joints)
-      (attribute vec4 a_weights)
-      (uniform mat4 u_mvp)
-      (uniform (array mat4 32) u_joints)
-      (varying vec3 v_normal)
-      (varying vec2 v_uv)
-      (define (main) void
-        (local mat4 skin
-               (+ (* a_weights.x (at u_joints (int a_joints.x)))
-                  (* a_weights.y (at u_joints (int a_joints.y)))
-                  (* a_weights.z (at u_joints (int a_joints.z)))
-                  (* a_weights.w (at u_joints (int a_joints.w)))))
-        (set! gl_Position (* u_mvp (* skin (vec4 a_pos (fl 1)))))
-        (set! v_normal (vec3 (* skin (vec4 a_normal (fl 0)))))
-        (set! v_uv a_uv))))
+  ;; The built-in skinned program is DERIVED, not hand written: it is
+  ;; exactly mesh-tex-vs run through the combinator below.  The two
+  ;; used to be separate, and the copy drifted -- it never declared
+  ;; u_model, so gltf-draw!'s optional root rotated the geometry
+  ;; while the normals stayed put.  Defined after gltf-skin-shader
+  ;; because it calls it.
+  (define gltf-skin-vs #f)
 
   ;; ---- the skin combinator: any static vertex shader, skinned ----
   ;; Skinning is one orthogonal dimension, not a family of
@@ -1415,6 +1403,8 @@
                                out)
                               out)))
                 (loop (cdr fs) (+ i 1) out)))))))
+
+  (set! gltf-skin-vs (gltf-skin-shader mesh-tex-vs))
 
   ;; KHR_mesh_quantization: read component c of a vertex as a flonum,
   ;; dequantizing by componentType + normalized.  Positions ride the
@@ -1859,18 +1849,22 @@
         (m4-identity)
         ($node-global g ($gprim-node p))))
 
-  ;; the shader attribute names a layout demands, in order
-  (define ($layout-attr-names layout)
+  ;; the shader attributes a layout demands: (name . components), in
+  ;; order.  Widths are part of the contract, not a detail -- wrong
+  ;; ones can cancel out in the total (vec2 + vec4 spans the same 24
+  ;; bytes as vec3 + vec3) and then every offset past the first is
+  ;; wrong while the stride looks right.
+  (define ($layout-attr-schema layout)
     (map (lambda (a)
            (case a
-             ((position) 'a_pos)
-             ((normal) 'a_normal)
-             ((uv) 'a_uv)
-             ((tangent) 'a_tangent)
-             ((color) 'a_color)
-             ((joints) 'a_joints)
-             ((weights) 'a_weights)
-             (else a)))
+             ((position) '(a_pos . 3))
+             ((normal) '(a_normal . 3))
+             ((uv) '(a_uv . 2))
+             ((tangent) '(a_tangent . 4))
+             ((color) '(a_color . 4))
+             ((joints) '(a_joints . 4))
+             ((weights) '(a_weights . 4))
+             (else (cons a 0))))
          layout))
 
   ;; draw every primitive; geometry uploads on its first frame.
@@ -1917,16 +1911,24 @@
   (define (gltf-draw! g prog vp . root)
     (for-each
      (lambda (p)
-       ;; strides collide across layouts (tangent and color are both
-       ;; vec4): the attribute NAMES are the exact contract.  A
-       ;; mismatch here would silently feed one attribute's bytes to
+       ;; Strides collide across layouts (tangent and color are both
+       ;; vec4) and wrong widths can cancel out in the total, so the
+       ;; contract is per attribute: name AND component count.  A
+       ;; mismatch would silently feed one attribute's bytes to
        ;; another -- refuse it instead.
-       (let ((want ($layout-attr-names (gprim-layout p)))
-             (have (fx-program-attribute-names prog)))
+       (let ((want ($layout-attr-schema (gprim-layout p)))
+             (have (fx-program-attribute-schema prog)))
          (unless (equal? want have)
            (error 'gltf-draw!
                   "program attributes do not match the primitive layout"
                   have want)))
+       ;; a program carrying per-instance attributes needs an
+       ;; instance buffer this entry point never binds; the shader
+       ;; would read zeros for them
+       (unless (= 0 (fx-program-istride prog))
+         (error 'gltf-draw!
+                "program declares per-instance attributes (i_*)"
+                (fx-program-istride prog)))
        (let ((fresh (not ($gprim-vbuf p))))
          (when fresh
            ($gprim-vbuf! p (fx-buffer!))

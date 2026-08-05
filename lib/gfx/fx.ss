@@ -40,7 +40,7 @@
           fx-bind-target! fx-bind-canvas!
           fx-program! fx-program3! fx-tf-program! fx-ubo!
           fx-program? fx-program-slot fx-program-stride
-          fx-program-attribute-names
+          fx-program-attribute-names fx-program-attribute-schema
           fx-program-istride
           fx-use! fx-use-instanced! fx-uniform! fx-uniform?
           fx-ticks! fx-loop! fx-loop-fixed!
@@ -234,10 +234,16 @@
             ;; GL uniform state is per-program and persistent, so a
             ;; skipped re-send is exactly free
             (immutable ucache $fx-program-ucache)
-            ;; vertex attribute names in declaration order -- strides
-            ;; collide (tangent and color are both vec4), names are
-            ;; the exact interleave contract
-            (immutable anames fx-program-attribute-names)))
+            ;; vertex attributes in declaration order as
+            ;; (name . components) -- strides collide (tangent and
+            ;; color are both vec4) and so do wrong widths that
+            ;; cancel out (vec2+vec4 spans the same 24 bytes as
+            ;; vec3+vec3), so the contract is per-attribute
+            (immutable aschema fx-program-attribute-schema)))
+
+  ;; just the names, in order
+  (define (fx-program-attribute-names prog)
+    (map car (fx-program-attribute-schema prog)))
 
   (define ($fx-instance-name? n)        ; i_offset, i_tint, ...
     (let ((s (symbol->string n)))
@@ -302,9 +308,12 @@
               ($make-fx-program pslot voff (reverse vacc)
                                 ioff (reverse iacc) uniforms
                                 (make-eq-hashtable)
-                                (filter (lambda (n)
-                                          (not ($fx-instance-name? n)))
-                                        (map car as0)))
+                                (map (lambda (a)
+                                       (cons (car a) (caddr a)))
+                                     (filter (lambda (a)
+                                               (not ($fx-instance-name?
+                                                     (car a))))
+                                             as0)))
               (let ((n (caar as)) (size (caddr (car as))))
                 (if ($fx-instance-name? n)
                     (loop (cdr as) (+ loc 1) voff (+ ioff (* 4 size))
