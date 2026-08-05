@@ -226,7 +226,7 @@
 ;; BIN: 0 pos(36) | 36 joints(12) | 48 weights(48) | 96 idx(6) |
 ;;      104 tiny-times(8) | 112 tiny-vals(24) | 136 times(8) |
 ;;      144 rot-vals(32) | 176 ta-vals(24)
-(define binlen2 200)
+(define binlen2 248)
 (define json2
   (string-append
    "{\"asset\":{\"version\":\"2.0\"},\"scene\":0,"
@@ -244,8 +244,14 @@
    "\"target\":{\"node\":1,\"path\":\"rotation\"}}]},"
    "{\"name\":\"ta\",\"samplers\":[{\"input\":6,\"output\":8,"
    "\"interpolation\":\"LINEAR\"}],\"channels\":[{\"sampler\":0,"
-   "\"target\":{\"node\":1,\"path\":\"translation\"}}]}],"
-   "\"buffers\":[{\"byteLength\":200}],"
+   "\"target\":{\"node\":1,\"path\":\"translation\"}}]},"
+   "{\"name\":\"dup\",\"samplers\":[{\"input\":9,\"output\":10,"
+   "\"interpolation\":\"LINEAR\"}],\"channels\":[{\"sampler\":0,"
+   "\"target\":{\"node\":1,\"path\":\"translation\"}}]},"
+   "{\"name\":\"n0\",\"samplers\":[{\"input\":6,\"output\":8,"
+   "\"interpolation\":\"LINEAR\"}],\"channels\":[{\"sampler\":0,"
+   "\"target\":{\"node\":0,\"path\":\"translation\"}}]}],"
+   "\"buffers\":[{\"byteLength\":248}],"
    "\"bufferViews\":["
    "{\"buffer\":0,\"byteOffset\":0,\"byteLength\":36},"
    "{\"buffer\":0,\"byteOffset\":36,\"byteLength\":12},"
@@ -255,7 +261,9 @@
    "{\"buffer\":0,\"byteOffset\":112,\"byteLength\":24},"
    "{\"buffer\":0,\"byteOffset\":136,\"byteLength\":8},"
    "{\"buffer\":0,\"byteOffset\":144,\"byteLength\":32},"
-   "{\"buffer\":0,\"byteOffset\":176,\"byteLength\":24}],"
+   "{\"buffer\":0,\"byteOffset\":176,\"byteLength\":24},"
+   "{\"buffer\":0,\"byteOffset\":200,\"byteLength\":12},"
+   "{\"buffer\":0,\"byteOffset\":212,\"byteLength\":36}],"
    "\"accessors\":["
    "{\"bufferView\":0,\"componentType\":5126,\"count\":3,\"type\":\"VEC3\"},"
    "{\"bufferView\":1,\"componentType\":5121,\"count\":3,\"type\":\"VEC4\"},"
@@ -265,7 +273,9 @@
    "{\"bufferView\":5,\"componentType\":5126,\"count\":2,\"type\":\"VEC3\"},"
    "{\"bufferView\":6,\"componentType\":5126,\"count\":2,\"type\":\"SCALAR\"},"
    "{\"bufferView\":7,\"componentType\":5126,\"count\":2,\"type\":\"VEC4\"},"
-   "{\"bufferView\":8,\"componentType\":5126,\"count\":2,\"type\":\"VEC3\"}]}"))
+   "{\"bufferView\":8,\"componentType\":5126,\"count\":2,\"type\":\"VEC3\"},"
+   "{\"bufferView\":9,\"componentType\":5126,\"count\":3,\"type\":\"SCALAR\"},"
+   "{\"bufferView\":10,\"componentType\":5126,\"count\":3,\"type\":\"VEC3\"}]}"))
 
 (define jlen2 (string-length json2))
 (define jpad2 (remainder (- 4 (remainder jlen2 4)) 4))
@@ -292,6 +302,8 @@
 (v4! 0.0 0.0 0.0 1.0)                     ; rot: identity ->
 (v4! 0.0 0.0 1.0 0.0)                     ;      180 deg about z
 (v3! 0.0 0.0 0.0) (v3! 5.0 0.0 0.0)       ; ta values
+(f32! 0.0) (f32! 0.0) (f32! 1.0)          ; dup times: t0 == t1
+(v3! 3.0 0.0 0.0) (v3! 3.0 0.0 0.0) (v3! 7.0 0.0 0.0)
 
 (define g2 (gltf-parse base2 total2))
 
@@ -347,6 +359,41 @@
     (gltf-animate-blend! g2 1 0.5 2 0.5 0.0)  ; fully "rot" (A side)
     (near? (vector-ref (joint2-m) 12) 0.0)))
 
-(and weights-ok lin-ok stp-ok cub-ok cubr-ok cubw-ok
+;; a duplicated timestamp gives a zero span at k /= k1.  It is a
+;; validator error but a common exporter artifact, and it must
+;; degrade to holding the left key -- dividing by the zero span
+;; would put a NaN in the node TRS, and every descendant's
+;; u_mvp/u_model inherits it.
+(define dup-time-ok
+  (begin
+    (gltf-animate! g2 3 0.0)
+    (near? (vector-ref (joint2-m) 12) 3.0)))
+
+;; when a crossfade COMPLETES, the outgoing clip's nodes must go
+;; back to bind too.  Clips "ta" (node 1) and "n0" (node 0) drive
+;; disjoint nodes, so after settling into n0 nothing may still hold
+;; node 1 at ta's pose.
+(define fade-settle-ok
+  (let ((m (anim-machine g2 '((a . 2) (b . 4)) 0.1)))
+    (anim-update! m 0.5)                 ; playing "ta": node1 = 2.5
+    (and (near? (vector-ref (joint2-m) 12) 2.5)
+         (begin
+           (anim-goto! m 'b)
+           (anim-update! m 0.5)          ; past the fade: settled on n0
+           (near? (vector-ref (joint2-m) 12) 0.0)))))
+
+;; the union of two clips' touched nodes visits each node ONCE.
+;; "ta" and "rot" BOTH touch node 1, so without dedup the blend runs
+;; twice on it: lerp(2.5, 0, .5) = 1.25 the first time, then
+;; lerp(2.5, 1.25, .5) = 1.875 the second.  (A mid k is required --
+;; at k = 0 or 1 a second pass is idempotent and proves nothing.)
+(define union-dedup-ok
+  (begin
+    (gltf-animate-blend! g2 2 0.5 1 0.5 0.5)
+    (near? (vector-ref (joint2-m) 12) 1.25)))
+
+(and union-dedup-ok
+     weights-ok lin-ok stp-ok cub-ok cubr-ok cubw-ok
      tiny-span-ok nlerp-contract-ok complete-pose-ok
-     crossfade-default-ok crossfade-from-ok)
+     crossfade-default-ok crossfade-from-ok dup-time-ok
+     fade-settle-ok)

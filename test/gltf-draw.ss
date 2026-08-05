@@ -185,11 +185,14 @@
 (define done #f)
 (gltf-load-textures! gs (lambda (g2) (set! done #t)))
 
-(define defaults-ok                       ; slots hold the fallbacks
+;; every optional slot owns a value -- including base color, whose
+;; unit 0 would otherwise keep the previous primitive's image
+(define defaults-ok
   (and done
        (gprim-ntex (car (gltf-prims gs)))
        (gprim-etex (car (gltf-prims gs)))
        (gprim-otex (car (gltf-prims gs)))
+       (gprim-tex (car (gltf-prims gs)))
        #t))
 
 (cmd-begin!)
@@ -280,14 +283,20 @@
    (string-append
     "{\"asset\":{\"version\":\"2.0\"},\"scene\":0,"
     "\"scenes\":[{\"nodes\":[0]}],"
-    "\"nodes\":[{\"mesh\":0,\"translation\":[0,0,0]}],"
+    "\"nodes\":[{\"children\":[1],\"translation\":[0,0,0]},"
+    "{\"mesh\":0,\"translation\":[100,0,0]}],"
     "\"meshes\":[{\"primitives\":[{\"attributes\":{\"POSITION\":0},"
     "\"indices\":1}]}],"
     "\"animations\":[{\"name\":\"slide\","
     "\"samplers\":[{\"input\":2,\"output\":3,"
     "\"interpolation\":\"LINEAR\"}],"
     "\"channels\":[{\"sampler\":0,\"target\":"
-    "{\"node\":0,\"path\":\"translation\"}}]}],"
+    "{\"node\":0,\"path\":\"translation\"}}]},"
+    "{\"name\":\"onmatrix\","
+    "\"samplers\":[{\"input\":2,\"output\":3,"
+    "\"interpolation\":\"LINEAR\"}],"
+    "\"channels\":[{\"sampler\":0,\"target\":"
+    "{\"node\":1,\"path\":\"translation\"}}]}],"
     "\"buffers\":[{\"byteLength\":76}],"
     "\"bufferViews\":["
     "{\"buffer\":0,\"byteOffset\":0,\"byteLength\":36},"
@@ -311,9 +320,87 @@
 (cmd-begin!)
 (gltf-draw! ga lit-prog (m4-identity))
 (cmd-flush!)
+;; the mesh sits UNDER the animated node at a fixed local offset of
+;; 100, so a $node-global that ignored the parent chain would report
+;; 100 and a snapshot world would report 100 as well -- only walking
+;; the runtime parents gives 105
 (define animated-world-ok
-  (= (count-log "uniformMat4:U:u_model:16:5.00") 1))
+  (= (count-log "uniformMat4:U:u_model:16:105.00") 1))
+
+;; ---- a node expressed as a matrix ----
+;; the pose arena snapshots TRS slots; a matrix node keeps its
+;; transform elsewhere, so the bind snapshot must carry it too --
+;; otherwise resetting such a node silently drops it to identity.
+;; Here an animated parent moves a matrix-transformed child.
+(define mx-loc
+  (glb!
+   (string-append
+    "{\"asset\":{\"version\":\"2.0\"},\"scene\":0,"
+    "\"scenes\":[{\"nodes\":[0]}],"
+    "\"nodes\":[{\"children\":[1],\"translation\":[0,0,0]},"
+    "{\"mesh\":0,"
+    "\"matrix\":[1,0,0,0, 0,1,0,0, 0,0,1,0, 20,0,0,1]}],"
+    "\"meshes\":[{\"primitives\":[{\"attributes\":{\"POSITION\":0},"
+    "\"indices\":1}]}],"
+    "\"animations\":[{\"name\":\"slide\","
+    "\"samplers\":[{\"input\":2,\"output\":3,"
+    "\"interpolation\":\"LINEAR\"}],"
+    "\"channels\":[{\"sampler\":0,\"target\":"
+    "{\"node\":0,\"path\":\"translation\"}}]},"
+    "{\"name\":\"onmatrix\","
+    "\"samplers\":[{\"input\":2,\"output\":3,"
+    "\"interpolation\":\"LINEAR\"}],"
+    "\"channels\":[{\"sampler\":0,\"target\":"
+    "{\"node\":1,\"path\":\"translation\"}}]}],"
+    "\"buffers\":[{\"byteLength\":76}],"
+    "\"bufferViews\":["
+    "{\"buffer\":0,\"byteOffset\":0,\"byteLength\":36},"
+    "{\"buffer\":0,\"byteOffset\":36,\"byteLength\":6},"
+    "{\"buffer\":0,\"byteOffset\":44,\"byteLength\":8},"
+    "{\"buffer\":0,\"byteOffset\":52,\"byteLength\":24}],"
+    "\"accessors\":["
+    "{\"bufferView\":0,\"componentType\":5126,\"count\":3,\"type\":\"VEC3\"},"
+    "{\"bufferView\":1,\"componentType\":5123,\"count\":3,\"type\":\"SCALAR\"},"
+    "{\"bufferView\":2,\"componentType\":5126,\"count\":2,\"type\":\"SCALAR\"},"
+    "{\"bufferView\":3,\"componentType\":5126,\"count\":2,\"type\":\"VEC3\"}]}")
+   76
+   (lambda ()
+     (v3! 0.0 0.0 0.0) (v3! 1.0 0.0 0.0) (v3! 0.0 1.0 0.0)
+     (u16! 0) (u16! 1) (u16! 2) (u16! 0)
+     (f32! 0.0) (f32! 1.0)
+     (v3! 0.0 0.0 0.0) (v3! 10.0 0.0 0.0))))
+(define gm (gltf-parse (car mx-loc) (cdr mx-loc)))
+(gltf-animate! gm 0 0.5)                  ; parent slides to 5
+(cmd-begin!)
+(gltf-draw! gm lit-prog (m4-identity))
+(cmd-flush!)
+(define matrix-node-ok                    ; 20 (matrix) + 5 (parent)
+  (= (count-log "uniformMat4:U:u_model:16:25.00") 1))
+
+;; a clip that TOUCHES the matrix node runs it through the reset
+;; path: the matrix must survive, whatever the arena stores as its
+;; "bind" TRS (glTF forbids animating a matrix node, so the channel
+;; is ignored -- but ignoring it must not zero the transform)
+(gltf-animate! gm 0 0.0)                  ; parent back to 0
+(gltf-animate! gm 1 0.5)                  ; the clip that touches it
+(cmd-begin!)
+(gltf-draw! gm lit-prog (m4-identity))
+(cmd-flush!)
+(define matrix-reset-ok
+  (= (count-log "uniformMat4:U:u_model:16:20.00") 1))
+
+;; gprim-world is the BIND pose; gltf-prim-world is what draws.
+;; A custom renderer needs the second, so the split has to be
+;; reachable and the two must actually differ under animation.
+(define prim-world-split-ok
+  (let ((p (car (gltf-prims ga))))
+    (and (near2? (vector-ref (gprim-world p) 12) 100.0)
+         (near2? (vector-ref (gltf-prim-world ga p) 12) 105.0))))
+
+(define (near2? a b)
+  (and (fl<? (fl- a b) 0.001) (fl<? (fl- b a) 0.001)))
 
 (and stride-collision k-draw-ok s-mismatch-ok defaults-ok
      nmap-bound-ok combinator-layout-ok base-tex-optional-ok
-     animated-world-ok)
+     animated-world-ok matrix-node-ok matrix-reset-ok
+     prim-world-split-ok)

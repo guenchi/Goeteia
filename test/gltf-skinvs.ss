@@ -76,6 +76,23 @@
                '(a_pos a_normal a_uv a_joints a_weights))
        (= (attr-bytes (gltf-skin-shader mesh-lit-vs)) 64)))
 
+;; the padding goes where the interleave puts it -- right after
+;; normal -- not merely at the end: a shader with tangent but no uv
+;; would otherwise get (pos normal tangent uv ...) and never match
+(define no-uv-order-ok
+  (equal? (map car (glsl-attributes
+                    (gltf-skin-shader
+                     '((attribute vec3 a_pos)
+                       (attribute vec3 a_normal)
+                       (attribute vec4 a_tangent)
+                       (uniform mat4 u_mvp)
+                       (varying vec3 v_t)
+                       (define (main) void
+                         (set! gl_Position
+                               (* u_mvp (vec4 a_pos (fl 1))))
+                         (set! v_t (+ a_normal a_tangent.xyz)))))))
+          '(a_pos a_normal a_uv a_tangent a_joints a_weights)))
+
 (define (errors? thunk)
   (guard (e (#t #t)) (thunk) #f))
 
@@ -127,5 +144,5 @@
                  (define (main) void
                    (set! gl_Position (vec4 a_pos (fl 1))))))))))
 
-(and nmap-ok tex-ok weird-ok no-uv-ok collision-ok near-ok
-     degenerate-ok)
+(and nmap-ok tex-ok weird-ok no-uv-ok no-uv-order-ok collision-ok
+     near-ok degenerate-ok)

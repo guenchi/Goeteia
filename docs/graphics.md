@@ -375,8 +375,12 @@ textures (`gltf-load-textures!`), skins, and animations. Untextured
 primitives come out in `mesh-lit-vs`'s 24-byte layout, textured ones at
 32 bytes, skinned at 64 for `gltf-skin-vs` (four weighted joints per
 vertex from one mat4-array upload). Animation is sampled and blended:
-`gltf-animate!` samples channels each frame (looping, nlerp rotations),
-`gltf-animate-blend!` crossfades two clips, `gltf-weights!` /
+`gltf-animate!` poses a clip completely each frame (looping, nlerp
+rotations; the nodes a clip touches return to bind first, so a channel
+the clip does not drive reads as bind rather than as whatever ran
+before), `gltf-animate-blend!` crossfades two clips posed
+independently — which is what lets clips with different channel sets
+fade correctly — `gltf-weights!` /
 `gprim-morph` drive morph targets, and `anim-machine` / `anim-goto!` /
 `anim-update!` package named states over clips with per-transition fades.
 The skeleton composes without a boxed matrix anywhere: each node's local
