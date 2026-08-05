@@ -372,11 +372,14 @@ What loads: every primitive's POSITION (+ NORMAL, or +y when absent),
 u8/u16/u32 indices, node TRS/matrix transforms accumulated through the
 scene graph, `baseColorFactor` and metallic/roughness factors, embedded
 textures (`gltf-load-textures!`), skins, and animations. Untextured
-primitives come out in `mesh-lit-vs`'s 24-byte layout, textured ones at
-32 bytes, skinned at 64 for `gltf-skin-vs` (four weighted joints per
-vertex from one mat4-array upload); `TANGENT` and `COLOR_0` extend the
-stride by 16 each, and `gprim-layout` names the attributes present, in
-interleave order — the contract `gltf-draw!` matches a program against.
+the stride follows the ATTRIBUTES the asset carries, never the
+material: position+normal alone is 24 bytes, a `TEXCOORD_0` (or
+anything past it) adds the 8-byte uv slot, and `TANGENT`, `COLOR_0`
+and the skin inputs add 16, 16 and 32. `gprim-layout` names what is
+present, in interleave order — that, not `gprim-textured?`, is the
+contract `gltf-draw!` matches a program against, and it checks widths
+as well as names (a `vec3 a_color` against the always-16-byte colour
+slot would otherwise misread every vertex).
 Skinning is a dimension rather than a shader variant:
 `(gltf-skin-shader vs)` turns any static vertex shader into its skinned
 form — padding the slots the interleave always carries, rewriting

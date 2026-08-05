@@ -118,6 +118,10 @@
 
 (define gk (gltf-parse (car k-loc) (cdr k-loc)))
 (define gs (gltf-parse (car s-loc) (cdr s-loc)))
+;; the predicate is an asset fact on BOTH sides: gs declares no base
+;; colour image, and that reads false before any texture exists too
+(define untextured-preload-ok
+  (not (gprim-textured? (car (gltf-prims gs)))))
 
 (define stride-collision                  ; the ambiguity is real
   (and (= (gprim-stride (car (gltf-prims gk))) 64)
@@ -126,7 +130,7 @@
                     (gprim-layout (car (gltf-prims gs)))))))
 
 ;; ---- the recording mock GL (as in test/gltf.ss) ----
-(js-eval "globalThis.__gllog = []; globalThis.__mockcanvas = { width:640, height:480, addEventListener(k,f){}, getContext(kind) { const log = globalThis.__gllog; const push = (...a) => log.push(a.join(':')); return { VERTEX_SHADER:'VS', FRAGMENT_SHADER:'FS', COMPILE_STATUS:'CS', LINK_STATUS:'LS', COLOR_BUFFER_BIT:16384, DEPTH_BUFFER_BIT:256, ARRAY_BUFFER:'AB', DYNAMIC_DRAW:'DD', FLOAT:'F', TRIANGLES:'TRI', DEPTH_TEST:'DT', ELEMENT_ARRAY_BUFFER:'EAB', UNSIGNED_SHORT:'US', createTexture(){ return {id:'T'+(this._t=(this._t||0)+1)} }, bindTexture(t,tex){ push('bindTexture', tex.id) }, texParameteri(t,k,v){ push('texParam', k, v) }, generateMipmap(t){ push('genMip', t) }, texImage2D(...a){ push('texImage', a.length) }, activeTexture(u){ push('activeTexture', u) }, uniform1i(loc,v){ push('uniform1i', loc.id, v) }, uniform2f(loc,x,y){ push('uniform2f', loc.id, x.toFixed(2), y.toFixed(2)) }, createShader(k){ return {kind:k} }, shaderSource(s,src){}, compileShader(s){}, getShaderParameter(){ return true }, createProgram(){ return {id:'P'+(this._p=(this._p||0)+1)} }, attachShader(p,s){}, linkProgram(p){}, getProgramParameter(){ return true }, bindAttribLocation(p,i,n){ push('bindAttrib', i, n) }, createVertexArray(){ return {id:'V'+(this._v=(this._v||0)+1)} }, bindVertexArray(){}, createBuffer(){ return {id:'B'+(this._b=(this._b||0)+1)} }, getUniformLocation(p,n){ return {id:'U:'+n} }, useProgram(p){ push('useProgram', p.id) }, bindBuffer(t,b){ push(t==='EAB'?'bindIndex':'bindBuffer', b.id) }, bufferData(t,arr,u){ push('bufferData', arr.length) }, enableVertexAttribArray(l){ push('enable', l) }, vertexAttribPointer(...a){ push('attrib', a.join(',')) }, uniform1f(loc,x){ push('uniform1f', loc.id, x.toFixed(2)) }, uniform3f(loc,x,y,z){ push('uniform3f', loc.id, x.toFixed(2), y.toFixed(2), z.toFixed(2)) }, uniform4f(loc,...a){ push('uniform4f', loc.id, a.map(x=>x.toFixed(1)).join(',')) }, uniformMatrix4fv(loc,tr,arr){ push('uniformMat4', loc.id, arr.length, arr[12].toFixed(2)) }, drawElements(m,c,t,o){ push('drawElements', m, c, t) }, viewport(...a){ push('viewport', a.join(',')) } } } }")
+(js-eval "globalThis.__gllog = []; globalThis.__mockcanvas = { width:640, height:480, addEventListener(k,f){}, getContext(kind) { const log = globalThis.__gllog; const push = (...a) => log.push(a.join(':')); return { VERTEX_SHADER:'VS', FRAGMENT_SHADER:'FS', COMPILE_STATUS:'CS', LINK_STATUS:'LS', COLOR_BUFFER_BIT:16384, DEPTH_BUFFER_BIT:256, ARRAY_BUFFER:'AB', DYNAMIC_DRAW:'DD', FLOAT:'F', TRIANGLES:'TRI', DEPTH_TEST:'DT', ELEMENT_ARRAY_BUFFER:'EAB', UNSIGNED_SHORT:'US', createTexture(){ return {id:'T'+(this._t=(this._t||0)+1)} }, bindTexture(t,tex){ push('bindTexture', tex.id) }, texParameteri(t,k,v){ push('texParam', k, v) }, generateMipmap(t){ push('genMip', t) }, texImage2D(...a){ push('texImage', a.length) }, activeTexture(u){ push('activeTexture', u) }, uniform1i(loc,v){ push('uniform1i', loc.id, v) }, uniform2f(loc,x,y){ push('uniform2f', loc.id, x.toFixed(2), y.toFixed(2)) }, createShader(k){ return {kind:k} }, shaderSource(s,src){}, compileShader(s){}, getShaderParameter(){ return true }, createProgram(){ return {id:'P'+(this._p=(this._p||0)+1)} }, attachShader(p,s){}, linkProgram(p){}, getProgramParameter(){ return true }, bindAttribLocation(p,i,n){ push('bindAttrib', i, n) }, createVertexArray(){ return {id:'V'+(this._v=(this._v||0)+1)} }, bindVertexArray(){}, createBuffer(){ return {id:'B'+(this._b=(this._b||0)+1)} }, getUniformLocation(p,n){ return {id:'U:'+n} }, useProgram(p){ push('useProgram', p.id) }, bindBuffer(t,b){ push(t==='EAB'?'bindIndex':'bindBuffer', b.id) }, bufferData(t,arr,u){ push('bufferData', arr.length) }, enableVertexAttribArray(l){ push('enable', l) }, vertexAttribPointer(...a){ push('attrib', a.join(',')) }, uniform1f(loc,x){ push('uniform1f', loc.id, x.toFixed(2)) }, uniform3f(loc,x,y,z){ push('uniform3f', loc.id, x.toFixed(2), y.toFixed(2), z.toFixed(2)) }, uniform4f(loc,...a){ push('uniform4f', loc.id, a.map(x=>x.toFixed(1)).join(',')) }, uniformMatrix4fv(loc,tr,arr){ push('uniformMat4', loc.id, arr.length, arr[12].toFixed(2)); push('mat:'+loc.id, Array.from(arr).map(x=>x.toFixed(2)).join(',')) }, drawElements(m,c,t,o){ push('drawElements', m, c, t) }, viewport(...a){ push('viewport', a.join(',')) } } } }")
 
 ;; image decode, synchronously: the loader only needs a thenable
 (js-eval "globalThis.Blob = function(){}; globalThis.__imgn = 0; globalThis.createImageBitmap = () => ({ then: f => { f({id:'IMG'+(++globalThis.__imgn)}); return {then(){}} } })")
@@ -218,6 +222,25 @@
     (gltf-draw! gk lit-skin-prog (m4-identity))
     (cmd-flush!)
     #t))
+
+;; gltf-prim-world says identity for a skinned primitive -- the DRAW
+;; path must agree.  gk's mesh node carries a translation, a rotation
+;; and a non-uniform scale; folding any of it into u_model would let
+;; the palette apply it a second time.  The window starts at `mark`
+;; so an unrelated draw whose world happens to be identity cannot
+;; satisfy this.
+(define mark (log-len))
+(cmd-begin!)
+(gltf-draw! gk lit-skin-prog (m4-identity))
+(cmd-flush!)
+(define skinned-draw-identity-ok
+  (let ((want (string-append
+               "mat:U:u_model:1.00,0.00,0.00,0.00,0.00,1.00,0.00,"
+               "0.00,0.00,0.00,1.00,0.00,0.00,0.00,0.00,1.00")))
+    (let loop ((i mark) (seen #f))
+      (cond ((= i (log-len)) seen)
+            ((string=? (entry i) want) (loop (+ i 1) #t))
+            (else (loop (+ i 1) seen))))))
 
 ;; ---- a fragment shader without u_tex must not be forced one ----
 ;; the documented normal-map pairing declares u_nmap and no u_tex;
@@ -424,6 +447,7 @@
 (define matrix-reset-ok
   (= (count-log "uniformMat4:U:u_model:16:20.00") 1))
 
+
 (define (near2? a b)
   (and (fl<? (fl- a b) 0.001) (fl<? (fl- b a) 0.001)))
 
@@ -455,4 +479,5 @@
      nmap-bound-ok combinator-layout-ok base-tex-optional-ok
      animated-world-ok matrix-node-ok matrix-reset-ok
      prim-world-split-ok skinned-prim-world-ok
-     no-u-model-ok textured-pred-ok textured-preload-ok)
+     no-u-model-ok textured-pred-ok textured-preload-ok
+     untextured-preload-ok skinned-draw-identity-ok)
