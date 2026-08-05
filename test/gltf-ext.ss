@@ -57,7 +57,7 @@
    "\"emissiveTexture\":{\"index\":1},"
    "\"occlusionTexture\":{\"index\":0},"
    "\"emissiveFactor\":[0.5,0.25,1]}],"
-   "\"textures\":[{\"source\":0},{\"source\":1}],"
+   "\"textures\":[{\"source\":1},{\"source\":0}],"
    "\"images\":[{\"bufferView\":10,\"mimeType\":\"image/png\"},"
    "{\"bufferView\":11,\"mimeType\":\"image/png\"}],"
    "\"buffers\":[{\"byteLength\":288}],"
@@ -145,10 +145,13 @@
        (near? (f32@ pa 56) 0.2)
        (near? (f32@ pa 60) 0.8)))
 
+;; textures[0] -> image 1 and textures[1] -> image 0, so a loader
+;; that returned the TEXTURE index instead of textures[i].source
+;; would read backwards here
 (define a-mat-ok
-  (and (= (gprim-normal-img pa) 0)
-       (= (gprim-emissive-img pa) 1)
-       (= (gprim-occlusion-img pa) 0)
+  (and (= (gprim-normal-img pa) 1)
+       (= (gprim-emissive-img pa) 0)
+       (= (gprim-occlusion-img pa) 1)
        (near? (vector-ref (gprim-emissive pa) 0) 0.5)
        (near? (vector-ref (gprim-emissive pa) 1) 0.25)
        (near? (vector-ref (gprim-emissive pa) 2) 1.0)))

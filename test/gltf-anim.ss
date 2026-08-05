@@ -216,4 +216,137 @@
     (gltf-animate! g 4 0.5)
     (near? (vector-ref (vector-ref (gprim-morph p1) 2) 0) 0.5)))
 
-(and weights-ok lin-ok stp-ok cub-ok cubr-ok cubw-ok)
+;; ---- a second GLB: sub-epsilon spans, off-midpoint rotation,
+;; and a crossfade between clips with DIFFERENT channel sets ----
+(let pad ((i 0)) (when (< i (remainder (- 4 (remainder at 4)) 4))
+                   (b! 0) (pad (+ i 1))))
+(define base2 (+ base at))
+(define at2-start at)
+
+;; BIN: 0 pos(36) | 36 joints(12) | 48 weights(48) | 96 idx(6) |
+;;      104 tiny-times(8) | 112 tiny-vals(24) | 136 times(8) |
+;;      144 rot-vals(32) | 176 ta-vals(24)
+(define binlen2 200)
+(define json2
+  (string-append
+   "{\"asset\":{\"version\":\"2.0\"},\"scene\":0,"
+   "\"scenes\":[{\"nodes\":[0,1]}],"
+   "\"nodes\":[{\"mesh\":0,\"skin\":0},{\"name\":\"j\"}],"
+   "\"skins\":[{\"joints\":[1]}],"
+   "\"meshes\":[{\"primitives\":[{\"attributes\":"
+   "{\"POSITION\":0,\"JOINTS_0\":1,\"WEIGHTS_0\":2},\"indices\":3}]}],"
+   "\"animations\":["
+   "{\"name\":\"tiny\",\"samplers\":[{\"input\":4,\"output\":5,"
+   "\"interpolation\":\"LINEAR\"}],\"channels\":[{\"sampler\":0,"
+   "\"target\":{\"node\":1,\"path\":\"translation\"}}]},"
+   "{\"name\":\"rot\",\"samplers\":[{\"input\":6,\"output\":7,"
+   "\"interpolation\":\"LINEAR\"}],\"channels\":[{\"sampler\":0,"
+   "\"target\":{\"node\":1,\"path\":\"rotation\"}}]},"
+   "{\"name\":\"ta\",\"samplers\":[{\"input\":6,\"output\":8,"
+   "\"interpolation\":\"LINEAR\"}],\"channels\":[{\"sampler\":0,"
+   "\"target\":{\"node\":1,\"path\":\"translation\"}}]}],"
+   "\"buffers\":[{\"byteLength\":200}],"
+   "\"bufferViews\":["
+   "{\"buffer\":0,\"byteOffset\":0,\"byteLength\":36},"
+   "{\"buffer\":0,\"byteOffset\":36,\"byteLength\":12},"
+   "{\"buffer\":0,\"byteOffset\":48,\"byteLength\":48},"
+   "{\"buffer\":0,\"byteOffset\":96,\"byteLength\":6},"
+   "{\"buffer\":0,\"byteOffset\":104,\"byteLength\":8},"
+   "{\"buffer\":0,\"byteOffset\":112,\"byteLength\":24},"
+   "{\"buffer\":0,\"byteOffset\":136,\"byteLength\":8},"
+   "{\"buffer\":0,\"byteOffset\":144,\"byteLength\":32},"
+   "{\"buffer\":0,\"byteOffset\":176,\"byteLength\":24}],"
+   "\"accessors\":["
+   "{\"bufferView\":0,\"componentType\":5126,\"count\":3,\"type\":\"VEC3\"},"
+   "{\"bufferView\":1,\"componentType\":5121,\"count\":3,\"type\":\"VEC4\"},"
+   "{\"bufferView\":2,\"componentType\":5126,\"count\":3,\"type\":\"VEC4\"},"
+   "{\"bufferView\":3,\"componentType\":5123,\"count\":3,\"type\":\"SCALAR\"},"
+   "{\"bufferView\":4,\"componentType\":5126,\"count\":2,\"type\":\"SCALAR\"},"
+   "{\"bufferView\":5,\"componentType\":5126,\"count\":2,\"type\":\"VEC3\"},"
+   "{\"bufferView\":6,\"componentType\":5126,\"count\":2,\"type\":\"SCALAR\"},"
+   "{\"bufferView\":7,\"componentType\":5126,\"count\":2,\"type\":\"VEC4\"},"
+   "{\"bufferView\":8,\"componentType\":5126,\"count\":2,\"type\":\"VEC3\"}]}"))
+
+(define jlen2 (string-length json2))
+(define jpad2 (remainder (- 4 (remainder jlen2 4)) 4))
+(define total2 (+ 12 8 jlen2 jpad2 8 binlen2))
+(u32! #x46546C67)
+(u32! 2)
+(u32! total2)
+(u32! (+ jlen2 jpad2))
+(u32! #x4E4F534A)
+(str! json2)
+(let pad ((i 0)) (when (< i jpad2) (b! 32) (pad (+ i 1))))
+(u32! binlen2)
+(u32! #x004E4942)
+(v3! 0.0 0.0 0.0) (v3! 1.0 0.0 0.0) (v3! 0.0 1.0 0.0)
+(let j ((i 0)) (when (< i 12) (b! 0) (j (+ i 1))))
+(let w ((i 0))
+  (when (< i 3)
+    (f32! 1.0) (f32! 0.0) (f32! 0.0) (f32! 0.0)
+    (w (+ i 1))))
+(u16! 0) (u16! 1) (u16! 2) (u16! 0)
+(f32! 0.0) (f32! 0.0000005)               ; tiny times: a legal span
+(v3! 0.0 0.0 0.0) (v3! 1.0 0.0 0.0)       ; tiny values
+(f32! 0.0) (f32! 1.0)                     ; times
+(v4! 0.0 0.0 0.0 1.0)                     ; rot: identity ->
+(v4! 0.0 0.0 1.0 0.0)                     ;      180 deg about z
+(v3! 0.0 0.0 0.0) (v3! 5.0 0.0 0.0)       ; ta values
+
+(define g2 (gltf-parse base2 total2))
+
+(define (joint2-m)
+  (vector-ref (gltf-joint-matrices g2 0) 0))
+
+;; a span far below 1e-6 is legal glTF: it must still interpolate
+(define tiny-span-ok
+  (begin
+    (gltf-animate! g2 0 0.00000025)
+    (near? (vector-ref (joint2-m) 12) 0.5)))
+
+;; LINEAR rotation interpolates by shortest-path NLERP, a documented
+;; deviation from the spec's SHOULD-be-slerp: the path is the same
+;; great arc, only the angular rate differs, and it is unobservable
+;; at keyframe spacing.  This locks the choice down -- a quarter of
+;; the way from identity to 180 degrees lands at nlerp's 36.87
+;; degrees (m[0] = 0.8), where slerp would give 45 (0.7071).  If
+;; anyone implements slerp, this goes red and the module doc's
+;; "known deviations" note must change with it.
+(define nlerp-contract-ok
+  (begin
+    (gltf-animate! g2 1 0.25)
+    (near? (vector-ref (joint2-m) 0) 0.8)))
+
+;; every clip poses COMPLETELY: switching to a clip that does not
+;; drive translation must return translation to bind, not keep the
+;; previous clip's value
+(define complete-pose-ok
+  (begin
+    (gltf-animate! g2 2 0.5)               ; "ta": translation = 2.5
+    (and (near? (vector-ref (joint2-m) 12) 2.5)
+         (begin
+           (gltf-animate! g2 1 0.5)        ; "rot" drives rotation only
+           (near? (vector-ref (joint2-m) 12) 0.0)))))
+
+;; crossfading INTO a clip that lacks a channel must return that
+;; channel to the bind pose, not leave the previous clip's value
+(define crossfade-default-ok
+  (begin
+    (gltf-animate! g2 2 0.5)               ; "ta": translation = 2.5
+    (gltf-animate-blend! g2 2 0.5 1 0.5 1.0)  ; fully into "rot"
+    (let ((m (joint2-m)))
+      (and (near? (vector-ref m 12) 0.0)   ; translation back to bind
+           (near? (vector-ref m 0) 0.0)))))  ; rot at t=.5 = 90 deg
+
+;; ... and the same holds for the clip being faded FROM: posing A
+;; must start from bind too, or a channel A does not drive carries
+;; whatever ran before into the blend
+(define crossfade-from-ok
+  (begin
+    (gltf-animate! g2 2 0.5)               ; "ta": translation = 2.5
+    (gltf-animate-blend! g2 1 0.5 2 0.5 0.0)  ; fully "rot" (A side)
+    (near? (vector-ref (joint2-m) 12) 0.0)))
+
+(and weights-ok lin-ok stp-ok cub-ok cubr-ok cubw-ok
+     tiny-span-ok nlerp-contract-ok complete-pose-ok
+     crossfade-default-ok crossfade-from-ok)

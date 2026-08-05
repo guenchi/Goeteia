@@ -33,6 +33,26 @@
 ;; memory, so parsing verifies headlessly; gltf-fetch! is the
 ;; browser-side loader (fetch -> one bulk copy into staging).
 ;;
+;; Known deviations, each deliberate:
+;;   * LINEAR rotation interpolates by shortest-path NLERP where the
+;;     spec SHOULDs slerp.  Same great arc, different angular rate,
+;;     unobservable at keyframe spacing -- and the language runtime
+;;     has no inverse trigonometry to do slerp exactly.
+;;     test/gltf-anim.ss locks the choice down.
+;;   * A material's texture references collapse to an image index:
+;;     texCoord (only TEXCOORD_0 loads), normal scale, occlusion
+;;     strength and sampler identity are dropped, and there is no
+;;     metallicRoughnessTexture slot -- the factors are per
+;;     primitive.  Two textures over one image with different
+;;     samplers therefore read as one.
+;;   * Skinning transforms normals by the skin matrix itself, not by
+;;     its inverse transpose, and keeps a_tangent.w regardless of
+;;     determinant sign: joints with non-uniform scale or mirroring
+;;     light incorrectly.
+;;   * A clip poses the nodes it touches (wholesale, at bind for the
+;;     paths it does not drive); nodes outside the clip keep their
+;;     values, so clips over disjoint body parts compose.
+;;
 ;; Copyright (c) 2026 guenchi. MIT license; see LICENSE.
 (library (gfx gltf)
   (export gltf? gltf-prims gltf-images gltf-parse gltf-fetch!
@@ -59,7 +79,15 @@
             (immutable images gltf-images)
             (immutable nodes gltf-nodes)      ; runtime TRS, animatable
             (immutable skins gltf-skins)      ; #(joint-nodes ibms)
-            (immutable anims gltf-anims)      ; #(name channels duration)
+            ;; #(name channels duration touched-nodes)
+            (immutable anims gltf-anims)
+            ;; the pose arena: #(binds scratch marks).  binds holds
+            ;; each node's immutable TRS, so a clip can be sampled as
+            ;; a COMPLETE pose -- channels it does not drive fall
+            ;; back to bind instead of keeping the previous clip's
+            ;; value.  scratch and marks let a crossfade pose both
+            ;; clips independently and then blend.
+            (immutable arena $gltf-arena)
             ;; the resident joint arena, #f when there are no skins:
             ;; #(globals-base scratch-base topo-order per-skin) where
             ;; per-skin[k] = #(ibms-base palette-base njoints) -- the
@@ -78,7 +106,8 @@
             (immutable iu32 gprim-index-u32?) ; 32-bit indices?
             (immutable color gprim-color)     ; r g b a flonum vector
             (immutable mr $gprim-mr)          ; (metallic . roughness)
-            (immutable world gprim-world)     ; m4
+            (immutable world gprim-world)     ; m4, the bind pose
+            (immutable node $gprim-node)      ; source node index
             (immutable stride gprim-stride)   ; total per-vertex bytes
             ;; the attributes present, in interleave order -- the
             ;; exact contract a matching shader must declare
@@ -445,6 +474,10 @@
                                                    nk))
                                      0))
                                 (else 3)))
+                       ;; a weights key is ncomp separate SCALAR
+                       ;; elements, so both the key step and the
+                       ;; component step are the accessor's stride
+                       (cstride (if (eq? path 'weights) (cadr vin) 4))
                        (kstride (if (eq? path 'weights)
                                     (* ncomp (cadr vin))
                                     (cadr vin)))
@@ -466,7 +499,8 @@
                                     (let comp ((j 0))
                                       (when (< j ncomp)
                                         (vector-set!
-                                         v j (%mem-f32-ref (+ vat (* 4 j))))
+                                         v j (%mem-f32-ref
+                                              (+ vat (* cstride j))))
                                         (comp (+ j 1))))
                                     v))))
                         (if (eq? interp 'cubic)
@@ -489,7 +523,18 @@
             (vector-set! out k
                          (vector (let ((nm (json-ref a "name")))
                                    (if nm nm "anim"))
-                                 cout dur)))
+                                 cout dur
+                                 ;; the nodes this clip touches
+                                 (let tn ((c 0) (acc '()))
+                                   (if (= c nc)
+                                       acc
+                                       (let ((ni (vector-ref
+                                                  (vector-ref cout c)
+                                                  0)))
+                                         (tn (+ c 1)
+                                             (if (memv ni acc)
+                                                 acc
+                                                 (cons ni acc)))))))))
           (loop (+ k 1))))
       out))
 
@@ -570,7 +615,11 @@
                      (t0 (vector-ref times k))
                      (t1 (vector-ref times k1))
                      (span (fl- t1 t0))
-                     (a (if (fl<? span 0.000001)
+                     ;; keyframe times are strictly increasing, so a
+                     ;; span is zero only when the cursor sits on the
+                     ;; last key (k = k1); legal sub-microsecond
+                     ;; spans still interpolate
+                     (a (if (= k k1)
                             0.0
                             (fl/ (fl- tw t0) span)))
                      (a (if (fl<? a 0.0) 0.0 (if (fl<? 1.0 a) 1.0 a)))
@@ -674,38 +723,162 @@
                                s)))
                         (comp (+ j 1)))))))))))))
 
-  ;; sample animation `ai` at time t (looping over its duration):
-  ;; every channel writes its node's TRS
-  (define (gltf-animate! g ai t)
-    (let* ((anim (vector-ref (gltf-anims g) ai))
-           (chans (vector-ref anim 1))
-           (dur (vector-ref anim 2))
-           (tf ($gltf-fl t))
-           (tw (if (fl<? dur 0.000001)
-                   0.0
-                   (fl- tf (fl* dur (flfloor (fl/ tf dur)))))))
+  ;; the clip's own clock: t wrapped into [0, duration)
+  (define ($anim-time anim t)
+    (let ((dur (vector-ref anim 2))
+          (tf ($gltf-fl t)))
+      ;; only a genuinely zero duration is a constant track
+      (if (fl<? 0.0 dur)
+          (fl- tf (fl* dur (flfloor (fl/ tf dur))))
+          0.0)))
+
+  ;; return every channel this clip drives to its bind value, so the
+  ;; sample that follows produces a COMPLETE pose: a channel the
+  ;; clip lacks must read as bind, never as whatever ran before.
+  ;; A node this clip touches is reset WHOLESALE, not only on the
+  ;; paths the clip drives: a clip that animates rotation alone still
+  ;; poses translation and scale, at bind.  (Nodes the clip does not
+  ;; touch keep their values, so clips driving disjoint body parts
+  ;; still compose.)
+  (define ($anim-reset! g anim)
+    (let ((binds (vector-ref ($gltf-arena g) 0))
+          (nodes (gltf-nodes g)))
+      (for-each
+       (lambda (ni)
+         (let ((node (vector-ref nodes ni))
+               (bind (vector-ref binds ni)))
+           (let cp ((j 0))
+             (when (< j 10)
+               (vector-set! node j (vector-ref bind j))
+               (cp (+ j 1)))))
+         (for-each
+          (lambda (p)
+            (let ((mo (gprim-morph p)))
+              (when (and mo (= (vector-ref mo 4) ni))
+                (let ((w (vector-ref mo 2))
+                      (b (vector-ref mo 5)))
+                  (let wi ((j 0))
+                    (when (< j (vector-length w))
+                      (vector-set! w j (vector-ref b j))
+                      (wi (+ j 1)))))
+                (vector-set! mo 3 #t))))
+          (gltf-prims g)))
+       (vector-ref anim 3))))
+
+  (define ($anim-sample! g anim t)
+    (let ((chans (vector-ref anim 1))
+          (tw ($anim-time anim t)))
       (let loop ((c 0))
         (when (< c (vector-length chans))
           ($chan-sample! g (vector-ref chans c) tw 1.0)
           (loop (+ c 1))))))
 
-  ;; the crossfade: pose animation ai at ti, then blend animation
-  ;; aj's pose at tj over it with weight k (0 = all ai, 1 = all aj)
+  ;; run proc over the union of two clips' touched nodes, once each
+  (define ($union-nodes! g a b proc)
+    (let ((marks (vector-ref ($gltf-arena g) 2)))
+      (for-each (lambda (i) (vector-set! marks i #f)) (vector-ref a 3))
+      (for-each (lambda (i) (vector-set! marks i #f)) (vector-ref b 3))
+      (for-each (lambda (i)
+                  (unless (vector-ref marks i)
+                    (vector-set! marks i #t)
+                    (proc i)))
+                (append (vector-ref a 3) (vector-ref b 3)))))
+
+  ;; sample animation `ai` at time t (looping over its duration):
+  ;; every channel this clip drives writes its node's TRS, and every
+  ;; channel it does not drive returns to the bind pose
+  (define (gltf-animate! g ai t)
+    (let ((anim (vector-ref (gltf-anims g) ai)))
+      ($anim-reset! g anim)
+      ($anim-sample! g anim t)))
+
+  ;; the crossfade: pose ai at ti and aj at tj INDEPENDENTLY, each
+  ;; as a complete pose, then blend with weight k (0 = all ai,
+  ;; 1 = all aj).  Posing them independently is what lets clips with
+  ;; different channel sets crossfade correctly -- a channel absent
+  ;; from one clip blends toward that clip's bind value instead of
+  ;; sticking at the other's.
   (define (gltf-animate-blend! g ai ti aj tj k)
-    (gltf-animate! g ai ti)
-    (let* ((anim (vector-ref (gltf-anims g) aj))
-           (chans (vector-ref anim 1))
-           (dur (vector-ref anim 2))
+    (let* ((a (vector-ref (gltf-anims g) ai))
+           (b (vector-ref (gltf-anims g) aj))
+           (arena ($gltf-arena g))
+           (scratch (vector-ref arena 1))
+           (nodes (gltf-nodes g))
            (kf (let ((kf ($gltf-fl k)))
-                 (if (fl<? kf 0.0) 0.0 (if (fl<? 1.0 kf) 1.0 kf))))
-           (tf ($gltf-fl tj))
-           (tw (if (fl<? dur 0.000001)
-                   0.0
-                   (fl- tf (fl* dur (flfloor (fl/ tf dur)))))))
-      (let loop ((c 0))
-        (when (< c (vector-length chans))
-          ($chan-sample! g (vector-ref chans c) tw kf)
-          (loop (+ c 1))))))
+                 (if (fl<? kf 0.0) 0.0 (if (fl<? 1.0 kf) 1.0 kf)))))
+      ;; pose A on a clean slate and stash it
+      ($anim-reset! g a) ($anim-reset! g b)
+      ($anim-sample! g a ti)
+      ($union-nodes! g a b
+                     (lambda (i)
+                       (let ((node (vector-ref nodes i))
+                             (s (vector-ref scratch i)))
+                         (let cp ((j 0))
+                           (when (< j 10)
+                             (vector-set! s j (vector-ref node j))
+                             (cp (+ j 1)))))))
+      (let ((wa ($morph-save! g a b)))
+        ;; pose B on a clean slate, then blend A back under it
+        ($anim-reset! g a) ($anim-reset! g b)
+        ($anim-sample! g b tj)
+        ($union-nodes!
+         g a b
+         (lambda (i)
+           (let ((node (vector-ref nodes i))
+                 (s (vector-ref scratch i))
+                 (u (fl- 1.0 kf)))
+             ;; translation and scale lerp componentwise
+             (let cp ((j 0))
+               (when (< j 10)
+                 (when (or (< j 3) (>= j 7))
+                   (vector-set! node j
+                                (fl+ (fl* u (vector-ref s j))
+                                     (fl* kf (vector-ref node j)))))
+                 (cp (+ j 1))))
+             ;; rotation blends as a quaternion
+             (let ((q ($q-nlerp
+                       (vector (vector-ref s 3) (vector-ref s 4)
+                               (vector-ref s 5) (vector-ref s 6))
+                       (vector (vector-ref node 3) (vector-ref node 4)
+                               (vector-ref node 5) (vector-ref node 6))
+                       kf)))
+               (vector-set! node 3 (vector-ref q 0))
+               (vector-set! node 4 (vector-ref q 1))
+               (vector-set! node 5 (vector-ref q 2))
+               (vector-set! node 6 (vector-ref q 3))))))
+        ($morph-blend! g wa kf))))
+
+  ;; morph weights ride the same two-pose scheme: snapshot A's
+  ;; weights per primitive, then lerp them back under B's
+  (define ($morph-save! g a b)
+    (map (lambda (p)
+           (let ((mo (gprim-morph p)))
+             (and mo
+                  (let* ((w (vector-ref mo 2))
+                         (n (vector-length w))
+                         (s (make-vector n 0.0)))
+                    (let cp ((j 0))
+                      (when (< j n)
+                        (vector-set! s j (vector-ref w j))
+                        (cp (+ j 1))))
+                    (cons p s)))))
+         (gltf-prims g)))
+
+  (define ($morph-blend! g saved kf)
+    (for-each
+     (lambda (e)
+       (when e
+         (let* ((p (car e)) (s (cdr e))
+                (mo (gprim-morph p))
+                (w (vector-ref mo 2))
+                (u (fl- 1.0 kf)))
+           (let cp ((j 0))
+             (when (< j (vector-length w))
+               (vector-set! w j (fl+ (fl* u (vector-ref s j))
+                                     (fl* kf (vector-ref w j))))
+               (cp (+ j 1))))
+           (vector-set! mo 3 #t))))
+     saved))
 
   (define (gltf-animation-names g)
     (let ((as (gltf-anims g)))
@@ -1003,6 +1176,19 @@
       (unless (memq 'a_pos names)
         (error 'gltf-skin-shader
                "vertex shader declares no a_pos attribute" names))
+      ;; every name this injects must be free in the input
+      (for-each
+       (lambda (n)
+         (when (memq n names)
+           (error 'gltf-skin-shader
+                  "input already declares an injected name" n)))
+       '(a_joints a_weights))
+      (for-each
+       (lambda (u)
+         (when (assq u (glsl-uniforms vs))
+           (error 'gltf-skin-shader
+                  "input already declares an injected uniform" u)))
+       '(u_joints))
       ;; the LAST attribute form, wherever it sits -- declarations
       ;; need not be contiguous
       (let ((last-attr
@@ -1046,7 +1232,15 @@
                                 '(uniform (array mat4 32) u_joints)
                                 '(attribute vec4 a_weights)
                                 '(attribute vec4 a_joints))
-                               out)
+                               ;; the loader always carries a uv
+                               ;; slot once anything past
+                               ;; position+normal is present, and
+                               ;; the skin inputs are exactly that:
+                               ;; a shader without a_uv needs the
+                               ;; padding to match the interleave
+                               (if (memq 'a_uv names)
+                                   out
+                                   (cons '(attribute vec2 a_uv) out)))
                               out)))
                 (loop (cdr fs) (+ i 1) out)))))))
 
@@ -1094,11 +1288,14 @@
   ;; is present, so every layout past 24 bytes starts pos/nrm/uv.
   (define ($build-prim json bin prim world skin nidx mw)
     (let* ((attrs (json-ref prim "attributes"))
-           (pos ($acc-info json bin (json-ref attrs "POSITION") 12))
+           ;; every attribute's tight stride follows its component
+           ;; type: quantized POSITION/NORMAL/TEXCOORD_0 pack to
+           ;; 6/3/4 bytes, not to float sizes
+           (pos ($attr-info json bin (json-ref attrs "POSITION") 3))
            (nrm (let ((i (json-ref attrs "NORMAL")))
-                  (and i ($acc-info json bin i 12))))
+                  (and i ($attr-info json bin i 3))))
            (uv (let ((i (json-ref attrs "TEXCOORD_0")))
-                 (and i ($acc-info json bin i 8))))
+                 (and i ($attr-info json bin i 2))))
            (jn0 (let ((i (json-ref attrs "JOINTS_0")))
                   (and i skin ($attr-info json bin i 4))))
            (wt (and jn0
@@ -1227,7 +1424,8 @@
         ($make-gprim vbase vbytes ibase ibytes icount u32?
                      ($material-color json (json-ref prim "material"))
                      ($material-mr json (json-ref prim "material"))
-                     world stride layout ($prim-tex-image json prim)
+                     world nidx stride layout
+                     ($prim-tex-image json prim)
                      ($prim-mat-tex json prim "normalTexture")
                      ($prim-mat-tex json prim "emissiveTexture")
                      ($prim-mat-tex json prim "occlusionTexture")
@@ -1240,10 +1438,13 @@
                                    (b (make-vector (* count 3) 0.0))
                                    (ds (make-vector nt #f))
                                    (w (make-vector nt 0.0)))
+                              ;; the base comes from the canonical
+                              ;; interleave, already dequantized --
+                              ;; re-reading the source accessor as
+                              ;; f32 would misread quantized data
                               (let bv ((v 0))
                                 (when (< v count)
-                                  (let ((src (+ (car pos)
-                                                (* v (cadr pos)))))
+                                  (let ((src (+ vbase (* v stride))))
                                     (let c2 ((j 0))
                                       (when (< j 3)
                                         (vector-set!
@@ -1253,11 +1454,13 @@
                                   (bv (+ v 1))))
                               (let tgt ((k 0))
                                 (when (< k nt)
-                                  (let* ((acc ($acc-info
+                                  (let* ((acc ($attr-info
                                                json bin
                                                (json-ref
                                                 (vector-ref tg k)
-                                                "POSITION") 12))
+                                                "POSITION") 3))
+                                         (act (cadddr acc))
+                                         (an (list-ref acc 4))
                                          (d (make-vector (* count 3)
                                                          0.0)))
                                     (let dv ((v 0))
@@ -1268,8 +1471,7 @@
                                             (when (< j 3)
                                               (vector-set!
                                                d (+ (* v 3) j)
-                                               (%mem-f32-ref
-                                                (+ src (* 4 j))))
+                                               ($deq src j act an))
                                               (c3 (+ j 1)))))
                                         (dv (+ v 1))))
                                     (vector-set! ds k d))
@@ -1281,7 +1483,16 @@
                                     (vector-set!
                                      w k ($gltf-fl (vector-ref mw k)))
                                     (iw (+ k 1)))))
-                              (vector b ds w #t nidx))))
+                              ;; slot 5: the bind weights, so a clip
+                              ;; that does not drive them can return
+                              ;; here instead of keeping the last
+                              ;; clip's pose
+                              (let ((bw (make-vector nt 0.0)))
+                                (let cw ((k 0))
+                                  (when (< k nt)
+                                    (vector-set! bw k (vector-ref w k))
+                                    (cw (+ k 1))))
+                                (vector b ds w #t nidx bw)))))
                      #f #f #f #f #f #f))))
 
   ;; ---- the GLB container, then the scene walk ----
@@ -1308,7 +1519,11 @@
                 (when mi
                   (let* ((mesh (vector-ref (json-ref json "meshes") mi))
                          (ps (json-ref mesh "primitives"))
-                         (mw (json-ref mesh "weights")))
+                         ;; node.weights overrides mesh.weights, so
+                         ;; two nodes can instance one mesh at
+                         ;; different morph poses
+                         (mw (let ((nw (json-ref node "weights")))
+                               (if nw nw (json-ref mesh "weights")))))
                     (let prim ((k 0))
                       (when (< k (vector-length ps))
                         (set! prims
@@ -1340,7 +1555,28 @@
                           ($gltf-image-table json bin)
                           nodes skins
                           ($gltf-anim-table json bin)
+                          ($gltf-pose-arena nodes)
                           ($gltf-pal-arena nodes skins)))))))
+
+  ;; the pose arena: immutable bind TRS per node, plus the scratch
+  ;; and marks a crossfade needs (preallocated -- a fade runs every
+  ;; frame of a transition)
+  (define ($gltf-pose-arena nodes)
+    (let* ((n (vector-length nodes))
+           (binds (make-vector n #f))
+           (scratch (make-vector n #f)))
+      (let loop ((i 0))
+        (when (< i n)
+          (let ((src (vector-ref nodes i))
+                (b (make-vector 10 0.0)))
+            (let cp ((j 0))
+              (when (< j 10)
+                (vector-set! b j (vector-ref src j))
+                (cp (+ j 1))))
+            (vector-set! binds i b)
+            (vector-set! scratch i (make-vector 10 0.0)))
+          (loop (+ i 1))))
+      (vector binds scratch (make-vector n #f))))
 
   ;; browser loader: fetch, one bulk copy into staging, parse, k
   (define (gltf-fetch! url k)
@@ -1493,7 +1729,7 @@
          (fx-use! prog ($gprim-vbuf p))
          (cmd-bind-index! ($gprim-ibuf p))
          (let ((tx (gprim-tex p)))
-           (when tx
+           (when (and tx (fx-uniform? prog 'u_tex))
              (cmd-bind-texture! 0 tx)
              (fx-uniform! prog 'u_tex 0)))
          ;; material texture slots beyond base color bind only when
@@ -1538,9 +1774,12 @@
                                 (if (null? root)
                                     (m4-identity)
                                     (car root)))))
-               (let ((world (if (null? root)
-                                (gprim-world p)
-                                (m4-mul (car root) (gprim-world p)))))
+               ;; the world matrix comes from the RUNTIME node tree,
+               ;; so animating an unskinned node moves what draws
+               (let* ((w0 ($node-global g ($gprim-node p)))
+                      (world (if (null? root)
+                                 w0
+                                 (m4-mul (car root) w0))))
                  (fx-uniform! prog 'u_mvp (m4-mul vp world))
                  (fx-uniform! prog 'u_model world)))
            (fx-uniform! prog 'u_color (vector-ref c 0) (vector-ref c 1)

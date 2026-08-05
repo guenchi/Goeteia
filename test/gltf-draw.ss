@@ -124,7 +124,10 @@
                     (gprim-layout (car (gltf-prims gs)))))))
 
 ;; ---- the recording mock GL (as in test/gltf.ss) ----
-(js-eval "globalThis.__gllog = []; globalThis.__mockcanvas = { width:640, height:480, addEventListener(k,f){}, getContext(kind) { const log = globalThis.__gllog; const push = (...a) => log.push(a.join(':')); return { VERTEX_SHADER:'VS', FRAGMENT_SHADER:'FS', COMPILE_STATUS:'CS', LINK_STATUS:'LS', COLOR_BUFFER_BIT:16384, DEPTH_BUFFER_BIT:256, ARRAY_BUFFER:'AB', DYNAMIC_DRAW:'DD', FLOAT:'F', TRIANGLES:'TRI', DEPTH_TEST:'DT', ELEMENT_ARRAY_BUFFER:'EAB', UNSIGNED_SHORT:'US', createTexture(){ return {id:'T'+(this._t=(this._t||0)+1)} }, bindTexture(t,tex){ push('bindTexture', tex.id) }, texParameteri(t,k,v){ push('texParam', k, v) }, generateMipmap(t){ push('genMip', t) }, texImage2D(...a){ push('texImage', a.length) }, activeTexture(u){ push('activeTexture', u) }, uniform1i(loc,v){ push('uniform1i', loc.id, v) }, uniform2f(loc,x,y){ push('uniform2f', loc.id, x.toFixed(2), y.toFixed(2)) }, createShader(k){ return {kind:k} }, shaderSource(s,src){}, compileShader(s){}, getShaderParameter(){ return true }, createProgram(){ return {id:'P'+(this._p=(this._p||0)+1)} }, attachShader(p,s){}, linkProgram(p){}, getProgramParameter(){ return true }, bindAttribLocation(p,i,n){ push('bindAttrib', i, n) }, createVertexArray(){ return {id:'V'+(this._v=(this._v||0)+1)} }, bindVertexArray(){}, createBuffer(){ return {id:'B'+(this._b=(this._b||0)+1)} }, getUniformLocation(p,n){ return {id:'U:'+n} }, useProgram(p){ push('useProgram', p.id) }, bindBuffer(t,b){ push(t==='EAB'?'bindIndex':'bindBuffer', b.id) }, bufferData(t,arr,u){ push('bufferData', arr.length) }, enableVertexAttribArray(l){ push('enable', l) }, vertexAttribPointer(...a){ push('attrib', a.join(',')) }, uniform1f(loc,x){ push('uniform1f', loc.id, x.toFixed(2)) }, uniform3f(loc,x,y,z){ push('uniform3f', loc.id, x.toFixed(2), y.toFixed(2), z.toFixed(2)) }, uniform4f(loc,...a){ push('uniform4f', loc.id, a.map(x=>x.toFixed(1)).join(',')) }, uniformMatrix4fv(loc,tr,arr){ push('uniformMat4', loc.id, arr.length) }, drawElements(m,c,t,o){ push('drawElements', m, c, t) }, viewport(...a){ push('viewport', a.join(',')) } } } }")
+(js-eval "globalThis.__gllog = []; globalThis.__mockcanvas = { width:640, height:480, addEventListener(k,f){}, getContext(kind) { const log = globalThis.__gllog; const push = (...a) => log.push(a.join(':')); return { VERTEX_SHADER:'VS', FRAGMENT_SHADER:'FS', COMPILE_STATUS:'CS', LINK_STATUS:'LS', COLOR_BUFFER_BIT:16384, DEPTH_BUFFER_BIT:256, ARRAY_BUFFER:'AB', DYNAMIC_DRAW:'DD', FLOAT:'F', TRIANGLES:'TRI', DEPTH_TEST:'DT', ELEMENT_ARRAY_BUFFER:'EAB', UNSIGNED_SHORT:'US', createTexture(){ return {id:'T'+(this._t=(this._t||0)+1)} }, bindTexture(t,tex){ push('bindTexture', tex.id) }, texParameteri(t,k,v){ push('texParam', k, v) }, generateMipmap(t){ push('genMip', t) }, texImage2D(...a){ push('texImage', a.length) }, activeTexture(u){ push('activeTexture', u) }, uniform1i(loc,v){ push('uniform1i', loc.id, v) }, uniform2f(loc,x,y){ push('uniform2f', loc.id, x.toFixed(2), y.toFixed(2)) }, createShader(k){ return {kind:k} }, shaderSource(s,src){}, compileShader(s){}, getShaderParameter(){ return true }, createProgram(){ return {id:'P'+(this._p=(this._p||0)+1)} }, attachShader(p,s){}, linkProgram(p){}, getProgramParameter(){ return true }, bindAttribLocation(p,i,n){ push('bindAttrib', i, n) }, createVertexArray(){ return {id:'V'+(this._v=(this._v||0)+1)} }, bindVertexArray(){}, createBuffer(){ return {id:'B'+(this._b=(this._b||0)+1)} }, getUniformLocation(p,n){ return {id:'U:'+n} }, useProgram(p){ push('useProgram', p.id) }, bindBuffer(t,b){ push(t==='EAB'?'bindIndex':'bindBuffer', b.id) }, bufferData(t,arr,u){ push('bufferData', arr.length) }, enableVertexAttribArray(l){ push('enable', l) }, vertexAttribPointer(...a){ push('attrib', a.join(',')) }, uniform1f(loc,x){ push('uniform1f', loc.id, x.toFixed(2)) }, uniform3f(loc,x,y,z){ push('uniform3f', loc.id, x.toFixed(2), y.toFixed(2), z.toFixed(2)) }, uniform4f(loc,...a){ push('uniform4f', loc.id, a.map(x=>x.toFixed(1)).join(',')) }, uniformMatrix4fv(loc,tr,arr){ push('uniformMat4', loc.id, arr.length, arr[12].toFixed(2)) }, drawElements(m,c,t,o){ push('drawElements', m, c, t) }, viewport(...a){ push('viewport', a.join(',')) } } } }")
+
+;; image decode, synchronously: the loader only needs a thenable
+(js-eval "globalThis.Blob = function(){}; globalThis.__imgn = 0; globalThis.createImageBitmap = () => ({ then: f => { f({id:'IMG'+(++globalThis.__imgn)}); return {then(){}} } })")
 
 (define gllog (js-get (js-global) "__gllog"))
 (define (entry i) (js->string (js-index gllog i)))
@@ -195,5 +198,122 @@
 (define nmap-bound-ok                     ; u_nmap points at unit 1
   (= (count-log "uniform1i:U:u_nmap:1") 1))
 
+;; ---- a combinator-built program pairs with the loader's layout ----
+;; mesh-lit-vs has no a_uv, but the loader always carries a uv slot
+;; once anything past position+normal is present, so the combinator
+;; must produce the same canonical layout the loader emits.
+(define lit-skin-prog
+  (fx-program! (gltf-skin-shader mesh-lit-vs) mesh-lit-fs))
+(define combinator-layout-ok
+  (guard (e (#t #f))
+    (cmd-begin!)
+    (gltf-draw! gk lit-skin-prog (m4-identity))
+    (cmd-flush!)
+    #t))
+
+;; ---- a fragment shader without u_tex must not be forced one ----
+;; the documented normal-map pairing declares u_nmap and no u_tex;
+;; an asset whose material has a baseColorTexture must still draw.
+(define td-loc
+  (glb!
+   (string-append
+    "{\"asset\":{\"version\":\"2.0\"},\"scene\":0,"
+    "\"scenes\":[{\"nodes\":[0]}],"
+    "\"nodes\":[{\"mesh\":0}],"
+    "\"meshes\":[{\"primitives\":[{\"attributes\":"
+    "{\"POSITION\":0,\"TEXCOORD_0\":1},\"indices\":2,\"material\":0}]}],"
+    "\"materials\":[{\"pbrMetallicRoughness\":"
+    "{\"baseColorTexture\":{\"index\":0}}}],"
+    "\"textures\":[{\"source\":0}],"
+    "\"images\":[{\"bufferView\":3,\"mimeType\":\"image/png\"}],"
+    "\"buffers\":[{\"byteLength\":72}],"
+    "\"bufferViews\":["
+    "{\"buffer\":0,\"byteOffset\":0,\"byteLength\":36},"
+    "{\"buffer\":0,\"byteOffset\":36,\"byteLength\":24},"
+    "{\"buffer\":0,\"byteOffset\":60,\"byteLength\":6},"
+    "{\"buffer\":0,\"byteOffset\":68,\"byteLength\":4}],"
+    "\"accessors\":["
+    "{\"bufferView\":0,\"componentType\":5126,\"count\":3,\"type\":\"VEC3\"},"
+    "{\"bufferView\":1,\"componentType\":5126,\"count\":3,\"type\":\"VEC2\"},"
+    "{\"bufferView\":2,\"componentType\":5123,\"count\":3,\"type\":\"SCALAR\"}]}")
+   72
+   (lambda ()
+     (v3! 0.0 0.0 0.0) (v3! 1.0 0.0 0.0) (v3! 0.0 1.0 0.0)
+     (f32! 0.0) (f32! 0.0) (f32! 1.0) (f32! 0.0)
+     (f32! 0.0) (f32! 1.0)
+     (u16! 0) (u16! 1) (u16! 2) (u16! 0)
+     (u32! #xFFFFFFFF))))
+(define gt (gltf-parse (car td-loc) (cdr td-loc)))
+(define tex-vs
+  '((attribute vec3 a_pos)
+    (attribute vec3 a_normal)
+    (attribute vec2 a_uv)
+    (uniform mat4 u_mvp)
+    (uniform mat4 u_model)
+    (varying vec2 v_uv)
+    (define (main) void
+      (set! gl_Position (* u_mvp (vec4 a_pos (fl 1))))
+      (set! v_uv a_uv))))
+(define nmap-only-fs                      ; declares u_nmap, NOT u_tex
+  '((precision mediump float)
+    (uniform sampler2D u_nmap)
+    (uniform vec4 u_color)
+    (varying vec2 v_uv)
+    (define (main) void
+      (set! gl_FragColor (* (texture2D u_nmap v_uv) u_color)))))
+(define nmap-only-prog (fx-program! tex-vs nmap-only-fs))
+(define t-done #f)
+(gltf-load-textures! gt (lambda (g2) (set! t-done #t)))
+(define base-tex-optional-ok
+  (and t-done
+       (guard (e (#t #f))
+         (cmd-begin!)
+         (gltf-draw! gt nmap-only-prog (m4-identity))
+         (cmd-flush!)
+         #t)))
+
+;; ---- an animated UNSKINNED node moves what gets drawn ----
+;; the world matrix a primitive draws with must come from the
+;; runtime node tree, not from a snapshot taken at parse time.
+(define an-loc
+  (glb!
+   (string-append
+    "{\"asset\":{\"version\":\"2.0\"},\"scene\":0,"
+    "\"scenes\":[{\"nodes\":[0]}],"
+    "\"nodes\":[{\"mesh\":0,\"translation\":[0,0,0]}],"
+    "\"meshes\":[{\"primitives\":[{\"attributes\":{\"POSITION\":0},"
+    "\"indices\":1}]}],"
+    "\"animations\":[{\"name\":\"slide\","
+    "\"samplers\":[{\"input\":2,\"output\":3,"
+    "\"interpolation\":\"LINEAR\"}],"
+    "\"channels\":[{\"sampler\":0,\"target\":"
+    "{\"node\":0,\"path\":\"translation\"}}]}],"
+    "\"buffers\":[{\"byteLength\":76}],"
+    "\"bufferViews\":["
+    "{\"buffer\":0,\"byteOffset\":0,\"byteLength\":36},"
+    "{\"buffer\":0,\"byteOffset\":36,\"byteLength\":6},"
+    "{\"buffer\":0,\"byteOffset\":44,\"byteLength\":8},"
+    "{\"buffer\":0,\"byteOffset\":52,\"byteLength\":24}],"
+    "\"accessors\":["
+    "{\"bufferView\":0,\"componentType\":5126,\"count\":3,\"type\":\"VEC3\"},"
+    "{\"bufferView\":1,\"componentType\":5123,\"count\":3,\"type\":\"SCALAR\"},"
+    "{\"bufferView\":2,\"componentType\":5126,\"count\":2,\"type\":\"SCALAR\"},"
+    "{\"bufferView\":3,\"componentType\":5126,\"count\":2,\"type\":\"VEC3\"}]}")
+   76
+   (lambda ()
+     (v3! 0.0 0.0 0.0) (v3! 1.0 0.0 0.0) (v3! 0.0 1.0 0.0)
+     (u16! 0) (u16! 1) (u16! 2) (u16! 0)
+     (f32! 0.0) (f32! 1.0)
+     (v3! 0.0 0.0 0.0) (v3! 10.0 0.0 0.0))))
+(define ga (gltf-parse (car an-loc) (cdr an-loc)))
+(define lit-prog (fx-program! mesh-lit-vs mesh-lit-fs))
+(gltf-animate! ga 0 0.5)                  ; node slides to x = 5
+(cmd-begin!)
+(gltf-draw! ga lit-prog (m4-identity))
+(cmd-flush!)
+(define animated-world-ok
+  (= (count-log "uniformMat4:U:u_model:16:5.00") 1))
+
 (and stride-collision k-draw-ok s-mismatch-ok defaults-ok
-     nmap-bound-ok)
+     nmap-bound-ok combinator-layout-ok base-tex-optional-ok
+     animated-world-ok)
