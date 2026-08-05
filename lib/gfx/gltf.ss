@@ -33,15 +33,15 @@
           gltf-animate-blend! gltf-weights! gprim-morph
           anim-machine anim-machine? anim-state anim-goto! anim-update!
           gltf-joint-matrices gltf-joint-palette! gltf-joint-count
-          gltf-skin-vs
+          gltf-skin-vs gltf-skin-shader
           gprim-vbase gprim-vbytes gprim-ibase gprim-ibytes
           gprim-icount gprim-index-u32? gprim-color
           gprim-metallic gprim-roughness
           gprim-world gprim-stride gprim-layout gprim-tex
           gprim-normal-img gprim-emissive-img gprim-occlusion-img
           gprim-emissive gprim-ntex gprim-etex gprim-otex)
-  (import (rnrs) (web js) (gfx gl) (gfx fx) (gfx mat) (web json)
-          (gfx meshopt))
+  (import (rnrs) (web js) (gfx gl) (gfx glsl) (gfx fx) (gfx mat)
+          (web json) (gfx meshopt))
 
   (define ($gltf-fl v) (if (flonum? v) v (exact->inexact v)))
 
@@ -903,6 +903,116 @@
         (set! gl_Position (* u_mvp (* skin (vec4 a_pos (fl 1)))))
         (set! v_normal (vec3 (* skin (vec4 a_normal (fl 0)))))
         (set! v_uv a_uv))))
+
+  ;; ---- the skin combinator: any static vertex shader, skinned ----
+  ;; Skinning is one orthogonal dimension, not a family of
+  ;; hand-written variants: (gltf-skin-shader vs) appends
+  ;; a_joints/a_weights AFTER the static attributes -- exactly where
+  ;; the loader's canonical interleave puts them -- adds the u_joints
+  ;; palette, and rewrites every reference to a_pos / a_normal /
+  ;; a_tangent (swizzles included) inside the shader's defines to
+  ;; read the skin-transformed locals.  Varyings and uniforms are
+  ;; untouched, so the result pairs with the same fragment shader
+  ;; the static program used: (fx-program! (gltf-skin-shader
+  ;; mesh-normal-vs) mesh-normal-fs) is the normal-mapped skinned
+  ;; program.  The names g_skin/g_pos/g_normal/g_tangent are
+  ;; reserved in the input.
+
+  (define ($sym-prefix? s pre)          ; s = pre, or pre.swizzle
+    (let* ((ss (symbol->string s)) (ps (symbol->string pre))
+           (sl (string-length ss)) (pl (string-length ps)))
+      (and (>= sl pl)
+           (string=? (substring ss 0 pl) ps)
+           (or (= sl pl) (char=? (string-ref ss pl) #\.)))))
+
+  (define ($sym-swap s from to)         ; new prefix, same swizzle
+    (let ((ss (symbol->string s)) (ps (symbol->string from)))
+      (string->symbol
+       (string-append (symbol->string to)
+                      (substring ss (string-length ps)
+                                 (string-length ss))))))
+
+  (define ($skin-subst form pairs)
+    (cond
+     ((symbol? form)
+      (let loop ((ps pairs))
+        (cond ((null? ps) form)
+              (($sym-prefix? form (caar ps))
+               ($sym-swap form (caar ps) (cdar ps)))
+              (else (loop (cdr ps))))))
+     ((pair? form)
+      (cons ($skin-subst (car form) pairs)
+            ($skin-subst (cdr form) pairs)))
+     (else form)))
+
+  (define (gltf-skin-shader vs)
+    (let* ((names (map car (glsl-attributes vs)))
+           (has? (lambda (n) (and (memq n names) #t)))
+           (subst
+            (append '((a_pos . g_pos))
+                    (if (has? 'a_normal) '((a_normal . g_normal)) '())
+                    (if (has? 'a_tangent)
+                        '((a_tangent . g_tangent))
+                        '())))
+           (locals
+            (append
+             (list '(local mat4 g_skin
+                           (+ (* a_weights.x
+                                 (at u_joints (int a_joints.x)))
+                              (* a_weights.y
+                                 (at u_joints (int a_joints.y)))
+                              (* a_weights.z
+                                 (at u_joints (int a_joints.z)))
+                              (* a_weights.w
+                                 (at u_joints (int a_joints.w)))))
+                   '(local vec3 g_pos
+                           (vec3 (* g_skin (vec4 a_pos (fl 1))))))
+             (if (has? 'a_normal)
+                 (list '(local vec3 g_normal
+                               (vec3 (* g_skin
+                                        (vec4 a_normal (fl 0))))))
+                 '())
+             (if (has? 'a_tangent)
+                 (list '(local vec4 g_tangent
+                               (vec4 (vec3 (* g_skin
+                                              (vec4 a_tangent.xyz
+                                                    (fl 0))))
+                                     a_tangent.w)))
+                 '()))))
+      (let loop ((fs vs) (out '()) (inserted #f))
+        (if (null? fs)
+            (reverse out)
+            (let ((f (car fs)))
+              (cond
+               ((and (pair? f) (eq? (car f) 'define))
+                ;; rewrite the body; main also gains the locals
+                (let* ((body ($skin-subst (cdddr f) subst))
+                       (body (if (equal? (cadr f) '(main))
+                                 (append locals body)
+                                 body)))
+                  (loop (cdr fs)
+                        (cons (append (list 'define (cadr f)
+                                            (caddr f))
+                                      body)
+                              out)
+                        inserted)))
+               ((and (not inserted)
+                     (pair? f)
+                     (eq? (car f) 'attribute)
+                     (or (null? (cdr fs))
+                         (not (and (pair? (cadr fs))
+                                   (eq? (car (cadr fs))
+                                        'attribute)))))
+                ;; after the LAST static attribute: the skin inputs
+                (loop (cdr fs)
+                      (append
+                       (list '(uniform (array mat4 32) u_joints)
+                             '(attribute vec4 a_weights)
+                             '(attribute vec4 a_joints)
+                             f)
+                       out)
+                      #t))
+               (else (loop (cdr fs) (cons f out) inserted))))))))
 
   ;; KHR_mesh_quantization: read component c of a vertex as a flonum,
   ;; dequantizing by componentType + normalized.  Positions ride the
