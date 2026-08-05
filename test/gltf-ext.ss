@@ -1,17 +1,21 @@
 ;; expect: #t
 ;; (gfx gltf) extended vertex attributes + material texture slots.
-;; Two primitives in one GLB:
+;; Three primitives in one GLB:
 ;;   A  static:  POSITION + TEXCOORD_0 + TANGENT + COLOR_0 (u8 norm,
 ;;      VEC4); material carries normal/emissive/occlusion textures
 ;;      and an emissiveFactor
-;;   B  skinned: POSITION + COLOR_0 (f32 VEC3 -> alpha fills as 1)
-;;      + JOINTS_0/WEIGHTS_0
+;;   B  skinned: POSITION + TANGENT + COLOR_0 (f32 VEC3 -> alpha
+;;      fills as 1) + JOINTS_0 (u16!) + WEIGHTS_0 -- tangent, color
+;;      and the skin coexist, and the u16 joints exercise the
+;;      2-bytes-per-component tight stride
+;;   C  JOINTS_0 without WEIGHTS_0: degrades to an unskinned
+;;      position+normal primitive
 ;; The interleave follows the canonical attribute order
 ;;   position normal uv tangent color joints weights
-;; so A lands at stride 64 with tangent@32/color@48, and B at stride
-;; 80 with color@32/joints@48/weights@64.  gprim-layout names the
-;; attributes present, in order -- the exact contract a matching
-;; shader must declare.
+;; so A lands at stride 64 (tangent@32/color@48), B at stride 96
+;; (tangent@32/color@48/joints@64/weights@80), C at stride 24.
+;; gprim-layout names the attributes present, in order -- the exact
+;; contract a matching shader must declare.
 (import (rnrs) (web js) (gfx gl) (gfx fx) (gfx mat) (gfx gltf))
 
 (define base (fx-alloc! 8192))
@@ -30,21 +34,23 @@
 
 ;; ---- BIN layout ----
 ;; 0    posA 36 | 36 uvA 24 | 60 tanA 48 | 108 colA 12 | 120 idxA 6+2
-;; 128  posB 36 | 164 colB 36 | 200 jB 12 | 212 wB 48 | 260 idxB 6+2
-;; 268  img0 4 | 272 img1 4
-(define binlen 276)
+;; 128  posB 36 | 164 colB 36 | 200 jB(u16) 24 | 224 wB 48 | 272 idxB 6+2
+;; 280  img0 4 | 284 img1 4
+(define binlen 288)
 
 (define json-text
   (string-append
    "{\"asset\":{\"version\":\"2.0\"},\"scene\":0,"
-   "\"scenes\":[{\"nodes\":[0,1,2]}],"
-   "\"nodes\":[{\"mesh\":0},{\"mesh\":1,\"skin\":0},{\"name\":\"j\"}],"
-   "\"skins\":[{\"joints\":[2]}],"
+   "\"scenes\":[{\"nodes\":[0,1,2,3]}],"
+   "\"nodes\":[{\"mesh\":0},{\"mesh\":1,\"skin\":0},{\"name\":\"j\"},"
+   "{\"mesh\":2,\"skin\":0}],"
+   "\"skins\":[{\"joints\":[2,2]}],"
    "\"meshes\":["
    "{\"primitives\":[{\"attributes\":{\"POSITION\":0,\"TEXCOORD_0\":1,"
    "\"TANGENT\":2,\"COLOR_0\":3},\"indices\":4,\"material\":0}]},"
-   "{\"primitives\":[{\"attributes\":{\"POSITION\":5,\"COLOR_0\":6,"
-   "\"JOINTS_0\":7,\"WEIGHTS_0\":8},\"indices\":9}]}],"
+   "{\"primitives\":[{\"attributes\":{\"POSITION\":5,\"TANGENT\":2,"
+   "\"COLOR_0\":6,\"JOINTS_0\":7,\"WEIGHTS_0\":8},\"indices\":9}]},"
+   "{\"primitives\":[{\"attributes\":{\"POSITION\":5,\"JOINTS_0\":7}}]}],"
    "\"materials\":[{"
    "\"pbrMetallicRoughness\":{\"baseColorFactor\":[1,1,1,1]},"
    "\"normalTexture\":{\"index\":0},"
@@ -54,7 +60,7 @@
    "\"textures\":[{\"source\":0},{\"source\":1}],"
    "\"images\":[{\"bufferView\":10,\"mimeType\":\"image/png\"},"
    "{\"bufferView\":11,\"mimeType\":\"image/png\"}],"
-   "\"buffers\":[{\"byteLength\":276}],"
+   "\"buffers\":[{\"byteLength\":288}],"
    "\"bufferViews\":["
    "{\"buffer\":0,\"byteOffset\":0,\"byteLength\":36},"
    "{\"buffer\":0,\"byteOffset\":36,\"byteLength\":24},"
@@ -63,11 +69,11 @@
    "{\"buffer\":0,\"byteOffset\":120,\"byteLength\":6},"
    "{\"buffer\":0,\"byteOffset\":128,\"byteLength\":36},"
    "{\"buffer\":0,\"byteOffset\":164,\"byteLength\":36},"
-   "{\"buffer\":0,\"byteOffset\":200,\"byteLength\":12},"
-   "{\"buffer\":0,\"byteOffset\":212,\"byteLength\":48},"
-   "{\"buffer\":0,\"byteOffset\":260,\"byteLength\":6},"
-   "{\"buffer\":0,\"byteOffset\":268,\"byteLength\":4},"
-   "{\"buffer\":0,\"byteOffset\":272,\"byteLength\":4}],"
+   "{\"buffer\":0,\"byteOffset\":200,\"byteLength\":24},"
+   "{\"buffer\":0,\"byteOffset\":224,\"byteLength\":48},"
+   "{\"buffer\":0,\"byteOffset\":272,\"byteLength\":6},"
+   "{\"buffer\":0,\"byteOffset\":280,\"byteLength\":4},"
+   "{\"buffer\":0,\"byteOffset\":284,\"byteLength\":4}],"
    "\"accessors\":["
    "{\"bufferView\":0,\"componentType\":5126,\"count\":3,\"type\":\"VEC3\"},"
    "{\"bufferView\":1,\"componentType\":5126,\"count\":3,\"type\":\"VEC2\"},"
@@ -77,7 +83,7 @@
    "{\"bufferView\":4,\"componentType\":5123,\"count\":3,\"type\":\"SCALAR\"},"
    "{\"bufferView\":5,\"componentType\":5126,\"count\":3,\"type\":\"VEC3\"},"
    "{\"bufferView\":6,\"componentType\":5126,\"count\":3,\"type\":\"VEC3\"},"
-   "{\"bufferView\":7,\"componentType\":5121,\"count\":3,\"type\":\"VEC4\"},"
+   "{\"bufferView\":7,\"componentType\":5123,\"count\":3,\"type\":\"VEC4\"},"
    "{\"bufferView\":8,\"componentType\":5126,\"count\":3,\"type\":\"VEC4\"},"
    "{\"bufferView\":9,\"componentType\":5123,\"count\":3,\"type\":\"SCALAR\"}]}"))
 
@@ -106,7 +112,9 @@
 (u16! 0) (u16! 1) (u16! 2) (u16! 0)                     ; idxA + pad
 (v3! 0.0 0.0 0.0) (v3! 1.0 0.0 0.0) (v3! 0.0 1.0 0.0)   ; posB
 (v3! 0.3 0.6 0.9) (v3! 0.3 0.6 0.9) (v3! 0.3 0.6 0.9)   ; colB VEC3
-(let j ((i 0)) (when (< i 12) (b! 0) (j (+ i 1))))      ; jB
+(u16! 0) (u16! 0) (u16! 0) (u16! 0)                     ; jB u16, per
+(u16! 1) (u16! 0) (u16! 0) (u16! 0)                     ; vertex 0/1/2:
+(u16! 1) (u16! 1) (u16! 0) (u16! 0)                     ; stride probe
 (let w ((i 0))                                           ; wB f32
   (when (< i 3)
     (f32! 0.5) (f32! 0.5) (f32! 0.0) (f32! 0.0)
@@ -121,6 +129,7 @@
 (define g (gltf-parse base total))
 (define pa (car (gltf-prims g)))
 (define pb (cadr (gltf-prims g)))
+(define pc (caddr (gltf-prims g)))
 
 (define a-ok
   (and (= (gprim-stride pa) 64)
@@ -145,21 +154,31 @@
        (near? (vector-ref (gprim-emissive pa) 2) 1.0)))
 
 (define b-ok
-  (and (= (gprim-stride pb) 80)
+  (and (= (gprim-stride pb) 96)
        (equal? (gprim-layout pb)
-               '(position normal uv color joints weights))
+               '(position normal uv tangent color joints weights))
        (near? (f32@ pb 24) 0.0)          ; uv slot present, zeroed
-       (near? (f32@ pb 32) 0.3)          ; VEC3 color, alpha fills 1
-       (near? (f32@ pb 36) 0.6)
-       (near? (f32@ pb 40) 0.9)
-       (near? (f32@ pb 44) 1.0)
-       (near? (f32@ pb 48) 0.0)          ; joints (as floats)
-       (near? (f32@ pb 64) 0.5)          ; weights
-       (near? (f32@ pb 68) 0.5)))
+       (near? (f32@ pb 32) 1.0)          ; tangent rides along
+       (near? (f32@ pb 44) -1.0)
+       (near? (f32@ pb 48) 0.3)          ; VEC3 color, alpha fills 1
+       (near? (f32@ pb 52) 0.6)
+       (near? (f32@ pb 56) 0.9)
+       (near? (f32@ pb 60) 1.0)
+       (near? (f32@ pb 64) 0.0)          ; u16 joints (as floats):
+       (near? (f32@ pb 160) 1.0)         ; v1 = (1,0,..) -- a wrong
+       (near? (f32@ pb 164) 0.0)         ; tight stride misreads j1
+       (near? (f32@ pb 256) 1.0)         ; v2 = (1,1,..)
+       (near? (f32@ pb 260) 1.0)
+       (near? (f32@ pb 80) 0.5)          ; weights
+       (near? (f32@ pb 84) 0.5)))
+
+(define c-ok                              ; JOINTS without WEIGHTS:
+  (and (= (gprim-stride pc) 24)          ; not a skinned layout
+       (equal? (gprim-layout pc) '(position normal))))
 
 (define plain-ok                          ; no normal/emissive slots
   (and (not (gprim-normal-img pb))
        (not (gprim-emissive-img pb))
        (not (gprim-occlusion-img pb))))
 
-(and a-ok a-mat-ok b-ok plain-ok)
+(and a-ok a-mat-ok b-ok c-ok plain-ok)

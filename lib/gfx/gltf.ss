@@ -17,9 +17,17 @@
 ;; graph, baseColorFactor and the metallic/roughness factors,
 ;; embedded textures (gltf-load-textures!), skins with their joint
 ;; matrices, animations (sampled, blended, morph targets), and a
-;; missing NORMAL becomes +y.  Untextured primitives come out in
-;; mesh-lit-vs's 24-byte layout; textured ones at 32 bytes for
-;; mesh-tex-vs; skinned ones at 64 for gltf-skin-vs.
+;; missing NORMAL becomes +y.  The interleave derives from the
+;; attributes present, in one canonical order --
+;;   position normal uv tangent color joints weights
+;; -- so untextured primitives come out in mesh-lit-vs's 24-byte
+;; layout, textured ones at 32 bytes for mesh-tex-vs, skinned ones
+;; at 64 for gltf-skin-vs, and TANGENT/COLOR_0 extend the stride by
+;; 16 each.  gprim-layout names the attributes present; gltf-draw!
+;; matches them against the program's attribute names and refuses a
+;; mismatch (an asset whose TANGENT/COLOR_0 was silently dropped
+;; before now needs a shader that declares them -- compose one with
+;; gltf-skin-shader or declare a_tangent/a_color yourself).
 ;;
 ;; (gltf-parse base len) works on any GLB bytes already in staging
 ;; memory, so parsing verifies headlessly; gltf-fetch! is the
@@ -945,6 +953,19 @@
             ($skin-subst (cdr form) pairs)))
      (else form)))
 
+  ;; does the form reference any of the rewritten attributes?
+  (define ($skin-refs? form pairs)
+    (cond
+     ((symbol? form)
+      (let loop ((ps pairs))
+        (cond ((null? ps) #f)
+              (($sym-prefix? form (caar ps)) #t)
+              (else (loop (cdr ps))))))
+     ((pair? form)
+      (or ($skin-refs? (car form) pairs)
+          ($skin-refs? (cdr form) pairs)))
+     (else #f)))
+
   (define (gltf-skin-shader vs)
     (let* ((names (map car (glsl-attributes vs)))
            (has? (lambda (n) (and (memq n names) #t)))
@@ -979,40 +1000,55 @@
                                                     (fl 0))))
                                      a_tangent.w)))
                  '()))))
-      (let loop ((fs vs) (out '()) (inserted #f))
-        (if (null? fs)
-            (reverse out)
-            (let ((f (car fs)))
-              (cond
-               ((and (pair? f) (eq? (car f) 'define))
-                ;; rewrite the body; main also gains the locals
-                (let* ((body ($skin-subst (cdddr f) subst))
-                       (body (if (equal? (cadr f) '(main))
-                                 (append locals body)
-                                 body)))
-                  (loop (cdr fs)
-                        (cons (append (list 'define (cadr f)
-                                            (caddr f))
-                                      body)
-                              out)
-                        inserted)))
-               ((and (not inserted)
-                     (pair? f)
-                     (eq? (car f) 'attribute)
-                     (or (null? (cdr fs))
-                         (not (and (pair? (cadr fs))
-                                   (eq? (car (cadr fs))
-                                        'attribute)))))
-                ;; after the LAST static attribute: the skin inputs
-                (loop (cdr fs)
-                      (append
-                       (list '(uniform (array mat4 32) u_joints)
-                             '(attribute vec4 a_weights)
-                             '(attribute vec4 a_joints)
-                             f)
-                       out)
-                      #t))
-               (else (loop (cdr fs) (cons f out) inserted))))))))
+      (unless (memq 'a_pos names)
+        (error 'gltf-skin-shader
+               "vertex shader declares no a_pos attribute" names))
+      ;; the LAST attribute form, wherever it sits -- declarations
+      ;; need not be contiguous
+      (let ((last-attr
+             (let scan ((fs vs) (i 0) (last -1))
+               (if (null? fs)
+                   last
+                   (scan (cdr fs) (+ i 1)
+                         (if (and (pair? (car fs))
+                                  (eq? (caar fs) 'attribute))
+                             i
+                             last))))))
+        (let loop ((fs vs) (i 0) (out '()))
+          (if (null? fs)
+              (reverse out)
+              (let* ((f (car fs))
+                     (out
+                      (cond
+                       ((and (pair? f) (eq? (car f) 'define))
+                        (if (equal? (cadr f) '(main))
+                            ;; main: the locals, then the rewritten
+                            ;; body
+                            (cons (append (list 'define (cadr f)
+                                                (caddr f))
+                                          locals
+                                          ($skin-subst (cdddr f)
+                                                       subst))
+                                  out)
+                            ;; a helper cannot see main's g_*
+                            ;; locals: refuse a rewrite that would
+                            ;; miscompile
+                            (begin
+                              (when ($skin-refs? (cdddr f) subst)
+                                (error 'gltf-skin-shader
+                                       "attribute referenced outside main; pass the skinned value as a parameter"
+                                       (cadr f)))
+                              (cons f out))))
+                       (else (cons f out))))
+                     (out (if (= i last-attr)
+                              (append
+                               (list
+                                '(uniform (array mat4 32) u_joints)
+                                '(attribute vec4 a_weights)
+                                '(attribute vec4 a_joints))
+                               out)
+                              out)))
+                (loop (cdr fs) (+ i 1) out)))))))
 
   ;; KHR_mesh_quantization: read component c of a vertex as a flonum,
   ;; dequantizing by componentType + normalized.  Positions ride the
@@ -1333,19 +1369,38 @@
            (pending n)
            (resolve!
             (lambda ()
-              (for-each (lambda (p)
-                          (let ((set (lambda (img put!)
-                                       (when img
-                                         (put! p (vector-ref
-                                                  slots img))))))
-                            (set ($gprim-tex-img p) $gprim-tex!)
-                            (set (gprim-normal-img p) $gprim-ntex!)
-                            (set (gprim-emissive-img p) $gprim-etex!)
-                            (set (gprim-occlusion-img p) $gprim-otex!)))
-                        (gltf-prims g))
+              ;; 1x1 fallbacks so every primitive OWNS a value for
+              ;; the optional slots: a program declaring u_nmap must
+              ;; never sample whatever the previous primitive left
+              ;; on the unit (or unit 0's base color)
+              (let* ((mk (lambda (r gr b)
+                           (let ((t (fx-texture!))
+                                 (px (fx-alloc! 4)))
+                             (%mem-u8-set! px r)
+                             (%mem-u8-set! (+ px 1) gr)
+                             (%mem-u8-set! (+ px 2) b)
+                             (%mem-u8-set! (+ px 3) 255)
+                             (gl-texture-data! t px 1 1)
+                             t)))
+                     (flat (mk 128 128 255))   ; tangent-space +z
+                     (white (mk 255 255 255))) ; emissive*factor, AO 1
+                (for-each
+                 (lambda (p)
+                   (let ((set (lambda (img put! dflt)
+                                (put! p (if img
+                                            (vector-ref slots img)
+                                            dflt)))))
+                     (let ((ii ($gprim-tex-img p)))
+                       (when ii
+                         ($gprim-tex! p (vector-ref slots ii))))
+                     (set (gprim-normal-img p) $gprim-ntex! flat)
+                     (set (gprim-emissive-img p) $gprim-etex! white)
+                     (set (gprim-occlusion-img p) $gprim-otex!
+                          white)))
+                 (gltf-prims g)))
               (k g))))
       (if (= n 0)
-          (k g)
+          (resolve!)
           (let load ((i 0))
             (when (< i n)
               (let ((info (vector-ref imgs i)))
@@ -1362,6 +1417,20 @@
                    (when (= pending 0) (resolve!))
                    (js-undefined))))
               (load (+ i 1)))))))
+
+  ;; the shader attribute names a layout demands, in order
+  (define ($layout-attr-names layout)
+    (map (lambda (a)
+           (case a
+             ((position) 'a_pos)
+             ((normal) 'a_normal)
+             ((uv) 'a_uv)
+             ((tangent) 'a_tangent)
+             ((color) 'a_color)
+             ((joints) 'a_joints)
+             ((weights) 'a_weights)
+             (else a)))
+         layout))
 
   ;; draw every primitive; geometry uploads on its first frame.
   ;; prog is an fx-program over mesh-lit-vs/-fs (or any shader with
@@ -1407,10 +1476,16 @@
   (define (gltf-draw! g prog vp . root)
     (for-each
      (lambda (p)
-       (unless (= (fx-program-stride prog) (gprim-stride p))
-         (error 'gltf-draw!
-                "program stride does not match the primitive (textured assets need a mesh-tex program)"
-                (gprim-stride p)))
+       ;; strides collide across layouts (tangent and color are both
+       ;; vec4): the attribute NAMES are the exact contract.  A
+       ;; mismatch here would silently feed one attribute's bytes to
+       ;; another -- refuse it instead.
+       (let ((want ($layout-attr-names (gprim-layout p)))
+             (have (fx-program-attribute-names prog)))
+         (unless (equal? want have)
+           (error 'gltf-draw!
+                  "program attributes do not match the primitive layout"
+                  have want)))
        (let ((fresh (not ($gprim-vbuf p))))
          (when fresh
            ($gprim-vbuf! p (fx-buffer!))

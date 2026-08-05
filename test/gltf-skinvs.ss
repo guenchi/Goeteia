@@ -50,4 +50,53 @@
        (= (attr-bytes sk-tex) 64)
        (string? (glsl->string sk-tex))))
 
-(and nmap-ok tex-ok)
+;; ---- attributes need not be contiguous: a_joints/a_weights must
+;; land after the LAST one, not after the first run ----
+(define weird
+  '((attribute vec3 a_pos)
+    (uniform mat4 u_mvp)
+    (attribute vec3 a_normal)
+    (varying vec3 v_n)
+    (define (main) void
+      (set! gl_Position (* u_mvp (vec4 a_pos (fl 1))))
+      (set! v_n a_normal))))
+(define weird-ok
+  (equal? (map car (glsl-attributes (gltf-skin-shader weird)))
+          '(a_pos a_normal a_joints a_weights)))
+
+;; ---- near-prefix attribute names survive untouched ----
+(define near-prefix
+  '((attribute vec3 a_pos)
+    (attribute vec3 a_position2)
+    (uniform mat4 u_mvp)
+    (varying vec3 v_x)
+    (define (main) void
+      (set! gl_Position (* u_mvp (vec4 a_pos (fl 1))))
+      (set! v_x a_position2))))
+(define near-src (glsl->string (gltf-skin-shader near-prefix)))
+(define near-ok
+  (and (contains? near-src "a_position2")
+       (not (contains? near-src "g_position2"))))
+
+;; ---- degenerate inputs fail loudly, not with broken GLSL ----
+(define (errors? thunk)
+  (guard (e (#t #t)) (thunk) #f))
+(define degenerate-ok
+  (and
+   ;; no a_pos at all
+   (errors? (lambda ()
+              (gltf-skin-shader
+               '((attribute vec3 a_dir)
+                 (define (main) void
+                   (set! gl_Position (vec4 a_dir (fl 1))))))))
+   ;; an attribute read from a helper: g_* locals live in main, so
+   ;; the rewrite cannot reach it -- refuse instead of miscompiling
+   (errors? (lambda ()
+              (gltf-skin-shader
+               '((attribute vec3 a_pos)
+                 (define (twice) vec3
+                   (return (* a_pos (fl 2))))
+                 (define (main) void
+                   (set! gl_Position (vec4 a_pos (fl 1))))))))))
+
+(and nmap-ok tex-ok weird-ok near-ok degenerate-ok)
