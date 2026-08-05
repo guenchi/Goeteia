@@ -41,7 +41,7 @@
           fx-program! fx-program3! fx-tf-program! fx-ubo!
           fx-program? fx-program-slot fx-program-stride
           fx-program-istride
-          fx-use! fx-use-instanced! fx-uniform!
+          fx-use! fx-use-instanced! fx-uniform! fx-uniform?
           fx-ticks! fx-loop! fx-loop-fixed!
           fx-init-input! key-down? pointer-x pointer-y pointer-down?
           pointer-lock! pointer-locked? pointer-motion!
@@ -373,6 +373,12 @@
   ;; the re-send (matrices change every frame; they don't bother).
   ;; Don't mix raw cmd-uniform*! writes with fx-uniform! on the same
   ;; uniform -- the cache cannot see them
+  ;; does the program declare this uniform?  Lets a renderer bind
+  ;; optional resources (extra material textures, u_model) only when
+  ;; the shader asks for them.
+  (define (fx-uniform? prog name)
+    (and (hashtable-ref ($fx-program-uniforms prog) name #f) #t))
+
   (define (fx-uniform! prog name . vs)
     (let ((u (hashtable-ref ($fx-program-uniforms prog) name #f))
           (cache ($fx-program-ucache prog)))

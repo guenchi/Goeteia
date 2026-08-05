@@ -37,7 +37,9 @@
           gprim-vbase gprim-vbytes gprim-ibase gprim-ibytes
           gprim-icount gprim-index-u32? gprim-color
           gprim-metallic gprim-roughness
-          gprim-world gprim-stride gprim-tex)
+          gprim-world gprim-stride gprim-layout gprim-tex
+          gprim-normal-img gprim-emissive-img gprim-occlusion-img
+          gprim-emissive gprim-ntex gprim-etex gprim-otex)
   (import (rnrs) (web js) (gfx gl) (gfx fx) (gfx mat) (web json)
           (gfx meshopt))
 
@@ -69,12 +71,22 @@
             (immutable color gprim-color)     ; r g b a flonum vector
             (immutable mr $gprim-mr)          ; (metallic . roughness)
             (immutable world gprim-world)     ; m4
-            (immutable stride gprim-stride)   ; 24, or 32 with uvs
+            (immutable stride gprim-stride)   ; total per-vertex bytes
+            ;; the attributes present, in interleave order -- the
+            ;; exact contract a matching shader must declare
+            (immutable layout gprim-layout)
             (immutable tex-img $gprim-tex-img); image index | #f
+            (immutable nrm-img gprim-normal-img)   ; image index | #f
+            (immutable emi-img gprim-emissive-img) ; image index | #f
+            (immutable occ-img gprim-occlusion-img); image index | #f
+            (immutable emissive gprim-emissive)    ; r g b factor
             (immutable skin $gprim-skin)      ; skin index | #f
             ;; #(base-positions target-deltas weights dirty node) | #f
             (mutable morph gprim-morph $gprim-morph!)
             (mutable tex gprim-tex $gprim-tex!)  ; texture slot | #f
+            (mutable ntex gprim-ntex $gprim-ntex!)
+            (mutable etex gprim-etex $gprim-etex!)
+            (mutable otex gprim-otex $gprim-otex!)
             (mutable vbuf $gprim-vbuf $gprim-vbuf!)
             (mutable ibuf $gprim-ibuf $gprim-ibuf!)))
 
@@ -206,6 +218,30 @@
                   (let ((ti (json-ref bct "index")))
                     (json-ref (vector-ref (json-ref json "textures") ti)
                               "source")))))))
+
+  ;; a material's root-level texture slot (normalTexture,
+  ;; emissiveTexture, occlusionTexture), as an image index
+  (define ($prim-mat-tex json prim key)
+    (let ((mi (json-ref prim "material")))
+      (and mi
+           (let* ((mat (vector-ref (json-ref json "materials") mi))
+                  (t (json-ref mat key)))
+             (and t
+                  (let ((ti (json-ref t "index")))
+                    (json-ref (vector-ref (json-ref json "textures") ti)
+                              "source")))))))
+
+  ;; emissiveFactor, spec default (0,0,0)
+  (define ($material-emissive json mi)
+    (if (not mi)
+        (vector 0.0 0.0 0.0)
+        (let* ((mat (vector-ref (json-ref json "materials") mi))
+               (f (json-ref mat "emissiveFactor")))
+          (if f
+              (vector ($gltf-fl (vector-ref f 0))
+                      ($gltf-fl (vector-ref f 1))
+                      ($gltf-fl (vector-ref f 2)))
+              (vector 0.0 0.0 0.0)))))
 
   ;; the embedded images: absolute staging offsets for later decode
   (define ($gltf-image-table json bin)
@@ -888,8 +924,28 @@
                     (if norm ($clamp-1 (fl/ v 127.0)) v)))
      (else (error 'gltf "bad vertex component type" ct))))
 
-  ;; one primitive: interleave pos+normal (+uv when the asset has
-  ;; TEXCOORD_0) and pack u16 index pairs into fresh staging memory
+  ;; accessor type string ("VEC3"/"VEC4"/...)
+  (define ($acc-type json i)
+    (json-ref (vector-ref (json-ref json "accessors") i) "type"))
+
+  ;; like $acc-info, but with the tight stride derived from the
+  ;; component type when the bufferView declares none
+  (define ($attr-info json bin i ncomp)
+    (let ((inf ($acc-info json bin i 0)))
+      (list (car inf)
+            (if (= (cadr inf) 0)
+                (* ncomp (case (cadddr inf)
+                           ((5126) 4)
+                           ((5123 5122) 2)
+                           (else 1)))
+                (cadr inf))
+            (caddr inf) (cadddr inf) (list-ref inf 4))))
+
+  ;; one primitive: interleave the attributes present in canonical
+  ;; order -- position normal uv tangent color joints weights -- and
+  ;; pack u16 index pairs into fresh staging memory.  The uv slot
+  ;; rides along (zeroed) whenever anything beyond position+normal
+  ;; is present, so every layout past 24 bytes starts pos/nrm/uv.
   (define ($build-prim json bin prim world skin nidx mw)
     (let* ((attrs (json-ref prim "attributes"))
            (pos ($acc-info json bin (json-ref attrs "POSITION") 12))
@@ -897,32 +953,32 @@
                   (and i ($acc-info json bin i 12))))
            (uv (let ((i (json-ref attrs "TEXCOORD_0")))
                  (and i ($acc-info json bin i 8))))
-           (jn (let ((i (json-ref attrs "JOINTS_0")))
-                 (and i skin
-                      (let ((inf ($acc-info json bin i 0)))
-                        ;; tight stride depends on the component type
-                        (list (car inf)
-                              (if (= (cadr inf) 0)
-                                  (if (= (cadddr inf) 5123) 8 4)
-                                  (cadr inf))
-                              (caddr inf) (cadddr inf))))))
-           (wt (and jn
+           (jn0 (let ((i (json-ref attrs "JOINTS_0")))
+                  (and i skin ($attr-info json bin i 4))))
+           (wt (and jn0
                     (let ((i (json-ref attrs "WEIGHTS_0")))
-                      (and i
-                           (let ((inf ($acc-info json bin i 0)))
-                             ;; tight stride depends on the component
-                             ;; type: f32, or normalized u8/u16
-                             (list (car inf)
-                                   (if (= (cadr inf) 0)
-                                       (case (cadddr inf)
-                                         ((5123) 8)
-                                         ((5121) 4)
-                                         (else 16))
-                                       (cadr inf))
-                                   (caddr inf) (cadddr inf)
-                                   (list-ref inf 4)))))))
+                      (and i ($attr-info json bin i 4)))))
+           (jn (and wt jn0))
+           (tan (let ((i (json-ref attrs "TANGENT")))
+                  (and i ($attr-info json bin i 4))))
+           (col-n (let ((i (json-ref attrs "COLOR_0")))
+                    (and i (if (string=? ($acc-type json i) "VEC3")
+                               3
+                               4))))
+           (col (let ((i (json-ref attrs "COLOR_0")))
+                  (and i ($attr-info json bin i col-n))))
            (count (caddr pos))
-           (stride (cond ((and jn wt) 64) (uv 32) (else 24)))
+           (uv-slot (and (or uv tan col jn) #t))
+           (o-tan (and tan 32))
+           (o-col (and col (+ 32 (if tan 16 0))))
+           (o-jn (and jn (+ 32 (if tan 16 0) (if col 16 0))))
+           (stride (+ 24 (if uv-slot 8 0) (if tan 16 0)
+                      (if col 16 0) (if jn 32 0)))
+           (layout (append '(position normal)
+                           (if uv-slot '(uv) '())
+                           (if tan '(tangent) '())
+                           (if col '(color) '())
+                           (if jn '(joints weights) '())))
            (vbytes (* stride count))
            (vbase (fx-alloc! vbytes))
            ;; componentType + normalized per attribute (5126 float =
@@ -950,22 +1006,40 @@
                 (let ((us (+ (car uv) (* v (cadr uv)))))
                   (%mem-f32-set! (+ dst 24) ($deq us 0 uct un))
                   (%mem-f32-set! (+ dst 28) ($deq us 1 uct un)))
-                (when (= stride 64)      ; skinned but uv-less: zeros
+                (when uv-slot            ; slot present, no data: zeros
                   (%mem-f32-set! (+ dst 24) 0.0)
                   (%mem-f32-set! (+ dst 28) 0.0)))
-            (when (= stride 64)          ; joints as floats + weights
+            (when tan
+              (let ((ts (+ (car tan) (* v (cadr tan))))
+                    (tct (cadddr tan)) (tn (list-ref tan 4)))
+                (let comp ((c 0))
+                  (when (< c 4)
+                    (%mem-f32-set! (+ dst o-tan (* 4 c))
+                                   ($deq ts c tct tn))
+                    (comp (+ c 1))))))
+            (when col                    ; VEC3 colors: alpha fills 1
+              (let ((cs (+ (car col) (* v (cadr col))))
+                    (cct (cadddr col)) (cn (list-ref col 4)))
+                (let comp ((c 0))
+                  (when (< c 4)
+                    (%mem-f32-set! (+ dst o-col (* 4 c))
+                                   (if (< c col-n)
+                                       ($deq cs c cct cn)
+                                       1.0))
+                    (comp (+ c 1))))))
+            (when jn                     ; joints as floats + weights
               (let ((js (+ (car jn) (* v (cadr jn))))
                 (u16? (= (cadddr jn) 5123))
                     (ws (+ (car wt) (* v (cadr wt)))))
                 (let comp ((c 0))
                   (when (< c 4)
                     (%mem-f32-set!
-                     (+ dst 32 (* 4 c))
+                     (+ dst o-jn (* 4 c))
                      (fixnum->flonum
                       (if u16?
                           ($glb-u16 (+ js (* 2 c)))
                           (%mem-u8-ref (+ js c)))))
-                    (%mem-f32-set! (+ dst 48 (* 4 c))
+                    (%mem-f32-set! (+ dst o-jn 16 (* 4 c))
                                    ($deq ws c (cadddr wt)
                                          (list-ref wt 4)))
                     (comp (+ c 1)))))))
@@ -1007,7 +1081,11 @@
         ($make-gprim vbase vbytes ibase ibytes icount u32?
                      ($material-color json (json-ref prim "material"))
                      ($material-mr json (json-ref prim "material"))
-                     world stride ($prim-tex-image json prim)
+                     world stride layout ($prim-tex-image json prim)
+                     ($prim-mat-tex json prim "normalTexture")
+                     ($prim-mat-tex json prim "emissiveTexture")
+                     ($prim-mat-tex json prim "occlusionTexture")
+                     ($material-emissive json (json-ref prim "material"))
                      (and jn skin)
                      ;; morph targets: POSITION deltas, CPU-blended
                      (let ((tg (json-ref prim "targets")))
@@ -1058,7 +1136,7 @@
                                      w k ($gltf-fl (vector-ref mw k)))
                                     (iw (+ k 1)))))
                               (vector b ds w #t nidx))))
-                     #f #f #f))))
+                     #f #f #f #f #f #f))))
 
   ;; ---- the GLB container, then the scene walk ----
   (define (gltf-parse base len)
@@ -1146,9 +1224,14 @@
            (resolve!
             (lambda ()
               (for-each (lambda (p)
-                          (let ((ii ($gprim-tex-img p)))
-                            (when ii
-                              ($gprim-tex! p (vector-ref slots ii)))))
+                          (let ((set (lambda (img put!)
+                                       (when img
+                                         (put! p (vector-ref
+                                                  slots img))))))
+                            (set ($gprim-tex-img p) $gprim-tex!)
+                            (set (gprim-normal-img p) $gprim-ntex!)
+                            (set (gprim-emissive-img p) $gprim-etex!)
+                            (set (gprim-occlusion-img p) $gprim-otex!)))
                         (gltf-prims g))
               (k g))))
       (if (= n 0)
@@ -1228,6 +1311,19 @@
            (when tx
              (cmd-bind-texture! 0 tx)
              (fx-uniform! prog 'u_tex 0)))
+         ;; material texture slots beyond base color bind only when
+         ;; the program declares their samplers
+         (let ((bind (lambda (tx unit name)
+                       (when (and tx (fx-uniform? prog name))
+                         (cmd-bind-texture! unit tx)
+                         (fx-uniform! prog name unit)))))
+           (bind (gprim-ntex p) 1 'u_nmap)
+           (bind (gprim-etex p) 2 'u_emap)
+           (bind (gprim-otex p) 3 'u_omap))
+         (when (fx-uniform? prog 'u_emissive)
+           (let ((e (gprim-emissive p)))
+             (fx-uniform! prog 'u_emissive (vector-ref e 0)
+                          (vector-ref e 1) (vector-ref e 2))))
          ;; a dirty morph rewrites the staging stream before upload
          (let ((mo (gprim-morph p)))
            (when (and mo (vector-ref mo 3))
@@ -1240,7 +1336,7 @@
                (cmd-index-data32! (gprim-ibase p) (gprim-ibytes p))
                (cmd-index-data! (gprim-ibase p) (gprim-ibytes p))))
          (let ((c (gprim-color p)))
-           (if (= (gprim-stride p) 64)
+           (if ($gprim-skin p)
                ;; skinned: the resident palette carries the pose --
                ;; composed in SIMD, uploaded in three words; the
                ;; optional root still frames the whole asset
@@ -1249,7 +1345,14 @@
                               (gltf-joint-palette! g ($gprim-skin p))
                               (gltf-joint-count g ($gprim-skin p)))
                  (fx-uniform! prog 'u_mvp
-                              (if (null? root) vp (m4-mul vp (car root)))))
+                              (if (null? root) vp (m4-mul vp (car root))))
+                 ;; skinned variants of world-space shaders read
+                 ;; u_model for their normals; the root frames it
+                 (when (fx-uniform? prog 'u_model)
+                   (fx-uniform! prog 'u_model
+                                (if (null? root)
+                                    (m4-identity)
+                                    (car root)))))
                (let ((world (if (null? root)
                                 (gprim-world p)
                                 (m4-mul (car root) (gprim-world p)))))
