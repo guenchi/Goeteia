@@ -97,6 +97,43 @@
   (guard (e (#t #t)) (thunk) #f))
 
 ;; ---- injected names must be free in the input ----
+;; the loader writes a +Y normal even when the asset has none, so
+;; every skinned layout carries a normal slot: a position-only
+;; shader needs that padding too, not just the uv one
+(define no-normal-ok
+  (equal? (map car (glsl-attributes
+                    (gltf-skin-shader
+                     '((attribute vec3 a_pos)
+                       (uniform mat4 u_mvp)
+                       (define (main) void
+                         (set! gl_Position
+                               (* u_mvp (vec4 a_pos (fl 1)))))))))
+          '(a_pos a_normal a_uv a_joints a_weights)))
+
+;; GLSL shares one top-level namespace across storage classes, so a
+;; name taken by a uniform blocks the attribute this injects (and
+;; vice versa)
+(define cross-class-ok
+  (and (errors? (lambda ()
+                  (gltf-skin-shader
+                   '((attribute vec3 a_pos)
+                     (attribute vec3 a_normal)
+                     (uniform vec2 a_uv)
+                     (define (main) void
+                       (set! gl_Position (vec4 a_pos (fl 1))))))))
+       (errors? (lambda ()
+                  (gltf-skin-shader
+                   '((attribute vec3 a_pos)
+                     (attribute vec4 u_joints)
+                     (define (main) void
+                       (set! gl_Position (vec4 a_pos (fl 1))))))))
+       (errors? (lambda ()
+                  (gltf-skin-shader
+                   '((attribute vec3 a_pos)
+                     (varying vec4 a_weights)
+                     (define (main) void
+                       (set! gl_Position (vec4 a_pos (fl 1))))))))))
+
 (define collision-ok
   (and (errors? (lambda ()
                   (gltf-skin-shader
@@ -144,5 +181,5 @@
                  (define (main) void
                    (set! gl_Position (vec4 a_pos (fl 1))))))))))
 
-(and nmap-ok tex-ok weird-ok no-uv-ok no-uv-order-ok collision-ok
-     near-ok degenerate-ok)
+(and nmap-ok tex-ok weird-ok no-uv-ok no-uv-order-ok no-normal-ok
+     cross-class-ok collision-ok near-ok degenerate-ok)

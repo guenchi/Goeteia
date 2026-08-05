@@ -112,7 +112,7 @@
    (string-append
     "{\"asset\":{\"version\":\"2.0\"},\"scene\":0,"
     "\"scenes\":[{\"nodes\":[0]}],"
-    "\"nodes\":[{\"mesh\":0}],"
+    "\"nodes\":[{\"mesh\":0,\"weights\":[0.3,0.1]}],"
     "\"meshes\":[{\"primitives\":[{\"attributes\":{\"POSITION\":0},"
     "\"indices\":1,\"targets\":[{\"POSITION\":4},{\"POSITION\":5}]}]}],"
     "\"animations\":[{\"name\":\"w\","
@@ -217,8 +217,8 @@
     (gltf-animate! gw 0 0.5)               ; "w": weights = .5 / .25
     (gltf-animate! gw 1 0.5)               ; "move": translation only
     (let ((w (vector-ref (gprim-morph pw) 2)))
-      (and (near? (vector-ref w 0) 0.0)
-           (near? (vector-ref w 1) 0.0)))))
+      (and (near? (vector-ref w 0) 0.3)    ; the ASSET's bind weights,
+           (near? (vector-ref w 1) 0.1))))) ; not a hardcoded zero
 
 ;; the quantized target dequantizes too: raw i8 read as f32 gives
 ;; denormals, and a float-strided read walks off the 9-byte view
@@ -228,6 +228,23 @@
          (near? (vector-ref d 4) 1.0)
          (near? (vector-ref d 0) 0.0))))
 
-(and morph-target-quant-ok
+;; morph weights crossfade through the same two-pose scheme as the
+;; node TRS: "w" poses them at (.5,.25) and "move" does not drive
+;; them at all, so at k = .5 they sit halfway to bind (.3,.1) --
+;; (.4,.175).  The dirty check is a contract on the blend as a
+;; whole -- the reset inside it already sets the flag, so it does
+;; not discriminate $morph-blend!'s own store; it does catch a
+;; blend that leaves the vertex buffer stale.
+(define morph-crossfade-ok
+  (begin
+    (vector-set! (gprim-morph pw) 3 #f)    ; clear dirty first
+    (gltf-animate-blend! gw 0 0.5 1 0.5 0.5)
+    (let ((w (vector-ref (gprim-morph pw) 2)))
+      (and (near? (vector-ref w 0) 0.4)
+           (near? (vector-ref w 1) 0.175)
+           (vector-ref (gprim-morph pw) 3)))))
+
+(and morph-crossfade-ok
+     morph-target-quant-ok
      pos-ok nrm-ok uv-ok morph-base-ok node-weights-ok
      strided-weights-ok morph-bind-ok)
