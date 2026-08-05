@@ -460,6 +460,33 @@
     (near? (vector-ref (joint2-m) 12) 7.0)))
 
 ;; goto to the state already current must not disturb a live fade
+;; a negative fade is the same family as an instant one: the guard
+;; says both must settle at once.  An implementation that special
+;; cases only exact zero keeps w = k/len negative, so w < 1 stays
+;; true forever and the source is never released.
+(define negative-fade-ok
+  (let ((m (anim-machine g2 '((a . 2) (b . 4)) 1.0)))
+    (anim-update! m 0.5)                 ; "ta": node1 = 2.5
+    (anim-goto! m 'b -1.0)
+    (anim-update! m 0.5)
+    (near? (vector-ref (joint2-m) 12) 7.0)))
+
+;; an interrupt restarts the fade clock: at the same dt the new
+;; transition must be a QUARTER in, not half.  ta -> n0 runs .25 of
+;; a 1s fade, then c interrupts; .25 later node 1 should be a
+;; quarter of the way from n0's pose (bind, 7) toward dup's 3.
+(define interrupt-clock-ok
+  (let ((m (anim-machine g2 '((a . 2) (b . 4) (c . 3)) 1.0)))
+    (anim-update! m 0.5)
+    (anim-goto! m 'b)
+    (anim-update! m 0.25)
+    (anim-goto! m 'c)
+    (anim-update! m 0.25)
+    ;; n0 leaves node 1 at bind (7); dup at its own t = .25 is 6.0
+    ;; (its keys are 3/5/9 with a duplicated first time).  A quarter
+    ;; of the way is 6.75 -- a carried-over k of .5 would give 6.5.
+    (near? (vector-ref (joint2-m) 12) 6.75)))
+
 (define same-state-ok
   (let ((m (anim-machine g2 '((a . 2) (b . 4)) 1.0)))
     (anim-update! m 0.5)
@@ -469,7 +496,8 @@
       (anim-goto! m 'b)                  ; already there: a no-op
       (near? (vector-ref (joint2-m) 12) mid))))
 
-(and bind-scale-ok instant-fade-ok same-state-ok interrupt-release-ok
+(and bind-scale-ok instant-fade-ok negative-fade-ok interrupt-clock-ok
+     same-state-ok interrupt-release-ok
      interrupt-effect-ok union-dedup-ok
      weights-ok lin-ok stp-ok cub-ok cubr-ok cubw-ok
      tiny-span-ok nlerp-contract-ok complete-pose-ok

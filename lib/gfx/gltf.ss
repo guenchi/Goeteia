@@ -1218,15 +1218,22 @@
       (let ((taken (append names
                            (map car (glsl-uniforms vs))
                            (glsl-varyings vs)
-                           ;; function names share the namespace too
+                           ;; function names share the namespace, and
+                           ;; so do the members of an anonymous
+                           ;; uniform block -- they land in global
+                           ;; scope exactly like a plain uniform
                            (let fn ((fs vs) (acc '()))
                              (cond
                               ((null? fs) acc)
-                              ((and (pair? (car fs))
-                                    (eq? (caar fs) 'define)
+                              ((not (pair? (car fs))) (fn (cdr fs) acc))
+                              ((and (eq? (caar fs) 'define)
                                     (pair? (cadr (car fs))))
                                (fn (cdr fs)
                                    (cons (car (cadr (car fs))) acc)))
+                              ((eq? (caar fs) 'uniform-block)
+                               (fn (cdr fs)
+                                   (append (map cadr (cddr (car fs)))
+                                           acc)))
                               (else (fn (cdr fs) acc)))))))
         (for-each
          (lambda (n)
