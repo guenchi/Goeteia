@@ -375,6 +375,13 @@
                        (smp (vector-ref samplers (json-ref chan "sampler")))
                        (path (string->symbol
                               (json-ref chan "target" "path")))
+                       ;; STEP holds the left key; CUBICSPLINE stores
+                       ;; in-tangent/value/out-tangent triples per key
+                       (interp (let ((s (json-ref smp "interpolation")))
+                                 (cond ((not s) 'linear)
+                                       ((string=? s "STEP") 'step)
+                                       ((string=? s "CUBICSPLINE") 'cubic)
+                                       (else 'linear))))
                        (tin ($acc-info json bin (json-ref smp "input") 4))
                        (nk (caddr tin))
                        (vin ($acc-info json bin (json-ref smp "output")
@@ -383,29 +390,47 @@
                                          ((weights) 4)   ; scalars
                                          (else 12))))
                        ;; weights: the accessor holds nk * n-targets
+                       ;; elements (times three under CUBICSPLINE)
                        (ncomp (case path
                                 ((rotation) 4)
-                                ((weights) (if (> nk 0)
-                                               (quotient (caddr vin) nk)
-                                               0))
+                                ((weights)
+                                 (if (> nk 0)
+                                     (quotient (caddr vin)
+                                               (if (eq? interp 'cubic)
+                                                   (* 3 nk)
+                                                   nk))
+                                     0))
                                 (else 3)))
                        (kstride (if (eq? path 'weights)
                                     (* ncomp (cadr vin))
                                     (cadr vin)))
                        (times (make-vector nk 0.0))
-                       (vals (make-vector nk #f)))
+                       (vals (make-vector nk #f))
+                       (intan (and (eq? interp 'cubic)
+                                   (make-vector nk #f)))
+                       (outtan (and (eq? interp 'cubic)
+                                    (make-vector nk #f))))
                   (let kf ((i 0))
                     (when (< i nk)
                       (vector-set! times i
                                    (%mem-f32-ref (+ (car tin)
                                                     (* i (cadr tin)))))
-                      (let ((vat (+ (car vin) (* i kstride)))
-                            (v (make-vector ncomp 0.0)))
-                        (let comp ((j 0))
-                          (when (< j ncomp)
-                            (vector-set! v j (%mem-f32-ref (+ vat (* 4 j))))
-                            (comp (+ j 1))))
-                        (vector-set! vals i v))
+                      ;; element e of the output stream, as ncomp f32s
+                      (let ((rd (lambda (e)
+                                  (let ((vat (+ (car vin) (* e kstride)))
+                                        (v (make-vector ncomp 0.0)))
+                                    (let comp ((j 0))
+                                      (when (< j ncomp)
+                                        (vector-set!
+                                         v j (%mem-f32-ref (+ vat (* 4 j))))
+                                        (comp (+ j 1))))
+                                    v))))
+                        (if (eq? interp 'cubic)
+                            (begin
+                              (vector-set! intan i (rd (* 3 i)))
+                              (vector-set! vals i (rd (+ (* 3 i) 1)))
+                              (vector-set! outtan i (rd (+ (* 3 i) 2))))
+                            (vector-set! vals i (rd i))))
                       (kf (+ i 1))))
                   (when (> nk 0)
                     (let ((last (vector-ref times (- nk 1))))
@@ -414,7 +439,8 @@
                                ;; slot 4: the play cursor -- the last
                                ;; keyframe span this channel sampled
                                (vector (json-ref chan "target" "node")
-                                       path times vals 0)))
+                                       path times vals 0
+                                       interp intan outtan)))
                 (ch (+ c 1))))
             (vector-set! out k
                          (vector (let ((nm (json-ref a "name")))
@@ -439,6 +465,28 @@
            (n (flsqrt (fl+ (fl+ (fl* x x) (fl* y y))
                            (fl+ (fl* z z) (fl* w w))))))
       (vector (fl/ x n) (fl/ y n) (fl/ z n) (fl/ w n))))
+
+  ;; cubic hermite between two keyframe values (glTF CUBICSPLINE):
+  ;; m0 = the left key's out-tangent, m1 = the right key's in-tangent,
+  ;; both stored per second and scaled by the keyframe span
+  (define ($hermite v0 v1 m0 m1 a span)
+    (let* ((t2 (fl* a a))
+           (t3 (fl* t2 a))
+           (h00 (fl+ (fl- (fl* 2.0 t3) (fl* 3.0 t2)) 1.0))
+           (h10 (fl* span (fl+ (fl- t3 (fl* 2.0 t2)) a)))
+           (h01 (fl- (fl* 3.0 t2) (fl* 2.0 t3)))
+           (h11 (fl* span (fl- t3 t2)))
+           (nc (vector-length v0))
+           (out (make-vector nc 0.0)))
+      (let j ((i 0))
+        (when (< i nc)
+          (vector-set! out i
+                       (fl+ (fl+ (fl* h00 (vector-ref v0 i))
+                                 (fl* h10 (vector-ref m0 i)))
+                            (fl+ (fl* h01 (vector-ref v1 i))
+                                 (fl* h11 (vector-ref m1 i)))))
+          (j (+ i 1))))
+      out))
 
   ;; write channel ch's value at time tw into its node's TRS; w < 1
   ;; blends toward the sampled value from whatever the node already
@@ -483,7 +531,23 @@
                             (fl/ (fl- tw t0) span)))
                      (a (if (fl<? a 0.0) 0.0 (if (fl<? 1.0 a) 1.0 a)))
                      (v0 (vector-ref vals k))
-                     (v1 (vector-ref vals k1)))
+                     (v1 (vector-ref vals k1))
+                     (interp (vector-ref ch 5))
+                     ;; STEP holds the left key; CUBICSPLINE samples
+                     ;; the hermite once, then both reduce to a = 0
+                     ;; and flow through the same write paths below
+                     ;; (the rotation path renormalizes either way)
+                     (a (if (eq? interp 'step)
+                            (if (fl<? a 1.0) 0.0 1.0)
+                            a))
+                     (v0 (if (and (eq? interp 'cubic) (not (= k k1)))
+                             ($hermite v0 v1
+                                       (vector-ref (vector-ref ch 7) k)
+                                       (vector-ref (vector-ref ch 6) k1)
+                                       a span)
+                             v0))
+                     (v1 (if (eq? interp 'cubic) v0 v1))
+                     (a (if (eq? interp 'cubic) 0.0 a)))
                 (cond
                  ((eq? path 'weights)
                   ;; morph weights: lerp element-wise, route to the
@@ -844,7 +908,19 @@
                               (caddr inf) (cadddr inf))))))
            (wt (and jn
                     (let ((i (json-ref attrs "WEIGHTS_0")))
-                      (and i ($acc-info json bin i 16)))))
+                      (and i
+                           (let ((inf ($acc-info json bin i 0)))
+                             ;; tight stride depends on the component
+                             ;; type: f32, or normalized u8/u16
+                             (list (car inf)
+                                   (if (= (cadr inf) 0)
+                                       (case (cadddr inf)
+                                         ((5123) 8)
+                                         ((5121) 4)
+                                         (else 16))
+                                       (cadr inf))
+                                   (caddr inf) (cadddr inf)
+                                   (list-ref inf 4)))))))
            (count (caddr pos))
            (stride (cond ((and jn wt) 64) (uv 32) (else 24)))
            (vbytes (* stride count))
@@ -890,7 +966,8 @@
                           ($glb-u16 (+ js (* 2 c)))
                           (%mem-u8-ref (+ js c)))))
                     (%mem-f32-set! (+ dst 48 (* 4 c))
-                                   (%mem-f32-ref (+ ws (* 4 c))))
+                                   ($deq ws c (cadddr wt)
+                                         (list-ref wt 4)))
                     (comp (+ c 1)))))))
           (copy (+ v 1))))
       ;; indices: u8/u16/u32 accessor, or none (sequential vertices).
