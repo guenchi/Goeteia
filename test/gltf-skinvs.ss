@@ -114,13 +114,25 @@
                                (* u_mvp (vec4 a_pos (fl 1)))))))))
           '(a_pos a_normal a_uv a_joints a_weights)))
 
-;; ... and an attribute main depends on may not follow it
+;; ... and NO attribute may follow main: main's injected body reads
+;; a_pos/a_normal/a_tangent, and the padding lands next to whichever
+;; of them the input declares, so an attribute after main puts a
+;; declaration after its use
 (define attrs-before-main-ok
-  (errors? (lambda ()
-             (gltf-skin-shader
-              '((define (main) void
-                  (set! gl_Position (vec4 a_pos (fl 1))))
-                (attribute vec3 a_pos))))))
+  (and (errors? (lambda ()
+                  (gltf-skin-shader
+                   '((define (main) void
+                       (set! gl_Position (vec4 a_pos (fl 1))))
+                     (attribute vec3 a_pos)))))
+       ;; a_pos before main is not enough: a_normal after it still
+       ;; ends up declared below the g_normal that reads it
+       (errors? (lambda ()
+                  (gltf-skin-shader
+                   '((attribute vec3 a_pos)
+                     (uniform mat4 u_mvp)
+                     (define (main) void
+                       (set! gl_Position (* u_mvp (vec4 a_pos (fl 1)))))
+                     (attribute vec3 a_normal)))))))
 
 ;; ---- injected names must be free in the input ----
 ;; the loader writes a +Y normal even when the asset has none, so
@@ -198,8 +210,9 @@
                      (define (main) void
                        (set! gl_Position (vec4 a_pos (fl 1))))))))))
 
-;; every global the shader uses must be declared before main: an
-;; attribute after it would put the joints injection after main too
+;; every global main uses is declared before it -- the injected
+;; ones included (an input with an attribute after main is refused
+;; outright, see attrs-before-main-ok)
 (define decl-order-ok
   (let* ((src (glsl->string
                (gltf-skin-shader
@@ -208,8 +221,7 @@
                   (attribute vec2 a_uv)
                   (uniform mat4 u_mvp)
                   (define (main) void
-                    (set! gl_Position (* u_mvp (vec4 a_pos (fl 1)))))
-                  (attribute vec4 a_color)))))
+                    (set! gl_Position (* u_mvp (vec4 a_pos (fl 1)))))))))
          (main-at (let loop ((i 0))
                     (cond ((> (+ i 9) (string-length src)) -1)
                           ((string=? (substring src i (+ i 9))
