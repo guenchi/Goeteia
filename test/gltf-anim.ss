@@ -226,13 +226,13 @@
 ;; BIN: 0 pos(36) | 36 joints(12) | 48 weights(48) | 96 idx(6) |
 ;;      104 tiny-times(8) | 112 tiny-vals(24) | 136 times(8) |
 ;;      144 rot-vals(32) | 176 ta-vals(24)
-(define binlen2 248)
+(define binlen2 272)
 (define json2
   (string-append
    "{\"asset\":{\"version\":\"2.0\"},\"scene\":0,"
    "\"scenes\":[{\"nodes\":[0,1]}],"
    "\"nodes\":[{\"mesh\":0,\"skin\":0},"
-   "{\"name\":\"j\",\"translation\":[7,0,0]}],"
+   "{\"name\":\"j\",\"translation\":[7,0,0],\"scale\":[1,3,4]}],"
    "\"skins\":[{\"joints\":[1]}],"
    "\"meshes\":[{\"primitives\":[{\"attributes\":"
    "{\"POSITION\":0,\"JOINTS_0\":1,\"WEIGHTS_0\":2},\"indices\":3}]}],"
@@ -251,7 +251,10 @@
    "\"target\":{\"node\":1,\"path\":\"translation\"}}]},"
    "{\"name\":\"n0\",\"samplers\":[{\"input\":6,\"output\":8,"
    "\"interpolation\":\"LINEAR\"}],\"channels\":[{\"sampler\":0,"
-   "\"target\":{\"node\":0,\"path\":\"translation\"}}]}],"
+   "\"target\":{\"node\":0,\"path\":\"translation\"}}]},"
+   "{\"name\":\"sc\",\"samplers\":[{\"input\":6,\"output\":11,"
+   "\"interpolation\":\"LINEAR\"}],\"channels\":[{\"sampler\":0,"
+   "\"target\":{\"node\":1,\"path\":\"scale\"}}]}],"
    "\"buffers\":[{\"byteLength\":248}],"
    "\"bufferViews\":["
    "{\"buffer\":0,\"byteOffset\":0,\"byteLength\":36},"
@@ -264,7 +267,8 @@
    "{\"buffer\":0,\"byteOffset\":144,\"byteLength\":32},"
    "{\"buffer\":0,\"byteOffset\":176,\"byteLength\":24},"
    "{\"buffer\":0,\"byteOffset\":200,\"byteLength\":12},"
-   "{\"buffer\":0,\"byteOffset\":212,\"byteLength\":36}],"
+   "{\"buffer\":0,\"byteOffset\":212,\"byteLength\":36},"
+   "{\"buffer\":0,\"byteOffset\":248,\"byteLength\":24}],"
    "\"accessors\":["
    "{\"bufferView\":0,\"componentType\":5126,\"count\":3,\"type\":\"VEC3\"},"
    "{\"bufferView\":1,\"componentType\":5121,\"count\":3,\"type\":\"VEC4\"},"
@@ -276,7 +280,8 @@
    "{\"bufferView\":7,\"componentType\":5126,\"count\":2,\"type\":\"VEC4\"},"
    "{\"bufferView\":8,\"componentType\":5126,\"count\":2,\"type\":\"VEC3\"},"
    "{\"bufferView\":9,\"componentType\":5126,\"count\":3,\"type\":\"SCALAR\"},"
-   "{\"bufferView\":10,\"componentType\":5126,\"count\":3,\"type\":\"VEC3\"}]}"))
+   "{\"bufferView\":10,\"componentType\":5126,\"count\":3,\"type\":\"VEC3\"},"
+   "{\"bufferView\":11,\"componentType\":5126,\"count\":2,\"type\":\"VEC3\"}]}"))
 
 (define jlen2 (string-length json2))
 (define jpad2 (remainder (- 4 (remainder jlen2 4)) 4))
@@ -305,6 +310,7 @@
 (v3! 0.0 0.0 0.0) (v3! 5.0 0.0 0.0)       ; ta values
 (f32! 0.0) (f32! 0.0) (f32! 1.0)          ; dup times: t0 == t1
 (v3! 3.0 0.0 0.0) (v3! 5.0 0.0 0.0) (v3! 9.0 0.0 0.0)
+(v3! 1.0 1.0 1.0) (v3! 2.0 2.0 2.0)       ; "sc" scale values
 
 (define g2 (gltf-parse base2 total2))
 
@@ -333,6 +339,19 @@
 ;; every clip poses COMPLETELY: switching to a clip that does not
 ;; drive translation must return translation to bind, not keep the
 ;; previous clip's value
+;; every TRS slot round-trips through the bind snapshot and reset,
+;; not just translation: the copy loops are bounded by a literal,
+;; and an off-by-one there would be invisible to the m[12] and
+;; m[0]/m[1] reads every other case makes
+(define bind-scale-ok
+  (begin
+    (gltf-animate! g2 5 0.5)              ; "sc" drives scale to 1.5
+    (gltf-animate! g2 2 0.5)              ; "ta" drives translation
+    (let ((m (joint2-m)))                 ; scale rides the diagonal
+      (and (near? (vector-ref m 5) 3.0)   ; back to the ASSET bind,
+           (near? (vector-ref m 10) 4.0)  ; not 1.5 and not 0
+           (near? (vector-ref m 12) 2.5)))))
+
 (define complete-pose-ok
   (begin
     (gltf-animate! g2 2 0.5)               ; "ta": translation = 2.5
@@ -396,24 +415,38 @@
     (near? (vector-ref (joint2-m) 12) 4.75)))
 
 ;; interrupting a live transition must not abandon the clip being
-;; faded OUT of.  "ta", "n0" and "dup" are three distinct clips.
-;; Going
+;; faded OUT of.  "ta" drives node 1, "n0" drives node 0, "dup"
+;; drives node 1 to a distinct value.
 ;; The state assertion plus the distinct settled value keep a goto
 ;; that silently refused mid-fade from passing.
-(define interrupt-ok
-  (let ((m (anim-machine g2 '((a . 2) (b . 4) (c . 3)) 1.0)))
+;; Two separate properties, two separate cases -- folding them into
+;; one lost the first when the clips changed.
+;;
+;; (i) the interrupted SOURCE is released.  Every state after the
+;; interrupt runs "n0", which touches node 0 only, so nothing ever
+;; resets node 1 again: it reads bind only if the abandoned "ta"
+;; was released at the interrupt itself.
+(define interrupt-release-ok
+  (let ((m (anim-machine g2 '((a . 2) (b . 4) (c . 4)) 1.0)))
     (anim-update! m 0.5)                 ; "ta": node1 = 2.5
     (anim-goto! m 'b)
     (anim-update! m 0.25)                ; mid-fade into n0
-    (anim-goto! m 'c)                    ; interrupt: source dropped
+    (anim-goto! m 'c)                    ; interrupt
+    (anim-update! m 2.0)
+    (near? (vector-ref (joint2-m) 12) 7.0)))
+
+;; (ii) the interrupting goto actually TAKES EFFECT.  Settling on
+;; "dup" puts node 1 at 3.0; a goto that silently refused mid-fade
+;; would finish the original ta -> n0 fade and leave bind, 7.0.
+(define interrupt-effect-ok
+  (let ((m (anim-machine g2 '((a . 2) (b . 4) (c . 3)) 1.0)))
+    (anim-update! m 0.5)
+    (anim-goto! m 'b)
+    (anim-update! m 0.25)
+    (anim-goto! m 'c)
     (and (eq? (anim-state m) 'c)
          (begin
-           (anim-update! m 2.0)          ; settle on "dup"
-           ;; settling on "dup" puts node 1 at 3.0.  A goto that
-           ;; silently refused mid-fade would instead finish the
-           ;; original ta -> n0 fade and leave node 1 at bind, 7.0
-           ;; -- so the value distinguishes the two, which a shared
-           ;; clip for b and c could not.
+           (anim-update! m 2.0)
            (near? (vector-ref (joint2-m) 12) 3.0)))))
 
 ;; an instant transition (fade 0) settles on the very first update,
@@ -436,7 +469,8 @@
       (anim-goto! m 'b)                  ; already there: a no-op
       (near? (vector-ref (joint2-m) 12) mid))))
 
-(and instant-fade-ok same-state-ok interrupt-ok union-dedup-ok
+(and bind-scale-ok instant-fade-ok same-state-ok interrupt-release-ok
+     interrupt-effect-ok union-dedup-ok
      weights-ok lin-ok stp-ok cub-ok cubr-ok cubw-ok
      tiny-span-ok nlerp-contract-ok complete-pose-ok
      crossfade-default-ok crossfade-from-ok dup-time-ok

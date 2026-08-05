@@ -96,6 +96,32 @@
 (define (errors? thunk)
   (guard (e (#t #t)) (thunk) #f))
 
+;; only MAIN bounds where the injected globals go -- a helper
+;; function declared ahead of the attributes is legal GLSL and must
+;; still compose (an earlier bound on "the first define" made the
+;; whole joints injection vanish for this input)
+(define helper-first-ok
+  (equal? (map car (glsl-attributes
+                    (gltf-skin-shader
+                     '((define (bump (in float x)) float
+                         (return (+ x (fl 1))))
+                       (attribute vec3 a_pos)
+                       (attribute vec3 a_normal)
+                       (attribute vec2 a_uv)
+                       (uniform mat4 u_mvp)
+                       (define (main) void
+                         (set! gl_Position
+                               (* u_mvp (vec4 a_pos (fl 1)))))))))
+          '(a_pos a_normal a_uv a_joints a_weights)))
+
+;; ... and an attribute main depends on may not follow it
+(define attrs-before-main-ok
+  (errors? (lambda ()
+             (gltf-skin-shader
+              '((define (main) void
+                  (set! gl_Position (vec4 a_pos (fl 1))))
+                (attribute vec3 a_pos))))))
+
 ;; ---- injected names must be free in the input ----
 ;; the loader writes a +Y normal even when the asset has none, so
 ;; every skinned layout carries a normal slot: a position-only
@@ -145,11 +171,31 @@
                      (define (main) void
                        (set! gl_Position
                              (* u_mvp (vec4 a_pos (fl 1)))))))))
+       ;; all four reserved locals, not just the first
        (errors? (lambda ()
                   (gltf-skin-shader
                    '((attribute vec3 a_pos)
                      (define (main) void
                        (local float g_skin (fl 2))
+                       (set! gl_Position (vec4 a_pos (fl 1))))))))
+       (errors? (lambda ()
+                  (gltf-skin-shader
+                   '((attribute vec3 a_pos)
+                     (define (main) void
+                       (local vec3 g_pos (vec3 (fl 1) (fl 1) (fl 1)))
+                       (set! gl_Position (vec4 a_pos (fl 1))))))))
+       (errors? (lambda ()
+                  (gltf-skin-shader
+                   '((attribute vec3 a_pos)
+                     (attribute vec3 a_normal)
+                     (define (main) void
+                       (local vec3 g_normal a_normal)
+                       (set! gl_Position (vec4 a_pos (fl 1))))))))
+       (errors? (lambda ()
+                  (gltf-skin-shader
+                   '((attribute vec3 a_pos)
+                     (varying vec4 g_tangent)
+                     (define (main) void
                        (set! gl_Position (vec4 a_pos (fl 1))))))))))
 
 ;; every global the shader uses must be declared before main: an
@@ -190,6 +236,17 @@
                      (attribute vec4 a_tangent)
                      (define (main) void
                        (set! gl_Position (vec4 a_pos (fl 1))))))))
+       ;; an attribute of the caller's own is not the loader's
+       ;; business: it composes, and gltf-draw! is what refuses to
+       ;; feed the resulting program
+       (equal? (map car
+                    (glsl-attributes
+                     (gltf-skin-shader
+                      '((attribute vec3 a_pos)
+                        (attribute vec3 a_custom)
+                        (define (main) void
+                          (set! gl_Position (vec4 a_pos (fl 1))))))))
+               '(a_pos a_normal a_uv a_custom a_joints a_weights))
        ;; ... while the canonical order composes fine
        (equal? (map car
                     (glsl-attributes
@@ -251,4 +308,5 @@
 
 (and nmap-ok tex-ok weird-ok no-uv-ok no-uv-order-ok no-normal-ok
      cross-class-ok name-space-ok decl-order-ok canonical-order-ok
+     helper-first-ok attrs-before-main-ok
      collision-ok near-ok degenerate-ok)
