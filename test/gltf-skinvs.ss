@@ -93,6 +93,20 @@
                          (set! v_t (+ a_normal a_tangent.xyz)))))))
           '(a_pos a_normal a_uv a_tangent a_joints a_weights)))
 
+;; the built-in skinned shader must carry u_model like the composed
+;; ones do: gltf-draw! folds an optional root into u_mvp, and only a
+;; program declaring u_model gets the root applied to its normals
+;; too -- without it a rotated root turns the model on screen while
+;; the lighting stays put.
+(define builtin-has-model-ok
+  (and (assq 'u_model (glsl-uniforms gltf-skin-vs))
+       ;; the normal actually goes through it
+       (contains? (glsl->string gltf-skin-vs) "u_model * vec4(g_normal")
+       ;; and it still pairs with mesh-tex-fs, so the varyings must
+       ;; match that shader's -- deriving it from a source without
+       ;; v_uv would leave the fragment stage without its input
+       (equal? (glsl-varyings gltf-skin-vs) (glsl-varyings mesh-tex-vs))))
+
 (define (errors? thunk)
   (guard (e (#t #t)) (thunk) #f))
 
@@ -116,6 +130,24 @@
                    '((attribute vec2 a_pos)
                      (define (main) void
                        (set! gl_Position (vec4 a_pos (fl 0) (fl 1))))))))
+       ;; every canonical slot, not just the two that prompted this
+       (errors? (lambda ()
+                  (gltf-skin-shader
+                   '((attribute vec3 a_pos) (attribute vec4 a_normal)
+                     (define (main) void
+                       (set! gl_Position (vec4 a_pos (fl 1))))))))
+       (errors? (lambda ()
+                  (gltf-skin-shader
+                   '((attribute vec3 a_pos) (attribute vec3 a_normal)
+                     (attribute vec3 a_uv)
+                     (define (main) void
+                       (set! gl_Position (vec4 a_pos (fl 1))))))))
+       (errors? (lambda ()
+                  (gltf-skin-shader
+                   '((attribute vec3 a_pos) (attribute vec3 a_normal)
+                     (attribute vec2 a_uv) (attribute vec3 a_tangent)
+                     (define (main) void
+                       (set! gl_Position (vec4 a_pos (fl 1))))))))
        ;; the right widths still compose
        (equal? (map car
                     (glsl-attributes
@@ -384,7 +416,7 @@
                  (define (main) void
                    (set! gl_Position (vec4 a_pos (fl 1))))))))))
 
-(and nmap-ok tex-ok weird-ok no-uv-ok no-uv-order-ok no-normal-ok
+(and builtin-has-model-ok nmap-ok tex-ok weird-ok no-uv-ok no-uv-order-ok no-normal-ok
      cross-class-ok name-space-ok decl-order-ok canonical-order-ok
      width-ok after-main-scope-ok
      helper-first-ok attrs-before-main-ok

@@ -237,10 +237,18 @@
   (let ((want (string-append
                "mat:U:u_model:1.00,0.00,0.00,0.00,0.00,1.00,0.00,"
                "0.00,0.00,0.00,1.00,0.00,0.00,0.00,0.00,1.00")))
-    (let loop ((i mark) (seen #f))
-      (cond ((= i (log-len)) seen)
-            ((string=? (entry i) want) (loop (+ i 1) #t))
-            (else (loop (+ i 1) seen))))))
+    ;; the value in force AT the draw, not merely one seen earlier:
+    ;; an implementation that uploaded identity and then overwrote it
+    ;; would pass a "was it ever there" check, and one that skipped
+    ;; the draw entirely would too
+    (let loop ((i mark) (last #f) (draws 0) (at-draw #f))
+      (cond ((= i (log-len))
+             (and (= draws 1) at-draw))
+            ((prefix? "mat:U:u_model:" (entry i))
+             (loop (+ i 1) (string=? (entry i) want) draws at-draw))
+            ((prefix? "drawElements" (entry i))
+             (loop (+ i 1) last (+ draws 1) last))
+            (else (loop (+ i 1) last draws at-draw))))))
 
 ;; ---- a fragment shader without u_tex must not be forced one ----
 ;; the documented normal-map pairing declares u_nmap and no u_tex;
@@ -448,6 +456,53 @@
   (= (count-log "uniformMat4:U:u_model:16:20.00") 1))
 
 
+;; ---- the draw check must compare WIDTHS, not just names ----
+;; A program built straight from fx-program! never passes through
+;; gltf-skin-shader, so the combinator's width contract cannot help
+;; here.  These two both present the loader's exact name list:
+;;   sneaky  vec2 a_pos + vec4 a_normal -- same 24-byte stride, but
+;;           normal sits at offset 8 instead of 12
+;;   narrow  vec3 a_color against the always-16-byte colour slot
+(define sneaky-vs
+  '((attribute vec2 a_pos)
+    (attribute vec4 a_normal)
+    (uniform mat4 u_mvp)
+    (uniform vec4 u_color)
+    (define (main) void
+      (set! gl_Position (* u_mvp (vec4 a_pos (fl 0) (fl 1)))))))
+(define plain-fs
+  '((precision mediump float)
+    (uniform vec4 u_color)
+    (define (main) void (set! gl_FragColor u_color))))
+(define sneaky-prog (fx-program! sneaky-vs plain-fs))
+(define width-guard-ok
+  (guard (e (#t #t))
+    (cmd-begin!)
+    (gltf-draw! ga sneaky-prog (m4-identity))
+    (cmd-flush!)
+    #f))
+
+;; ---- an i_* attribute must not slip through ----
+;; fx-program classifies i_-prefixed attributes as per-instance and
+;; drops them from the visible name list, so the name check passes
+;; while a plain gltf-draw! never binds an instance buffer -- the
+;; shader would silently read zeros.
+(define inst-vs
+  '((attribute vec3 a_pos)
+    (attribute vec3 a_normal)
+    (attribute vec3 i_offset)
+    (uniform mat4 u_mvp)
+    (uniform vec4 u_color)
+    (define (main) void
+      (set! gl_Position (* u_mvp (vec4 (+ a_pos i_offset) (fl 1)))))))
+(define inst-prog (fx-program! inst-vs plain-fs))
+(define instance-guard-ok
+  (guard (e (#t #t))
+    (cmd-begin!)
+    (gltf-draw! ga inst-prog (m4-identity))
+    (cmd-flush!)
+    #f))
+
 (define (near2? a b)
   (and (fl<? (fl- a b) 0.001) (fl<? (fl- b a) 0.001)))
 
@@ -480,4 +535,5 @@
      animated-world-ok matrix-node-ok matrix-reset-ok
      prim-world-split-ok skinned-prim-world-ok
      no-u-model-ok textured-pred-ok textured-preload-ok
-     untextured-preload-ok skinned-draw-identity-ok)
+     untextured-preload-ok skinned-draw-identity-ok
+     width-guard-ok instance-guard-ok)
