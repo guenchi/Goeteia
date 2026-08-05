@@ -52,6 +52,12 @@
 ;;   * A clip poses the nodes it touches (wholesale, at bind for the
 ;;     paths it does not drive); nodes outside the clip keep their
 ;;     values, so clips over disjoint body parts compose.
+;;   * anim-machine carries ONE transition.  Interrupting a live
+;;     fade releases the clip being faded out of (its nodes return
+;;     to bind) and starts the new fade from the incoming clip's own
+;;     pose, so the pose jumps rather than easing from what is on
+;;     screen.  Blending from the displayed pose would need the
+;;     machine to hold an arbitrary number of weighted clips.
 ;;
 ;; Copyright (c) 2026 guenchi. MIT license; see LICENSE.
 (library (gfx gltf)
@@ -922,10 +928,21 @@
 
   (define (anim-state m) ($am-cur m))
 
+  ;; Interrupting a live transition drops the clip it was fading
+  ;; out of; release that clip's nodes here, or nothing ever touches
+  ;; them again and they hold the last blended value for the rest of
+  ;; the run.  (The pose does jump: the machine carries one
+  ;; transition, so the new fade starts from the incoming clip's own
+  ;; pose rather than from what is on screen.)
   (define (anim-goto! m name . fade)
     (unless (assq name ($am-states m))
       (error 'anim-goto! "unknown state" name))
     (unless (eq? name ($am-cur m))
+      (when ($am-prev m)
+        ($anim-reset! ($am-g m)
+                      (vector-ref (gltf-anims ($am-g m))
+                                  (cdr (assq ($am-prev m)
+                                             ($am-states m))))))
       ($am-prev! m ($am-cur m))
       ($am-tprev! m ($am-tcur m))
       ($am-cur! m name)
@@ -1186,19 +1203,23 @@
       (unless (memq 'a_pos names)
         (error 'gltf-skin-shader
                "vertex shader declares no a_pos attribute" names))
-      ;; every name this injects must be free in the input
-      (for-each
-       (lambda (n)
-         (when (memq n names)
-           (error 'gltf-skin-shader
-                  "input already declares an injected name" n)))
-       '(a_joints a_weights))
-      (for-each
-       (lambda (u)
-         (when (assq u (glsl-uniforms vs))
-           (error 'gltf-skin-shader
-                  "input already declares an injected uniform" u)))
-       '(u_joints))
+      ;; every name this injects must be free in the input.  GLSL
+      ;; shares one top-level namespace across storage classes, so
+      ;; check attributes, uniforms and varyings together -- a
+      ;; uniform named a_uv blocks the attribute just as an
+      ;; attribute named u_joints blocks the uniform.
+      (let ((taken (append names
+                           (map car (glsl-uniforms vs))
+                           (glsl-varyings vs))))
+        (for-each
+         (lambda (n)
+           (when (memq n taken)
+             (error 'gltf-skin-shader
+                    "input already declares an injected name" n)))
+         (append '(a_joints a_weights u_joints)
+                 ;; the padding slots, only where they get injected
+                 (if (memq 'a_normal names) '() '(a_normal))
+                 (if (memq 'a_uv names) '() '(a_uv)))))
       ;; the LAST attribute form, wherever it sits -- declarations
       ;; need not be contiguous -- and the position the uv padding
       ;; belongs at: the interleave puts uv right after normal, so
@@ -1224,8 +1245,11 @@
                                    (eq? (caar fs) 'attribute))
                               i
                               last)))))
-             (uv-after (let ((n (attr-at 'a_normal)))
-                         (if (< n 0) (attr-at 'a_pos) n))))
+             ;; the canonical prefix is position normal uv; whatever
+             ;; of it the input omits gets padded in, right after
+             ;; the last piece it does declare
+             (pad-after (let ((n (attr-at 'a_normal)))
+                          (if (< n 0) (attr-at 'a_pos) n))))
         (let loop ((fs vs) (i 0) (out '()))
           (if (null? fs)
               (reverse out)
@@ -1252,14 +1276,24 @@
                                        (cadr f)))
                               (cons f out))))
                        (else (cons f out))))
-                     ;; the loader always carries a uv slot once
-                     ;; anything past position+normal is present,
-                     ;; and the skin inputs are exactly that: a
-                     ;; shader without a_uv needs the padding, at
-                     ;; the interleave's position for it
-                     (out (if (and (= i uv-after)
-                                   (not (memq 'a_uv names)))
-                              (cons '(attribute vec2 a_uv) out)
+                     ;; the loader writes a +y normal even for an
+                     ;; asset with none, and carries a uv slot once
+                     ;; anything past position+normal is present --
+                     ;; and the skin inputs are exactly that.  So a
+                     ;; shader missing either gets the padding, in
+                     ;; the interleave's order.
+                     (out (if (= i pad-after)
+                              (let* ((o out)
+                                     (o (if (memq 'a_normal names)
+                                            o
+                                            (cons '(attribute vec3
+                                                              a_normal)
+                                                  o)))
+                                     (o (if (memq 'a_uv names)
+                                            o
+                                            (cons '(attribute vec2 a_uv)
+                                                  o))))
+                                o)
                               out))
                      (out (if (= i last-attr)
                               (append

@@ -231,7 +231,8 @@
   (string-append
    "{\"asset\":{\"version\":\"2.0\"},\"scene\":0,"
    "\"scenes\":[{\"nodes\":[0,1]}],"
-   "\"nodes\":[{\"mesh\":0,\"skin\":0},{\"name\":\"j\"}],"
+   "\"nodes\":[{\"mesh\":0,\"skin\":0},"
+   "{\"name\":\"j\",\"translation\":[7,0,0]}],"
    "\"skins\":[{\"joints\":[1]}],"
    "\"meshes\":[{\"primitives\":[{\"attributes\":"
    "{\"POSITION\":0,\"JOINTS_0\":1,\"WEIGHTS_0\":2},\"indices\":3}]}],"
@@ -338,7 +339,7 @@
     (and (near? (vector-ref (joint2-m) 12) 2.5)
          (begin
            (gltf-animate! g2 1 0.5)        ; "rot" drives rotation only
-           (near? (vector-ref (joint2-m) 12) 0.0)))))
+           (near? (vector-ref (joint2-m) 12) 7.0)))))  ; the ASSET bind
 
 ;; crossfading INTO a clip that lacks a channel must return that
 ;; channel to the bind pose, not leave the previous clip's value
@@ -347,7 +348,7 @@
     (gltf-animate! g2 2 0.5)               ; "ta": translation = 2.5
     (gltf-animate-blend! g2 2 0.5 1 0.5 1.0)  ; fully into "rot"
     (let ((m (joint2-m)))
-      (and (near? (vector-ref m 12) 0.0)   ; translation back to bind
+      (and (near? (vector-ref m 12) 7.0)   ; translation back to bind
            (near? (vector-ref m 0) 0.0)))))  ; rot at t=.5 = 90 deg
 
 ;; ... and the same holds for the clip being faded FROM: posing A
@@ -357,7 +358,7 @@
   (begin
     (gltf-animate! g2 2 0.5)               ; "ta": translation = 2.5
     (gltf-animate-blend! g2 1 0.5 2 0.5 0.0)  ; fully "rot" (A side)
-    (near? (vector-ref (joint2-m) 12) 0.0)))
+    (near? (vector-ref (joint2-m) 12) 7.0)))
 
 ;; a duplicated timestamp gives a zero span at k /= k1.  It is a
 ;; validator error but a common exporter artifact, and it must
@@ -380,7 +381,7 @@
          (begin
            (anim-goto! m 'b)
            (anim-update! m 0.5)          ; past the fade: settled on n0
-           (near? (vector-ref (joint2-m) 12) 0.0)))))
+           (near? (vector-ref (joint2-m) 12) 7.0)))))
 
 ;; the union of two clips' touched nodes visits each node ONCE.
 ;; "ta" and "rot" BOTH touch node 1, so without dedup the blend runs
@@ -390,9 +391,24 @@
 (define union-dedup-ok
   (begin
     (gltf-animate-blend! g2 2 0.5 1 0.5 0.5)
-    (near? (vector-ref (joint2-m) 12) 1.25)))
+    (near? (vector-ref (joint2-m) 12) 4.75)))
 
-(and union-dedup-ok
+;; interrupting a live transition must not abandon the clip being
+;; faded OUT of.  "ta" drives node 1; states b and c both run "n0",
+;; which drives node 0 only.  Going ta -> b and then, mid-fade,
+;; b -> c means NOTHING touches node 1 again -- so unless the
+;; interrupted source is released, node 1 keeps ta's last blended
+;; value forever instead of returning to bind.
+(define interrupt-ok
+  (let ((m (anim-machine g2 '((a . 2) (b . 4) (c . 4)) 1.0)))
+    (anim-update! m 0.5)                 ; "ta": node1 translation
+    (anim-goto! m 'b)
+    (anim-update! m 0.25)                ; mid-fade into n0
+    (anim-goto! m 'c)                    ; interrupt: source dropped
+    (anim-update! m 2.0)                 ; settle
+    (near? (vector-ref (joint2-m) 12) 7.0)))
+
+(and interrupt-ok union-dedup-ok
      weights-ok lin-ok stp-ok cub-ok cubr-ok cubw-ok
      tiny-span-ok nlerp-contract-ok complete-pose-ok
      crossfade-default-ok crossfade-from-ok dup-time-ok
