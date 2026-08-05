@@ -40,6 +40,7 @@
           fx-bind-target! fx-bind-canvas!
           fx-program! fx-program3! fx-tf-program! fx-ubo!
           fx-program? fx-program-slot fx-program-stride
+          fx-program-attribute-names
           fx-program-istride
           fx-use! fx-use-instanced! fx-uniform! fx-uniform?
           fx-ticks! fx-loop! fx-loop-fixed!
@@ -232,7 +233,11 @@
             ;; name -> last encoded value: same value, no command.
             ;; GL uniform state is per-program and persistent, so a
             ;; skipped re-send is exactly free
-            (immutable ucache $fx-program-ucache)))
+            (immutable ucache $fx-program-ucache)
+            ;; vertex attribute names in declaration order -- strides
+            ;; collide (tangent and color are both vec4), names are
+            ;; the exact interleave contract
+            (immutable anames fx-program-attribute-names)))
 
   (define ($fx-instance-name? n)        ; i_offset, i_tint, ...
     (let ((s (symbol->string n)))
@@ -291,17 +296,21 @@
                   (append (glsl-uniforms vs-forms) (glsl-uniforms fs-forms)))
         ;; locations follow declaration order; vertex and instance
         ;; attributes each get their own interleaved layout
+        (let ((as0 as))
         (let loop ((as as) (loc 0) (voff 0) (ioff 0) (vacc '()) (iacc '()))
           (if (null? as)
               ($make-fx-program pslot voff (reverse vacc)
                                 ioff (reverse iacc) uniforms
-                                (make-eq-hashtable))
+                                (make-eq-hashtable)
+                                (filter (lambda (n)
+                                          (not ($fx-instance-name? n)))
+                                        (map car as0)))
               (let ((n (caar as)) (size (caddr (car as))))
                 (if ($fx-instance-name? n)
                     (loop (cdr as) (+ loc 1) voff (+ ioff (* 4 size))
                           vacc (cons (list loc size ioff) iacc))
                     (loop (cdr as) (+ loc 1) (+ voff (* 4 size)) ioff
-                          (cons (list loc size voff) vacc) iacc))))))))
+                          (cons (list loc size voff) vacc) iacc)))))))))
 
   ;; use-program, then the attributes -- through a vertex array
   ;; object: the first use of a (program, buffer[, instance buffer])

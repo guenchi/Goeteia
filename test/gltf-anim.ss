@@ -1,19 +1,28 @@
 ;; expect: #t
 ;; (gfx gltf) animation sampling semantics + quantized skin weights.
-;; One skinned GLB built in staging: a triangle bound to one joint,
-;; JOINTS_0 as u8, WEIGHTS_0 as normalized u8, and three animations
-;; over the same three keyframes (t = 0, 1, 2):
-;;   "lin"  LINEAR        translation x = 0 -> 10 -> 20
-;;   "stp"  STEP          same values -- holds the left key inside a
-;;                        span, takes the right key AT its time
-;;   "cub"  CUBICSPLINE   zero tangents, (1,2,3)/(7,8,9)/(13,14,15)
-;; Checks: normalized-u8 weights dequantize to 0.2/0.8 in the
-;; interleaved stream; LINEAR lerps; STEP holds; CUBICSPLINE reads
-;; the VALUE element of each in/value/out triple and hermite-blends.
+;; One skinned GLB built in staging: a triangle bound to one joint
+;; (with a morph target), JOINTS_0 as u8, WEIGHTS_0 as normalized u8,
+;; and five animations:
+;;   "lin"  LINEAR       translation x = 0 -> 10 -> 20 at t = 0,1,2
+;;   "stp"  STEP         same values -- holds the left key inside a
+;;                       span, takes the right key AT its time
+;;   "cub"  CUBICSPLINE  translation keys (1,2,3)/(7,8,9)/(13,14,15)
+;;                       at t = 0,2,3, key0's OUT-tangent = (6,6,6),
+;;                       every other tangent zero -- discriminates
+;;                       the hermite from a lerp AND the span scaling
+;;                       AND the m0/m1 (out/in) tangent choice
+;;   "cubr" CUBICSPLINE  rotation identity -> 90deg-about-z, zero
+;;                       tangents: the hermite midpoint is NOT unit,
+;;                       so the written pose discriminates the
+;;                       renormalization
+;;   "cubw" CUBICSPLINE  morph weights 0 -> 1: the output accessor
+;;                       holds 3*nk scalars, so ncomp must divide by
+;;                       3*nk, not nk
+;; Also: normalized-u8 weights dequantize to 0.2/0.8 in the stream.
 ;; (t = duration wraps to 0 by design, so edges probe interior keys.)
 (import (rnrs) (web js) (gfx gl) (gfx fx) (gfx mat) (gfx gltf))
 
-(define base (fx-alloc! 4096))
+(define base (fx-alloc! 8192))
 (define at 0)
 (define (b! v) (%mem-u8-set! (+ base at) v) (set! at (+ at 1)))
 (define (u16! v) (b! (remainder v 256)) (b! (quotient v 256)))
@@ -24,18 +33,24 @@
   (b! (quotient v 16777216)))
 (define (f32! v) (%mem-f32-set! (+ base at) v) (set! at (+ at 4)))
 (define (v3! x y z) (f32! x) (f32! y) (f32! z))
+(define (v4! x y z w) (f32! x) (f32! y) (f32! z) (f32! w))
 (define (str! s)
   (string-for-each (lambda (c) (b! (char->integer c))) s))
 
 ;; ---- binary chunk layout (offsets within BIN) ----
-;; 0   positions  3 x vec3 f32   = 36
-;; 36  joints     3 x 4 u8       = 12
-;; 48  weights    3 x 4 u8 norm  = 12
-;; 60  indices    3 x u16 + pad  = 8
-;; 68  times      3 x f32        = 12
-;; 80  lin vals   3 x vec3       = 36
-;; 116 cub vals   9 x vec3       = 108
-(define binlen 224)
+;; 0   positions   3 x vec3        = 36
+;; 36  joints      3 x 4 u8        = 12
+;; 48  weights     3 x 4 u8 norm   = 12
+;; 60  indices     3 x u16 + pad   = 8
+;; 68  times3      3 x f32 (0,1,2) = 12
+;; 80  lin vals    3 x vec3        = 36
+;; 116 cub vals    9 x vec3        = 108
+;; 224 cub times   3 x f32 (0,2,3) = 12
+;; 236 cubr vals   6 x vec4        = 96
+;; 332 times2      2 x f32 (0,1)   = 8
+;; 340 morph delta 3 x vec3        = 36
+;; 376 cubw vals   6 x f32         = 24
+(define binlen 400)
 
 (define json-text
   (string-append
@@ -44,7 +59,8 @@
    "\"nodes\":[{\"mesh\":0,\"skin\":0},{\"name\":\"j\"}],"
    "\"skins\":[{\"joints\":[1]}],"
    "\"meshes\":[{\"primitives\":[{\"attributes\":"
-   "{\"POSITION\":0,\"JOINTS_0\":1,\"WEIGHTS_0\":2},\"indices\":3}]}],"
+   "{\"POSITION\":0,\"JOINTS_0\":1,\"WEIGHTS_0\":2},\"indices\":3,"
+   "\"targets\":[{\"POSITION\":11}]}]}],"
    "\"animations\":["
    "{\"name\":\"lin\",\"samplers\":[{\"input\":4,\"output\":5,"
    "\"interpolation\":\"LINEAR\"}],"
@@ -54,11 +70,19 @@
    "\"interpolation\":\"STEP\"}],"
    "\"channels\":[{\"sampler\":0,\"target\":"
    "{\"node\":1,\"path\":\"translation\"}}]},"
-   "{\"name\":\"cub\",\"samplers\":[{\"input\":4,\"output\":6,"
+   "{\"name\":\"cub\",\"samplers\":[{\"input\":7,\"output\":6,"
    "\"interpolation\":\"CUBICSPLINE\"}],"
    "\"channels\":[{\"sampler\":0,\"target\":"
-   "{\"node\":1,\"path\":\"translation\"}}]}],"
-   "\"buffers\":[{\"byteLength\":224}],"
+   "{\"node\":1,\"path\":\"translation\"}}]},"
+   "{\"name\":\"cubr\",\"samplers\":[{\"input\":8,\"output\":9,"
+   "\"interpolation\":\"CUBICSPLINE\"}],"
+   "\"channels\":[{\"sampler\":0,\"target\":"
+   "{\"node\":1,\"path\":\"rotation\"}}]},"
+   "{\"name\":\"cubw\",\"samplers\":[{\"input\":8,\"output\":10,"
+   "\"interpolation\":\"CUBICSPLINE\"}],"
+   "\"channels\":[{\"sampler\":0,\"target\":"
+   "{\"node\":0,\"path\":\"weights\"}}]}],"
+   "\"buffers\":[{\"byteLength\":400}],"
    "\"bufferViews\":["
    "{\"buffer\":0,\"byteOffset\":0,\"byteLength\":36},"
    "{\"buffer\":0,\"byteOffset\":36,\"byteLength\":12},"
@@ -66,7 +90,12 @@
    "{\"buffer\":0,\"byteOffset\":60,\"byteLength\":6},"
    "{\"buffer\":0,\"byteOffset\":68,\"byteLength\":12},"
    "{\"buffer\":0,\"byteOffset\":80,\"byteLength\":36},"
-   "{\"buffer\":0,\"byteOffset\":116,\"byteLength\":108}],"
+   "{\"buffer\":0,\"byteOffset\":116,\"byteLength\":108},"
+   "{\"buffer\":0,\"byteOffset\":224,\"byteLength\":12},"
+   "{\"buffer\":0,\"byteOffset\":332,\"byteLength\":8},"
+   "{\"buffer\":0,\"byteOffset\":236,\"byteLength\":96},"
+   "{\"buffer\":0,\"byteOffset\":376,\"byteLength\":24},"
+   "{\"buffer\":0,\"byteOffset\":340,\"byteLength\":36}],"
    "\"accessors\":["
    "{\"bufferView\":0,\"componentType\":5126,\"count\":3,\"type\":\"VEC3\"},"
    "{\"bufferView\":1,\"componentType\":5121,\"count\":3,\"type\":\"VEC4\"},"
@@ -75,7 +104,12 @@
    "{\"bufferView\":3,\"componentType\":5123,\"count\":3,\"type\":\"SCALAR\"},"
    "{\"bufferView\":4,\"componentType\":5126,\"count\":3,\"type\":\"SCALAR\"},"
    "{\"bufferView\":5,\"componentType\":5126,\"count\":3,\"type\":\"VEC3\"},"
-   "{\"bufferView\":6,\"componentType\":5126,\"count\":9,\"type\":\"VEC3\"}]}"))
+   "{\"bufferView\":6,\"componentType\":5126,\"count\":9,\"type\":\"VEC3\"},"
+   "{\"bufferView\":7,\"componentType\":5126,\"count\":3,\"type\":\"SCALAR\"},"
+   "{\"bufferView\":8,\"componentType\":5126,\"count\":2,\"type\":\"SCALAR\"},"
+   "{\"bufferView\":9,\"componentType\":5126,\"count\":6,\"type\":\"VEC4\"},"
+   "{\"bufferView\":10,\"componentType\":5126,\"count\":6,\"type\":\"SCALAR\"},"
+   "{\"bufferView\":11,\"componentType\":5126,\"count\":3,\"type\":\"VEC3\"}]}"))
 
 (define jlen (string-length json-text))
 (define jpad (remainder (- 4 (remainder jlen 4)) 4))
@@ -97,27 +131,37 @@
     (b! 51) (b! 204) (b! 0) (b! 0)                       ; 204/255 = .8
     (w (+ i 1))))
 (u16! 0) (u16! 1) (u16! 2) (u16! 0)                      ; indices + pad
-(f32! 0.0) (f32! 1.0) (f32! 2.0)                         ; times
+(f32! 0.0) (f32! 1.0) (f32! 2.0)                         ; times3
 (v3! 0.0 0.0 0.0) (v3! 10.0 0.0 0.0) (v3! 20.0 0.0 0.0) ; lin/stp
-(v3! 0.0 0.0 0.0) (v3! 1.0 2.0 3.0) (v3! 0.0 0.0 0.0)   ; cub: in v out
-(v3! 0.0 0.0 0.0) (v3! 7.0 8.0 9.0) (v3! 0.0 0.0 0.0)
-(v3! 0.0 0.0 0.0) (v3! 13.0 14.0 15.0) (v3! 0.0 0.0 0.0)
+(v3! 0.0 0.0 0.0) (v3! 1.0 2.0 3.0) (v3! 6.0 6.0 6.0)   ; cub k0: in v OUT
+(v3! 0.0 0.0 0.0) (v3! 7.0 8.0 9.0) (v3! 0.0 0.0 0.0)   ; cub k1
+(v3! 0.0 0.0 0.0) (v3! 13.0 14.0 15.0) (v3! 0.0 0.0 0.0); cub k2
+(f32! 0.0) (f32! 2.0) (f32! 3.0)                         ; cub times
+(v4! 0.0 0.0 0.0 0.0) (v4! 0.0 0.0 0.0 1.0)              ; cubr k0
+(v4! 0.0 0.0 0.0 0.0)
+(v4! 0.0 0.0 0.0 0.0)                                    ; cubr k1
+(v4! 0.0 0.0 0.70710678 0.70710678)
+(v4! 0.0 0.0 0.0 0.0)
+(f32! 0.0) (f32! 1.0)                                    ; times2
+(v3! 0.0 0.0 1.0) (v3! 0.0 0.0 1.0) (v3! 0.0 0.0 1.0)   ; morph deltas
+(f32! 0.0) (f32! 0.0) (f32! 0.0)                         ; cubw k0: in v out
+(f32! 0.0) (f32! 1.0) (f32! 0.0)                         ; cubw k1
 
 (define (near? a b)
-  (and (fl<? (fl- a b) 0.00001) (fl<? (fl- b a) 0.00001)))
+  (and (fl<? (fl- a b) 0.0001) (fl<? (fl- b a) 0.0001)))
 
 (define g (gltf-parse base total))
 (define p1 (car (gltf-prims g)))
 
-;; joint 0's palette matrix: IBM defaults to identity, so the
-;; translation column IS the sampled channel value
-(define (joint-x-y-z)
-  (let ((m (vector-ref (gltf-joint-matrices g 0) 0)))
-    (vector (vector-ref m 12) (vector-ref m 13) (vector-ref m 14))))
+;; joint 0's palette matrix: IBM defaults to identity, so it IS the
+;; joint node's local transform
+(define (joint-m)
+  (vector-ref (gltf-joint-matrices g 0) 0))
 
 (define (sampled anim t)
   (gltf-animate! g anim t)
-  (joint-x-y-z))
+  (let ((m (joint-m)))
+    (vector (vector-ref m 12) (vector-ref m 13) (vector-ref m 14))))
 
 ;; normalized-u8 weights land dequantized in the interleaved stream
 (define weights-ok
@@ -134,18 +178,42 @@
        (near? (vector-ref (sampled 1 1.0) 0) 10.0)   ; takes key 1 AT 1.0
        (near? (vector-ref (sampled 1 1.5) 0) 10.0))) ; holds key 1
 
+;; hermite in span [0,2] at t=1 (a=.5, span=2): h00=.5 h01=.5
+;; h10=.125*span; key0 out-tangent (6,6,6), key1 in-tangent zero:
+;;   x = .5*1 + .125*2*6 + .5*7  = 5.5   (a lerp would give 4)
+;;   y = .5*2 + 1.5      + .5*8  = 6.5
+;;   z = .5*3 + 1.5      + .5*9  = 7.5
+;; span [2,3] has zero tangents: t=2.5 is the plain midpoint
 (define cub-ok
   (let ((a (sampled 2 0.0))
-        (b (sampled 2 0.5))
-        (c (sampled 2 1.5)))
+        (b (sampled 2 1.0))
+        (c (sampled 2 2.5)))
     (and (near? (vector-ref a 0) 1.0)        ; the VALUE element,
          (near? (vector-ref a 1) 2.0)        ; not the in-tangent
          (near? (vector-ref a 2) 3.0)
-         (near? (vector-ref b 0) 4.0)        ; hermite, zero tangents
-         (near? (vector-ref b 1) 5.0)
-         (near? (vector-ref b 2) 6.0)
+         (near? (vector-ref b 0) 5.5)
+         (near? (vector-ref b 1) 6.5)
+         (near? (vector-ref b 2) 7.5)
          (near? (vector-ref c 0) 10.0)
          (near? (vector-ref c 1) 11.0)
          (near? (vector-ref c 2) 12.0))))
 
-(and weights-ok lin-ok stp-ok cub-ok)
+;; cubic rotation: identity -> 90deg about z, zero tangents.  The
+;; hermite midpoint (0,0,.35355,.85355) is NOT unit; only after
+;; renormalization does the pose become the 45-degree rotation with
+;; m[0] = m[1] = cos45.  (An unnormalized write gives m[0] = .75.)
+(define cubr-ok
+  (begin
+    (gltf-animate! g 3 0.5)
+    (let ((m (joint-m)))
+      (and (near? (vector-ref m 0) 0.70710678)
+           (near? (vector-ref m 1) 0.70710678)))))
+
+;; cubic morph weights: 6 scalars = 2 keys x (in value out) x 1
+;; target -- ncomp divides by 3*nk.  Midpoint of 0 -> 1 is .5.
+(define cubw-ok
+  (begin
+    (gltf-animate! g 4 0.5)
+    (near? (vector-ref (vector-ref (gprim-morph p1) 2) 0) 0.5)))
+
+(and weights-ok lin-ok stp-ok cub-ok cubr-ok cubw-ok)
