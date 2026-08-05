@@ -53,7 +53,8 @@
    (string-append
     "{\"asset\":{\"version\":\"2.0\"},\"scene\":0,"
     "\"scenes\":[{\"nodes\":[0,1]}],"
-    "\"nodes\":[{\"mesh\":0,\"skin\":0,\"translation\":[50,0,0]},"
+    "\"nodes\":[{\"mesh\":0,\"skin\":0,\"translation\":[50,7,-3],"
+    "\"rotation\":[0,0.3826834,0,0.9238795],\"scale\":[2,3,4]},"
     "{\"name\":\"j\"}],"
     "\"skins\":[{\"joints\":[1]}],"
     "\"meshes\":[{\"primitives\":[{\"attributes\":"
@@ -251,6 +252,14 @@
      (u16! 0) (u16! 1) (u16! 2) (u16! 0)
      (u32! #xFFFFFFFF))))
 (define gt (gltf-parse (car td-loc) (cdr td-loc)))
+;; the predicate is an ASSET fact, so it holds from parse time --
+;; before any texture slot exists.  An implementation that also
+;; consulted gprim-tex would read #f here and only become right
+;; after loading.
+(define textured-preload-ok
+  (and (gprim-textured? (car (gltf-prims gt)))
+       (not (gprim-tex (car (gltf-prims gt))))
+       (not (gprim-textured? (car (gltf-prims gs))))))
 (define tex-vs
   '((attribute vec3 a_pos)
     (attribute vec3 a_normal)
@@ -431,13 +440,19 @@
 ;; (the palette already carries the pose).  Returning the node's
 ;; global here would make a custom renderer transform twice.
 (define skinned-prim-world-ok
-  (let ((p (car (gltf-prims gk))))
-    (and (near2? (vector-ref (gltf-prim-world gk p) 12) 0.0)
-         (near2? (vector-ref (gltf-prim-world gk p) 0) 1.0)
-         (near2? (vector-ref (gltf-prim-world gk p) 5) 1.0))))
+  (let* ((p (car (gltf-prims gk)))
+         (m (gltf-prim-world gk p))
+         (id (m4-identity)))
+    ;; ALL sixteen elements: the node carries translation, a 45-degree
+    ;; y rotation and a non-uniform scale, so a half fix that only
+    ;; cleared the x translation would leave nine of them wrong
+    (let loop ((i 0))
+      (cond ((= i 16) #t)
+            ((near2? (vector-ref m i) (vector-ref id i)) (loop (+ i 1)))
+            (else #f)))))
 
 (and stride-collision k-draw-ok s-mismatch-ok defaults-ok
      nmap-bound-ok combinator-layout-ok base-tex-optional-ok
      animated-world-ok matrix-node-ok matrix-reset-ok
      prim-world-split-ok skinned-prim-world-ok
-     no-u-model-ok textured-pred-ok)
+     no-u-model-ok textured-pred-ok textured-preload-ok)

@@ -170,6 +170,15 @@
                    '((attribute vec3 a_pos)
                      (varying vec4 a_weights)
                      (define (main) void
+                       (set! gl_Position (vec4 a_pos (fl 1))))))))
+       ;; an anonymous uniform block puts its members in the global
+       ;; scope too, so they take the name just as a plain uniform
+       ;; would
+       (errors? (lambda ()
+                  (gltf-skin-shader
+                   '((attribute vec3 a_pos)
+                     (uniform-block Env (mat4 u_joints))
+                     (define (main) void
                        (set! gl_Position (vec4 a_pos (fl 1))))))))))
 
 ;; a function name lives in the same namespace as the injected
