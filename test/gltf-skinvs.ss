@@ -60,9 +60,39 @@
     (define (main) void
       (set! gl_Position (* u_mvp (vec4 a_pos (fl 1))))
       (set! v_n a_normal))))
+;; (a_uv is the padding slot the loader always emits for skinned
+;; layouts -- see the no-uv case below)
 (define weird-ok
   (equal? (map car (glsl-attributes (gltf-skin-shader weird)))
-          '(a_pos a_normal a_joints a_weights)))
+          '(a_pos a_normal a_uv a_joints a_weights)))
+
+;; ---- a static shader without a_uv still matches the loader ----
+;; the interleave carries a uv slot for every skinned layout, so the
+;; combinator supplies the padding attribute rather than producing a
+;; program the loader can never feed.
+(define no-uv-ok
+  (and (equal? (map car (glsl-attributes
+                         (gltf-skin-shader mesh-lit-vs)))
+               '(a_pos a_normal a_uv a_joints a_weights))
+       (= (attr-bytes (gltf-skin-shader mesh-lit-vs)) 64)))
+
+(define (errors? thunk)
+  (guard (e (#t #t)) (thunk) #f))
+
+;; ---- injected names must be free in the input ----
+(define collision-ok
+  (and (errors? (lambda ()
+                  (gltf-skin-shader
+                   '((attribute vec3 a_pos)
+                     (attribute vec4 a_joints)
+                     (define (main) void
+                       (set! gl_Position (vec4 a_pos (fl 1))))))))
+       (errors? (lambda ()
+                  (gltf-skin-shader
+                   '((attribute vec3 a_pos)
+                     (uniform (array mat4 8) u_joints)
+                     (define (main) void
+                       (set! gl_Position (vec4 a_pos (fl 1))))))))))
 
 ;; ---- near-prefix attribute names survive untouched ----
 (define near-prefix
@@ -79,8 +109,6 @@
        (not (contains? near-src "g_position2"))))
 
 ;; ---- degenerate inputs fail loudly, not with broken GLSL ----
-(define (errors? thunk)
-  (guard (e (#t #t)) (thunk) #f))
 (define degenerate-ok
   (and
    ;; no a_pos at all
@@ -99,4 +127,5 @@
                  (define (main) void
                    (set! gl_Position (vec4 a_pos (fl 1))))))))))
 
-(and nmap-ok tex-ok weird-ok near-ok degenerate-ok)
+(and nmap-ok tex-ok weird-ok no-uv-ok collision-ok near-ok
+     degenerate-ok)
