@@ -1313,8 +1313,21 @@
              ;; the last piece it does declare
              (pad-after (let ((n (attr-at 'a_normal)))
                           (if (< n 0) (attr-at 'a_pos) n))))
-        ;; main uses a_pos, so a_pos has to precede it -- and with
-        ;; it every attribute the interleave depends on
+        ;; Every attribute has to precede main: main's injected body
+        ;; reads a_pos/a_normal/a_tangent, and the padding lands
+        ;; beside whichever of them the input declares -- so one
+        ;; declared after main puts a declaration below its use.
+        ;; (Helper FUNCTIONS may sit anywhere; only attributes are
+        ;; constrained.)
+        (let scan ((fs vs) (i 0))
+          (cond ((null? fs) #t)
+                ((and (pair? (car fs))
+                      (eq? (caar fs) 'attribute)
+                      (> i main-at))
+                 (error 'gltf-skin-shader
+                        "attribute declared after main"
+                        (caddr (car fs))))
+                (else (scan (cdr fs) (+ i 1)))))
         (when (< last-attr 0)
           (error 'gltf-skin-shader
                  "attributes must be declared before main"))
