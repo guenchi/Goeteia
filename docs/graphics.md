@@ -374,7 +374,17 @@ scene graph, `baseColorFactor` and metallic/roughness factors, embedded
 textures (`gltf-load-textures!`), skins, and animations. Untextured
 primitives come out in `mesh-lit-vs`'s 24-byte layout, textured ones at
 32 bytes, skinned at 64 for `gltf-skin-vs` (four weighted joints per
-vertex from one mat4-array upload). Animation is sampled and blended:
+vertex from one mat4-array upload); `TANGENT` and `COLOR_0` extend the
+stride by 16 each, and `gprim-layout` names the attributes present, in
+interleave order — the contract `gltf-draw!` matches a program against.
+Skinning is a dimension rather than a shader variant:
+`(gltf-skin-shader vs)` turns any static vertex shader into its skinned
+form — padding the slots the interleave always carries, rewriting
+`a_pos`/`a_normal`/`a_tangent` through the joint matrix, and leaving the
+varyings alone so the same fragment shader still pairs. A renderer
+driving its own shaders reads `gltf-prim-world` for a primitive's
+current model matrix (`gprim-world` is the bind pose, and neither
+follows the optional root). Animation is sampled and blended:
 `gltf-animate!` poses a clip completely each frame (looping, nlerp
 rotations; the nodes a clip touches return to bind first, so a channel
 the clip does not drive reads as bind rather than as whatever ran

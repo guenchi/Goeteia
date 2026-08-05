@@ -408,7 +408,27 @@
     (anim-update! m 2.0)                 ; settle
     (near? (vector-ref (joint2-m) 12) 7.0)))
 
-(and interrupt-ok union-dedup-ok
+;; an instant transition (fade 0) settles on the very first update,
+;; so it must release the outgoing clip just like a timed one --
+;; (anim-goto! m name 0.0) is a documented idiom
+(define instant-fade-ok
+  (let ((m (anim-machine g2 '((a . 2) (b . 4)) 1.0)))
+    (anim-update! m 0.5)                 ; "ta": node1 = 2.5
+    (anim-goto! m 'b 0.0)                ; instant
+    (anim-update! m 0.5)
+    (near? (vector-ref (joint2-m) 12) 7.0)))
+
+;; goto to the state already current must not disturb a live fade
+(define same-state-ok
+  (let ((m (anim-machine g2 '((a . 2) (b . 4)) 1.0)))
+    (anim-update! m 0.5)
+    (anim-goto! m 'b)
+    (anim-update! m 0.25)                ; mid-fade
+    (let ((mid (vector-ref (joint2-m) 12)))
+      (anim-goto! m 'b)                  ; already there: a no-op
+      (near? (vector-ref (joint2-m) 12) mid))))
+
+(and instant-fade-ok same-state-ok interrupt-ok union-dedup-ok
      weights-ok lin-ok stp-ok cub-ok cubr-ok cubw-ok
      tiny-span-ok nlerp-contract-ok complete-pose-ok
      crossfade-default-ok crossfade-from-ok dup-time-ok
