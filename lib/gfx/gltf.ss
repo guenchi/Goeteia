@@ -759,7 +759,7 @@
          (let ((node (vector-ref nodes ni))
                (bind (vector-ref binds ni)))
            (let cp ((j 0))
-             (when (< j 11)
+             (when (< j 10)
                (vector-set! node j (vector-ref bind j))
                (cp (+ j 1)))))
          (for-each
@@ -955,7 +955,10 @@
            (g ($am-g m))
            (ci (cdr (assq ($am-cur m) ($am-states m)))))
       ($am-tcur! m (fl+ ($am-tcur m) dt))
-      (if (and ($am-prev m) (fl<? ($am-k m) ($am-len m)))
+      ;; the transition is live whenever prev is set: an instant
+      ;; (or negative) fade must still reach the completion branch,
+      ;; which is the only place the outgoing clip is released
+      (if ($am-prev m)
           (begin
             ($am-tprev! m (fl+ ($am-tprev m) dt))
             ($am-k! m (fl+ ($am-k m) dt))
@@ -1210,7 +1213,17 @@
       ;; attribute named u_joints blocks the uniform.
       (let ((taken (append names
                            (map car (glsl-uniforms vs))
-                           (glsl-varyings vs))))
+                           (glsl-varyings vs)
+                           ;; function names share the namespace too
+                           (let fn ((fs vs) (acc '()))
+                             (cond
+                              ((null? fs) acc)
+                              ((and (pair? (car fs))
+                                    (eq? (caar fs) 'define)
+                                    (pair? (cadr (car fs))))
+                               (fn (cdr fs)
+                                   (cons (car (cadr (car fs))) acc)))
+                              (else (fn (cdr fs) acc)))))))
         (for-each
          (lambda (n)
            (when (memq n taken)
@@ -1220,6 +1233,14 @@
                  ;; the padding slots, only where they get injected
                  (if (memq 'a_normal names) '() '(a_normal))
                  (if (memq 'a_uv names) '() '(a_uv)))))
+      ;; the g_* locals go into main's body, so they must be free
+      ;; anywhere in the input -- a local of the same name would be
+      ;; a redeclaration in the same scope
+      (when ($skin-refs? vs '((g_skin . g_skin) (g_pos . g_pos)
+                              (g_normal . g_normal)
+                              (g_tangent . g_tangent)))
+        (error 'gltf-skin-shader
+               "input uses a name reserved for the skin locals (g_*)"))
       ;; the LAST attribute form, wherever it sits -- declarations
       ;; need not be contiguous -- and the position the uv padding
       ;; belongs at: the interleave puts uv right after normal, so
@@ -1236,13 +1257,24 @@
                                      (eq? (caddr (car fs)) name))
                                 i
                                 found))))))
+             ;; the last attribute BEFORE the first function: every
+             ;; global must be declared ahead of the code using it,
+             ;; and an input may declare an attribute after main
+             (first-def
+              (let scan ((fs vs) (i 0))
+                (cond ((null? fs) i)
+                      ((and (pair? (car fs))
+                            (eq? (caar fs) 'define))
+                       i)
+                      (else (scan (cdr fs) (+ i 1))))))
              (last-attr
               (let scan ((fs vs) (i 0) (last -1))
                 (if (null? fs)
                     last
                     (scan (cdr fs) (+ i 1)
                           (if (and (pair? (car fs))
-                                   (eq? (caar fs) 'attribute))
+                                   (eq? (caar fs) 'attribute)
+                                   (< i first-def))
                               i
                               last)))))
              ;; the canonical prefix is position normal uv; whatever
@@ -1628,13 +1660,15 @@
            (scratch (make-vector n #f)))
       (let loop ((i 0))
         (when (< i n)
-          ;; slot 10 (the matrix form) rides along, so the bind is
-          ;; the WHOLE transform and nothing depends on $node-local
-          ;; happening to ignore TRS for a matrix node
+          ;; only the TRS slots: nothing ever writes slot 10 (the
+          ;; matrix form) after parse, so copying it back would be a
+          ;; no-op that aliases the live matrix vector rather than
+          ;; protecting it.  A matrix node keeps its transform
+          ;; because $node-local reads slot 10 in preference to TRS.
           (let ((src (vector-ref nodes i))
-                (b (make-vector 11 0.0)))
+                (b (make-vector 10 0.0)))
             (let cp ((j 0))
-              (when (< j 11)
+              (when (< j 10)
                 (vector-set! b j (vector-ref src j))
                 (cp (+ j 1))))
             (vector-set! binds i b)
@@ -1719,12 +1753,18 @@
                    (js-undefined))))
               (load (+ i 1)))))))
 
-  ;; A primitive's CURRENT world matrix, walked from the runtime
-  ;; node tree -- what gltf-draw! uses.  gprim-world is the bind
-  ;; pose captured at parse time and does not follow animation; a
-  ;; renderer driving its own shaders wants this one.
+  ;; A primitive's CURRENT model matrix -- what gltf-draw! feeds
+  ;; u_model, so a renderer driving its own shaders wants this one
+  ;; rather than gprim-world (the bind pose captured at parse time,
+  ;; which does not follow animation).  For a SKINNED primitive this
+  ;; is the identity: glTF says a skinned mesh ignores its node's
+  ;; transform, and the joint palette already carries the pose --
+  ;; returning the node's global here would transform twice.  The
+  ;; optional root gltf-draw! takes is the caller's to apply.
   (define (gltf-prim-world g p)
-    ($node-global g ($gprim-node p)))
+    (if ($gprim-skin p)
+        (m4-identity)
+        ($node-global g ($gprim-node p))))
 
   ;; the shader attribute names a layout demands, in order
   (define ($layout-attr-names layout)

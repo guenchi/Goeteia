@@ -53,7 +53,8 @@
    (string-append
     "{\"asset\":{\"version\":\"2.0\"},\"scene\":0,"
     "\"scenes\":[{\"nodes\":[0,1]}],"
-    "\"nodes\":[{\"mesh\":0,\"skin\":0},{\"name\":\"j\"}],"
+    "\"nodes\":[{\"mesh\":0,\"skin\":0,\"translation\":[50,0,0]},"
+    "{\"name\":\"j\"}],"
     "\"skins\":[{\"joints\":[1]}],"
     "\"meshes\":[{\"primitives\":[{\"attributes\":"
     "{\"POSITION\":0,\"JOINTS_0\":1,\"WEIGHTS_0\":2},\"indices\":3}]}],"
@@ -291,12 +292,7 @@
     "\"samplers\":[{\"input\":2,\"output\":3,"
     "\"interpolation\":\"LINEAR\"}],"
     "\"channels\":[{\"sampler\":0,\"target\":"
-    "{\"node\":0,\"path\":\"translation\"}}]},"
-    "{\"name\":\"onmatrix\","
-    "\"samplers\":[{\"input\":2,\"output\":3,"
-    "\"interpolation\":\"LINEAR\"}],"
-    "\"channels\":[{\"sampler\":0,\"target\":"
-    "{\"node\":1,\"path\":\"translation\"}}]}],"
+    "{\"node\":0,\"path\":\"translation\"}}]}],"
     "\"buffers\":[{\"byteLength\":76}],"
     "\"bufferViews\":["
     "{\"buffer\":0,\"byteOffset\":0,\"byteLength\":36},"
@@ -327,11 +323,37 @@
 (define animated-world-ok
   (= (count-log "uniformMat4:U:u_model:16:105.00") 1))
 
+;; a program that legitimately omits u_model must draw on the
+;; unskinned path too, not only on the skinned one
+(define no-model-vs
+  '((attribute vec3 a_pos)
+    (attribute vec3 a_normal)
+    (uniform mat4 u_mvp)
+    (varying vec3 v_n)
+    (define (main) void
+      (set! gl_Position (* u_mvp (vec4 a_pos (fl 1))))
+      (set! v_n a_normal))))
+(define no-model-fs
+  '((precision mediump float)
+    (uniform vec4 u_color)
+    (varying vec3 v_n)
+    (define (main) void (set! gl_FragColor u_color))))
+(define no-model-prog (fx-program! no-model-vs no-model-fs))
+(define no-u-model-ok
+  (guard (e (#t #f))
+    (cmd-begin!)
+    (gltf-draw! ga no-model-prog (m4-identity))
+    (cmd-flush!)
+    #t))
+
 ;; ---- a node expressed as a matrix ----
-;; the pose arena snapshots TRS slots; a matrix node keeps its
-;; transform elsewhere, so the bind snapshot must carry it too --
-;; otherwise resetting such a node silently drops it to identity.
-;; Here an animated parent moves a matrix-transformed child.
+;; a matrix node keeps its transform in a slot the pose arena does
+;; not snapshot and no channel writes; $node-local reads it in
+;; preference to TRS, which is what makes reset harmless.  These
+;; two cases pin that down: an animated parent moving a
+;; matrix-transformed child, and a clip that touches the matrix
+;; node itself (glTF forbids animating one, so the channel is
+;; ignored -- but ignoring it must not zero the transform).
 (define mx-loc
   (glb!
    (string-append
@@ -377,10 +399,7 @@
 (define matrix-node-ok                    ; 20 (matrix) + 5 (parent)
   (= (count-log "uniformMat4:U:u_model:16:25.00") 1))
 
-;; a clip that TOUCHES the matrix node runs it through the reset
-;; path: the matrix must survive, whatever the arena stores as its
-;; "bind" TRS (glTF forbids animating a matrix node, so the channel
-;; is ignored -- but ignoring it must not zero the transform)
+;; the clip that touches the matrix node, through the reset path
 (gltf-animate! gm 0 0.0)                  ; parent back to 0
 (gltf-animate! gm 1 0.5)                  ; the clip that touches it
 (cmd-begin!)
@@ -388,6 +407,9 @@
 (cmd-flush!)
 (define matrix-reset-ok
   (= (count-log "uniformMat4:U:u_model:16:20.00") 1))
+
+(define (near2? a b)
+  (and (fl<? (fl- a b) 0.001) (fl<? (fl- b a) 0.001)))
 
 ;; gprim-world is the BIND pose; gltf-prim-world is what draws.
 ;; A custom renderer needs the second, so the split has to be
@@ -397,10 +419,18 @@
     (and (near2? (vector-ref (gprim-world p) 12) 100.0)
          (near2? (vector-ref (gltf-prim-world ga p) 12) 105.0))))
 
-(define (near2? a b)
-  (and (fl<? (fl- a b) 0.001) (fl<? (fl- b a) 0.001)))
+;; ... and for a SKINNED primitive it must agree with what
+;; gltf-draw! does, which is to ignore the node transform entirely
+;; (the palette already carries the pose).  Returning the node's
+;; global here would make a custom renderer transform twice.
+(define skinned-prim-world-ok
+  (let ((p (car (gltf-prims gk))))
+    (and (near2? (vector-ref (gltf-prim-world gk p) 12) 0.0)
+         (near2? (vector-ref (gltf-prim-world gk p) 0) 1.0)
+         (near2? (vector-ref (gltf-prim-world gk p) 5) 1.0))))
 
 (and stride-collision k-draw-ok s-mismatch-ok defaults-ok
      nmap-bound-ok combinator-layout-ok base-tex-optional-ok
      animated-world-ok matrix-node-ok matrix-reset-ok
-     prim-world-split-ok)
+     prim-world-split-ok skinned-prim-world-ok
+     no-u-model-ok)

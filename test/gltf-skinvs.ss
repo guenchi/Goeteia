@@ -134,6 +134,50 @@
                      (define (main) void
                        (set! gl_Position (vec4 a_pos (fl 1))))))))))
 
+;; a function name lives in the same namespace as the injected
+;; uniform, and the g_* locals injected into main must be free too
+(define name-space-ok
+  (and (errors? (lambda ()
+                  (gltf-skin-shader
+                   '((attribute vec3 a_pos)
+                     (uniform mat4 u_mvp)
+                     (define (u_joints) float (return (fl 1)))
+                     (define (main) void
+                       (set! gl_Position
+                             (* u_mvp (vec4 a_pos (fl 1)))))))))
+       (errors? (lambda ()
+                  (gltf-skin-shader
+                   '((attribute vec3 a_pos)
+                     (define (main) void
+                       (local float g_skin (fl 2))
+                       (set! gl_Position (vec4 a_pos (fl 1))))))))))
+
+;; every global the shader uses must be declared before main: an
+;; attribute after it would put the joints injection after main too
+(define decl-order-ok
+  (let* ((src (glsl->string
+               (gltf-skin-shader
+                '((attribute vec3 a_pos)
+                  (attribute vec3 a_normal)
+                  (attribute vec2 a_uv)
+                  (uniform mat4 u_mvp)
+                  (define (main) void
+                    (set! gl_Position (* u_mvp (vec4 a_pos (fl 1)))))
+                  (attribute vec4 a_color)))))
+         (main-at (let loop ((i 0))
+                    (cond ((> (+ i 9) (string-length src)) -1)
+                          ((string=? (substring src i (+ i 9))
+                                     "void main")
+                           i)
+                          (else (loop (+ i 1))))))
+         (decl-at (let loop ((i 0))
+                    (cond ((> (+ i 8) (string-length src)) -1)
+                          ((string=? (substring src i (+ i 8))
+                                     "a_joints")
+                           i)
+                          (else (loop (+ i 1)))))))
+    (and (> main-at 0) (> decl-at 0) (< decl-at main-at))))
+
 (define collision-ok
   (and (errors? (lambda ()
                   (gltf-skin-shader
@@ -182,4 +226,5 @@
                    (set! gl_Position (vec4 a_pos (fl 1))))))))))
 
 (and nmap-ok tex-ok weird-ok no-uv-ok no-uv-order-ok no-normal-ok
-     cross-class-ok collision-ok near-ok degenerate-ok)
+     cross-class-ok name-space-ok decl-order-ok collision-ok near-ok
+     degenerate-ok)
