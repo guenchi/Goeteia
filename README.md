@@ -524,8 +524,10 @@ buffer, shaders as s-expressions, and everything over them — in
   Geometry, node transforms, base colors, metallic/roughness
   factors, embedded textures
   (`gltf-load-textures!`), skins and animations all load: 
-  `gltf-animate!` samples the channels each frame (looping, nlerp
-  rotations), `gltf-animate-blend!` crossfades two clips,
+  `gltf-animate!` poses a clip completely each frame (looping,
+  nlerp rotations, and the nodes it touches reset to bind so a
+  channel the clip lacks never keeps the last clip's value),
+  `gltf-animate-blend!` crossfades two independently posed clips,
   `anim-machine` packages the pattern every character repeats —
   named states over clips, `anim-goto!` transitions that fade over
   a per-transition time while both clocks keep running — and

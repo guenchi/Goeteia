@@ -72,7 +72,7 @@
     "{\"buffer\":0,\"byteOffset\":32,\"byteLength\":12},"
     "{\"buffer\":0,\"byteOffset\":44,\"byteLength\":6},"
     "{\"buffer\":0,\"byteOffset\":52,\"byteLength\":36},"
-    "{\"buffer\":0,\"byteOffset\":88,\"byteLength\":36}],"
+    "{\"buffer\":0,\"byteOffset\":88,\"byteLength\":9}],"
     "\"accessors\":["
     "{\"bufferView\":0,\"componentType\":5123,\"count\":3,\"type\":\"VEC3\"},"
     "{\"bufferView\":1,\"componentType\":5120,\"normalized\":true,"
@@ -81,7 +81,8 @@
     "\"count\":3,\"type\":\"VEC2\"},"
     "{\"bufferView\":3,\"componentType\":5123,\"count\":3,\"type\":\"SCALAR\"},"
     "{\"bufferView\":4,\"componentType\":5126,\"count\":3,\"type\":\"VEC3\"},"
-    "{\"bufferView\":5,\"componentType\":5126,\"count\":3,\"type\":\"VEC3\"}]}")
+    "{\"bufferView\":5,\"componentType\":5120,\"normalized\":true,"
+    "\"count\":3,\"type\":\"VEC3\"}]}")
    124
    (lambda (bin)
      (u16! 100) (u16! 200) (u16! 300)      ; pos v0
@@ -98,7 +99,10 @@
      (u16! 0) (u16! 1) (u16! 2)            ; indices
      (pad-to! (+ bin 52))
      (v3! 10.0 0.0 0.0) (v3! 10.0 0.0 0.0) (v3! 10.0 0.0 0.0)
-     (v3! 0.0 20.0 0.0) (v3! 0.0 20.0 0.0) (v3! 0.0 20.0 0.0))))
+     ;; target 1 is normalized i8: 127 -> 1.0 per component
+     (i8! 0) (i8! 127) (i8! 0)
+     (i8! 0) (i8! 127) (i8! 0)
+     (i8! 0) (i8! 127) (i8! 0))))
 
 ;; ---- W: morph weights animated through a strided accessor ----
 ;; BIN: 0 pos(36) | 36 idx(6) | 44 times(8) | 52 weights(32) |
@@ -216,5 +220,14 @@
       (and (near? (vector-ref w 0) 0.0)
            (near? (vector-ref w 1) 0.0)))))
 
-(and pos-ok nrm-ok uv-ok morph-base-ok node-weights-ok
+;; the quantized target dequantizes too: raw i8 read as f32 gives
+;; denormals, and a float-strided read walks off the 9-byte view
+(define morph-target-quant-ok
+  (let ((d (vector-ref (vector-ref (gprim-morph pq) 1) 1)))
+    (and (near? (vector-ref d 1) 1.0)
+         (near? (vector-ref d 4) 1.0)
+         (near? (vector-ref d 0) 0.0))))
+
+(and morph-target-quant-ok
+     pos-ok nrm-ok uv-ok morph-base-ok node-weights-ok
      strided-weights-ok morph-bind-ok)

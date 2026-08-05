@@ -65,7 +65,8 @@
           gprim-vbase gprim-vbytes gprim-ibase gprim-ibytes
           gprim-icount gprim-index-u32? gprim-color
           gprim-metallic gprim-roughness
-          gprim-world gprim-stride gprim-layout gprim-tex
+          gprim-world gltf-prim-world
+          gprim-stride gprim-layout gprim-tex
           gprim-normal-img gprim-emissive-img gprim-occlusion-img
           gprim-emissive gprim-ntex gprim-etex gprim-otex)
   (import (rnrs) (web js) (gfx gl) (gfx glsl) (gfx fx) (gfx mat)
@@ -615,13 +616,17 @@
                      (t0 (vector-ref times k))
                      (t1 (vector-ref times k1))
                      (span (fl- t1 t0))
-                     ;; keyframe times are strictly increasing, so a
-                     ;; span is zero only when the cursor sits on the
-                     ;; last key (k = k1); legal sub-microsecond
-                     ;; spans still interpolate
-                     (a (if (= k k1)
-                            0.0
-                            (fl/ (fl- tw t0) span)))
+                     ;; a zero span holds the left key: that covers
+                     ;; both the cursor sitting on the last key and a
+                     ;; duplicated timestamp (a validator error, but
+                     ;; a common exporter artifact -- dividing by it
+                     ;; would put a NaN in the node TRS, and every
+                     ;; descendant inherits it).  The test is on the
+                     ;; span itself, not an epsilon, so legal
+                     ;; sub-microsecond spans still interpolate.
+                     (a (if (fl<? 0.0 span)
+                            (fl/ (fl- tw t0) span)
+                            0.0))
                      (a (if (fl<? a 0.0) 0.0 (if (fl<? 1.0 a) 1.0 a)))
                      (v0 (vector-ref vals k))
                      (v1 (vector-ref vals k1))
@@ -748,7 +753,7 @@
          (let ((node (vector-ref nodes ni))
                (bind (vector-ref binds ni)))
            (let cp ((j 0))
-             (when (< j 10)
+             (when (< j 11)
                (vector-set! node j (vector-ref bind j))
                (cp (+ j 1)))))
          (for-each
@@ -943,7 +948,12 @@
                   (pi (cdr (assq ($am-prev m) ($am-states m)))))
               (if (fl<? w 1.0)
                   (gltf-animate-blend! g pi ($am-tprev m) ci ($am-tcur m) w)
+                  ;; the fade is over: the outgoing clip's nodes go
+                  ;; back to bind before the incoming clip poses, or
+                  ;; a node only IT drove keeps the last blended
+                  ;; value for the rest of the run
                   (begin ($am-prev! m #f)
+                         ($anim-reset! g (vector-ref (gltf-anims g) pi))
                          (gltf-animate! g ci ($am-tcur m))))))
           (gltf-animate! g ci ($am-tcur m)))))
 
@@ -1190,16 +1200,32 @@
                   "input already declares an injected uniform" u)))
        '(u_joints))
       ;; the LAST attribute form, wherever it sits -- declarations
-      ;; need not be contiguous
-      (let ((last-attr
-             (let scan ((fs vs) (i 0) (last -1))
-               (if (null? fs)
-                   last
-                   (scan (cdr fs) (+ i 1)
-                         (if (and (pair? (car fs))
-                                  (eq? (caar fs) 'attribute))
-                             i
-                             last))))))
+      ;; need not be contiguous -- and the position the uv padding
+      ;; belongs at: the interleave puts uv right after normal, so
+      ;; appending it at the end would misplace it for a shader that
+      ;; declares tangent or color
+      (let* ((attr-at
+              (lambda (name)
+                (let scan ((fs vs) (i 0) (found -1))
+                  (if (null? fs)
+                      found
+                      (scan (cdr fs) (+ i 1)
+                            (if (and (pair? (car fs))
+                                     (eq? (caar fs) 'attribute)
+                                     (eq? (caddr (car fs)) name))
+                                i
+                                found))))))
+             (last-attr
+              (let scan ((fs vs) (i 0) (last -1))
+                (if (null? fs)
+                    last
+                    (scan (cdr fs) (+ i 1)
+                          (if (and (pair? (car fs))
+                                   (eq? (caar fs) 'attribute))
+                              i
+                              last)))))
+             (uv-after (let ((n (attr-at 'a_normal)))
+                         (if (< n 0) (attr-at 'a_pos) n))))
         (let loop ((fs vs) (i 0) (out '()))
           (if (null? fs)
               (reverse out)
@@ -1226,21 +1252,22 @@
                                        (cadr f)))
                               (cons f out))))
                        (else (cons f out))))
+                     ;; the loader always carries a uv slot once
+                     ;; anything past position+normal is present,
+                     ;; and the skin inputs are exactly that: a
+                     ;; shader without a_uv needs the padding, at
+                     ;; the interleave's position for it
+                     (out (if (and (= i uv-after)
+                                   (not (memq 'a_uv names)))
+                              (cons '(attribute vec2 a_uv) out)
+                              out))
                      (out (if (= i last-attr)
                               (append
                                (list
                                 '(uniform (array mat4 32) u_joints)
                                 '(attribute vec4 a_weights)
                                 '(attribute vec4 a_joints))
-                               ;; the loader always carries a uv
-                               ;; slot once anything past
-                               ;; position+normal is present, and
-                               ;; the skin inputs are exactly that:
-                               ;; a shader without a_uv needs the
-                               ;; padding to match the interleave
-                               (if (memq 'a_uv names)
-                                   out
-                                   (cons '(attribute vec2 a_uv) out)))
+                               out)
                               out)))
                 (loop (cdr fs) (+ i 1) out)))))))
 
@@ -1567,10 +1594,13 @@
            (scratch (make-vector n #f)))
       (let loop ((i 0))
         (when (< i n)
+          ;; slot 10 (the matrix form) rides along, so the bind is
+          ;; the WHOLE transform and nothing depends on $node-local
+          ;; happening to ignore TRS for a matrix node
           (let ((src (vector-ref nodes i))
-                (b (make-vector 10 0.0)))
+                (b (make-vector 11 0.0)))
             (let cp ((j 0))
-              (when (< j 10)
+              (when (< j 11)
                 (vector-set! b j (vector-ref src j))
                 (cp (+ j 1))))
             (vector-set! binds i b)
@@ -1619,16 +1649,17 @@
                              (gl-texture-data! t px 1 1)
                              t)))
                      (flat (mk 128 128 255))   ; tangent-space +z
-                     (white (mk 255 255 255))) ; emissive*factor, AO 1
+                     (white (mk 255 255 255))) ; base/emissive, AO 1
                 (for-each
                  (lambda (p)
                    (let ((set (lambda (img put! dflt)
                                 (put! p (if img
                                             (vector-ref slots img)
                                             dflt)))))
-                     (let ((ii ($gprim-tex-img p)))
-                       (when ii
-                         ($gprim-tex! p (vector-ref slots ii))))
+                     ;; base color too: an untextured primitive must
+                     ;; not inherit unit 0 from the textured one
+                     ;; drawn before it
+                     (set ($gprim-tex-img p) $gprim-tex! white)
                      (set (gprim-normal-img p) $gprim-ntex! flat)
                      (set (gprim-emissive-img p) $gprim-etex! white)
                      (set (gprim-occlusion-img p) $gprim-otex!
@@ -1653,6 +1684,13 @@
                    (when (= pending 0) (resolve!))
                    (js-undefined))))
               (load (+ i 1)))))))
+
+  ;; A primitive's CURRENT world matrix, walked from the runtime
+  ;; node tree -- what gltf-draw! uses.  gprim-world is the bind
+  ;; pose captured at parse time and does not follow animation; a
+  ;; renderer driving its own shaders wants this one.
+  (define (gltf-prim-world g p)
+    ($node-global g ($gprim-node p)))
 
   ;; the shader attribute names a layout demands, in order
   (define ($layout-attr-names layout)
@@ -1781,7 +1819,8 @@
                                  w0
                                  (m4-mul (car root) w0))))
                  (fx-uniform! prog 'u_mvp (m4-mul vp world))
-                 (fx-uniform! prog 'u_model world)))
+                 (when (fx-uniform? prog 'u_model)
+                   (fx-uniform! prog 'u_model world))))
            (fx-uniform! prog 'u_color (vector-ref c 0) (vector-ref c 1)
                         (vector-ref c 2) (vector-ref c 3))
            (if (gprim-index-u32? p)
