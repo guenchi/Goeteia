@@ -20,6 +20,59 @@ inventing anything. `lib/gfx/gltf.ss`'s header comment is the
 authoritative statement of what loads and what the known deviations
 are -- trust it over your memory.
 
+## What is already in the box
+
+Twenty-odd libraries live under `lib/gfx/`, and the failure mode is
+not misusing them -- it is not knowing they exist and hand-rolling
+something worse. This index says only WHEN to reach for each; every
+signature comes from the library's own header comment, which is
+current in a way this list cannot be.
+
+Core, for almost any scene:
+
+- `(gfx gl)` raw WebGL through a command buffer -- the layer
+  everything else encodes into.
+- `(gfx fx)` the frame harness over it: programs, buffers, targets,
+  meshes, `fx-ticks!`.
+- `(gfx glsl)` shaders as s-expressions; `(gfx wgsl)` renders the
+  SAME forms to WGSL.
+- `(gfx mat)` vec3 and column-major mat4, pure and headless-verifiable.
+
+Geometry and assets:
+
+- `(gfx gltf)` glTF/GLB, the authoritative loader.
+- `(gfx mesh)` parametric primitives (box, sphere, torus...) when you
+  need geometry without an asset.
+- `(gfx meshopt)` EXT_meshopt_compression, `(gfx ktx)` KTX2 +
+  Basis Universal, `(gfx uastc)` and `(gfx zstd)` the codecs beneath
+  them -- all pure Scheme, no native transcoder.
+
+Looks:
+
+- `(gfx post)` threshold/blur/composite chains -- bloom and SSAO
+  without rebuilding them.
+- `(gfx ibl)` cube map to light probe: the two GPU precomputations
+  that make PBR look lit rather than plastic.
+- `(gfx sdf)` distance-field text that stays sharp as the camera
+  leans in; `(gfx sprite)` 2D sprites and GL text via a glyph atlas.
+
+Scene, interaction, platform:
+
+- `(gfx scene)` reactive raw-GL scenes -- sx for the third dimension;
+  `(gfx sgpu)` the same declarative scene, GPU-culled, on WebGPU.
+- `(gfx collide)` raycasts and sphere/AABB/plane/triangle/mesh
+  tests -- picking and "did I hit a wall", pure arithmetic, verifies
+  headlessly.
+- `(gfx gpu)` the WebGPU backend; `(gfx xr)` walks a raw-GL scene
+  into a headset.
+- `(gfx stats)` the frame-time/draw-call HUD -- the counts are free,
+  the command buffer already knows them.
+
+Two habits follow from this list. Check it before writing geometry,
+a blur chain, or a ray test by hand. And when something here is
+close but not enough, that is a finding for the library's own review
+loop, not a reason to fork its logic into your page.
+
 ## The vertex layout is law
 
 The loader interleaves whatever attributes an asset has, in ONE
