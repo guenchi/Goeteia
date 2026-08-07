@@ -67,7 +67,8 @@
 (library (gfx gltf)
   (export gltf? gltf-prims gltf-images gltf-parse gltf-fetch!
           gltf-load-textures! gltf-draw!
-          gltf-anims gltf-animation-names gltf-animation-duration
+          gltf-anims gltf-nodes gltf-skins
+          gltf-animation-names gltf-animation-duration
           gltf-animate!
           gltf-animate-blend! gltf-weights! gprim-morph
           anim-machine anim-machine? anim-state anim-goto! anim-update!

@@ -507,19 +507,22 @@ A primitive is a plain list — `(layout vbase vcount ibase icount
 generator, a decoder or a parsed asset can all feed it. `layout` names
 the attributes present in the order they occupy the interleave, from
 the same vocabulary `gprim-layout` reports: `position` `normal` `uv`
-`tangent` `color`, each float32 at 12/12/8/16/16 bytes. `glb-stride`
+`tangent` `color` `joints` `weights`, each float32 at
+12/12/8/16/16/16/16 bytes. `glb-stride`
 and `glb-offset` give a layout's byte stride and an attribute's place
 inside it, which is what a generator writing the vertices needs anyway.
 The options are a key/value tail: `color` for a `baseColorFactor`
 material (absent means no material, and the loader's own default
 answers), `index-u32?` for the index width — defaulting to `#t` past
-65536 vertices, where `(gfx gltf)` switches too — and `stride` for a
-padded interleave. `icount` 0 writes a non-indexed primitive.
+65536 vertices, where `(gfx gltf)` switches too — `stride` for a
+padded interleave, and `joints-u16?` for the `JOINTS_0` element width.
+`icount` 0 writes a non-indexed primitive.
 
-What comes out is one buffer, two bufferViews per primitive (vertices
-with a `byteStride`, indices without), one accessor per attribute plus
-one per index array, one mesh holding every primitive, one node, one
-scene — with the JSON chunk space-padded and the BIN chunk zero-padded
+What comes out is one buffer, a bufferView per vertex block (with a
+`byteStride`), per index block and per joint block, one accessor per
+attribute plus one per index array, one mesh holding every primitive,
+the node array and one scene — with the JSON chunk space-padded and the
+BIN chunk zero-padded
 to the 4-byte alignment the container specification requires, and with
 POSITION's mandatory `min`/`max` computed from the data rather than
 guessed. Indices are checked against the vertex count as they are
@@ -527,8 +530,19 @@ written: an index that names a vertex the primitive does not own is
 refused here rather than drawing garbage in a viewer that never says
 why.
 
+`JOINTS_0` is the one attribute that does not stay where it lies. glTF
+stores joint indices as unsigned bytes or shorts while the interleave
+`(gfx gltf)` builds carries them as floats, so the writer narrows them
+into a block of their own and leaves the interleave's 16 bytes
+unreferenced; `WEIGHTS_0`, which glTF is happy to take as float32, is
+described in place like everything else. A joint index that is not a
+whole number the skin owns is refused rather than narrowed, and a
+layout naming only one of `joints`/`weights` is refused too — half a
+skin binding is a primitive no reader can pose.
+
 Round trip: for a layout in the canonical interleave order (`position
-normal`, then `uv`, then `tangent`, then `color`) `gltf-parse`
+normal`, then `uv`, then `tangent`, then `color`, then `joints` and
+`weights`) `gltf-parse`
 reproduces the vertex bytes exactly — `test/glb.ss` compares them byte
 for byte. Other layouts are written faithfully but come back
 canonicalized, because the loader always gives a primitive a normal
@@ -547,10 +561,119 @@ needs no adapter beyond the accessors `(gfx gltf)` already exports:
       (gltf-prims g)))
 ```
 
-Static meshes only for now: skins, animations, morph targets, textures,
-cameras and node hierarchies are not written, and a layout naming
-`joints` or `weights` is refused rather than written as something a
-reader would misinterpret.
+#### Skeletons and clips
+
+`glb-write!` takes a key/value tail of its own for everything that is
+not one primitive's vertices — `nodes`, `mesh-node`, `skin`, `anims` —
+and each of the four is optional, so the call above stays exactly what
+it was.
+
+```scheme
+(glb-write!
+ (list (list '(position normal uv joints weights) vbase vcount ibase icount))
+ 'nodes (list (list "mesh" -1)                    ; (name parent T R S)
+              (list "j0" -1 (vector 1.0 0.0 0.0))
+              (list "j1"  1 (vector 2.0 0.0 0.0)))
+ 'mesh-node 0
+ 'skin (list '(1 2) ibm-base)                     ; joint nodes, inverse binds
+ 'anims (list (list "walk"
+                    ;; (node path times values keys interpolation)
+                    (list (list 1 'rotation t-base r-base 3 'linear)
+                          (list 2 'scale    t-base s-base 3 'step)))))
+```
+
+`nodes` is the whole node array in file order. A node is `(name parent
+translation rotation scale)`, or `(name parent . options)` with the
+same three as keys — a transform is a vector or list of numbers and an
+option key is a symbol, so the two spellings never collide. `parent` is
+an index, or `-1`/`#f` for a root; children and the scene's roots are
+*derived* from it, so a parent that does not exist, a node that is its
+own parent, and a parent chain that closes on itself are all refused at
+the call. Omit `nodes` and you get the single node the writer emitted
+before, carrying the mesh. `mesh-node` says which node carries the mesh
+(default 0); that node is also the one that gets the skin, and it gets
+it only when some primitive really has `JOINTS_0` — a skinned node
+whose mesh has no joint inputs is a file `gltf-parse` cannot pose.
+
+`skin` is `(joint-node-indices inverse-bind-matrices)`. The second
+element may be a staging base of `njoints` tightly packed mat4s, a
+sequence of 16-number matrices, or `#f` for identity binds.
+
+`anims` is a list of clips, each `(name channels)`; a channel is
+`(node path times values keys interpolation)`. `path` is
+`translation`, `rotation`, `scale` or `weights`; `interpolation` is
+`linear`, `step` or `cubic` (glTF's own `"LINEAR"`/`"STEP"`/
+`"CUBICSPLINE"` also work), defaults to `linear`, and may equally ride
+in a key/value tail as `'interpolation`. Under `cubic` the values
+source holds the specification's in-tangent/value/out-tangent triples —
+`3 × keys` elements, in that order — and a morph-`weights` channel
+takes `'components` for how many targets a key carries, since glTF
+writes those as loose scalars rather than as vectors. Every animation
+input accessor gets the `min`/`max` the specification demands, scanned
+out of the times themselves; times that go backwards are refused,
+because no sampler has a reading for them.
+
+`times`, `values` and the inverse binds are **sources**, and a source
+is deliberately wider than staging memory: either a base (tightly
+packed float32) or a Scheme sequence of elements, each element a
+sequence of `ncomp` numbers — or a bare number when `ncomp` is 1. That
+is what makes a parsed asset re-exportable without a staging round
+trip, because `(gfx gltf)` hands its skeleton and its clips back as
+vectors. `gltf-nodes` gives the runtime node table (`tx ty tz`, `qx qy
+qz qw`, `sx sy sz`, matrix, parent), `gltf-skins` gives `#(joint-nodes
+inverse-binds)`, and `gltf-anims` gives `#(name channels duration
+touched)` with each channel `#(node path times values cursor
+interpolation in-tangents out-tangents)`. The one shape that needs
+rebuilding is `CUBICSPLINE`: the parser splits the triples into three
+vectors and the writer wants them whole again.
+
+```scheme
+(define (node->desc v)                     ; a runtime node -> a descriptor
+  (list #f (vector-ref v 11)
+        (vector (vector-ref v 0) (vector-ref v 1) (vector-ref v 2))
+        (vector (vector-ref v 3) (vector-ref v 4)
+                (vector-ref v 5) (vector-ref v 6))
+        (vector (vector-ref v 7) (vector-ref v 8) (vector-ref v 9))))
+
+(define (chan->desc ch)
+  (let* ((times (vector-ref ch 2)) (vals (vector-ref ch 3))
+         (interp (vector-ref ch 5)) (n (vector-length times))
+         (out (if (eq? interp 'cubic)
+                  (let ((o (make-vector (* 3 n) #f)))   ; in, value, out
+                    (let loop ((i 0))
+                      (if (= i n)
+                          o
+                          (begin
+                            (vector-set! o (* 3 i) (vector-ref (vector-ref ch 6) i))
+                            (vector-set! o (+ (* 3 i) 1) (vector-ref vals i))
+                            (vector-set! o (+ (* 3 i) 2) (vector-ref (vector-ref ch 7) i))
+                            (loop (+ i 1))))))
+                  vals)))
+    (append (list (vector-ref ch 0) (vector-ref ch 1) times out n interp)
+            (if (eq? (vector-ref ch 1) 'weights)
+                (list 'components (vector-length (vector-ref vals 0)))
+                '()))))
+
+(glb-write!
+ (map (lambda (p) ...) (gltf-prims g))     ; as above
+ 'nodes (map node->desc (vector->list (gltf-nodes g)))
+ 'mesh-node 0
+ 'skin (list (vector-ref (vector-ref (gltf-skins g) 0) 0)
+             (vector-ref (vector-ref (gltf-skins g) 0) 1))
+ 'anims (map (lambda (a)
+               (list (vector-ref a 0)
+                     (map chan->desc (vector->list (vector-ref a 1)))))
+             (vector->list (gltf-anims g))))
+```
+
+`test/glb-skin.ss` runs exactly this on a four-joint chain carrying a
+skinned mesh and three clips, then compares the two generations
+accessor by accessor and pose by pose. Read the skeleton back *before*
+posing it, though: `gltf-nodes` is the runtime table, which
+`gltf-animate!` writes into.
+
+Not written yet: morph targets, textures, cameras, materials beyond a
+base colour, and more than one skin per file.
 
 ### `(gfx ktx)` — KTX2 decode/transcode
 
