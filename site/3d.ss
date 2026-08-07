@@ -131,7 +131,41 @@
              "the pipeline above."))))
 
    `(section
-     ,(layer "7" "Why this stack, specifically"
+     ,(layer "7" "Built for a fleet, not a seat"
+            '("Throughput is bounded by how parallel the environment lets the "
+              "agents be."))
+     (div (@ (class "layer-body"))
+       (p "The traditional 3D stack is physically hostile to concurrent AI "
+          "work: one editor instance, a gigabyte install, binary assets that "
+          "git cannot merge. Ten agents on one project means nine waiting.")
+       (ul (@ (class "points"))
+         (li (b "The entire product is text.") " Scenes, shaders, meshes, "
+             "animation logic — so ten agents mean ten git worktrees, each with "
+             "its own second-scale compiles and headless assertions, on one "
+             "laptop, converging by ordinary merge.")
+         (li (b "Review is a program, not a meeting.") " Mutation tests tell you "
+             "whether an assertion can actually fail — and nothing in the loop "
+             "needs a window."))))
+
+   `(section
+     ,(layer "8" "Light enough to be everywhere"
+            '("The whole compiler crosses the wire in under 60KB "
+              "(431KB of wasm, before compression) and runs in the page."))
+     (div (@ (class "layer-body"))
+       (ul (@ (class "points"))
+         (li (b "The workbench is a browser tab.") " A Chromebook or a tablet "
+             "is enough to model, skin and iterate.")
+         (li (b "Shipped artifacts are hundreds of kilobytes.") " Not a "
+             "thirty-megabyte engine runtime — which is the difference between "
+             (em "works in a product page on a phone") " and "
+             (em "works after a loading bar") ".")
+         (li (b "Disposable 3D, at conversation scale.") " Generating, "
+             "compiling and running all happen on one surface, so an AI can "
+             "hand you an interactive 3D demo the way it hands you a paragraph "
+             "— made to answer one question, then thrown away."))))
+
+   `(section
+     ,(layer "9" "Why this stack, specifically"
             '("The loop has hard prerequisites. They are exactly what "
               "shipped."))
      (div (@ (class "layer-body"))
@@ -159,40 +193,6 @@
           (a (@ (href "manual.html#3d-and-webgl")) "manual") "; the point of "
           "this page is what the pieces add up to. The agent that drives them "
           "is " (a (@ (href "agent.html")) "3d-builder") ".")))
-
-   `(section
-     ,(layer "8" "Built for a fleet, not a seat"
-            '("Throughput is bounded by how parallel the environment lets the "
-              "agents be."))
-     (div (@ (class "layer-body"))
-       (p "The traditional 3D stack is physically hostile to concurrent AI "
-          "work: one editor instance, a gigabyte install, binary assets that "
-          "git cannot merge. Ten agents on one project means nine waiting.")
-       (ul (@ (class "points"))
-         (li (b "The entire product is text.") " Scenes, shaders, meshes, "
-             "animation logic — so ten agents mean ten git worktrees, each with "
-             "its own second-scale compiles and headless assertions, on one "
-             "laptop, converging by ordinary merge.")
-         (li (b "Review is a program, not a meeting.") " Mutation tests tell you "
-             "whether an assertion can actually fail — and nothing in the loop "
-             "needs a window."))))
-
-   `(section
-     ,(layer "9" "Light enough to be everywhere"
-            '("The whole compiler crosses the wire in under 60KB "
-              "(431KB of wasm, before compression) and runs in the page."))
-     (div (@ (class "layer-body"))
-       (ul (@ (class "points"))
-         (li (b "The workbench is a browser tab.") " A Chromebook or a tablet "
-             "is enough to model, skin and iterate.")
-         (li (b "Shipped artifacts are hundreds of kilobytes.") " Not a "
-             "thirty-megabyte engine runtime — which is the difference between "
-             (em "works in a product page on a phone") " and "
-             (em "works after a loading bar") ".")
-         (li (b "Disposable 3D, at conversation scale.") " Generating, "
-             "compiling and running all happen on one surface, so an AI can "
-             "hand you an interactive 3D demo the way it hands you a paragraph "
-             "— made to answer one question, then thrown away."))))
 
    `(section
      ,(layer "10" "Where it stands"
