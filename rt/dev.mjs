@@ -77,7 +77,15 @@ function onChange(file) {
 const watcher = fs.watch(ROOT, { recursive: true }, (_e, f) => onChange(f));
 
 // ---- serve ----
+// Every response is uncacheable, set once here rather than per branch:
+// a dev server that lets a browser reuse yesterday's wasm silently
+// serves stale code, and the usual workaround -- restart on a fresh
+// port to mint a new origin -- only hides it. writeHead() merges these
+// in and lets an explicit header of the same name win, so a later
+// branch could still opt out; none does.
 const server = http.createServer((req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
+  res.setHeader('Pragma', 'no-cache');          // HTTP/1.0 proxies
   let url;
   try {
     url = decodeURIComponent(req.url.split('?')[0]);
@@ -86,7 +94,7 @@ const server = http.createServer((req, res) => {
     return res.end('bad request');
   }
   if (url === '/livereload') {
-    res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive' });
+    res.writeHead(200, { 'Content-Type': 'text/event-stream', Connection: 'keep-alive' });
     res.write('retry: 500\n\n');
     res.write('data: build ' + buildN + '\n\n');
     clients.add(res);
@@ -110,7 +118,7 @@ const server = http.createServer((req, res) => {
     fs.readFile(realFile, (err, buf) => {
       if (err) { res.writeHead(404); return res.end('not found'); }
       const ext = path.extname(realFile);
-      res.writeHead(200, { 'Content-Type': MIME[ext] || 'application/octet-stream', 'Cache-Control': 'no-store' });
+      res.writeHead(200, { 'Content-Type': MIME[ext] || 'application/octet-stream' });
       if (ext === '.html') buf = Buffer.from(buf.toString().replace('</body>', RELOAD_SNIPPET + '</body>'));
       res.end(buf);
     });
@@ -118,7 +126,8 @@ const server = http.createServer((req, res) => {
 });
 server.on('close', () => watcher.close());
 server.listen(PORT, () => {
-  console.log(`Goeteia dev server: http://localhost:${PORT}  (cwd: ${ROOT})`);
+  // the bound port, not the requested one: port 0 means "any free port"
+  console.log(`Goeteia dev server: http://localhost:${server.address().port}  (cwd: ${ROOT})`);
   console.log(HAS_BUILD ? 'watching sources; ./build.sh runs on save.' : 'watching sources; no build.sh -- reload only.');
   build();
 });

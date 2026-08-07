@@ -4,6 +4,11 @@ import { join, normalize } from 'node:path';
 const root = process.argv[2] || '/tmp/benchsite';
 const GIF = Buffer.from([71,73,70,56,57,97,1,0,1,0,128,0,0,0,0,0,255,255,255,33,249,4,1,0,0,0,0,44,0,0,0,0,1,0,1,0,0,2,2,68,1,0,59]);
 createServer((req, res) => {
+  // Nothing here may be cached: a reused .wasm silently benchmarks the
+  // previous build, and a cached beacon response drops the result the
+  // browser was trying to report.
+  res.setHeader('Cache-Control', 'no-store');
+  res.setHeader('Pragma', 'no-cache');
   console.error(req.method, req.url.slice(0, 60));
   if (req.url.startsWith('/bench-report')) {
     const d = new URL(req.url, 'http://x').searchParams.get('d') || '';

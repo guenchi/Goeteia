@@ -172,4 +172,9 @@ if ${NODE-node} test/glyphs-scope-dispose.mjs >/dev/null 2>&1; then
 else
     echo "FAIL test/glyphs-scope-dispose.mjs"; fail=1
 fi
+if ${NODE-node} test/dev-nocache.mjs; then
+    echo "ok   test/dev-nocache.mjs"
+else
+    echo "FAIL test/dev-nocache.mjs"; fail=1
+fi
 exit $fail
