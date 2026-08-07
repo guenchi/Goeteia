@@ -311,6 +311,19 @@ backend's for now. Example: `examples/sgpu-scene.html`.
 pure, verifies headlessly, with its own range-reduced trig (`flsin`,
 `flcos`, `fltan`) so both compiler hosts emit identical bytes.
 
+The inverses come the same way — `flasin`, `flacos`, `flatan`,
+`flatan2`, each a reduction onto one series, accurate to 1e-7 across
+its whole domain (measured within a few ulps of a host `Math`).
+`flasin` / `flacos` **clamp** arguments outside [-1, 1] instead of
+answering NaN, because a dot product of two unit vectors leaves that
+interval by an ulp as a matter of course; `flatan2` follows
+`Math.atan2`'s signs, answers 0 at the origin, and does not
+distinguish negative zero. `q-slerp` interpolates two unit
+quaternions `#(x y z w)` along the shortest arc at a constant angular
+rate (`t` unclamped, near-parallel pairs falling back to a normalized
+lerp) — the rate is what separates it from the nlerp
+`gltf-animate!` samples with.
+
 ```scheme
 (define proj (m4-perspective 0.9 (/ 800.0 600.0) 0.1 100.0))
 (define view (m4-look-at (v3 0 0 6) (v3 0 0 0) (v3 0 1 0)))
@@ -402,7 +415,10 @@ before), `gltf-animate-blend!` crossfades two clips posed
 independently — which is what lets clips with different channel sets
 fade correctly — `gltf-weights!` /
 `gprim-morph` drive morph targets, and `anim-machine` / `anim-goto!` /
-`anim-update!` package named states over clips with per-transition fades.
+`anim-update!` package named states over clips with per-transition
+fades. `gltf-animation-names` and `gltf-animation-duration` report a
+clip's name and its length in seconds — the period `gltf-animate!`
+wraps its clock into.
 The skeleton composes without a boxed matrix anywhere: each node's local
 is `m4s-tqs!` in closed form, parent chains multiply in SIMD
 parents-first into a resident staging arena, and `gltf-joint-palette!`

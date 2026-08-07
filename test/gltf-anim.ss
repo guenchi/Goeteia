@@ -528,6 +528,22 @@
     (anim-update! m 0.00000025)
     (near? (vector-ref (joint2-m) 12) 4.75)))
 
+;; the clip clock's period, read back off the parse.  The fixture
+;; keys "lin"/"stp" at t = 0,1,2, "cub" at 0,2,3 and "cubr"/"cubw"
+;; at 0,1 -- three distinct lengths, so a wrong slot in the clip
+;; record and an off-by-one in the index both show, and neither is
+;; hidden by every clip happening to be a second long
+(define duration-ok
+  (and (near? (gltf-animation-duration g 0) 2.0)   ; "lin"
+       (near? (gltf-animation-duration g 1) 2.0)   ; "stp"
+       (near? (gltf-animation-duration g 2) 3.0)   ; "cub"
+       (near? (gltf-animation-duration g 3) 1.0)   ; "cubr"
+       (near? (gltf-animation-duration g2 1) 1.0)  ; "rot"
+       ;; the microsecond clip measures its own span, not zero and
+       ;; not the second the other clips run for (near? alone would
+       ;; call every sub-1e-4 duration equal, hence the scaling)
+       (near? (fl* 10000000.0 (gltf-animation-duration g2 0)) 5.0)))
+
 (define same-state-ok
   (let ((m (anim-machine g2 '((a . 2) (b . 4)) 1.0)))
     (anim-update! m 0.5)
@@ -544,4 +560,4 @@
      weights-ok lin-ok stp-ok cub-ok cubr-ok cubw-ok
      tiny-span-ok nlerp-contract-ok complete-pose-ok
      crossfade-default-ok crossfade-from-ok dup-time-ok
-     fade-settle-ok)
+     duration-ok fade-settle-ok)
