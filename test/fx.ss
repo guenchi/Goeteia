@@ -305,5 +305,127 @@
        (= (count-log "activeTexture:33986") 1)
        (= (count-log "uniform1i:U:u_arr:2") 1)))
 
+;; ---- staging water marks: mark, then release the bytes above it ----
+;; A is kept, B is transient.  After the release, C must land on
+;; exactly B's address -- the same bytes handed out twice is the
+;; whole claim of the mechanism.
+(define wm-a (fx-alloc! 100))
+(define wm-m (fx-mark))
+(define wm-b1 (fx-alloc! 4096))
+(define wm-b2 (fx-alloc! 12))
+(fx-release! wm-m)
+(define wm-c1 (fx-alloc! 4096))
+(define wm-c2 (fx-alloc! 12))
+(define mark-ok
+  (and (> wm-m wm-a)                     ; the mark is above the kept block
+       (= wm-b1 wm-c1)                   ; reuse, block for block
+       (= wm-b2 wm-c2)
+       ;; releasing to the same mark again is idempotent
+       (begin (fx-release! wm-m) (fx-release! wm-m)
+              (= (fx-mark) wm-m))
+       ;; a mark read back after a release is that mark
+       (begin (fx-release! wm-m) (= (fx-mark) wm-m))))
+
+;; ---- a rebuild loop does not drift ----
+;; Fifty mark/alloc/release cycles: the water level must return to
+;; where it started every time, and every cycle must hand out the
+;; same addresses.
+(define wm-top (fx-mark))
+(define cycle-ok
+  (let loop ((i 0) (first-x -1) (first-y -1) (ok #t))
+    (if (= i 50)
+        (and ok (= (fx-mark) wm-top))
+        (let ((m (fx-mark)))
+          (let* ((x (fx-alloc! 333))
+                 (y (fx-alloc! 777)))
+            (fx-alloc! 1)
+            (fx-release! m)
+            (if (= i 0)
+                (loop (+ i 1) x y (and ok (= m wm-top)))
+                (loop (+ i 1) first-x first-y
+                      (and ok (= x first-x) (= y first-y)
+                           (= m wm-top)))))))))
+
+;; ---- the guards: a mark must lie inside the staging heap ----
+(define wm-now (fx-mark))
+(define guard-ok
+  (and
+   ;; below the command region: that would hand the encoder's own
+   ;; bytes out as staging
+   (guard (e ((error? e)
+              (and (eq? (condition-who e) 'fx-release!)
+                   (equal? (condition-irritants e) (list 64 wm-now)))))
+     (fx-release! 64)
+     #f)
+   ;; one byte below the floor is still below it
+   (guard (e ((error? e)
+              (equal? (condition-irritants e) (list 65535 wm-now))))
+     (fx-release! 65535)
+     #f)
+   ;; above the current level: memory that was never allocated
+   (guard (e ((error? e)
+              (and (eq? (condition-who e) 'fx-release!)
+                   (equal? (condition-irritants e)
+                           (list (+ wm-now 8) wm-now)))))
+     (fx-release! (+ wm-now 8))
+     #f)
+   ;; a refused release leaves the water level alone
+   (= (fx-mark) wm-now)
+   ;; the current level itself is legal, and a no-op
+   (begin (fx-release! wm-now) (= (fx-mark) wm-now))
+   ;; so is the floor: the whole staging heap goes back at once.
+   ;; Nothing is written in between, so bumping the same distance
+   ;; again returns the identical addresses and every earlier
+   ;; object survives untouched.
+   (begin (fx-release! 65536)
+          (and (= (fx-mark) 65536)
+               (= (fx-alloc! (- wm-now 65536)) 65536)
+               (= (fx-mark) wm-now)))))
+
+;; ---- alignment survives a release to an unaligned water level ----
+;; 13 bytes leave the level at base+13, which is never a multiple
+;; of 8; the next allocation must still start aligned, at the same
+;; place before and after the release.
+(define al-base (fx-alloc! 13))
+(define al-m (fx-mark))
+(define al-1 (fx-alloc! 5))
+(fx-release! al-m)
+(define al-2 (fx-alloc! 5))
+(define align-ok
+  (and (= (remainder al-base 8) 0)
+       (not (= (remainder al-m 8) 0))    ; the mark itself is odd
+       (= (remainder al-1 8) 0)
+       (= (remainder al-2 8) 0)
+       (= al-1 al-2)
+       (> al-1 al-m)
+       (< (- al-1 al-m) 8)))
+
+;; ---- release leaves the command region alone ----
+;; Pattern A is written above a mark, released, and pattern B
+;; written over it.  The upload has to carry B: that the released
+;; range was handed out again AND that the command encoder still
+;; reads the memory it always did.
+(define cr-m (fx-mark))
+(define cr-a (fx-alloc! 16))
+(%mem-f32-set! cr-a 1.0)          (%mem-f32-set! (+ cr-a 4) 2.0)
+(%mem-f32-set! (+ cr-a 8) 3.0)    (%mem-f32-set! (+ cr-a 12) 4.0)
+(fx-release! cr-m)
+(define cr-b (fx-alloc! 16))
+(%mem-f32-set! cr-b 5.0)          (%mem-f32-set! (+ cr-b 4) 6.0)
+(%mem-f32-set! (+ cr-b 8) 7.0)    (%mem-f32-set! (+ cr-b 12) 8.0)
+(define base-wm (log-len))
+(cmd-begin!)
+(define cr-pos0 (cmd-pos))
+(fx-use! p buf)
+(cmd-buffer-data! cr-b 16)
+(cmd-flush!)
+(define region-ok
+  (and (= cr-a cr-b)                     ; same bytes, second tenant
+       (= cr-pos0 0)                     ; encoder still starts at 0
+       (check-from base-wm
+                   '("useProgram:P1" "bindVAO:V1" "bindBuffer:B1"
+                     "bufferData:5.00,6.00,7.00,8.00"))))
+
 (and alloc-ok prog-ok use-ok reuse-ok ucache-ok ticks-ok loop-ok quad-ok mat-ok
-     input-ok input2-ok inst-ok target-ok lock-ok fixed-ok texarr-ok)
+     input-ok input2-ok inst-ok target-ok lock-ok fixed-ok texarr-ok
+     mark-ok cycle-ok guard-ok align-ok region-ok)

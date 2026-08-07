@@ -92,11 +92,42 @@ wider values, or use lookup tables for hashing-style code.
   33 and 256 joints loads, but drawing it with a 32-slot program is
   refused by `gltf-draw!` rather than silently truncated.  A small
   skin is legal on either.
-- **Staging memory only grows.** `fx-alloc!` is a bump allocator
-  with no `free`; every `gltf-fetch!` of a new asset leaks the
-  previous one's staging bytes.  Fine for dozens of reloads in an
-  editing session (Wasm memory grows on demand); unsuitable for an
-  unbounded loader loop.
+- **Staging memory is a bump heap with one water mark, no `free`.**
+  `fx-alloc!` only ever moves a pointer up.  The one way back is
+  the water-mark pair: `(fx-mark)` reads the current level,
+  `(fx-release! m)` drops it back to `m`, and the next `fx-alloc!`
+  hands those same bytes out again.  So a loader loop that rebuilds
+  a scene is bounded — mark before the build, release when tearing
+  it down:
+
+  ```scheme
+  (define m (fx-mark))
+  (define asset (gltf-fetch! url))   ; …and everything it allocates
+  ;; …later, tearing the whole asset down:
+  (fx-release! m)                    ; asset and its handles are now dead
+  ```
+
+  The discipline is entirely the caller's, and it is absolute:
+  **everything** allocated after the mark dies at the release, at
+  once and with no diagnostic.  Pose arenas, joint palettes,
+  resident mesh bases, readback buffers, any staging address a
+  record still carries — after the release each one points at
+  whatever the next allocation writes there.  Release only whole
+  build phases, and drop the handles in the same breath; a mark
+  taken before something that must outlive the release is a
+  use-after-free that nothing will report.  `fx-release!` does
+  check its argument (below the 64 KiB command region, or above the
+  current level, is an error naming both numbers), but it cannot
+  see who still holds a pointer.
+
+  Wasm memory itself never shrinks — only the pointer moves.  Peak
+  occupancy is the highest water level ever reached, not the sum of
+  everything ever allocated.  Without marks that sum grows without
+  bound: every `gltf-fetch!` of a new asset leaks the previous
+  one's staging bytes, which is fine for dozens of reloads in an
+  editing session and unsuitable for a loop.  GL objects are a
+  separate question: re-uploading into the same slot already
+  replaces, and the browser reclaims what nothing references.
 
 ## Pixel readback stalls the frame
 
