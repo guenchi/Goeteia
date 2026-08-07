@@ -168,13 +168,6 @@
          (li (b "A complete glTF 2.0 skeletal pipeline that verifies headless.")
              " Joint matrices, vertex streams and animation samplers are all "
              "assertable from a terminal.")
-         (li (b "A mismatched draw is an error, not a glitch.") " Every "
-             "draw checks the shader's declared inputs against the mesh's "
-             "actual vertex layout — name and width, per attribute — before "
-             "a byte uploads. Two different layouts can share the same "
-             "stride; feed one to the other's shader and GL silently "
-             "renders a collapsed mesh with nothing in the console. Here "
-             "that is a refusal naming both sides.")
          (li (b "Shaders are data.") " Lighting is written once as an "
              "s-expression; the skinned variant is derived from it "
              "mechanically, by a combinator that checks its own output — "
