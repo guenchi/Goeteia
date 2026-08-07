@@ -21,6 +21,18 @@
   (fold-left (lambda (n a) (+ n (* 4 (caddr a))))
              0 (glsl-attributes forms)))
 
+;; full (type name) pairs -- glsl-varyings returns names only, and a
+;; name-level match would bless (varying vec2 v_normal) against an fs
+;; that declares vec3: real WebGL refuses to link that.
+(define (varying-schema forms)
+  (let loop ((fs forms) (acc '()))
+    (cond ((null? fs) (reverse acc))
+          ((and (pair? (car fs)) (eq? (caar fs) 'varying))
+           (let ((d (car fs)))               ; (varying type name)
+             (loop (cdr fs)
+                   (cons (list (cadr d) (caddr d)) acc))))
+          (else (loop (cdr fs) acc)))))
+
 ;; ---- the normal-mapped static shader, skinned ----
 (define sk-nmap (gltf-skin-shader mesh-normal-vs))
 (define nmap-src (glsl->string sk-nmap))
@@ -37,8 +49,10 @@
        (contains? nmap-src "vec4(g_normal")
        (contains? nmap-src "g_tangent.xyz")
        (contains? nmap-src "g_tangent.w")
-       ;; the varying interface survives: same fs still pairs
-       (equal? (glsl-varyings sk-nmap) (glsl-varyings mesh-normal-vs))))
+       ;; the varying interface survives: same fs still pairs --
+       ;; types included, or the real linker would refuse the pair
+       (equal? (varying-schema sk-nmap) (varying-schema mesh-normal-vs))
+       (equal? (varying-schema sk-nmap) (varying-schema mesh-normal-fs))))
 
 ;; ---- the plain textured shader, skinned: same layout as the
 ;; hand-written gltf-skin-vs it generalizes ----
@@ -104,8 +118,10 @@
        (contains? (glsl->string gltf-skin-vs) "u_model * vec4(g_normal")
        ;; and it still pairs with mesh-tex-fs, so the varyings must
        ;; match that shader's -- deriving it from a source without
-       ;; v_uv would leave the fragment stage without its input
-       (equal? (glsl-varyings gltf-skin-vs) (glsl-varyings mesh-tex-vs))))
+       ;; v_uv would leave the fragment stage without its input, and
+       ;; a type drift (vec2 v_normal) would fail the real linker
+       (equal? (varying-schema gltf-skin-vs) (varying-schema mesh-tex-vs))
+       (equal? (varying-schema gltf-skin-vs) (varying-schema mesh-tex-fs))))
 
 (define (errors? thunk)
   (guard (e (#t #t)) (thunk) #f))
