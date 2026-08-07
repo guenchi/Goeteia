@@ -108,7 +108,49 @@
           "delivers material you keep working.")))
 
    `(section
-     ,(layer "6" "Why this stack, specifically"
+     ,(layer "6" "A family per line, not a model per month"
+            '("Macros generate assets the way they generate code."))
+     (div (@ (class "layer-body"))
+       (p "Game production never wants one model. It wants a family — every "
+          "fence length, forty crates, a lamp post per district. Here a "
+          "parameterized model is a function, and a macro stamps the family "
+          "out at expansion time; the variation lives in arguments, not in "
+          "an artist's afternoon.")
+       (ul (@ (class "points"))
+         (li (b "The asset is source code.") " A character is kilobytes of "
+             "text, not hundreds of megabytes of binary — so git can diff "
+             "it, a review can read it, a merge can reconcile two people's "
+             "changes to the same prop.")
+         (li (b "Validators are the gate.") " Generated variants pass "
+             "through the same computable checks as everything else — "
+             "degenerate triangles, collapsed normals, broken symmetry never "
+             "reach a human eye. Generate wide, filter hard.")
+         (li (b "Honest scope.") " This eats hard-surface work — props, "
+             "kits, architecture, the bulk of any asset list. Sculpted "
+             "hero organics stay in the sculptor's tools; fitting them is "
+             "the pipeline above."))))
+
+   `(section
+     ,(layer "7" "Two exits: the page and the engine"
+            '("The same asset serves the web at zero distance and the "
+              "engine through the front door."))
+     (div (@ (class "layer-body"))
+       (ul (@ (class "points"))
+         (li (b "The web exit is zero distance.") " The source that previewed "
+             "the asset is the runtime that ships it — hundreds of "
+             "kilobytes, no exporter in between.")
+         (li (b "The engine exit is glTF.") " Unreal imports it through "
+             "Interchange, front door, no plugin. And for skeletons the "
+             "preview parity is mathematical: linear blend skinning is the "
+             "same formula on both sides, so joints, weights and bind "
+             "matrices carry over vertex for vertex — what deformed here "
+             "deforms there.")
+         (li (b "Stated boundary.") " PBR base materials carry; bespoke "
+             "engine material graphs do not. That is a format boundary, "
+             "written down, not discovered on import day."))))
+
+   `(section
+     ,(layer "8" "Why this stack, specifically"
             '("The loop has hard prerequisites. They are exactly what "
               "shipped."))
      (div (@ (class "layer-body"))
@@ -138,7 +180,7 @@
           "is " (a (@ (href "agent.html")) "3d-builder") ".")))
 
    `(section
-     ,(layer "7" "Built for a fleet, not a seat"
+     ,(layer "9" "Built for a fleet, not a seat"
             '("Throughput is bounded by how parallel the environment lets the "
               "agents be."))
      (div (@ (class "layer-body"))
@@ -155,7 +197,7 @@
              "needs a window."))))
 
    `(section
-     ,(layer "8" "Light enough to be everywhere"
+     ,(layer "10" "Light enough to be everywhere"
             '("The whole compiler crosses the wire in under 60KB "
               "(431KB of wasm, before compression) and runs in the page."))
      (div (@ (class "layer-body"))
@@ -172,7 +214,7 @@
              "— made to answer one question, then thrown away."))))
 
    `(section
-     ,(layer "9" "Where it stands"
+     ,(layer "11" "Where it stands"
             '("Not a roadmap slide."))
      (div (@ (class "layer-body"))
        (p "The camera-from-silhouette solver, the projection baker and the "
@@ -180,8 +222,9 @@
           "synthetic views baked back to the atlas and compared, recovered "
           "cameras checked against ground truth — every claim a computable "
           "assertion.")
-       (p "The per-frame pose solver is in progress. Lighting-from-reference "
-          "and the feedback protocol for vision models come next.")
+       (p "The per-frame pose solver is in progress. The GLB writer, "
+          "lighting-from-reference and the feedback protocol for vision "
+          "models come next.")
        (div (@ (class "callout"))
          (span (@ (class "k")) "The discipline, unchanged as it grows")
          (p "Nothing ships on the strength of looking right. It ships when a "
