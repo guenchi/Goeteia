@@ -29,11 +29,12 @@ Route every JS-sourced number through such a helper before it can
 reach `fl` operators.  Do not sprinkle `exact->inexact` at use
 sites; the call you forget is the one that traps.
 
-## GLSL reserved words are refused at generation time
+## GLSL and WGSL reserved words are refused at generation time
 
 **Symptom**: `glsl->string` raises `illegal local variable name: out
--- reserved in GLSL ES 1.00 (keyword)` on a shader that used to
-render.
+-- reserved in GLSL ES 1.00 (keyword)`, or `wgsl->string` raises
+`illegal local variable name: let -- a WGSL keyword`, on a shader
+that used to render.
 
 **Cause**: the s-expression shader DSL passes identifiers through
 verbatim, so naming a local `out`, `in`, `sample`, or `filter` used
@@ -64,6 +65,33 @@ before you argue with it:
   `varying`, `uniform-block`) are not identifiers.
 
 `glsl-check` runs the same check without rendering.
+
+`(gfx wgsl)` closes the same hole on its side, with its own table:
+`wgsl->string` (both form lists) and `wgsl-compute->string` refuse a
+declared name that is a WGSL keyword or reserved word — the lists in
+sections 16.1 and 16.2 of the W3C WGSL specification — at every
+position that reaches the module as an identifier: `attribute` /
+`uniform` / `varying`, `struct` names and members, `storage`
+bindings, function names and parameters, `local`, and a `for` index.
+`wgsl-check` runs it alone.  The two tables are deliberately *not*
+translations of one another, and neither renderer is held to the
+other's vocabulary:
+
+- `in`, `out`, `inout` and `void` are GLSL keywords that WGSL leaves
+  free, while `fn`, `let`, `var`, `loop`, `alias`, `override` and
+  `mut` go the other way.
+- WGSL reserves the two underscores as a *prefix* only (section 2.2),
+  where GLSL reserves `__` anywhere — so `a__b` is a legal WGSL name
+  and an illegal GLSL one.  A lone `_` is refused: in WGSL it is the
+  phony-assignment token, not an identifier.
+- `gl_` is a GLSL prefix rule and not a WGSL one.  `gl_Position`,
+  `gl_FragColor` and `gl_FragCoord` are rewritten on the way into a
+  WGSL module, so they never reach it as names at all.
+
+A form list that renders for one backend can therefore be refused by
+the other.  That is the honest answer — the two languages' reserved
+sets simply differ — and it is better found at generation time than
+as a blank canvas on whichever backend the page picks.
 
 ## Prelude gaps
 

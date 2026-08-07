@@ -194,6 +194,17 @@ not truncate (go through a `local` and swizzle instead of
 f32 for the std140-like alignment. `examples/gpu-tex.html` runs a shader
 from forms with a texture from staging bytes.
 
+Every position that *introduces* a name — the three global declarations,
+`struct` names and members, `storage` bindings, function names and
+parameters, `local`, and a `for` index — is checked against WGSL's own
+keyword and reserved lists, so a name the browser would reject is an
+error here instead of a pipeline that silently fails to build.
+`wgsl-check` runs it alone. The table is WGSL's, not the GLSL one
+respelled: `in`, `out`, `inout` and `void` are GLSL keywords that WGSL
+leaves free, `fn` / `let` / `var` / `loop` / `alias` / `override` go the
+other way, and WGSL reserves `__` as a prefix only where GLSL reserves it
+anywhere. Each renderer is held to its own specification.
+
 ## 3. Declarative scenes
 
 ### `(gfx scene)` — `sgl`, raw-GL
