@@ -16,7 +16,9 @@
 ;; through fx-program!/fx-buffer!/fx-texture!, not with hand-numbered
 ;; gl-buffer! calls, or the two schemes collide.  Staging memory is
 ;; owned the same way: bytes [0, 64KiB) are the command region,
-;; fx-alloc! hands out what lies above and grows the memory as needed.
+;; fx-alloc! hands out what lies above and grows the memory as
+;; needed.  A rebuild loop brackets its allocations with (fx-mark)
+;; and (fx-release! m) so the bytes come back.
 ;;
 ;; fx-ticks! (the timing pump: t and dt in seconds, no GL) and
 ;; fx-init-input! (polled keys and pointer) work without fx-init!'s
@@ -28,7 +30,8 @@
 ;;
 ;; Copyright (c) 2026 guenchi. MIT license; see LICENSE.
 (library (gfx fx)
-  (export fx-init! fx-slot! fx-alloc! fx-buffer! fx-texture!
+  (export fx-init! fx-slot! fx-alloc! fx-mark fx-release!
+          fx-buffer! fx-texture!
           fx-texture-array!
           fx-mesh! fx-mesh? fx-mesh-use! fx-mesh-draw! fx-mesh-count
           fx-width fx-height
@@ -105,6 +108,41 @@
         (%mem-grow (quotient (+ (- end have) 65535) 65536)))
       (set! $fx-heap end)
       base))
+
+  ;; ---- water marks: the bump heap's one form of release ----
+  ;; (fx-mark) reads the current water level; (fx-release! m) drops
+  ;; the level back to m, so the next fx-alloc! hands those bytes
+  ;; out again.  That is the whole mechanism: no per-object free, no
+  ;; second arena, no compaction.
+  ;;
+  ;; The discipline is the caller's, and it is absolute: EVERYTHING
+  ;; allocated after the mark dies at the release, at once and
+  ;; without a trace.  Nothing warns you -- the bytes are simply
+  ;; handed out again and overwritten by whatever comes next.  Pose
+  ;; arenas, joint palettes, resident mesh bases, readback buffers,
+  ;; any staging address a record still carries: after the release
+  ;; every one of them points at somebody else's data.  So mark
+  ;; before building a set of assets, release when tearing that
+  ;; whole set down, and drop the handles in the same breath.  A
+  ;; mark taken before an allocation that outlives the release is a
+  ;; use-after-free with no diagnostic.
+  ;;
+  ;; Wasm memory itself never shrinks; only the pointer moves.  Peak
+  ;; occupancy is therefore the highest water level ever reached,
+  ;; not the sum of everything ever allocated -- which is exactly
+  ;; what makes a rebuild loop bounded instead of unbounded.
+  (define (fx-mark) $fx-heap)
+
+  ;; A mark below the command region would hand the encoder's own
+  ;; bytes out as staging; one above the current level would hand
+  ;; out memory that was never allocated.  Both report the offered
+  ;; mark and the level it was measured against.
+  (define (fx-release! m)
+    (when (< m $fx-cmd-limit)
+      (error 'fx-release! "mark below the command region" m $fx-heap))
+    (when (> m $fx-heap)
+      (error 'fx-release! "mark above the current water level" m $fx-heap))
+    (set! $fx-heap m))
 
   (define (fx-buffer!) (let ((s (fx-slot!))) (gl-buffer! s) s))
   (define (fx-texture!) (let ((s (fx-slot!))) (gl-texture! s) s))

@@ -665,6 +665,30 @@ memory at `base` (`w*h*4` RGBA8 bytes from `fx-alloc!`); like
 `fx-bind-target!` it leaves the framebuffer bound, and on a
 multisampled target it reads the resolve framebuffer, so
 `fx-resolve!` has to run first.
+
+Staging memory itself is a bump heap, and `(fx-mark)` / `(fx-release! m)`
+are the way back down it: `fx-mark` reads the current water level,
+`fx-release!` drops it to `m`, and the next `fx-alloc!` hands those bytes
+out again. Bracket a rebuild with the pair and a loader loop stays
+bounded instead of leaking the previous scene:
+
+```scheme
+(define m (fx-mark))
+(define asset (gltf-fetch! url))
+;; …tearing the whole asset down again:
+(fx-release! m)
+```
+
+The bookkeeping stops there: there is no per-object free, and
+**everything** allocated after the mark dies at the release, silently and
+at once — pose arenas, palettes, resident mesh bases, readback buffers,
+any staging address a record still holds. Release whole build phases
+only, and drop the handles with them. `fx-release!` refuses a mark below
+the 64 KiB command region or above the current level (the error names
+both numbers), but nothing can tell it who still holds a pointer. Wasm
+memory never shrinks; only the pointer moves, so peak occupancy is the
+highest level ever reached. See `docs/limits.md`.
+
 Examples: `examples/fx-plasma.html`, `examples/fx-deferred.html`,
 `examples/fx-fps.html`, `examples/arena.html`.
 
