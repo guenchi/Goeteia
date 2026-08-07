@@ -264,13 +264,20 @@
 (define-record-type ($port $make-port port?)
   (fields (immutable kind $port-kind)
           (mutable a $port-a $port-a!)
-          (mutable b $port-b $port-b!)))
+          (mutable b $port-b $port-b!)
+          ;; where the reader stands in this port: line (from 1) and
+          ;; bytes consumed on that line.  Live counting happens in
+          ;; globals (see %next-byte); these fields are the parking
+          ;; place $with-in uses, so a port that is read from twice
+          ;; keeps counting where it left off.
+          (mutable line $port-line $port-line!)
+          (mutable col $port-col $port-col!)))
 ;; kinds: console-in (a = one-byte pushback), console-out,
 ;;        string-in (a = string, b = position),
 ;;        string-out (a = reversed char list)
 
-(define $console-in ($make-port 'console-in -2 0))
-(define $console-out ($make-port 'console-out 0 0))
+(define $console-in ($make-port 'console-in -2 0 1 0))
+(define $console-out ($make-port 'console-out 0 0 1 0))
 (define $cip $console-in)
 (define $cop $console-out)
 (define (current-input-port) $cip)
@@ -280,8 +287,8 @@
 (define (output-port? p)
   (and (port? p) (memq ($port-kind p) '(console-out string-out file-out))))
 
-(define (open-input-string s) ($make-port 'string-in s 0))
-(define (open-output-string) ($make-port 'string-out '() 0))
+(define (open-input-string s) ($make-port 'string-in s 0 1 0))
+(define (open-output-string) ($make-port 'string-out '() 0 1 0))
 (define (get-output-string p) (list->string (reverse ($port-a p))))
 
 (define ($peek-byte-port p)
@@ -299,18 +306,23 @@
       (when (= ($port-b p) -2) ($port-b! p (%fread ($port-a p))))
       ($port-b p))
      (else (errorf 'read "not an input port")))))
-;; line accounting for the console stream: the compiler reads its
-;; source here, and error context wants file:line
+;; Where the reader stands in the current input port.  The compiler
+;; reads its source through this counter and error context wants
+;; file:line; the reader's own diagnostics want a column too.
+;;
+;; Lines count from 1.  $reader-column counts BYTES consumed on the
+;; current line, so after consuming a byte it is that byte's 1-based
+;; column -- and a multi-byte UTF-8 character spans as many columns as
+;; it has bytes, matching the latin-1 view the reader takes of source.
 (define $reader-line 1)
+(define $reader-column 0)
 (define $reader-datum-line 1)
 
 (define ($next-byte-port p)
   (let ((b ($peek-byte-port p)))
     (let ((k ($port-kind p)))
       (cond
-       ((eq? k 'console-in)
-        ($port-a! p -2)
-        (when (= b 10) (set! $reader-line (+ $reader-line 1))))
+       ((eq? k 'console-in) ($port-a! p -2))
        ((eq? k 'file-in) ($port-b! p -2))
        ((eq? k 'string-in)
         (when (< -1 b) ($port-b! p (+ ($port-b p) 1))))))
@@ -325,7 +337,15 @@
      (else (errorf 'write "not an output port")))))
 
 (define (%peek-byte) ($peek-byte-port $cip))
-(define (%next-byte) ($next-byte-port $cip))
+;; the reader's byte source, and the one place the position advances:
+;; two integer updates, no allocation, on the hottest path there is
+(define (%next-byte)
+  (let ((b ($next-byte-port $cip)))
+    (cond
+     ((= b 10) (set! $reader-line (+ $reader-line 1))
+               (set! $reader-column 0))
+     ((< -1 b) (set! $reader-column (+ $reader-column 1))))
+    b))
 (define ($wb byte) ($write-byte-port $cop byte))
 
 (define ($with-out p thunk)
@@ -335,11 +355,21 @@
       thunk
       (lambda () (set! $cop old)))))
 (define ($with-in p thunk)
+  ;; park the live position in the port being left and pick up the
+  ;; one belonging to the port being entered, so every port keeps its
+  ;; own place across separate reads (and a nested read cannot move
+  ;; the outer stream's line number)
   (let ((old $cip))
     (dynamic-wind
-      (lambda () (set! $cip p))
+      (lambda () ($set-in! old p))
       thunk
-      (lambda () (set! $cip old)))))
+      (lambda () ($set-in! p old)))))
+(define ($set-in! from to)
+  ($port-line! from $reader-line)
+  ($port-col! from $reader-column)
+  (set! $cip to)
+  (set! $reader-line ($port-line to))
+  (set! $reader-column ($port-col to)))
 (define (with-output-to-string thunk)
   (let ((p (open-output-string)))
     ($with-out p thunk)
@@ -347,8 +377,13 @@
 (define (with-input-from-string s thunk)
   ($with-in (open-input-string s) thunk))
 
+;; Bytes taken from the CURRENT input port move the reader position;
+;; a read-char naming some other port does not (that port's parked
+;; position, and any later read from it, is off by what was taken).
 (define (read-char . p)
-  (let ((b ($next-byte-port (if (null? p) $cip (car p)))))
+  (let ((b (if (or (null? p) (eq? (car p) $cip))
+               (%next-byte)
+               ($next-byte-port (car p)))))
     (if (< b 0) (eof-object) (integer->char b))))
 (define (peek-char . p)
   (let ((b ($peek-byte-port (if (null? p) $cip (car p)))))
@@ -357,6 +392,15 @@
   ($write-byte-port (if (null? p) $cop (car p)) (char->integer c)))
 
 ;; ---- the reader ----
+
+;; "line L column C", the one place a reader diagnostic spells a
+;; position.  Callers pass the position they captured, not the live
+;; counter: the mistake a reader reports is nearly always where a
+;; construct was OPENED, and by the time it is detected the counter
+;; has run on to the end of the input.
+(define (%at-line line col)
+  (string-append "line " (number->string line)
+                 " column " (number->string col)))
 
 (define (read . p)
   (if (null? p)
@@ -372,6 +416,10 @@
     (cond
      ((< b 0) (eof-object))
      ((= b 40) (%next-byte) (%read-list))          ; (
+     ((= b 41)                                     ; ) with nothing open
+      (%next-byte)
+      (errorf 'read (string-append "unexpected ) at "
+                                   (%at-line $reader-line $reader-column))))
      ((= b 39) (%next-byte) (list 'quote ($read)))  ; '
      ((= b 96) (%next-byte) (list 'quasiquote ($read))) ; `
      ((= b 44)                                     ; , or ,@
@@ -379,7 +427,9 @@
       (if (= (%peek-byte) 64)
           (begin (%next-byte) (list 'unquote-splicing ($read)))
           (list 'unquote ($read))))
-     ((= b 34) (%next-byte) (%read-string '()))    ; "
+     ((= b 34)                                     ; "
+      (%next-byte)
+      (%read-string $reader-line $reader-column '()))
      ((= b 35) (%next-byte) (%read-hash))          ; #
      (else (%finish-atom (%read-token '()))))))
 
@@ -535,31 +585,47 @@
     (string-set! s i (integer->char (car bs)))
     (%fill-bytes s (cdr bs) (+ i 1))))
 
+;; Entered with the open paren already consumed, so the live counter
+;; still names it: carry that position down the whole list, and an
+;; end of input reports where the list was OPENED.  A file whose
+;; parens do not balance otherwise reports at its very end, which is
+;; the least useful place it could name.
 (define (%read-list)
+  (%read-list-from $reader-line $reader-column))
+(define (%read-list-from line col)
   (%skip-blanks)
   (let ((b (%peek-byte)))
     (cond
-     ((< b 0) (errorf 'read "unexpected end of input in list"))
+     ((< b 0) (%unclosed-list line col))
      ((= b 41) (%next-byte) '())                   ; )
      ((= b 46)                                     ; . -- dotted tail
       (%next-byte)                                 ;      or dot-initial
       (if (%delimiter? (%peek-byte))               ;      symbol
           (let ((d ($read)))
             (%skip-blanks)
-            (%next-byte)                           ; consume )
+            (if (< (%peek-byte) 0)
+                (%unclosed-list line col)
+                (%next-byte))                      ; consume )
             d)
           (cons (%finish-atom (cons 46 (%read-token '())))
-                (%read-list))))
+                (%read-list-from line col))))
      (else
       (let ((x ($read)))
-        (cons x (%read-list)))))))
+        (cons x (%read-list-from line col)))))))
+(define (%unclosed-list line col)
+  (errorf 'read (string-append "list opened at " (%at-line line col)
+                               " never closed")))
 
-(define (%read-string acc)
+(define (%read-string line col acc)
   (let ((b (%next-byte)))
     (cond
      ((= b 34) (%bytes->string (reverse acc)))
-     ((= b 92) (%read-string (cons (%read-escape (%next-byte)) acc))) ; backslash
-     (else (%read-string (cons b acc))))))
+     ((< b 0)
+      (errorf 'read (string-append "string opened at " (%at-line line col)
+                                   " never closed")))
+     ((= b 92)                                     ; backslash
+      (%read-string line col (cons (%read-escape (%next-byte)) acc)))
+     (else (%read-string line col (cons b acc))))))
 (define (%read-escape b)
   ;; translate the byte after a backslash; \" and \\ fall through to
   ;; themselves, \n \t \r become the control characters
@@ -616,7 +682,9 @@
    ((string=? name "esc") (integer->char 27))
    ((string=? name "delete") (integer->char 127))
    ((= (string-length name) 1) (string-ref name 0))
-   (else (error 'read "unknown character name" name))))
+   (else (error 'read (string-append "unknown character name ending at "
+                                     (%at-line $reader-line $reader-column))
+                name))))
 
 ;; ---- write ----
 
@@ -1583,12 +1651,12 @@
   ($send-path path)
   (let ((fd (%open-read)))
     (when (< fd 0) (errorf 'open-input-file "cannot open" path))
-    ($make-port 'file-in fd -2)))
+    ($make-port 'file-in fd -2 1 0)))
 (define (open-output-file path)
   ($send-path path)
   (let ((fd (%open-write)))
     (when (< fd 0) (errorf 'open-output-file "cannot open" path))
-    ($make-port 'file-out fd 0)))
+    ($make-port 'file-out fd 0 1 0)))
 (define (close-port p)
   (let ((k ($port-kind p)))
     (when (memq k '(file-in file-out))
