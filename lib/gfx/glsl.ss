@@ -37,10 +37,15 @@
 ;;   (+ - * /) are infix, (- x) negates; (< > <= >= ==) compare;
 ;;   anything else (vec4 sin dot mix ...) is a call.
 ;;
+;; Every position that introduces a name is checked against the GLSL
+;; ES reserved words (glsl-check runs it alone), so an identifier the
+;; driver would reject is an error here instead of a shader that
+;; silently fails to compile and draws nothing.
+;;
 ;; Copyright (c) 2026 guenchi. MIT license; see LICENSE.
 (library (gfx glsl)
   (export glsl->string glsl-attributes glsl-uniforms glsl-varyings
-          glsl-uniform-blocks
+          glsl-uniform-blocks glsl-check
           glsl300-vs->string glsl300-fs->string)
   (import (rnrs))
 
@@ -185,7 +190,194 @@
                         "} ")))
       (else (error 'glsl "bad top-level form" f))))
 
+  ;; ---- reserved words, rejected where a name is introduced ----
+  ;;
+  ;; Identifiers pass through verbatim, so a local named `out' used
+  ;; to reach the driver as syntactically invalid GLSL: the shader
+  ;; failed to compile at runtime, the draw produced nothing, and
+  ;; nothing on the Scheme side said a word.  The check below turns
+  ;; that into a generation-time error, raised at the *declaration*
+  ;; -- the place the user wrote the name -- rather than at one of
+  ;; its uses.
+  ;;
+  ;; The tables are data, one row per spec clause:
+  ;;   (dialect kind word ...)
+  ;; Sources: "The OpenGL ES Shading Language" 1.00.17 sections 3.6
+  ;; (Keywords) and 3.7 (Reserved Keywords), and 3.00.6 sections 3.6
+  ;; and 3.7.  A word is listed in the first row that reserves it and
+  ;; not repeated, so the row it is found in names the clause the
+  ;; error can cite.
+  ;;
+  ;; Both dialects reject the *union* of the two sets, whichever one
+  ;; is being emitted.  A word that 3.00 reserves and 1.00 does not
+  ;; (`sample', `filter', `layout', `smooth') would otherwise compile
+  ;; today and break the day the same forms are handed to
+  ;; glsl300-vs->string -- which is the point of a dialect-neutral
+  ;; form language, and one call away.  The dialect tag stays so the
+  ;; message can say which spec reserves the name.
+  (define $glsl-reserved
+    '((es100 keyword
+             attribute const bool float int break continue do else for
+             if discard return bvec2 bvec3 bvec4 ivec2 ivec3 ivec4
+             vec2 vec3 vec4 mat2 mat3 mat4 in out inout uniform
+             varying sampler2D samplerCube struct void while lowp
+             mediump highp precision invariant)
+      (es100 future
+             asm class union enum typedef template this packed goto
+             switch default inline noinline volatile public static
+             extern external interface flat long short double half
+             fixed unsigned superp input output hvec2 hvec3 hvec4
+             dvec2 dvec3 dvec4 fvec2 fvec3 fvec4 sampler1D sampler3D
+             sampler1DShadow sampler2DShadow sampler2DRect
+             sampler3DRect sampler2DRectShadow sizeof cast namespace
+             using)
+      ;; 3.00 keywords the 1.00 rows above do not already cover
+      (es300 keyword
+             layout centroid smooth case true false uint uvec2 uvec3
+             uvec4 mat2x2 mat2x3 mat2x4 mat3x2 mat3x3 mat3x4 mat4x2
+             mat4x3 mat4x4 samplerCubeShadow sampler2DArray
+             sampler2DArrayShadow isampler2D isampler3D isamplerCube
+             isampler2DArray usampler2D usampler3D usamplerCube
+             usampler2DArray)
+      (es300 future
+             coherent restrict readonly writeonly resource atomic_uint
+             noperspective patch sample subroutine common partition
+             active filter image1D image2D image3D imageCube iimage1D
+             iimage2D iimage3D iimageCube uimage1D uimage2D uimage3D
+             uimageCube image1DArray image2DArray iimage1DArray
+             iimage2DArray uimage1DArray uimage2DArray image1DShadow
+             image2DShadow image1DArrayShadow image2DArrayShadow
+             imageBuffer iimageBuffer uimageBuffer sampler1DArray
+             sampler1DArrayShadow isampler1D isampler1DArray usampler1D
+             usampler1DArray samplerBuffer isamplerBuffer
+             usamplerBuffer sampler2DMS isampler2DMS usampler2DMS
+             sampler2DMSArray isampler2DMSArray usampler2DMSArray)))
+
+  (define ($glsl-reserved-by w)         ; (dialect kind), or #f
+    (let loop ((rows $glsl-reserved))
+      (cond
+       ((null? rows) #f)
+       ((memq w (cddr (car rows))) (list (caar rows) (cadar rows)))
+       (else (loop (cdr rows))))))
+
+  (define ($glsl-prefix? s p)
+    (and (>= (string-length s) (string-length p))
+         (string=? (substring s 0 (string-length p)) p)))
+
+  ;; both specs reserve identifiers containing two consecutive
+  ;; underscores anywhere, not only at the front
+  (define ($glsl-dunder? s)
+    (let loop ((i 1))
+      (and (< i (string-length s))
+           (or (and (char=? (string-ref s (- i 1)) #\_)
+                    (char=? (string-ref s i) #\_))
+               (loop (+ i 1))))))
+
+  ;; why this name may not be declared, or #f if it may be
+  (define ($glsl-name-fault name)
+    (let ((s (symbol->string name)))
+      (cond
+       ;; "gl_" is reserved for built-ins; a *reference* to
+       ;; gl_Position or gl_FragColor is fine, this is about
+       ;; introducing the name
+       (($glsl-prefix? s "gl_") "names beginning gl_ are reserved")
+       (($glsl-dunder? s) "names containing __ are reserved")
+       (else
+        (let ((row ($glsl-reserved-by name)))
+          (and row
+               (string-append "reserved in GLSL ES "
+                              (if (eq? (car row) 'es100) "1.00" "3.00")
+                              " ("
+                              (symbol->string (cadr row))
+                              ")")))))))
+
+  ;; kind names the binding form, so the message points at the
+  ;; declaration and not at some use of it far downstream
+  (define ($glsl-check-name kind name)
+    (if (symbol? name)
+        (let ((fault ($glsl-name-fault name)))
+          (if fault
+              (error 'glsl
+                     (string-append "illegal " kind " name: "
+                                    (symbol->string name) " -- " fault)
+                     name)
+              #t))
+        #t))
+
+  ;; tolerant accessors: a malformed form is the renderer's error to
+  ;; report, so the check skips what it cannot read rather than
+  ;; failing first with a worse message
+  (define ($glsl-nth x n)
+    (cond ((not (pair? x)) #f)
+          ((= n 0) (car x))
+          (else ($glsl-nth (cdr x) (- n 1)))))
+
+  (define ($glsl-drop x n)
+    (if (or (= n 0) (not (pair? x))) x ($glsl-drop (cdr x) (- n 1))))
+
+  (define ($glsl-check-each kind xs field)
+    (let loop ((xs xs))
+      (if (pair? xs)
+          (begin ($glsl-check-name kind ($glsl-nth (car xs) field))
+                 (loop (cdr xs)))
+          #t)))
+
+  (define ($glsl-check-stmt s)
+    (if (pair? s)
+        (case (car s)
+          ((local) ($glsl-check-name "local variable" ($glsl-nth s 2)))
+          ((if) ($glsl-check-stmts ($glsl-drop s 2)))
+          ((if-else)
+           (begin ($glsl-check-stmts ($glsl-nth s 2))
+                  ($glsl-check-stmts ($glsl-nth s 3))))
+          ((for)
+           (begin ($glsl-check-name "loop index"
+                                    ($glsl-nth ($glsl-nth s 1) 1))
+                  ($glsl-check-stmts ($glsl-drop s 2))))
+          (else #t))
+        #t))
+
+  (define ($glsl-check-stmts ss)
+    (let loop ((ss ss))
+      (if (pair? ss)
+          (begin ($glsl-check-stmt (car ss)) (loop (cdr ss)))
+          #t)))
+
+  ;; Only names the *user* introduces are checked.  The DSL's own
+  ;; structure words sit in head position -- attribute, varying, out
+  ;; in (out 0 vec4 name), uniform-block -- and type names sit in
+  ;; type position; neither is a declared identifier, so neither is
+  ;; matched against the tables.
+  (define ($glsl-check-form f)
+    (if (pair? f)
+        (case (car f)
+          ((attribute uniform varying)
+           ($glsl-check-name (symbol->string (car f)) ($glsl-nth f 2)))
+          ((out)                        ; (out loc T name)
+           ($glsl-check-name "fragment output" ($glsl-nth f 3)))
+          ((uniform-block)              ; (uniform-block Name (T m) ...)
+           (begin ($glsl-check-name "uniform block" ($glsl-nth f 1))
+                  ($glsl-check-each "uniform block member"
+                                    ($glsl-drop f 2) 1)))
+          ((define)                     ; (define (name (T a) ...) RET stmt ...)
+           (let ((head ($glsl-nth f 1)))
+             (begin ($glsl-check-name "function" ($glsl-nth head 0))
+                    ($glsl-check-each "function parameter"
+                                      ($glsl-drop head 1) 1)
+                    ($glsl-check-stmts ($glsl-drop f 3)))))
+          (else #t))
+        #t))
+
+  ;; every emission path runs this first: the error belongs to the
+  ;; forms, not to the dialect that happens to render them
+  (define (glsl-check forms)
+    (let loop ((fs forms))
+      (if (pair? fs)
+          (begin ($glsl-check-form (car fs)) (loop (cdr fs)))
+          #t)))
+
   (define (glsl->string forms)
+    (glsl-check forms)
     (apply string-append (map form->glsl forms)))
 
   ;; ---- the ES 3.00 dialect: the same forms, respelled ----
@@ -250,6 +442,9 @@
       (else (form->glsl f))))
 
   (define ($glsl300 forms stage head)
+    ;; the names checked are the ones the caller wrote, before the
+    ;; 3.00 renames rewrite references
+    (glsl-check forms)
     (string-append
      "#version 300 es\n" head
      (apply string-append
