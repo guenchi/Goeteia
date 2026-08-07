@@ -144,13 +144,9 @@
              "worktrees — each with second-scale compiles and headless "
              "assertions — and converge by ordinary merge. Nothing in the "
              "loop needs a window.")
-         (li (b "Small at both ends.") " The workbench is a browser tab — "
-             "the whole compiler crosses the wire in under 60KB and runs in "
-             "the page, so a Chromebook or a tablet is enough to model, "
-             "skin and iterate. And what ships is hundreds of kilobytes, "
-             "not a thirty-megabyte engine runtime: the difference between "
-             (em "works in a product page on a phone") " and "
-             (em "works after a loading bar") ".")
+         (li (b "The workbench is a browser tab.") " The whole compiler "
+             "crosses the wire in under 60KB and runs in the page — a "
+             "Chromebook or a tablet is enough to model, skin and iterate.")
          (li (b "Disposable 3D, at conversation scale.") " Generating, "
              "compiling and running all happen on one surface, so an AI can "
              "hand you an interactive 3D demo the way it hands you a "
