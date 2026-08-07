@@ -152,6 +152,19 @@ a function call. `glsl300-vs->string` / `glsl300-fs->string` emit
 array — `((array mat4 256) u_joints)` — which is how a block carries a
 palette; std140 gives a `mat4` array the tight 64-byte stride, so such a
 block maps one to one onto a run of matrices in staging memory.
+Every position that *introduces* a name — the three global
+declarations, `out`, uniform-block names and members, function names and
+parameters, `local`, and a `for` index — is checked against the GLSL ES
+1.00 and 3.00 keyword and reserved lists (plus the `gl_` prefix and any
+`__`), and a hit is an error from `glsl->string` naming the identifier
+and the declaration that introduced it. Both dialects refuse the union
+of the two lists, so `sample`, `filter`, `layout` and `smooth` are
+refused even when emitting 1.00: the forms are dialect-neutral and one
+call away from `glsl300-vs->string`. *References* to built-ins
+(`gl_Position`, `gl_FragColor`, `gl_FrontFacing`) are untouched — the
+check is about declarations. `glsl-check` runs it alone, without
+rendering.
+
 `glsl-attributes`, `glsl-uniforms`, `glsl-varyings` and
 `glsl-uniform-blocks` read the interface back out of the forms — how
 `(gfx fx)` wires programs automatically, and what

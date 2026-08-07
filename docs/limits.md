@@ -29,18 +29,41 @@ Route every JS-sourced number through such a helper before it can
 reach `fl` operators.  Do not sprinkle `exact->inexact` at use
 sites; the call you forget is the one that traps.
 
-## Generated GLSL is not checked for reserved words
+## GLSL reserved words are refused at generation time
 
-**Symptom**: a shader silently fails to compile at runtime — the
-draw produces nothing, with no Scheme-side error.
+**Symptom**: `glsl->string` raises `illegal local variable name: out
+-- reserved in GLSL ES 1.00 (keyword)` on a shader that used to
+render.
 
 **Cause**: the s-expression shader DSL passes identifiers through
-verbatim.  Naming a local `out`, `in`, `sample`, `filter`, or any
-other GLSL keyword produces syntactically invalid GLSL.
+verbatim, so naming a local `out`, `in`, `sample`, or `filter` used
+to produce syntactically invalid GLSL — the shader failed to compile
+inside the driver, the draw produced nothing, and nothing on the
+Scheme side said a word.  Every position that introduces a name is
+now checked against the GLSL ES 1.00 and 3.00 keyword and reserved
+lists: `attribute` / `uniform` / `varying`, `(out loc T name)`,
+uniform-block names and members, function names and parameters,
+`local`, and a `for` index.  Identifiers beginning `gl_` and any
+identifier containing `__` are refused too; both are reserved by
+the specs.
 
-**Workaround**: avoid GLSL reserved words for locals and helpers.
-When a shader "does nothing", print the generated source with
-`glsl->string` and scan it before suspecting anything else.
+**Workaround**: rename the identifier — the message gives the name
+and which declaration introduced it.  Two things worth knowing
+before you argue with it:
+
+- Both dialects refuse the *union* of the two reserved lists, so
+  `sample`, `filter`, `layout` and `smooth` are refused even when
+  emitting ESSL 1.00, which does not reserve them.  The forms are
+  dialect-neutral; accepting such a name would only move the blank
+  frame to the day someone hands the same shader to
+  `glsl300-vs->string`.
+- *References* to built-ins (`gl_Position`, `gl_FragColor`,
+  `gl_FrontFacing`) are untouched.  The check is about declarations,
+  and only about names you introduce — the DSL's own structure words
+  (the `out` heading an `(out 0 vec4 name)` form, `attribute`,
+  `varying`, `uniform-block`) are not identifiers.
+
+`glsl-check` runs the same check without rendering.
 
 ## Prelude gaps
 
@@ -54,7 +77,16 @@ operations.  Inverse trigonometry (`flasin`/`flacos`/`flatan`/
 
 **Symptom**: a file compiles under the Chez-hosted driver
 (`bin/goeteiac`) but stage1 (`goeteia.wasm` compiling itself) fails
-with `unbound variable 1e-3` — the literal was read as a *symbol*.
+with
+
+```
+unbound variable ~s; exponent literals are not supported by this
+reader -- write the constant out 1e-3
+```
+
+— the literal was read as a *symbol*.  A name that merely contains
+an `e` (`elf-3`, `vec3`) gets the plain `unbound variable` message;
+the hint appears only for something shaped like a number.
 
 **Cause**: the self-hosted reader has no `1e-9` / `1.5e3` exponent
 syntax.
@@ -171,12 +203,43 @@ file only points at it.
 ## Compiler diagnostics are terse
 
 Runtime traps surface as `unreachable` or `illegal cast` with no
-Scheme-level context; a malformed file can report an unexpected
-close paren at a position far from the mistake.  Bisect with small
-files and keep test expressions one-per-define so the failing
-definition identifies itself.  Very large quoted literals traversed
-with `for-each` can overflow the expander — build big tables
-programmatically instead.
+Scheme-level context.  Keep test expressions one-per-define so the
+failing definition identifies itself.  Very large quoted literals
+traversed with `for-each` can overflow the expander — build big
+tables programmatically instead.
+
+### Reader errors say where the construct *opened*
+
+An unbalanced file used to be reported at its end, which is never
+where the mistake is.  The reader now names the opening position of
+whatever was left open:
+
+```
+read: list opened at line 3 column 5 never closed
+read: string opened at line 2 column 3 never closed
+read: unexpected ) at line 2 column 3
+```
+
+Two things to know about those numbers:
+
+- **Columns count bytes, from 1.**  Source is read as latin-1 (see
+  *Source encoding* below), so a three-byte UTF-8 character occupies
+  three columns.  A tab is one column.
+- **Under stage1 the line is a line of the compiler's input
+  stream, not of your file.**  `rt/compile.mjs` feeds the compiler
+  the prelude, the runtime glue and every resolved import ahead of
+  your source, and a reader error is raised before the `(%loc …)`
+  markers that map stream lines back to files have been consumed.
+  The column is exact either way, and the *relative* distance
+  between two reported lines is exact.  When the absolute line
+  matters, compile the same file with `bin/goeteiac`: the
+  Chez-hosted driver reads each file on its own, so its reader
+  errors carry true source positions.
+
+The self-hosted reader's positions are exact for `read` at runtime —
+a program reading from a string or file port gets the real line and
+column of its own input, and a port that is read from more than once
+keeps counting where it left off.
 
 ## Source encoding
 
