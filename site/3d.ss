@@ -151,7 +151,8 @@
 
    `(section
      ,(layer "8" "Light enough to be everywhere"
-            '("The compiler is a 431KB wasm file that runs in the page."))
+            '("The whole compiler crosses the wire in under 60KB "
+              "(431KB of wasm, before compression) and runs in the page."))
      (div (@ (class "layer-body"))
        (ul (@ (class "points"))
          (li (b "The workbench is a browser tab.") " A Chromebook or a tablet "
