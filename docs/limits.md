@@ -215,9 +215,9 @@ where the mistake is.  The reader now names the opening position of
 whatever was left open:
 
 ```
-read: list opened at line 3 column 5 never closed
-read: string opened at line 2 column 3 never closed
-read: unexpected ) at line 2 column 3
+read: list opened at src/scene.ss line 41 column 3 never closed
+read: string opened at src/scene.ss line 7 column 12 never closed
+read: unexpected ) at src/scene.ss line 88 column 20
 ```
 
 Two things to know about those numbers:
@@ -225,21 +225,18 @@ Two things to know about those numbers:
 - **Columns count bytes, from 1.**  Source is read as latin-1 (see
   *Source encoding* below), so a three-byte UTF-8 character occupies
   three columns.  A tab is one column.
-- **Under stage1 the line is a line of the compiler's input
-  stream, not of your file.**  `rt/compile.mjs` feeds the compiler
-  the prelude, the runtime glue and every resolved import ahead of
-  your source, and a reader error is raised before the `(%loc …)`
-  markers that map stream lines back to files have been consumed.
-  The column is exact either way, and the *relative* distance
-  between two reported lines is exact.  When the absolute line
-  matters, compile the same file with `bin/goeteiac`: the
-  Chez-hosted driver reads each file on its own, so its reader
-  errors carry true source positions.
+- **The file and line are the ones you wrote**, even though the
+  compiler is fed a single stream with the prelude, the runtime glue
+  and every resolved import spliced in ahead of your source.  The
+  `(%loc …)` markers that `rt/compile.mjs` plants at each file
+  boundary set a reader-side origin, so the reader maps its stream
+  line back before printing.  An error inside a library names that
+  library.
 
-The self-hosted reader's positions are exact for `read` at runtime —
-a program reading from a string or file port gets the real line and
-column of its own input, and a port that is read from more than once
-keeps counting where it left off.
+The same positions come out of `read` at runtime: a program reading
+from a string or file port gets the real line and column of its own
+input (no file name — nothing told it one), and a port that is read
+from more than once keeps counting where it left off.
 
 ## Source encoding
 
