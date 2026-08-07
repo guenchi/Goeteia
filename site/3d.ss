@@ -131,26 +131,7 @@
              "the pipeline above."))))
 
    `(section
-     ,(layer "7" "Two exits: the page and the engine"
-            '("The same asset serves the web at zero distance and the "
-              "engine through the front door."))
-     (div (@ (class "layer-body"))
-       (ul (@ (class "points"))
-         (li (b "The web exit is zero distance.") " The source that previewed "
-             "the asset is the runtime that ships it — hundreds of "
-             "kilobytes, no exporter in between.")
-         (li (b "The engine exit is glTF.") " Unreal imports it through "
-             "Interchange, front door, no plugin. And for skeletons the "
-             "preview parity is mathematical: linear blend skinning is the "
-             "same formula on both sides, so joints, weights and bind "
-             "matrices carry over vertex for vertex — what deformed here "
-             "deforms there.")
-         (li (b "Stated boundary.") " PBR base materials carry; bespoke "
-             "engine material graphs do not. That is a format boundary, "
-             "written down, not discovered on import day."))))
-
-   `(section
-     ,(layer "8" "Why this stack, specifically"
+     ,(layer "7" "Why this stack, specifically"
             '("The loop has hard prerequisites. They are exactly what "
               "shipped."))
      (div (@ (class "layer-body"))
@@ -180,7 +161,7 @@
           "is " (a (@ (href "agent.html")) "3d-builder") ".")))
 
    `(section
-     ,(layer "9" "Built for a fleet, not a seat"
+     ,(layer "8" "Built for a fleet, not a seat"
             '("Throughput is bounded by how parallel the environment lets the "
               "agents be."))
      (div (@ (class "layer-body"))
@@ -197,7 +178,7 @@
              "needs a window."))))
 
    `(section
-     ,(layer "10" "Light enough to be everywhere"
+     ,(layer "9" "Light enough to be everywhere"
             '("The whole compiler crosses the wire in under 60KB "
               "(431KB of wasm, before compression) and runs in the page."))
      (div (@ (class "layer-body"))
@@ -214,7 +195,7 @@
              "— made to answer one question, then thrown away."))))
 
    `(section
-     ,(layer "11" "Where it stands"
+     ,(layer "10" "Where it stands"
             '("Not a roadmap slide."))
      (div (@ (class "layer-body"))
        (p "The camera-from-silhouette solver, the projection baker and the "
