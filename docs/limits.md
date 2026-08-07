@@ -136,6 +136,27 @@ exactly traps).
 **Workaround**: keep bitwise operands strictly below 2^29 — split
 wider values, or use lookup tables for hashing-style code.
 
+## About a thousand constants per procedure
+
+**Symptom**: the module compiles, then refuses to load —
+`WebAssembly.instantiate(): param count of 1001 exceeds internal
+limit of 1000`.  Nothing in the source names a function with a
+thousand parameters.
+
+**Cause**: constants are hoisted per emitted function, and the
+module's top level is one function.  A body carrying more than ~1000
+of them — a big table of float literals, a long list of strings —
+pushes that function's type past the 1000-parameter ceiling every
+wasm engine imposes.  The prelude's own constants count toward a
+top-level body's share, so the ceiling arrives sooner there than in
+a procedure you write.
+
+**Workaround**: split the body across procedures.
+`test/determinism-battery.ss` carries 600 float literals as fifteen
+procedures of forty and loads fine; the same 600 at top level do
+not.  Grouping does not help if one procedure still holds them all —
+it is a per-function limit, not a per-module one.
+
 ## Capacity limits in the graphics stack
 
 - **256 joints per skin, and 32 on the ESSL 1.00 path.** There are

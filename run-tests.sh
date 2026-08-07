@@ -182,4 +182,9 @@ if ${NODE-node} test/dev-nocache.mjs; then
 else
     echo "FAIL test/dev-nocache.mjs"; fail=1
 fi
+if ${NODE-node} test/determinism.mjs; then
+    echo "ok   test/determinism.mjs"
+else
+    echo "FAIL test/determinism.mjs"; fail=1
+fi
 exit $fail
