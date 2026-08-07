@@ -23,9 +23,14 @@
 ;; Mind the uniform struct's std140-like alignment: order members
 ;; mat4 / vec4 / vec3+pad / f32, as WGSL will read them.
 ;;
+;; Every position that introduces a name is checked against WGSL's own
+;; keyword and reserved lists (wgsl-check runs it alone), so an
+;; identifier the browser would reject is an error here instead of a
+;; pipeline that silently fails to build and draws nothing.
+;;
 ;; Copyright (c) 2026 guenchi. MIT license; see LICENSE.
 (library (gfx wgsl)
-  (export wgsl->string wgsl-compute->string wgsl-layout)
+  (export wgsl->string wgsl-compute->string wgsl-layout wgsl-check)
   (import (rnrs) (gfx glsl))
 
   (define ($wgsl-join parts sep)
@@ -195,8 +200,179 @@
         (loop (cdr fs) (cons (car fs) acc)))
        (else (loop (cdr fs) acc)))))
 
+  ;; ---- reserved words, refused where a name is introduced ----
+  ;;
+  ;; Identifiers reach the module verbatim, so a local named `let' or
+  ;; a uniform named `var' used to be emitted as WGSL the browser
+  ;; refuses to create: the pipeline never built, the pass drew
+  ;; nothing, and nothing on the Scheme side said a word.  The check
+  ;; below turns that into a generation-time error, raised at the
+  ;; *declaration* -- the place the user wrote the name -- rather
+  ;; than at one of its uses.
+  ;;
+  ;; The table is data, one row per specification clause:
+  ;;   (kind word ...)
+  ;; Source: "WGSL" (W3C), section 16.1 Keyword Summary and section
+  ;; 16.2 Reserved Words, each transcribed whole, so the row a word
+  ;; is found in names the clause the error can cite.
+  ;;
+  ;; This is deliberately NOT the GLSL table respelled: the overlap
+  ;; is far smaller than the two languages' family resemblance
+  ;; suggests, and copying either way would both refuse legal names
+  ;; and pass illegal ones.  `in', `out', `inout', `uniform',
+  ;; `void', `sample', `flat', `centroid' and `invariant' are GLSL
+  ;; keywords that WGSL leaves free; `fn', `let', `var', `loop',
+  ;; `alias', `override', `enable', `mut' and `async' go the other
+  ;; way.  Each renderer is held to its own specification.
+  (define $wgsl-reserved
+    '((keyword
+       alias break case const const_assert continue continuing default
+       diagnostic discard else enable false fn for if let loop
+       override requires return struct switch true var while)
+      (reserved
+       NULL Self abstract active alignas alignof as asm asm_fragment
+       async attribute auto await become cast catch class co_await
+       co_return co_yield coherent column_major common compile
+       compile_fragment concept const_cast consteval constexpr
+       constinit crate debugger decltype delete demote
+       demote_to_helper do dynamic_cast enum explicit export extends
+       extern external fallthrough filter final finally friend from
+       fxgroup get goto groupshared highp impl implements import
+       inline instanceof interface layout lowp macro macro_rules
+       match mediump meta mod module move mut mutable namespace new
+       nil noexcept noinline nointerpolation non_coherent noncoherent
+       noperspective null nullptr of operator package packoffset
+       partition pass patch pixelfragment precise precision premerge
+       priv protected pub public readonly ref regardless register
+       reinterpret_cast require resource restrict self set shared
+       sizeof smooth snorm static static_assert static_cast std
+       subroutine super target template this thread_local throw trait
+       try type typedef typeid typename typeof union unless unorm
+       unsafe unsized use using varying virtual volatile wgsl where
+       with writeonly yield)))
+
+  (define ($wgsl-reserved-by w)         ; the clause kind, or #f
+    (let loop ((rows $wgsl-reserved))
+      (cond
+       ((null? rows) #f)
+       ((memq w (cdr (car rows))) (caar rows))
+       (else (loop (cdr rows))))))
+
+  ;; WGSL reserves the two underscores as a *prefix* only (section
+  ;; 2.2, Identifiers): a__b is a legal WGSL name even though GLSL
+  ;; reserves __ anywhere.  A lone _ is the phony-assignment token,
+  ;; not an identifier.
+  (define ($wgsl-dunder-prefix? s)
+    (and (>= (string-length s) 2)
+         (char=? (string-ref s 0) #\_)
+         (char=? (string-ref s 1) #\_)))
+
+  ;; why this name may not be declared, or #f if it may be
+  (define ($wgsl-name-fault name)
+    (let ((s (symbol->string name)))
+      (cond
+       (($wgsl-dunder-prefix? s) "names beginning __ are reserved")
+       ((string=? s "_") "_ alone is not an identifier")
+       (else
+        (let ((kind ($wgsl-reserved-by name)))
+          (and kind
+               (if (eq? kind 'keyword)
+                   "a WGSL keyword"
+                   "a WGSL reserved word")))))))
+
+  ;; kind names the binding form, so the message points at the
+  ;; declaration and not at some use of it far downstream
+  (define ($wgsl-check-name kind name)
+    (if (symbol? name)
+        (let ((fault ($wgsl-name-fault name)))
+          (if fault
+              (error 'wgsl
+                     (string-append "illegal " kind " name: "
+                                    (symbol->string name) " -- " fault)
+                     name)
+              #t))
+        #t))
+
+  ;; tolerant accessors: a malformed form is the renderer's error to
+  ;; report, so the check skips what it cannot read rather than
+  ;; failing first with a worse message
+  (define ($wgsl-nth x n)
+    (cond ((not (pair? x)) #f)
+          ((= n 0) (car x))
+          (else ($wgsl-nth (cdr x) (- n 1)))))
+
+  (define ($wgsl-drop x n)
+    (if (or (= n 0) (not (pair? x))) x ($wgsl-drop (cdr x) (- n 1))))
+
+  (define ($wgsl-check-each kind xs field)
+    (let loop ((xs xs))
+      (if (pair? xs)
+          (begin ($wgsl-check-name kind ($wgsl-nth (car xs) field))
+                 (loop (cdr xs)))
+          #t)))
+
+  (define ($wgsl-check-stmt s)
+    (if (pair? s)
+        (case (car s)
+          ((local) ($wgsl-check-name "local variable" ($wgsl-nth s 2)))
+          ((if) ($wgsl-check-stmts ($wgsl-drop s 2)))
+          ((if-else)
+           (begin ($wgsl-check-stmts ($wgsl-nth s 2))
+                  ($wgsl-check-stmts ($wgsl-nth s 3))))
+          ((for)
+           (begin ($wgsl-check-name "loop index"
+                                    ($wgsl-nth ($wgsl-nth s 1) 1))
+                  ($wgsl-check-stmts ($wgsl-drop s 2))))
+          (else #t))
+        #t))
+
+  (define ($wgsl-check-stmts ss)
+    (let loop ((ss ss))
+      (if (pair? ss)
+          (begin ($wgsl-check-stmt (car ss)) (loop (cdr ss)))
+          #t)))
+
+  ;; Only names the *user* introduces are checked -- the ones that
+  ;; land in the module as identifiers: attribute parameters, the
+  ;; uniform struct's members (and a sampler2D's _s/_t pair), VOut
+  ;; members, helper functions and their parameters, locals, loop
+  ;; indices, compute struct names and fields, and storage bindings.
+  ;; The DSL's own structure words sit in head position -- struct,
+  ;; storage, varying, uniform -- and type names sit in type
+  ;; position; neither is a declared identifier, so neither is
+  ;; matched against the table.
+  (define ($wgsl-check-form f)
+    (if (pair? f)
+        (case (car f)
+          ((attribute uniform varying)
+           ($wgsl-check-name (symbol->string (car f)) ($wgsl-nth f 2)))
+          ((struct)                     ; (struct Name ((T field) ...))
+           (begin ($wgsl-check-name "struct" ($wgsl-nth f 1))
+                  ($wgsl-check-each "struct member" ($wgsl-nth f 2) 1)))
+          ((storage)                    ; (storage name (array T))
+           ($wgsl-check-name "storage buffer" ($wgsl-nth f 1)))
+          ((define)                     ; (define (name (T a) ...) RET stmt ...)
+           (let ((head ($wgsl-nth f 1)))
+             (begin ($wgsl-check-name "function" ($wgsl-nth head 0))
+                    ($wgsl-check-each "function parameter"
+                                      ($wgsl-drop head 1) 1)
+                    ($wgsl-check-stmts ($wgsl-drop f 3)))))
+          (else #t))
+        #t))
+
+  ;; every emission path runs this first, on each form list it is
+  ;; handed: the error belongs to the forms, not to the module they
+  ;; end up sharing
+  (define (wgsl-check forms)
+    (let loop ((fs forms))
+      (if (pair? fs)
+          (begin ($wgsl-check-form (car fs)) (loop (cdr fs)))
+          #t)))
+
   ;; ---- the module: struct U + struct VOut + helpers + vs + fs ----
   (define (wgsl->string vs-forms fs-forms)
+    (wgsl-check vs-forms)
+    (wgsl-check fs-forms)
     (let* ((attrs (glsl-attributes vs-forms))
            (varys (glsl-varyings vs-forms))
            (vary-types (let loop ((fs vs-forms) (acc '()))
@@ -328,6 +504,7 @@
   ;;     (if (>= i (array-length ps)) (return))
   ;;     (local P p (at ps i)) ... (set! (at ps i) p))
   (define (wgsl-compute->string forms)
+    (wgsl-check forms)
     (let* ((structs (filter (lambda (f) (eq? (car f) 'struct)) forms))
            (stores (filter (lambda (f) (eq? (car f) 'storage)) forms))
            (unis (glsl-uniforms forms))
