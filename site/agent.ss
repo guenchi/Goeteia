@@ -9,6 +9,52 @@
         " each one leaves proof, not promises."))
 
    `(section
+     (h2 "3d-builder")
+     (p (@ (class "hint") (style "color:var(--dim)"))
+        "Hand it an asset and it builds the whole 3D pipeline in Goeteia — "
+        "glTF in, shader programs composed from the combinators, animation "
+        "driven through a state machine, an interactive viewer page out. It "
+        "proves what it can with numbers before anyone is asked to look at "
+        "pixels.")
+
+     (div (@ (class "agent"))
+       (div (@ (class "agent-head"))
+         (div (h3 "3d-builder")
+              (div (@ (class "role"))
+                   "asset" ,(raw "&nbsp;") "→" ,(raw "&nbsp;")
+                   "shaded, skinned, animated · verified headlessly first"))
+         (a (@ (class "btn primary") (href "agent/3d-builder.md") (download #t))
+            (span (@ (class "ic")) "↓") "Download 3d-builder.md"))
+
+       (p (@ (class "agent-lead"))
+          "Shaders are s-expressions and the loader's vertex layout is a fixed "
+          "contract, so most of a 3D pipeline can be settled before a browser "
+          "opens: parse the asset, print the generated GLSL and read it, check "
+          "the joint matrices, drive a recording mock GL and inspect the calls "
+          "it received. Only what genuinely needs eyes gets handed over.")
+
+       (div (@ (class "feats"))
+         ,(feat "The layout is law"
+            "One canonical attribute order with fixed widths. "
+            '(code "gprim-layout") " names what a primitive carries — that, "
+            "not the material, is the contract a program must match.")
+         ,(feat "Shaders you can read"
+            "Programs compose from combinators and print as GLSL, so a "
+            "wrong varying is caught by reading the text, not by staring "
+            "at a black canvas.")
+         ,(feat "Numbers before pixels"
+            "glTF parsing, joint matrices and draw calls all verify "
+            "headlessly. A human is asked only for what a machine cannot "
+            "judge.")
+         ,(feat "Knows its edges"
+            "Library gaps go back to the compiler's own review loop rather "
+            "than being papered over here, and 2D pages belong to "
+            '(code "web-builder") "."))
+
+       (div (@ (class "meta"))
+         "tools: " (code "Bash, Read, Write, Edit, Grep, Glob"))))
+
+   `(section
      (h2 "web-builder")
      (p (@ (class "hint") (style "color:var(--dim)"))
         "Describe a page and it builds the whole thing in Goeteia Scheme — "
@@ -52,52 +98,6 @@
             "Generator smoke, node-side smoke of every degradation road, and "
             "dual-backend agreement plus absolute value checks — a diff test "
             "alone passes when both sides are wrong the same way."))
-
-       (div (@ (class "meta"))
-         "tools: " (code "Bash, Read, Write, Edit, Grep, Glob"))))
-
-   `(section
-     (h2 "3d-builder")
-     (p (@ (class "hint") (style "color:var(--dim)"))
-        "Hand it an asset and it builds the whole 3D pipeline in Goeteia — "
-        "glTF in, shader programs composed from the combinators, animation "
-        "driven through a state machine, an interactive viewer page out. It "
-        "proves what it can with numbers before anyone is asked to look at "
-        "pixels.")
-
-     (div (@ (class "agent"))
-       (div (@ (class "agent-head"))
-         (div (h3 "3d-builder")
-              (div (@ (class "role"))
-                   "asset" ,(raw "&nbsp;") "→" ,(raw "&nbsp;")
-                   "shaded, skinned, animated · verified headlessly first"))
-         (a (@ (class "btn primary") (href "agent/3d-builder.md") (download #t))
-            (span (@ (class "ic")) "↓") "Download 3d-builder.md"))
-
-       (p (@ (class "agent-lead"))
-          "Shaders are s-expressions and the loader's vertex layout is a fixed "
-          "contract, so most of a 3D pipeline can be settled before a browser "
-          "opens: parse the asset, print the generated GLSL and read it, check "
-          "the joint matrices, drive a recording mock GL and inspect the calls "
-          "it received. Only what genuinely needs eyes gets handed over.")
-
-       (div (@ (class "feats"))
-         ,(feat "The layout is law"
-            "One canonical attribute order with fixed widths. "
-            '(code "gprim-layout") " names what a primitive carries — that, "
-            "not the material, is the contract a program must match.")
-         ,(feat "Shaders you can read"
-            "Programs compose from combinators and print as GLSL, so a "
-            "wrong varying is caught by reading the text, not by staring "
-            "at a black canvas.")
-         ,(feat "Numbers before pixels"
-            "glTF parsing, joint matrices and draw calls all verify "
-            "headlessly. A human is asked only for what a machine cannot "
-            "judge.")
-         ,(feat "Knows its edges"
-            "Library gaps go back to the compiler's own review loop rather "
-            "than being papered over here, and 2D pages belong to "
-            '(code "web-builder") "."))
 
        (div (@ (class "meta"))
          "tools: " (code "Bash, Read, Write, Edit, Grep, Glob"))))
@@ -193,11 +193,11 @@
 
 (write-file "agent.html"
   (render-page "Agents — Goeteia"
-               (string-append "Agents for Goeteia. web-builder builds a page from "
-                              "scratch — HTML, CSS, wasm, generated JS fallback and "
-                              "RPC in one source; 3d-builder takes a glTF asset through "
-                              "shading, skinning and animation to a viewer page, "
-                              "verified headlessly; web-porter rewrites a "
+               (string-append "Agents for Goeteia. 3d-builder takes a glTF asset "
+                              "through shading, skinning and animation to a viewer "
+                              "page, verified headlessly; web-builder builds a page "
+                              "from scratch — HTML, CSS, wasm, generated JS fallback "
+                              "and RPC in one source; web-porter rewrites a "
                               "JavaScript/TypeScript web file into Goeteia Scheme with "
                               "behavioral equivalence proved by differential testing — "
                               "download the agent definitions.")
