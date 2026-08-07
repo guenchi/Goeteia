@@ -418,9 +418,14 @@
 
 ;; ---- refusals ---------------------------------------------------
 (define refuse-ok
-  (and (guard (e (#t #t))                  ; skinning is v2
+  (and (guard (e (#t #t))                  ; joints with no skin to index
          (glb-write! (list (list '(position normal joints weights)
                                  (pl-vbase pb) 3 (pl-ibase pb) 3)))
+         #f)
+       (guard (e (#t #t))                  ; half a skin binding
+         (glb-write! (list (list '(position normal joints)
+                                 (pl-vbase pb) 3 (pl-ibase pb) 3))
+                     'skin (list (list 0)))
          #f)
        (guard (e (#t #t))                  ; index past the vertices
          (glb-write! (list (list '(position normal)
