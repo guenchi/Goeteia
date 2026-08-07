@@ -16,13 +16,17 @@ const compileMjs = path.join(here, '../rt/compile.mjs');
 const compilerWasm = path.join(here, '../goeteia.wasm');
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'goeteia-readerdiag-'));
 
-// compile source with the self-hosted compiler; return { status, stderr }
-function compile(name, source) {
+// compile source with the self-hosted compiler; return { status, stderr }.
+// opts.js selects the JavaScript target, which reaches a different
+// backend and so needs its own evidence.
+function compile(name, source, opts = {}) {
     const src = path.join(tmp, name);
     fs.writeFileSync(src, source);
+    const out = path.join(tmp, opts.js ? 'out.js' : 'out.wasm');
+    const args = opts.js ? ['--js'] : [];
     try {
         execFileSync(process.execPath,
-                     [compileMjs, compilerWasm, src, path.join(tmp, 'out.wasm')],
+                     [compileMjs, ...args, compilerWasm, src, out],
                      { stdio: ['ignore', 'pipe', 'pipe'] });
     } catch (e) {
         return { status: e.status, stderr: String(e.stderr) };
@@ -58,14 +62,37 @@ test('an ordinary name that merely contains an e gets no exponent hint', () => {
     assert.doesNotMatch(stderr, /exponent/);
 });
 
-test('an unclosed list names where it opened', () => {
+test('the JS target carries the exponent hint too', () => {
+    // --js reaches a second backend with its own reference compiler;
+    // a hint only the wasm backend gives is half a fix
+    const { status, stderr } = compile('exponent-js.ss',
+        ';; expect: 0\n(define eps 1e-3)\n(display eps)\n', { js: true });
+    assert.notEqual(status, 0);
+    assert.match(stderr, /unbound variable/);
+    assert.match(stderr, /exponent literals are not supported by this reader/);
+});
+
+test('the JS target keeps the same negative control', () => {
+    const { status, stderr } = compile('ordinary-js.ss',
+        ';; expect: 0\n(display elf-3)\n', { js: true });
+    assert.notEqual(status, 0);
+    assert.match(stderr, /unbound variable/);
+    assert.doesNotMatch(stderr, /exponent/);
+});
+
+// The compiler is fed one stream holding the prelude, the runtime
+// glue and every resolved import ahead of the user's source, so the
+// reader's raw line is some four-figure stream line.  The (%loc ...)
+// markers the driver plants map it back, and these tests pin the
+// mapping: the number a user reads must be the line in the file the
+// user wrote, with that file named.
+test('an unclosed list names the file and the true source line', () => {
     const { status, stderr } = compile('unclosed.ss',
         ';; expect: 0\n(define (f x)\n  (+ x\n     1)\n(display (f 1))\n');
     assert.notEqual(status, 0);
-    assert.match(stderr, /list opened at line \d+ column \d+ never closed/);
-    // the column is a real column of the offending line, not a
-    // stream-wide character offset: (define starts the line
-    assert.match(stderr, /column 1 never closed/);
+    // (define opens on line 2, at column 1, of a five-line file
+    assert.match(stderr,
+                 /list opened at \S*unclosed\.ss line 2 column 1 never closed/);
 });
 
 test('a close paren with nothing open is reported, not looped on', () => {
@@ -74,12 +101,23 @@ test('a close paren with nothing open is reported, not looped on', () => {
     const { status, stderr } = compile('stray.ss',
         ';; expect: 0\n(display 1))\n');
     assert.notEqual(status, 0);
-    assert.match(stderr, /unexpected \) at line \d+ column 12/);
+    assert.match(stderr, /unexpected \) at \S*stray\.ss line 2 column 12/);
 });
 
 test('an unclosed string names its open quote', () => {
     const { status, stderr } = compile('unstring.ss',
         ';; expect: 0\n(display "hello)\n');
     assert.notEqual(status, 0);
-    assert.match(stderr, /string opened at line \d+ column 10 never closed/);
+    assert.match(stderr,
+                 /string opened at \S*unstring\.ss line 2 column 10 never closed/);
+});
+
+test('the mapped line tracks a mistake further down the file', () => {
+    // one origin for the whole file would satisfy the test above by
+    // accident; a mistake on line 6 must report 6, not 2
+    const { status, stderr } = compile('deep.ss',
+        ';; expect: 0\n(define a 1)\n(define b 2)\n(define c 3)\n'
+        + '(define d 4)\n(display (+ a\n');
+    assert.notEqual(status, 0);
+    assert.match(stderr, /list opened at \S*deep\.ss line 6 column 10 never closed/);
 });

@@ -318,6 +318,16 @@
 (define $reader-column 0)
 (define $reader-datum-line 1)
 
+;; A driver that splices many files into one stream can say which
+;; file the stream is currently in, and where its line 1 fell: set
+;; $reader-file to the name and $reader-line-origin so that
+;; (stream line - origin) is the line in that file.  The reader's
+;; diagnostics then name the file the author wrote rather than the
+;; stream nobody sees.  Left alone -- which is the case for every
+;; program that merely calls read -- positions are the stream's own.
+(define $reader-file "")
+(define $reader-line-origin 0)
+
 (define ($next-byte-port p)
   (let ((b ($peek-byte-port p)))
     (let ((k ($port-kind p)))
@@ -398,8 +408,14 @@
 ;; counter: the mistake a reader reports is nearly always where a
 ;; construct was OPENED, and by the time it is detected the counter
 ;; has run on to the end of the input.
+;;
+;; The line is mapped back through $reader-line-origin, so a driver
+;; that concatenates files reports the author's line, and the file
+;; name leads when one is known.
 (define (%at-line line col)
-  (string-append "line " (number->string line)
+  (string-append $reader-file
+                 (if (string=? $reader-file "") "" " ")
+                 "line " (number->string (- line $reader-line-origin))
                  " column " (number->string col)))
 
 (define (read . p)

@@ -18,8 +18,14 @@
                   (compile-program (reverse acc) (reverse locs))))
        ((and (pair? form) (eq? (car form) '%loc))
         ;; the next stream line is line (caddr form) of (cadr form)
-        (loop acc locs (cadr form)
-              (- (+ $reader-line 1) (caddr form))))
+        (let ((off (- (+ $reader-line 1) (caddr form))))
+          ;; hand the same mapping to the reader: an error raised
+          ;; while reading the NEXT form is reported before any of
+          ;; the machinery below runs, so the reader has to be able
+          ;; to name the file and line on its own
+          (set! $reader-file (cadr form))
+          (set! $reader-line-origin off)
+          (loop acc locs (cadr form) off)))
        ((and (pair? form) (eq? (car form) '%opt))
         ;; (%opt 0) -- script mode: the optimization passes stand down
         (set! *opt-level* (cadr form))
