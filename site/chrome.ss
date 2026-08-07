@@ -105,6 +105,7 @@
          (a (@ (class "brand") (href "index.html")) "Goeteia")
          (div (@ (class "nav-links"))
            (a (@ (class ,(nav-class active 'why)) (href "why.html")) "Why Scheme?")
+           (a (@ (class ,(nav-class active '3d)) (href "3d.html")) "3D")
            (a (@ (class ,(nav-class active 'manual)) (href "manual.html")) "Manual")
            (a (@ (class ,(nav-class active 'agent)) (href "agent.html")) "Agents")
            (a (@ (class "gh") (href "https://github.com/guenchi/Goeteia")) "GitHub")))))
