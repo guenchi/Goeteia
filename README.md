@@ -34,8 +34,9 @@ both.  See [The JS target](#the-js-target).
 - Hygienic macros: `define-syntax` with `syntax-rules` or procedural
   `syntax-case` (fenders, nested ellipses, `(... ...)` escapes,
   `with-syntax`, `datum->syntax`, `generate-temporaries`)
-- The numeric tower minus rationals: fixnums with overflow promotion
-  to bignums, flonums with contagion, exact/inexact conversions
+- The numeric tower: fixnums with overflow promotion to bignums,
+  exact rationals (`(/ 1 3)` → `1/3`, canonical), flonums with
+  contagion, complex numbers, exact/inexact conversions
 - `call/cc` (escape continuations over wasm exception handling) and
   `dynamic-wind`
 - Vectors, bytevectors, strings, interned symbols, characters,
@@ -90,6 +91,16 @@ The UI, text and network stack over the JS bridge, in `lib/web/`:
   `"0.92em"`) that stay exact — no flonums, since the printer isn't
   bit-exact.  The `(web css)` of shaders is `(gfx glsl)`; this is the
   `(web css)` of pages
+- `(web component)` — the React lesson taken at *build* time:
+  `define-component` writes the styles on the element (a value is an
+  ordinary binding, so changing one changes every use) and the
+  library interns each distinct style set to one generated class, so
+  nine identical cards cost one rule.  Pseudo-classes, descendant
+  selectors and `@media` blocks nest inside the style set; the
+  template is implicitly quasiquoted, and `(styled-css)` hands back
+  every interned rule as a `(web css)` rule list.  The registry
+  fills while the page is built and renders once — no css-in-js
+  runtime tax
 - `(web react)` — embed Goeteia components into an existing React
   app: `react-component` registers a factory the React side wraps
   in one `useEffect` (`rt/react.mjs`); props flow in as JS objects,
@@ -111,6 +122,14 @@ The UI, text and network stack over the JS bridge, in `lib/web/`:
   measureText-backed measurer that feeds `(web typeset)`'s
   `prepare` (the one place a host appears in the text stack), and
   the home for Canvas 2D drawing sugar as it grows
+- `(web glyphs)` — per-glyph life over `(web typeset)`: `glyphs!`
+  explodes an element's text into spans re-set at the pen positions
+  typeset computes (so the layout does not move), `glyphs-mixed!`
+  does the same for inline markup by measuring DOM Ranges, and the
+  glyphs then dodge the pointer on a spring.  `glyphs-dodge!` brings
+  its own rAF loop, `glyphs-track!` only the listeners for a loop you
+  already run; both return a disposer, and a `MutationObserver`
+  fires it once every tracked root has left the document
 - `(web scroll)` — a virtual scroller for variable-height text, the
   use case `(web typeset)` was born for: heights are typeset before
   anything mounts (no reflow-forcing measurement), only the visible
@@ -153,7 +172,13 @@ The UI, text and network stack over the JS bridge, in `lib/web/`:
   `define-wasm-js` wrap the modes into named definitions and dispatch
   on the head's shape the way `define` does: a bare name keeps the
   module inline, `(name "app.wasm")` references the URL and writes the
-  file when the generator runs.  See `examples/counter-page.ss`.
+  file when the generator runs, and `define-wasm-js`'s three-element
+  head `(name "app.wasm" "app.js")` externalizes both artifacts — the
+  fallback file is fetched only on an engine without Wasm GC, and
+  caches apart from the page.  Mount-shaped *data* stays data:
+  `quote` suppresses mounting and `quasiquote` suspends it until an
+  unquote, so `` `(div ,(conjure ...)) `` mounts while
+  `` `(conjure ...) `` is just a list.  See `examples/counter-page.ss`.
 
 `examples/counter.html` is a page scripted entirely in Goeteia;
 `examples/counter-embedded.html` is that page as ONE self-contained
@@ -165,7 +190,10 @@ React app with Goeteia widgets inside.
 
 The rendering and game stack — raw WebGL/WebGPU through a command
 buffer, shaders as s-expressions, and everything over them — in
-`lib/gfx/`:
+`lib/gfx/`.  `docs/graphics.md` walks the whole stack, and
+`docs/limits.md` collects the sharp edges (float/fixnum at the JS
+boundary, GLSL reserved words, capacity ceilings) that cost the most
+debugging time:
 
 - `(gfx gl)` — raw WebGL through a command buffer: Scheme encodes a
   frame of GL commands as words in the shared linear memory and one
@@ -521,9 +549,12 @@ buffer, shaders as s-expressions, and everything over them — in
   (`test/meshopt.ss`)
 - `(gfx gltf)` — real 3D assets: GLB files parse with the binary
   chunk in staging memory (the wasm f32 loads are the float decoder).
-  Geometry, node transforms, base colors, metallic/roughness
-  factors, embedded textures
-  (`gltf-load-textures!`), skins and animations all load: 
+  Geometry (POSITION/NORMAL plus `TEXCOORD_0`, `TANGENT`, `COLOR_0`
+  and the skin inputs, interleaved in the order the asset carries
+  them), node transforms, base colors, metallic/roughness
+  factors, embedded base-color/normal/emissive/occlusion textures
+  (`gltf-load-textures!`), morph targets (`gltf-weights!`),
+  skins and animations all load:
   `gltf-animate!` poses a clip completely each frame (looping,
   nlerp rotations, and the nodes it touches reset to bind so a
   channel the clip lacks never keeps the last clip's value),
@@ -532,7 +563,10 @@ buffer, shaders as s-expressions, and everything over them — in
   named states over clips, `anim-goto!` transitions that fade over
   a per-transition time while both clocks keep running — and
   `gltf-skin-vs` blends four weighted joints per
-  vertex from one mat4-array upload.  The skeleton composes without
+  vertex from one mat4-array upload.  Skinning is a dimension, not a
+  shader variant: `(gltf-skin-shader vs)` derives the skinned form of
+  any static vertex shader, leaving the varyings alone so the same
+  fragment shader still pairs.  The skeleton composes without
   a boxed matrix anywhere: every node's local is `m4s-tqs!` in
   closed form, parent chains multiply in SIMD parents-first into a
   resident staging arena, the inverse binds were staged once at
@@ -649,6 +683,20 @@ program finds its canvas at `(js-get (js-global) "__goeteia_canvas")`
 instead of the DOM, and everything else (fx-init!, fx-loop!, input)
 runs unchanged (`examples/fx-worker.html`: jam the main thread for a
 second, the animation doesn't drop a frame).
+
+`rt/web.mjs` is the browser-side loader, and its pieces are separately
+callable: `loadGoeteia(url)` runs a compiled module, `runGoeteiaBytes`
+runs one you already hold, `loadGoeteiaAuto(url, fallback)` picks
+between the wasm module and the `--js` fallback by engine support, and
+`compileGoeteia(source)` / `compileGoeteiaFrom(urls)` compile Scheme in
+the browser against `goeteia.wasm` — a page can ship *sources* instead
+of a binary and build itself on load, with the compiler's own error
+text surfacing as the thrown error rather than the engine's
+`unreachable`. All but `loadGoeteiaAuto` are also published on
+`globalThis` as `__goeteia_load`, `__goeteia_run`, `__goeteia_compile`
+and `__goeteia_compile_from`, which is how a `define-js` mount point —
+Scheme deciding, in the page, whether a heavy module should load at
+all — reaches a loader that otherwise lives in the glue's module scope.
 
 ## Self-hosting
 

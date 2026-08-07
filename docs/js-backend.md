@@ -108,6 +108,14 @@ false), mirroring the wasm compare-against-`G-FALSE`.
   (`TCI` builds the thunk, `IC` sites keep `TR`).  Direct calls stay
   compile-time arity-checked; indirect ones check at bounce time,
   the same moment wasm's adapter would trap.
+- **Exports are a call site with no caller inside the module**, so
+  nothing out there would unwind a thunk.  An exported function that
+  the bounce analysis says may return one is handed to the host
+  wrapped in `TR`; the rest go out as the bare function, so their
+  `Function.length` still reports the real arity -- the wrapper's
+  rest parameter reports 0, which would diverge from the wasm
+  target's adapter arity for every export if it were applied
+  unconditionally.
 
 ## Runtime kernel
 
@@ -140,13 +148,43 @@ lets the prelude fork where the hosts differ (only the branch for
 the compiling backend expands), which is how the integer layer rides
 native `BigInt` here while wasm keeps its limb arithmetic: bignums
 ARE host bigints (`typeof` dispatch, literals emit as `123n`, `BNRM`
-renormalizes into the i31 range), and the limb machinery never
-reaches a js module.  DCE also drops top-level definitions whose
-initializers are pure construction, so unused prelude tables cost
-nothing.  The emitted text itself is compact by construction: short
+renormalizes back to a tagged number whenever the value fits the
+untagged fixnum range `[-2^29, 2^29-1]` -- the range whose `n<<1`
+still fits i31, so the two targets promote to bignum at the same
+magnitude), and the limb machinery never reaches a js module.
+DCE also drops top-level definitions whose initializers are pure
+construction, so unused prelude tables cost nothing.
+The emitted text itself is compact by construction: short
 deterministic names (the Scheme names stay recoverable through
 `xports`), defensive parentheses squashed by a string-safe text
 pass.
+
+### What DCE is allowed to drop
+
+Both targets share `prune-dead`, so the rule matters here for the
+same reason it matters for wasm: how much of the prelude a small
+program pays for.  An unreferenced top-level definition may vanish
+only when evaluating its initializer can neither perform IO nor
+**observably fail** -- a dropped definition must not delete an error
+the program would otherwise have raised.  Pure, therefore: literals,
+`quote`, `lambda`, and `cons`/`vector`/`list`/`%record` over pure
+arguments, plus `if`/`begin`/`let` built from those.
+
+Two edges are easy to get backwards:
+
+- `make-vector` and `string` are **not** pure.  Neither performs IO
+  and both only allocate on success, but each validates its
+  arguments first -- `make-vector` rejects an invalid length,
+  `string` rejects a non-character -- and that failure is observable.
+  A dead `(define x (make-vector -1))` must still trap.
+- A bare variable reference is pure only when the name **resolves**:
+  to another top-level definition, to a primitive, or to an
+  enclosing `let` binding inside the initializer.  An unbound name
+  keeps the initializer alive so ordinary name resolution can report
+  it, instead of a typo in dead code compiling silently.
+
+Everything else -- any other call -- stays impure and roots the
+definition.
 
 ## Drivers and artifacts
 
@@ -154,9 +192,23 @@ pass.
   `bin/goeteiac` and `rt/compile.mjs` grow a flag that injects it.
 - Output is a single ES module: kernel + program, `export function
   main(io)`.
-- `rt/web.mjs`'s `loadGoeteiaAuto`: `WebAssembly.validate` on a
-  canned WasmGC snippet -> load `app.wasm` via the existing glue,
-  else run the fallback (an inline tag or a lazily imported file).
+- `rt/web.mjs`'s `loadGoeteiaAuto(url, fallback)`:
+  `WebAssembly.validate` on a canned WasmGC snippet -> load
+  `app.wasm` via the existing glue, else run the fallback.
+  `fallback` is either a CSS selector for an inert inline
+  `<script type="goeteia/js">` tag (the single-file page, zero extra
+  requests) or a `.js`/`.mjs` URL.  The URL shape is lazy: a WasmGC
+  engine never fetches it, and the file caches apart from the page.
+  `?goeteia=js` forces the fallback, so it can be exercised on a GC
+  engine.
+- The external-file fallback is **fetched as text and evaluated per
+  launch**, not imported as a module namespace.  A module namespace
+  is cached by the host, so a second launch would re-enter a kernel
+  whose module-scoped state -- the staging memory, the FFI locals --
+  is whatever the first launch left behind.  `runGoeteiaInline` puts
+  each launch in a fresh `Function` scope instead (the emitted text
+  is an ES module, so scoping it needs only the `export` keywords
+  removed); the browser's HTTP cache still serves the second fetch.
 - `(conjure mode body...)`: the mount point as a language
   form.  Inside a host program the body compiles as an INDEPENDENT
   program -- its own prelude, its own imports in a fresh scope -- and
@@ -177,6 +229,20 @@ pass.
   runtime (wasm's `array.new_fixed` caps at 10000 operands).  See
   `examples/counter-page.ss` -- a site generator whose interactive
   half compiles inside its own mount point.
+- **Mount-shaped data is data.**  A generator manipulates lists that
+  can look exactly like mount points, so materialization is
+  suppressed under `quote` outright, and under `quasiquote` it is
+  suspended by nesting depth and resumes inside `unquote` /
+  `unquote-splicing`.  `` `(conjure ...) `` therefore stays a list,
+  while `` `(div ,(conjure ...)) `` -- the shape site generators
+  actually write -- still mounts.  All three resolvers (the
+  compiler's `embed-expand`, the Chez driver's form walk, the
+  `rt/compile.mjs` text scan) track the depth identically; the text
+  scanner additionally unwinds prefix-recorded shifts when the
+  enclosing list closes, since a reader macro binds to one datum.
+  Fixing one resolver alone re-opens host divergence in the other
+  direction, so the cases are asserted in `test/conjure.ss` and run
+  on both hosts.
 - The define- family wraps the modes into named definitions, the
   head's shape picking the artifact's home, like `define` itself:
   `(define-js name body...)` embeds the module inline while
@@ -187,6 +253,102 @@ pass.
   while `(define-wasm (name "app.wasm") body...)` references the
   URL and writes the file; `define-wasm-js` does the same and adds
   the JS fallback -- the name's order is the load preference.
+  A three-element head, `(define-wasm-js (name "app.wasm" "app.js")
+  body...)`, puts **both** artifacts in files and leaves the section
+  carrying nothing but the `loadGoeteiaAuto` call -- the lazy shape,
+  which a WasmGC engine never pays for.  That written `.js` keeps
+  its `export` and gains **no** appended self-running call, the
+  opposite of `define-js`'s URL form: the loader runs `main` itself,
+  so appending one would run the program twice.  A fallback path on
+  any mode but `auto` is an error.
+- URLs in a section are escaped for the context they land in, and
+  the two contexts differ.  `define-js`'s URL goes into an HTML
+  attribute, where a quote closes the attribute and `<` can start a
+  tag, so it gets markup escapes (`&amp; &quot; &#39; &lt; &gt;`) --
+  a JS `\x27` escape would be copied through literally there.  The
+  loader-call URLs sit in single-quoted JS string literals inside a
+  `<script>`, so they get `\xNN` escapes for the control range,
+  `'`, `\`, and `<` (which would otherwise let a URL spell an HTML
+  end tag).  Underneath both, because these strings are also written
+  as *filesystem paths*, every byte outside the unreserved URL path
+  set is percent-encoded first (`/` preserved), so a `#`, `?`, or
+  `%` in a filename cannot turn into a fragment, a query, or an
+  escape on the way back.
+
+### Runtime primitives
+
+`rt/web.mjs` is the browser half of the loader story, and it factors
+into pieces a page can reach individually:
+
+| primitive | what it does |
+|-----------|--------------|
+| `runGoeteiaBytes(bytes)` | instantiate an already-compiled module against the DOM bridge and await its `main` |
+| `loadGoeteia(url)` | `fetch` + `runGoeteiaBytes` |
+| `runGoeteiaInline(text)` | run a `--js` module from text, in a fresh scope |
+| `compileGoeteia(source, compilerUrl)` | compile Scheme text in the browser, returning module bytes |
+| `compileGoeteiaFrom(urls, compilerUrl)` | fetch a source list in parallel, join in order, compile |
+| `loadGoeteiaAuto(url, fallback)` | the two-artifact entry above |
+| `hasWasmGC()` | the engine probe `loadGoeteiaAuto` uses |
+
+The compile pair exists because a page that ships *sources* instead
+of a binary -- "compiled by Goeteia in your browser" -- otherwise
+hand-rolls the same twenty lines: instantiate `goeteia.wasm` with its
+stdin wired to the source text and its stdout to a byte sink, then
+instantiate the result.  Splitting `loadGoeteia` into fetch plus
+`runGoeteiaBytes` is what lets the bytes path and the URL path share
+one instantiation -- including the retry for engines that advertise
+`WebAssembly.Suspending` and then reject the import.
+
+`compileGoeteia` surfaces the **compiler's own diagnostics**.  The
+compiler writes errors to the same stdout it writes module bytes to
+and then traps, so catching the trap and reporting `cause.message`
+would reduce every source error to the engine's `unreachable`.  The
+accumulated output is decoded first and becomes the thrown error's
+message, with the original trap kept on `.cause` and the raw text on
+`.output`.  `compileGoeteiaFrom` concatenates its sources in
+dependency order -- dependencies before dependents, since the
+compiler splices each `(library ...)` and treats `(import ...)` as a
+no-op.
+
+### Page-global handles
+
+The glue publishes four handles on `globalThis`:
+
+    __goeteia_load          loadGoeteia
+    __goeteia_run           runGoeteiaBytes
+    __goeteia_compile       compileGoeteia
+    __goeteia_compile_from  compileGoeteiaFrom
+
+They exist because of a reachability problem with a real cause.
+"Fallback" hides two unrelated dimensions:
+
+- **Engine fallback** -- the same program on an engine without
+  WasmGC.  This is mechanical, and `define-wasm-js` automates it.
+- **Capability degradation** -- doing something *else* when WebGL2
+  or a layout box is missing.  This carries ordering (reveal,
+  measure, probe, only then fetch) and recovery (undo the reveal
+  after a trap), which no macro can generate.  It is application
+  logic, so it is written as another mount point: a `define-js`
+  section that probes and then decides what to load.  Degradation
+  deliberately did NOT become macro clauses: a `require`/`on-fail`
+  vocabulary would grow into a template language and still could not
+  express the ordering.
+
+Such a gating section is itself a compiled Goeteia program, and
+`loadGoeteia` lives in the glue's *module* scope, where nothing
+outside can see it.  The handles are the bridge.  Ordering works out
+because any `wasm`/`auto` section's glue is a `<script
+type="module">` that runs before later scripts in document order, so
+the handles are set by the time a gating section calls one.
+
+The handles are set by the *host* glue in plain JS, on the real
+`globalThis`, which is why the `__goeteia_` prefix is harmless here:
+the bridge's per-instance shadowing of that namespace intercepts
+**writes** from a compiled module, while a read falls through to the
+real global when the instance has never written the key.  A module
+may therefore read these handles, but must not use the prefix for
+state it wants another module instance to see -- see the namespace
+rule in `docs/graphics.md`.
 
 ## Testing
 
@@ -195,6 +357,16 @@ on both hosts (texts must be identical) and runs on node; its output
 must equal the `;; expect:` line -- the same oracle the wasm target
 answers to, so wasm/JS behavioral parity is checked test-by-test with
 zero new fixtures.  Skips are defects, per repo policy.
+
+Whatever has no Scheme-level oracle gets a node harness of its own,
+`test/*.mjs`, run from the same script: the emitted JS's trap and
+arity behavior (`js-backend-*`), the bridge's per-instance globals
+(`jsbridge-instance`), and the loader and library lifecycles that
+only misbehave on the *second* run of a page -- the compiler's
+diagnostics surviving a trap (`web-compile-diagnostics`), an
+external `.js` fallback getting a fresh runtime per launch
+(`web-external-fallback-fresh`), and loop retirement in `(gfx fx)`
+and `(web glyphs)`.
 
 ## Known non-goals
 
