@@ -579,6 +579,68 @@ multisampled target it reads the resolve framebuffer, so
 Examples: `examples/fx-plasma.html`, `examples/fx-deferred.html`,
 `examples/fx-fps.html`, `examples/arena.html`.
 
+#### Loop retirement, and the `__goeteia_*` namespace rule
+
+A long-lived page runs a program more than once — a live editor
+recompiles on Run, a demo switcher launches the next demo. Each run
+starts its own `requestAnimationFrame` chain, and nothing in the DOM
+tells the old chain to stop, so without a retirement protocol the
+loops stack up forever and the page gets slower with every Run.
+
+`fx-init!` bumps a generation counter; `fx-ticks!` captures the value
+it saw and stops rescheduling itself as soon as the counter moves
+past it. `(gfx fx)` handles this for you — the trap is in *where the
+counter lives*.
+
+The counter key is deliberately **outside** the `__goeteia_`
+namespace. The JS bridge shadows `globalThis.__goeteia_*` per module
+instance: a write under that prefix lands in the instance's own map,
+never on the real global, and `__goeteia_mem` is answered from the
+instance's own exports. That isolation is the point of the prefix —
+and it means a counter stored under such a key could never be seen
+by a *different* module instance, which is precisely the case this
+counter exists for, since the previous run is a different instance.
+(Reads still fall through to the real global for keys the instance
+has not written, which is how host-planted values like
+`__goeteia_canvas` and the loader handles arrive.) The general rule:
+`__goeteia_*` is per-instance state a module writes for itself, and
+anything that must cross module instances needs a key outside that
+prefix.
+
+`fx-init!` takes an optional second argument, the **owner** object
+the counter is stored on:
+
+```scheme
+(fx-init! canvas)          ; owner defaults to the JS global
+(fx-init! canvas mount)    ; scoped to a node you keep
+```
+
+The default is the global scope, and that default is deliberate.
+Scoping looks tidier, but on a live page every run builds a fresh
+subtree, so scoping the counter to anything the run itself created —
+the canvas, its parent — hands each run a private counter that
+starts at zero, and no run can ever retire the one before it. That
+is the leak the counter exists to prevent, reintroduced.
+
+Pass an owner only for the case it is for: one page running two
+independent widgets that must not retire each other. Then the owner
+must be a node that **outlives the runs** — a container you keep,
+never one a run creates.
+
+`(web glyphs)` runs the same protocol for its pointer-tracking
+lifecycle, on its own key outside the same prefix, but it can afford
+a narrower default: the owner defaults to the **first glyph root**,
+which is an element the page already had (that is what the text was
+exploded from), not something the run built — so two glyph sets on
+one page keep independent lifecycles by default, and the global is
+used only when the group list is empty. Both `glyphs-track!` and
+`glyphs-dodge!` take the optional owner and return an idempotent
+disposer, and a `MutationObserver` calls that disposer when every
+tracked root has left the document — so switching to non-glyph UI
+drops the listeners without the page having to know it should. A
+stale disposer removes its own listeners but leaves the counter and
+the cleanup slot alone if a newer run has already claimed them.
+
 ### `(gfx sprite)` — 2D games
 
 `(gfx sprite)` sits over `(gfx fx)` and `(web typeset)`. A glyph atlas
