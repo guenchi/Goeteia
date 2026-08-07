@@ -88,6 +88,35 @@ wider values, or use lookup tables for hashing-style code.
   editing session (Wasm memory grows on demand); unsuitable for an
   unbounded loader loop.
 
+## Pixel readback stalls the frame
+
+`cmd-read-pixels!` / `fx-read-target!` are synchronous by
+construction: the whole point is that the bytes are in staging
+memory the instant `cmd-flush!` returns, and that requires the
+driver to finish everything already queued before it can answer.
+So a readback drains the pipeline — the CPU waits for the GPU, and
+the GPU then starts the next frame with nothing buffered ahead of
+it.  One small read per frame (picking under the cursor) is
+usually affordable; a full-canvas read every frame is not, and
+neither is reading a target the same frame that drew it.
+
+There is no asynchronous escape hatch here.  WebGL 2's
+`PIXEL_PACK_BUFFER` + fence path (read this frame, collect two
+frames later) would need a command that *returns* on a later
+flush, which the buffer protocol has no shape for.  Where latency
+matters more than freshness, read a target that was drawn a frame
+or two ago and accept the lag.
+
+Two sharp edges besides the cost:
+
+- **Rows come back bottom-up.**  Row 0 of the result is the bottom
+  row of the rectangle, GL's own convention — flip it yourself
+  when handing the bytes to anything that expects top-down images.
+- **A multisampled target cannot be read.**  `cmd-resolve!` it and
+  read the resolve framebuffer; `fx-read-target!` picks the
+  resolve framebuffer for you, but it can only show what
+  `fx-resolve!` has already blitted there.
+
 ## Animation semantics
 
 The deliberate deviations from the glTF ideal — nlerp instead of

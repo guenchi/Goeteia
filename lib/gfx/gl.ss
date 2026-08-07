@@ -34,7 +34,7 @@
           gl-cubemap-empty! gl-cube-face-fb! gl-slot-object!
           gl-target! gl-target-hdr! gl-target-msaa! gl-cube-target!
           gl-target-mrt!
-          cmd-bind-target! cmd-bind-canvas! cmd-resolve!
+          cmd-bind-target! cmd-bind-canvas! cmd-resolve! cmd-read-pixels!
           cmd-region! cmd-begin! cmd-flush! cmd-pos cmd-draws
           cmd-clear! cmd-use-program! cmd-bind-buffer! cmd-buffer-data!
           cmd-vertex-attrib! cmd-vertex-attrib-h!
@@ -464,6 +464,11 @@
      "                                 gl.COLOR_BUFFER_BIT, gl.NEAREST);"
      "              gl.bindFramebuffer(gl.FRAMEBUFFER, null);"
      "              p += 4; break;"
+     "     case 43: gl.readPixels(u[p], u[p+1], u[p+2], u[p+3], gl.RGBA,"
+     "                gl.UNSIGNED_BYTE,"
+     "                new Uint8Array(memory.buffer, u[p+4],"
+     "                               u[p+2] * u[p+3] * 4));"
+     "              p += 5; break;"
      "     default: throw new Error('bad gl opcode');"
      "    }"
      "    if (tquery) {"
@@ -693,6 +698,22 @@
   (define (cmd-resolve! slot rslot w h)  ; blit msaa -> its resolve fb
     (u! 26) (u! slot) (u! rslot) (u! w) (u! h))
   (define (cmd-bind-canvas!) (u! 21))
+  ;; pixels back out of the GPU, into the staging memory: the w*h
+  ;; RGBA8 texels of the rectangle at (x, y) land as w*h*4 bytes at
+  ;; `base`, readable with %mem-u8-ref once cmd-flush! returns (the
+  ;; replayer writes straight into the shared buffer, so there is no
+  ;; second copy and nothing asynchronous to wait for).
+  ;;
+  ;; The source is whatever framebuffer is bound WHERE THIS COMMAND
+  ;; SITS in the stream -- the canvas by default, or the target of an
+  ;; earlier cmd-bind-target!.  A multisampled target cannot be read
+  ;; at all: cmd-resolve! it first and bind its resolve framebuffer.
+  ;; Rows arrive bottom-up, GL's own order: row 0 of the result is
+  ;; the BOTTOM row of the rectangle.
+  ;;
+  ;; The cost is a full pipeline stall -- see docs/limits.md.
+  (define (cmd-read-pixels! x y w h base)
+    (u! 43) (u! x) (u! y) (u! w) (u! h) (u! base))
   ;; instancing (webgl2): per-instance attributes advance once per
   ;; instance; one draw carries them all
   (define (cmd-attrib-divisor! loc div) (u! 22) (u! loc) (u! div))

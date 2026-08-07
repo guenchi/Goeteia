@@ -37,7 +37,7 @@
           fx-cube-target! fx-bind-cube-face!
           fx-target? fx-target-texture
           fx-target-width fx-target-height
-          fx-bind-target! fx-bind-canvas!
+          fx-bind-target! fx-bind-canvas! fx-read-target!
           fx-program! fx-program3! fx-tf-program! fx-ubo!
           fx-program? fx-program-slot fx-program-stride
           fx-program-attribute-names fx-program-attribute-schema
@@ -208,6 +208,24 @@
       (error 'fx-resolve! "not a multisampled target"))
     (cmd-resolve! ($fx-target-fb t) ($fx-target-rfb t)
                   (fx-target-width t) (fx-target-height t)))
+
+  ;; the whole image of a target, back in the staging memory: w*h*4
+  ;; RGBA8 bytes at `base` (allocate it with fx-alloc!), readable with
+  ;; %mem-u8-ref as soon as the frame's cmd-flush! returns.  Rows
+  ;; arrive bottom-up, GL's own order.
+  ;;
+  ;; Like fx-bind-target!, this CHANGES the framebuffer binding and
+  ;; leaves it changed -- the read has to happen with the target bound,
+  ;; and restoring would have to guess what to restore to.  Unlike
+  ;; fx-bind-target! it does not touch the viewport, so anything drawn
+  ;; after it must rebind (fx-bind-target! / fx-bind-canvas!) first.
+  ;;
+  ;; A multisampled target reads through its RESOLVE framebuffer,
+  ;; which only holds the passes that (fx-resolve! t) has already
+  ;; blitted into it: resolve first, or read a stale image.
+  (define (fx-read-target! t base)
+    (cmd-bind-target! (or ($fx-target-rfb t) ($fx-target-fb t)))
+    (cmd-read-pixels! 0 0 (fx-target-width t) (fx-target-height t) base))
 
   ;; binding also sets the viewport to match
   (define (fx-bind-target! t)
