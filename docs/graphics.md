@@ -60,8 +60,19 @@ the 32-bit variants), instancing (`cmd-attrib-divisor!`,
 (`gl-texture-array!`, `cmd-bind-texture-array!`), UBOs (`gl-ubo!`,
 `gl-uniform-block!`, `cmd-ubo-data!`), transform feedback
 (`gl-tf-program!`, `cmd-tf-begin!` / `cmd-tf-end!`), half-float vertex
-attributes (`cmd-vertex-attrib-h!`), and a GPU frame timer
-(`gl-gpu-timer!` / `gl-gpu-ms`). The `cmd-pos` and `cmd-draws` counters
+attributes (`cmd-vertex-attrib-h!`), a GPU frame timer
+(`gl-gpu-timer!` / `gl-gpu-ms`), and pixel readback. Readback is the
+upload path run backwards, and stays a command like any other:
+`cmd-read-pixels!` encodes a rectangle plus a staging address, and the
+replayer hands `gl.readPixels` a view aimed straight at that address —
+so once the frame's one `cmd-flush!` returns, the `w*h*4` RGBA8 bytes
+are simply there for `%mem-u8-ref`, with no copy and nothing to await.
+It reads whichever framebuffer is bound where the command sits in the
+stream, and rows arrive bottom-up as GL delivers them. Picking under
+the cursor, saving a screenshot and reading back a compute-style pass
+all go through it — at the price documented under "Pixel readback
+stalls the frame" in `docs/limits.md`. The `cmd-pos` and `cmd-draws`
+counters
 make instrumentation free — the frame's byte size is the write cursor
 and draws are counted as they encode (see `(gfx stats)`). Example:
 `examples/gl-particles.html` (10,000 particles, one call per frame).
@@ -560,6 +571,11 @@ pointer, with `key-down?`, `pointer-x`, `pointer-lock!`) have no GL
 dependency, so a Three.js or WebGPU scene uses them directly. Render
 targets: `fx-target!`, `fx-target-hdr!`, `fx-target-mrt!` (a G-buffer,
 n half-float attachments one shader fills in one pass), `fx-cube-target!`.
+`(fx-read-target! t base)` copies a whole target back into staging
+memory at `base` (`w*h*4` RGBA8 bytes from `fx-alloc!`); like
+`fx-bind-target!` it leaves the framebuffer bound, and on a
+multisampled target it reads the resolve framebuffer, so
+`fx-resolve!` has to run first.
 Examples: `examples/fx-plasma.html`, `examples/fx-deferred.html`,
 `examples/fx-fps.html`, `examples/arena.html`.
 
