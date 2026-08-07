@@ -130,7 +130,7 @@
                     (gprim-layout (car (gltf-prims gs)))))))
 
 ;; ---- the recording mock GL (as in test/gltf.ss) ----
-(js-eval "globalThis.__gllog = []; globalThis.__mockcanvas = { width:640, height:480, addEventListener(k,f){}, getContext(kind) { const log = globalThis.__gllog; const push = (...a) => log.push(a.join(':')); return { VERTEX_SHADER:'VS', FRAGMENT_SHADER:'FS', COMPILE_STATUS:'CS', LINK_STATUS:'LS', COLOR_BUFFER_BIT:16384, DEPTH_BUFFER_BIT:256, ARRAY_BUFFER:'AB', DYNAMIC_DRAW:'DD', FLOAT:'F', TRIANGLES:'TRI', DEPTH_TEST:'DT', ELEMENT_ARRAY_BUFFER:'EAB', UNSIGNED_SHORT:'US', createTexture(){ return {id:'T'+(this._t=(this._t||0)+1)} }, bindTexture(t,tex){ push('bindTexture', tex.id) }, texParameteri(t,k,v){ push('texParam', k, v) }, generateMipmap(t){ push('genMip', t) }, texImage2D(...a){ push('texImage', a.length) }, activeTexture(u){ push('activeTexture', u) }, uniform1i(loc,v){ push('uniform1i', loc.id, v) }, uniform2f(loc,x,y){ push('uniform2f', loc.id, x.toFixed(2), y.toFixed(2)) }, createShader(k){ return {kind:k} }, shaderSource(s,src){}, compileShader(s){}, getShaderParameter(){ return true }, createProgram(){ return {id:'P'+(this._p=(this._p||0)+1)} }, attachShader(p,s){}, linkProgram(p){}, getProgramParameter(){ return true }, bindAttribLocation(p,i,n){ push('bindAttrib', i, n) }, createVertexArray(){ return {id:'V'+(this._v=(this._v||0)+1)} }, bindVertexArray(){}, createBuffer(){ return {id:'B'+(this._b=(this._b||0)+1)} }, getUniformLocation(p,n){ return {id:'U:'+n} }, useProgram(p){ push('useProgram', p.id) }, bindBuffer(t,b){ push(t==='EAB'?'bindIndex':'bindBuffer', b.id) }, bufferData(t,arr,u){ push('bufferData', arr.length) }, enableVertexAttribArray(l){ push('enable', l) }, vertexAttribPointer(...a){ push('attrib', a.join(',')) }, uniform1f(loc,x){ push('uniform1f', loc.id, x.toFixed(2)) }, uniform3f(loc,x,y,z){ push('uniform3f', loc.id, x.toFixed(2), y.toFixed(2), z.toFixed(2)) }, uniform4f(loc,...a){ push('uniform4f', loc.id, a.map(x=>x.toFixed(1)).join(',')) }, uniformMatrix4fv(loc,tr,arr){ push('uniformMat4', loc.id, arr.length, arr[12].toFixed(2)); push('mat:'+loc.id, Array.from(arr).map(x=>x.toFixed(2)).join(',')) }, drawElements(m,c,t,o){ push('drawElements', m, c, t) }, viewport(...a){ push('viewport', a.join(',')) } } } }")
+(js-eval "globalThis.__gllog = []; globalThis.__mockcanvas = { width:640, height:480, addEventListener(k,f){}, getContext(kind) { const log = globalThis.__gllog; const push = (...a) => log.push(a.join(':')); return { VERTEX_SHADER:'VS', FRAGMENT_SHADER:'FS', COMPILE_STATUS:'CS', LINK_STATUS:'LS', COLOR_BUFFER_BIT:16384, DEPTH_BUFFER_BIT:256, ARRAY_BUFFER:'AB', DYNAMIC_DRAW:'DD', FLOAT:'F', TRIANGLES:'TRI', DEPTH_TEST:'DT', ELEMENT_ARRAY_BUFFER:'EAB', UNSIGNED_SHORT:'US', createTexture(){ return {id:'T'+(this._t=(this._t||0)+1)} }, bindTexture(t,tex){ push('bindTexture', tex.id) }, texParameteri(t,k,v){ push('texParam', k, v) }, generateMipmap(t){ push('genMip', t) }, texImage2D(...a){ push('texImage', a.length) }, activeTexture(u){ push('activeTexture', u) }, uniform1i(loc,v){ push('uniform1i', loc.id, v) }, uniform2f(loc,x,y){ push('uniform2f', loc.id, x.toFixed(2), y.toFixed(2)) }, createShader(k){ return {kind:k} }, shaderSource(s,src){}, compileShader(s){}, getShaderParameter(){ return true }, createProgram(){ return {id:'P'+(this._p=(this._p||0)+1)} }, attachShader(p,s){}, linkProgram(p){}, getProgramParameter(){ return true }, bindAttribLocation(p,i,n){ push('bindAttrib', i, n) }, createVertexArray(){ return {id:'V'+(this._v=(this._v||0)+1)} }, bindVertexArray(){}, createBuffer(){ return {id:'B'+(this._b=(this._b||0)+1)} }, getUniformLocation(p,n){ return {id:'U:'+n} }, useProgram(p){ push('useProgram', p.id) }, bindBuffer(t,b){ push(t==='EAB'?'bindIndex':'bindBuffer', b.id) }, bufferData(t,arr,u){ push('bufferData', arr.length) }, enableVertexAttribArray(l){ push('enable', l) }, vertexAttribPointer(...a){ push('attrib', a.join(',')) }, uniform1f(loc,x){ push('uniform1f', loc.id, x.toFixed(2)) }, uniform3f(loc,x,y,z){ push('uniform3f', loc.id, x.toFixed(2), y.toFixed(2), z.toFixed(2)) }, uniform4f(loc,...a){ push('uniform4f', loc.id, a.map(x=>x.toFixed(1)).join(',')) }, uniformMatrix4fv(loc,tr,arr){ push('uniformMat4', loc.id, arr.length, arr[12].toFixed(2)); push('mat:'+loc.id, Array.from(arr).map(x=>x.toFixed(2)).join(',')); globalThis['__last_'+loc.id]=Array.from(arr) }, drawElements(m,c,t,o){ push('drawElements', m, c, t) }, viewport(...a){ push('viewport', a.join(',')) } } } }")
 
 ;; image decode, synchronously: the loader only needs a thenable
 (js-eval "globalThis.Blob = function(){}; globalThis.__imgn = 0; globalThis.createImageBitmap = () => ({ then: f => { f({id:'IMG'+(++globalThis.__imgn)}); return {then(){}} } })")
@@ -144,6 +144,12 @@
 (define (count-log p)
   (let ((n (log-len)))
     (let loop ((i 0) (c 0))
+      (if (= i n)
+          c
+          (loop (+ i 1) (if (prefix? p (entry i)) (+ c 1) c))))))
+(define (count-log-from p from)
+  (let ((n (log-len)))
+    (let loop ((i from) (c 0))
       (if (= i n)
           c
           (loop (+ i 1) (if (prefix? p (entry i)) (+ c 1) c))))))
@@ -482,6 +488,58 @@
     (cmd-flush!)
     #f))
 
+;; ... and EVERY slot of the schema map needs its own reachable
+;; counter-example, or one case of $layout-attr-schema can drift
+;; narrow (a_color . 3) and bless a program that steps 60 bytes over
+;; a 64-byte primitive.  Table-driven: each program below carries the
+;; full correct name list with exactly ONE wrong width.  The uniforms
+;; are complete on purpose -- if a broken check let the program
+;; through, the draw would otherwise die at a missing u_mvp and the
+;; guard would report a false red-for-the-wrong-reason pass.
+(define (wrong-width-prog names)
+  (fx-program!
+   (append
+    (map (lambda (p) (list 'attribute (cdr p) (car p))) names)
+    '((uniform mat4 u_mvp)
+      (uniform mat4 u_model)
+      (uniform (array mat4 32) u_joints)
+      (uniform vec4 u_color)
+      (define (main) void
+        (set! gl_Position
+              (* u_mvp (vec4 (fl 0) (fl 0) (fl 0) (fl 1)))))))
+   plain-fs))
+(define gs-names
+  '((a_pos . vec3) (a_normal . vec3) (a_uv . vec2)
+    (a_tangent . vec4) (a_color . vec4)))
+(define gk-names
+  '((a_pos . vec3) (a_normal . vec3) (a_uv . vec2)
+    (a_joints . vec4) (a_weights . vec4)))
+(define (one-wrong names key ty)
+  (map (lambda (p) (if (eq? (car p) key) (cons key ty) p)) names))
+(define (refused? g names key ty)
+  (let ((prog (wrong-width-prog (one-wrong names key ty))))
+    (guard (e (#t #t))
+      (cmd-begin!)
+      (gltf-draw! g prog (m4-identity))
+      (cmd-flush!)
+      #f)))
+(define width-table-ok
+  (and (refused? gs gs-names 'a_pos 'vec2)
+       (refused? gs gs-names 'a_normal 'vec4)
+       (refused? gs gs-names 'a_uv 'vec3)
+       (refused? gs gs-names 'a_tangent 'vec3)
+       (refused? gs gs-names 'a_color 'vec3)
+       (refused? gk gk-names 'a_joints 'vec3)
+       (refused? gk gk-names 'a_weights 'vec3)
+       ;; positive control: the same construction with every width
+       ;; RIGHT must draw, or the seven refusals above prove nothing
+       (let ((prog (wrong-width-prog gs-names))
+             (mark (log-len)))
+         (cmd-begin!)
+         (gltf-draw! gs prog (m4-identity))
+         (cmd-flush!)
+         (= 1 (count-log-from "drawElements" mark)))))
+
 ;; ---- an i_* attribute must not slip through ----
 ;; fx-program classifies i_-prefixed attributes as per-instance and
 ;; drops them from the visible name list, so the name check passes
@@ -530,10 +588,60 @@
             ((near2? (vector-ref m i) (vector-ref id i)) (loop (+ i 1)))
             (else #f)))))
 
+;; ---- a NON-IDENTITY root must reach the shader, whole ----
+;; Static shader-text checks cannot see this: a draw path that
+;; quietly uploads identity to u_model (the exact failure this
+;; round's u_model work fixed) passes every assertion above.  So:
+;; draw through the real gltf-skin-vs program with a rotated,
+;; translated root and compare ALL sixteen components of what was
+;; in force at the drawElements -- for u_mvp AND u_model.
+(define (last-mat name)
+  (let ((a (js-get (js-global) name)))
+    (let loop ((i 0) (acc '()))
+      (if (= i 16)
+          (list->vector (reverse acc))
+          ;; js->number hands back a FIXNUM for integral JS values
+          ;; (0.0 crosses as 0) and fl<? traps on those -- normalize
+          (loop (+ i 1)
+                (cons (exact->inexact (js->number (js-index a i)))
+                      acc))))))
+(define (m16-near? a b)
+  (let loop ((i 0))
+    (cond ((= i 16) #t)
+          ((near2? (vector-ref a i) (vector-ref b i)) (loop (+ i 1)))
+          (else #f))))
+(define root-frame
+  (m4-mul (m4-translate 5.0 2.0 -3.0) (m4-rotate-y 0.7)))
+
+(define skinned-root-ok
+  (let ((mark (log-len)))
+    (cmd-begin!)
+    (gltf-draw! gk skin-prog (m4-identity) root-frame)
+    (cmd-flush!)
+    (and (= 1 (count-log-from "drawElements" mark))
+         ;; vp is identity, so u_mvp must BE the root -- not identity
+         (m16-near? (last-mat "__last_U:u_mvp") root-frame)
+         ;; ... and the normal matrix carries the same frame, or the
+         ;; model turns on screen while the lighting stays put
+         (m16-near? (last-mat "__last_U:u_model") root-frame))))
+
+;; unskinned: the root folds into the runtime node world instead
+(define unskinned-root-ok
+  (let* ((p (car (gltf-prims ga)))
+         (expect (m4-mul root-frame (gltf-prim-world ga p)))
+         (mark (log-len)))
+    (cmd-begin!)
+    (gltf-draw! ga lit-prog (m4-identity) root-frame)
+    (cmd-flush!)
+    (and (= 1 (count-log-from "drawElements" mark))
+         (m16-near? (last-mat "__last_U:u_mvp") expect)
+         (m16-near? (last-mat "__last_U:u_model") expect))))
+
 (and stride-collision k-draw-ok s-mismatch-ok defaults-ok
      nmap-bound-ok combinator-layout-ok base-tex-optional-ok
      animated-world-ok matrix-node-ok matrix-reset-ok
      prim-world-split-ok skinned-prim-world-ok
      no-u-model-ok textured-pred-ok textured-preload-ok
      untextured-preload-ok skinned-draw-identity-ok
-     width-guard-ok instance-guard-ok)
+     width-guard-ok width-table-ok instance-guard-ok
+     skinned-root-ok unskinned-root-ok)

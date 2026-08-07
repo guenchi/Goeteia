@@ -472,13 +472,18 @@
 
 (define instant-fade-ok
   (let ((m (anim-machine g2 '((a . 2) (b . 4)) 1.0)))
-    (anim-update! m 0.5)                 ; "ta": node1 = 2.5
-    (anim-goto! m 'b 0.0)                ; instant
-    (anim-update! m 0.5)
-    (and (near? (vector-ref (joint2-m) 12) 7.0)   ; source released
-         ;; ... and the DESTINATION was sampled: "n0" drives node 0
-         ;; alone, so this is zero unless the settle branch ran it
-         (near? (node0-x) 2.5))))
+    ;; park node 0 at 0 first: an earlier case leaves it at 2.5, so
+    ;; a settle branch that skipped the destination would inherit
+    ;; exactly the expected value and pass anyway
+    (gltf-animate! g2 4 0.0)
+    (and (near? (node0-x) 0.0)
+         (begin
+           (anim-update! m 0.5)          ; "ta": node1 = 2.5
+           (anim-goto! m 'b 0.0)         ; instant
+           (anim-update! m 0.5)
+           (and (near? (vector-ref (joint2-m) 12) 7.0) ; source freed
+                ;; ... and the DESTINATION really was sampled
+                (near? (node0-x) 2.5))))))
 
 ;; goto to the state already current must not disturb a live fade
 ;; a negative fade is the same family as an instant one: the guard
@@ -487,11 +492,14 @@
 ;; true forever and the source is never released.
 (define negative-fade-ok
   (let ((m (anim-machine g2 '((a . 2) (b . 4)) 1.0)))
-    (anim-update! m 0.5)                 ; "ta": node1 = 2.5
-    (anim-goto! m 'b -1.0)
-    (anim-update! m 0.5)
-    (and (near? (vector-ref (joint2-m) 12) 7.0)
-         (near? (node0-x) 2.5))))
+    (gltf-animate! g2 4 0.0)             ; same hygiene as above
+    (and (near? (node0-x) 0.0)
+         (begin
+           (anim-update! m 0.5)          ; "ta": node1 = 2.5
+           (anim-goto! m 'b -1.0)
+           (anim-update! m 0.5)
+           (and (near? (vector-ref (joint2-m) 12) 7.0)
+                (near? (node0-x) 2.5))))))
 
 ;; an interrupt restarts the fade clock: at the same dt the new
 ;; transition must be a QUARTER in, not half.  ta -> n0 runs .25 of
