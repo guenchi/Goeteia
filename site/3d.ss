@@ -119,14 +119,19 @@
          (li (b "Drawing that refuses layout mismatches.") " A program that "
              "does not match the mesh is an error naming both sides, not a "
              "frame of triangle soup with nothing in the console.")
-         (li (b "Inverse trigonometry and constant-rate quaternion slerp.")
-             " The arithmetic every solver above is written in.")
+         (li (b "Shaders are data.") " Lighting is written once as an "
+             "s-expression; the skinned variant is derived from it "
+             "mechanically, by a combinator that checks its own output — "
+             "so a fitting loop can rewrite rendering the same way it "
+             "rewrites geometry.")
          (li (b "Pixel readback.") " The machine can see the frame it just "
              "rendered — which is the half of the loop everything else "
              "depends on.")
          (li (b "Second-scale compilation, and an asset memory writable at "
                 "runtime.") " Together they close the iteration to something an "
-             "agent can drive thousands of times a day."))
+             "agent can drive thousands of times a day — with the solver "
+             "arithmetic (inverse trig, constant-rate slerp) already in the "
+             "box."))
        (p "The API detail lives in the "
           (a (@ (href "manual.html#3d-and-webgl")) "manual") "; the point of "
           "this page is what the pieces add up to. The agent that drives them "
