@@ -152,6 +152,11 @@ if ${NODE-node} test/web-compile-diagnostics.mjs >/dev/null 2>&1; then
 else
     echo "FAIL test/web-compile-diagnostics.mjs"; fail=1
 fi
+if ${NODE-node} test/reader-diagnostics.mjs >/dev/null 2>&1; then
+    echo "ok   test/reader-diagnostics.mjs"
+else
+    echo "FAIL test/reader-diagnostics.mjs"; fail=1
+fi
 if ${NODE-node} test/web-external-fallback-fresh.mjs >/dev/null 2>&1; then
     echo "ok   test/web-external-fallback-fresh.mjs"
 else

@@ -1370,6 +1370,51 @@
       (else (compile-app e locals cell tail?))))
    (else (errorf 'goeteia "cannot compile ~s" e))))
 
+;; An unbound name that is really a number the reader could not read:
+;; the self-hosted reader has no exponent syntax, so 1e-3 arrives here
+;; as a symbol and the bare "unbound variable" names a cause nobody
+;; guesses.  Shape: an optional sign, then digits and dots with at
+;; least one digit, then e or E, an optional sign, and digits to the
+;; end.  Ordinary names that merely contain an e (elf-3, vec3) fail
+;; the very first test, since they do not start like a number.
+(define (exponent-literal? sym)
+  (and (symbol? sym)
+       (let* ((s (symbol->string sym))
+              (n (string-length s)))
+         (and (< 2 n)
+              (let* ((c0 (char->integer (string-ref s 0)))
+                     (signed? (or (= c0 43) (= c0 45))))    ; + -
+                (and (or signed? (= c0 46)                  ; .
+                         (and (< 47 c0) (< c0 58)))         ; 0-9
+                     (let mantissa ((i (if signed? 1 0)) (digits 0))
+                       (and (< i n)
+                            (let ((c (char->integer (string-ref s i))))
+                              (cond
+                               ((and (< 47 c) (< c 58))
+                                (mantissa (+ i 1) (+ digits 1)))
+                               ((= c 46) (mantissa (+ i 1) digits))
+                               ((or (= c 101) (= c 69))     ; e E
+                                (and (< 0 digits)
+                                     (%exponent-digits? s n (+ i 1))))
+                               (else #f)))))))))))
+(define (%exponent-digits? s n i)
+  ;; the tail after e/E: an optional sign, then at least one digit
+  (let* ((j (if (and (< i n)
+                     (let ((c (char->integer (string-ref s i))))
+                       (or (= c 43) (= c 45))))
+                (+ i 1)
+                i)))
+    (and (< j n)
+         (let digits ((k j))
+           (or (= k n)
+               (let ((c (char->integer (string-ref s k))))
+                 (and (< 47 c) (< c 58) (digits (+ k 1)))))))))
+(define (unbound-hint sym)
+  (if (exponent-literal? sym)
+      (string-append "; exponent literals are not supported by this"
+                     " reader -- write the constant out")
+      ""))
+
 (define (compile-ref e locals cell)
   ;; lexical bindings are found by identity; unbound marked
   ;; identifiers resolve like the identifier they renamed
@@ -1398,7 +1443,10 @@
                                          (nums-below (cdr p)))))
                             (compile-lambda ps (list (cons r ps))
                                             locals cell))
-                          (errorf 'goeteia "unbound variable ~s" e))))))))))
+                          (errorf 'goeteia
+                                  (string-append "unbound variable ~s"
+                                                 (unbound-hint r))
+                                  e))))))))))
 
 ;; walk an argument list held in local t, pushing n elements
 (define (unpack-args t n)
@@ -1838,8 +1886,12 @@
       (list head OP-DROP rest)))))
 
 (define (compile-global-set e locals cell)
-  (let ((v (assq (unmark (cadr e)) *vars*)))
-    (unless v (errorf 'goeteia "set! of unbound variable ~s" (cadr e)))
+  (let* ((r (unmark (cadr e)))
+         (v (assq r *vars*)))
+    (unless v
+      (errorf 'goeteia
+              (string-append "set! of unbound variable ~s" (unbound-hint r))
+              (cadr e)))
     (list (compile-exp (caddr e) locals cell #f)
           (global-set (cdr v))
           (global-get G-VOID))))
