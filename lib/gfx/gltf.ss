@@ -73,6 +73,9 @@
           anim-machine anim-machine? anim-state anim-goto! anim-update!
           gltf-joint-matrices gltf-joint-palette! gltf-joint-count
           gltf-skin-vs gltf-skin-shader
+          gltf-skin-vs3 gltf-skin-shader3 gltf-skin-program3!
+          gltf-skin-binding gltf-skin-block-joints
+          gltf-skin-uniform-joints
           gprim-vbase gprim-vbytes gprim-ibase gprim-ibytes
           gprim-icount gprim-index-u32? gprim-color
           gprim-metallic gprim-roughness
@@ -105,7 +108,13 @@
             ;; per-skin[k] = #(ibms-base palette-base njoints) -- the
             ;; whole palette composes and uploads without a boxed
             ;; matrix anywhere
-            (immutable pal $gltf-pal)))
+            (immutable pal $gltf-pal)
+            ;; the uniform buffer the big-palette draw path uploads
+            ;; through, or #f until one is needed.  It cannot be
+            ;; allocated at parse time: buffer slots are fx's to
+            ;; hand out and fx-init! resets them, while parsing runs
+            ;; wherever the caller likes
+            (mutable ubo $gltf-ubo $gltf-ubo!)))
 
   ;; primitives are open records: custom renderers can reach the
   ;; staging offsets and draw with their own shaders
@@ -426,8 +435,14 @@
                  (ibms (make-vector nj #f))
                  (ibm-acc (json-ref skin "inverseBindMatrices"))
                  (inf (and ibm-acc ($acc-info json bin ibm-acc 64))))
-            (when (> nj 32)
-              (error 'gltf "too many joints for the skin shader" nj))
+            ;; the ceiling is the BIG palette's, not the small one's:
+            ;; a skin past 32 is still loadable, it just has to draw
+            ;; through the uniform-block path (gltf-skin-shader3).
+            ;; Refusing it here would make the loader decide a
+            ;; question that belongs to the program.
+            (when (> nj gltf-skin-block-joints)
+              (error 'gltf "too many joints for the skin shader"
+                     nj gltf-skin-block-joints))
             (let j ((i 0))
               (when (< i nj)
                 (vector-set! joints i (vector-ref js i))
@@ -1117,6 +1132,39 @@
   ;; while the normals stayed put.  Defined after gltf-skin-shader
   ;; because it calls it.
   (define gltf-skin-vs #f)
+  ;; its big-palette twin, from the same combinator family
+  (define gltf-skin-vs3 #f)
+
+  ;; ---- the two palette carriers ----
+  ;; A skin's matrices reach the vertex shader one of two ways, and
+  ;; the choice is the PROGRAM's, not the asset's:
+  ;;
+  ;;   uniform mat4 u_joints[32]   -- ESSL 1.00, no extensions, the
+  ;;                                  original path, unchanged
+  ;;   layout(std140) uniform Skin { mat4 u_joints[256]; }
+  ;;                               -- ESSL 3.00 + WebGL 2, the size
+  ;;                                  a humanoid rig with fingers
+  ;;                                  and a face actually needs
+  ;;
+  ;; 256 is what a conforming WebGL 2 context guarantees:
+  ;; MAX_UNIFORM_BLOCK_SIZE is at least 16384 bytes and std140 gives
+  ;; a mat4 array a 64-byte stride, so 16384 / 64 = 256 matrices fit
+  ;; with nothing to spare.  The stride being exactly 64 is why the
+  ;; resident palette uploads with no repacking: the block's memory
+  ;; image IS the run of matrices gltf-joint-palette! composed.
+  (define gltf-skin-uniform-joints 32)  ; the ESSL 1.00 array's size
+  (define gltf-skin-block-joints 256)   ; the std140 block's size
+  ;; the binding point the Skin block wants.  0 belongs to the frame
+  ;; globals block (gfx scene) so that a skinned program can carry
+  ;; both without either party knowing about the other
+  (define gltf-skin-binding 1)
+  (define $gltf-skin-block-name 'Skin)
+  (define $gltf-skin-block
+    (list 'uniform-block $gltf-skin-block-name
+          (list (list 'array 'mat4 gltf-skin-block-joints) 'u_joints)))
+  (define $gltf-skin-uniform
+    (list 'uniform (list 'array 'mat4 gltf-skin-uniform-joints)
+          'u_joints))
 
   ;; ---- the skin combinator: any static vertex shader, skinned ----
   ;; Skinning is one orthogonal dimension, not a family of
@@ -1172,7 +1220,38 @@
           ($skin-refs? (cdr form) pairs)))
      (else #f)))
 
+  ;; Both variants are ONE combinator: they differ only in the form
+  ;; that declares the palette (and, for the block flavour, in the
+  ;; block name it additionally reserves).  Everything else -- the
+  ;; attribute padding, the interleave-order check, the rewrite of
+  ;; a_pos/a_normal/a_tangent, every diagnostic -- is shared, so the
+  ;; small and large paths cannot drift apart the way the
+  ;; hand-written skin shader once drifted from its combinator.
   (define (gltf-skin-shader vs)
+    ($skin-shader vs $gltf-skin-uniform #f))
+
+  ;; the big-palette flavour: up to 256 joints out of a std140
+  ;; uniform block.  ESSL 3.00 only -- render it with fx-program3!
+  ;; (fx-program! rejects a uniform-block form outright), and wire
+  ;; the block to gltf-skin-binding, which gltf-skin-program3! does
+  ;; for you.  The ACCESS syntax is identical, so a shader body
+  ;; written against either reads the same.
+  (define (gltf-skin-shader3 vs)
+    ($skin-shader vs $gltf-skin-block $gltf-skin-block-name))
+
+  ;; the whole big-palette program in one call: skin the vertex
+  ;; shader, build it as ESSL 3.00, and wire the Skin block to its
+  ;; binding point.  Doing the wiring here is what keeps the binding
+  ;; number out of the caller's hands -- gltf-draw! binds the same
+  ;; one, and neither has to trust the other to remember it.
+  (define (gltf-skin-program3! vs-forms fs-forms)
+    (let ((p (fx-program3! (gltf-skin-shader3 vs-forms) fs-forms)))
+      (gl-uniform-block! (fx-program-slot p)
+                         (symbol->string $gltf-skin-block-name)
+                         gltf-skin-binding)
+      p))
+
+  (define ($skin-shader vs palette block-name)
     (let* ((names (map car (glsl-attributes vs)))
            (has? (lambda (n) (and (memq n names) #t)))
            (subst
@@ -1209,6 +1288,18 @@
       (unless (memq 'a_pos names)
         (error 'gltf-skin-shader
                "vertex shader declares no a_pos attribute" names))
+      ;; block names live in their own namespace, so this is a
+      ;; separate check from the variable one below -- but a second
+      ;; block called Skin is just as fatal, and only the block
+      ;; flavour injects one
+      (when block-name
+        (for-each
+         (lambda (b)
+           (when (eq? (car b) block-name)
+             (error 'gltf-skin-shader
+                    "input already declares the injected uniform block"
+                    block-name)))
+         (glsl-uniform-blocks vs)))
       ;; every name this injects must be free in the input.  GLSL
       ;; shares one top-level namespace across storage classes, so
       ;; check attributes, uniforms and varyings together -- a
@@ -1406,7 +1497,7 @@
                      (out (if (= i last-attr)
                               (append
                                (list
-                                '(uniform (array mat4 32) u_joints)
+                                palette
                                 '(attribute vec4 a_weights)
                                 '(attribute vec4 a_joints))
                                out)
@@ -1414,6 +1505,7 @@
                 (loop (cdr fs) (+ i 1) out)))))))
 
   (set! gltf-skin-vs (gltf-skin-shader mesh-tex-vs))
+  (set! gltf-skin-vs3 (gltf-skin-shader3 mesh-tex-vs))
 
   ;; KHR_mesh_quantization: read component c of a vertex as a flonum,
   ;; dequantizing by componentType + normalized.  Positions ride the
@@ -1727,7 +1819,8 @@
                           nodes skins
                           ($gltf-anim-table json bin)
                           ($gltf-pose-arena nodes)
-                          ($gltf-pal-arena nodes skins)))))))
+                          ($gltf-pal-arena nodes skins)
+                          #f))))))
 
   ;; the pose arena: immutable bind TRS per node, plus the scratch
   ;; and marks a crossfade needs (preallocated -- a fade runs every
@@ -1917,6 +2010,50 @@
             (loop (+ k 1) (cdr ws)))))
       (vector-set! mo 3 #t)))
 
+  ;; the uniform buffer behind the big palette, made on first use.
+  ;; It is sized for the FULL block (256 mat4) rather than for this
+  ;; asset's joint count: GL wants the bound buffer to cover the
+  ;; block a program declares, and the block's size is the shader's
+  ;; property, not the asset's.  One per gltf is enough -- upload,
+  ;; bind and draw are consecutive in the command stream, so two
+  ;; skins never share a buffer across a draw boundary.
+  (define ($gltf-skin-ubo! g)
+    (or ($gltf-ubo g)
+        (let ((s (fx-ubo! (* 64 gltf-skin-block-joints))))
+          ($gltf-ubo! g s)
+          s)))
+
+  ;; Which palette carrier does this program use?  The two are
+  ;; mutually exclusive by construction -- a block member has no
+  ;; uniform location of its own, so u_joints is in exactly one of
+  ;; the two tables -- which is what lets the choice be made from
+  ;; the program alone, with no registration order to consult.  A
+  ;; small asset therefore draws fine through a big-palette program
+  ;; (the block just carries fewer matrices than it can hold); the
+  ;; reverse is the one combination that cannot work, and it is
+  ;; refused by name below.
+  (define ($skin-upload! g prog si)
+    (let ((n (gltf-joint-count g si)))
+      (cond
+       ((fx-uniform? prog 'u_joints)
+        (when (> n gltf-skin-uniform-joints)
+          (error 'gltf-draw!
+                 "skin has more joints than the uniform-array palette holds; build the program with gltf-skin-shader3"
+                 n gltf-skin-uniform-joints))
+        (fx-uniform! prog 'u_joints (gltf-joint-palette! g si) n))
+       ((memq $gltf-skin-block-name (fx-program-blocks prog))
+        (let ((ubo ($gltf-skin-ubo! g)))
+          ;; the palette is already the block's memory image -- the
+          ;; std140 stride for a mat4 array is 64 bytes, exactly
+          ;; what gltf-joint-palette! composed, so this is a
+          ;; straight copy of n matrices with no repacking
+          (cmd-ubo-data! ubo (gltf-joint-palette! g si) (* n 64))
+          (cmd-bind-ubo! gltf-skin-binding ubo)))
+       (else
+        (error 'gltf-draw!
+               "program carries no joint palette: no u_joints uniform and no Skin block"
+               (fx-program-blocks prog))))))
+
   (define (gltf-draw! g prog vp . root)
     (for-each
      (lambda (p)
@@ -1975,12 +2112,11 @@
          (let ((c (gprim-color p)))
            (if ($gprim-skin p)
                ;; skinned: the resident palette carries the pose --
-               ;; composed in SIMD, uploaded in three words; the
-               ;; optional root still frames the whole asset
+               ;; composed in SIMD, uploaded in a handful of command
+               ;; words through whichever carrier the program
+               ;; declares; the optional root still frames the asset
                (begin
-                 (fx-uniform! prog 'u_joints
-                              (gltf-joint-palette! g ($gprim-skin p))
-                              (gltf-joint-count g ($gprim-skin p)))
+                 ($skin-upload! g prog ($gprim-skin p))
                  (fx-uniform! prog 'u_mvp
                               (if (null? root) vp (m4-mul vp (car root))))
                  ;; skinned variants of world-space shaders read

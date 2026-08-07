@@ -41,7 +41,7 @@
           fx-program! fx-program3! fx-tf-program! fx-ubo!
           fx-program? fx-program-slot fx-program-stride
           fx-program-attribute-names fx-program-attribute-schema
-          fx-program-istride
+          fx-program-istride fx-program-blocks
           fx-use! fx-use-instanced! fx-uniform! fx-uniform?
           fx-ticks! fx-loop! fx-loop-fixed!
           fx-init-input! key-down? pointer-x pointer-y pointer-down?
@@ -257,7 +257,15 @@
             ;; color are both vec4) and so do wrong widths that
             ;; cancel out (vec2+vec4 spans the same 24 bytes as
             ;; vec3+vec3), so the contract is per-attribute
-            (immutable aschema fx-program-attribute-schema)))
+            (immutable aschema fx-program-attribute-schema)
+            ;; the uniform BLOCK names the shaders declare, in
+            ;; order.  Block members never reach the uniform table
+            ;; (they have no location of their own), so a renderer
+            ;; asking "does this program carry X?" has to ask this
+            ;; when X lives in a block -- and the two questions stay
+            ;; mutually exclusive, which is what lets a caller pick
+            ;; an upload path without consulting declaration order
+            (immutable blocks fx-program-blocks)))
 
   ;; just the names, in order
   (define (fx-program-attribute-names prog)
@@ -331,7 +339,11 @@
                                      (filter (lambda (a)
                                                (not ($fx-instance-name?
                                                      (car a))))
-                                             as0)))
+                                             as0))
+                                (map car
+                                     (append
+                                      (glsl-uniform-blocks vs-forms)
+                                      (glsl-uniform-blocks fs-forms))))
               (let ((n (caar as)) (size (caddr (car as))))
                 (if ($fx-instance-name? n)
                     (loop (cdr as) (+ loc 1) voff (+ ioff (* 4 size))
