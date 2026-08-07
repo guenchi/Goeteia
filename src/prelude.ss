@@ -554,7 +554,7 @@
        ((null? bs)
         (let* ((den (let tens ((k fraclen) (acc 1))
                       (if (zero? k) acc (tens (- k 1) (* acc 10)))))
-               (v ($->fl ($make-rat digits den))))
+               (v ($nonneg->fl digits den)))
           (if neg (fl- (fixnum->flonum 0) v) v)))
        ((= (car bs) 46) (loop (cdr bs) digits fraclen #t))
        (else (loop (cdr bs)
@@ -1243,25 +1243,93 @@
   (define ($bn-negate b)
     (%make-bignum (- 1 (%bignum-sign b)) (%bignum-limbs b)))))
 
+;; ---- exact -> inexact, in ONE rounding ----
+;; An exact value wider than 53 bits has to be rounded, and rounding
+;; more than once is not the same as rounding once: two conversions
+;; and a division land up to two ulp from the nearest double, and land
+;; there differently on the two targets.  So the scaling and the
+;; rounding decision are made in the EXACT integer layer -- where both
+;; targets are forced to agree, every operation in it being exact --
+;; and only a 53-bit significand and a power of two ever cross into
+;; f64, both of which f64 represents exactly.
+;;
+;; $exact->fl is the single entry point: bignum -> flonum, ratio ->
+;; flonum and the reader's decimal literals all round here, once.
+(define ($int-bitlen n)                 ; n >= 0, exact
+  (let coarse ((m n) (b 0))
+    (if (< m 16777216)                  ; 2^24, a fixnum-safe stride
+        (let fine ((m m) (b b))
+          (if (= m 0) b (fine (quotient m 2) (+ b 1))))
+        (coarse (quotient m 16777216) (+ b 24)))))
+
+(define ($pow2 k)                       ; 2^k, exact, by squaring
+  (if (= k 0)
+      1
+      (let* ((h ($pow2 (quotient k 2)))
+             (hh (* h h)))
+        (if (= 0 (- k (* 2 (quotient k 2)))) hh (* hh 2)))))
+
+(define ($small->fl m)                  ; exact 0 <= m < 2^53, exactly
+  (let* ((hi (quotient m 67108864))     ; 2^26: both halves are fixnums
+         (lo (- m (* hi 67108864))))
+    (fl+ (fl* (fixnum->flonum hi) 67108864.0) (fixnum->flonum lo))))
+
+(define ($fl-scale2 v k)                ; v * 2^k, exact until it can
+  (cond                                 ; no longer be (overflow, or
+   ((= k 0) v)                          ; the subnormal floor)
+   ((< k 0) ($fl-scale2 (fl* v 0.5) (+ k 1)))
+   (else ($fl-scale2 (fl* v 2.0) (- k 1)))))
+
+(define ($nonneg->fl num den)           ; num >= 0, den > 0
+  (if (= num 0)
+      0.0
+      ;; scale num/den into [2^53, 2^54) so the quotient carries the
+      ;; 53 bits that survive plus one guard bit, and the division
+      ;; remainder is the sticky bit
+      (let* ((k (- 54 (- ($int-bitlen num) ($int-bitlen den))))
+             (n (if (< 0 k) (* num ($pow2 k)) num))
+             (d (if (< k 0) (* den ($pow2 (- 0 k))) den)))
+        (let norm ((n n) (d d) (e (- 0 k)))
+          (let ((q (quotient n d)))     ; value = (n/d) * 2^e
+            (cond
+             ((< q 9007199254740992) (norm (* n 2) d (- e 1)))     ; 2^53
+             ((< 18014398509481983 q) (norm n (* d 2) (+ e 1)))    ; 2^54
+             (else
+              (let* ((sticky (not (= (- n (* q d)) 0)))
+                     (half (quotient q 2))
+                     (guard (- q (* half 2)))
+                     (odd (- half (* (quotient half 2) 2)))
+                     (rounded                     ; nearest, ties to even
+                      (if (and (= guard 1) (or sticky (= odd 1)))
+                          (+ half 1)
+                          half)))
+                ($fl-scale2 ($small->fl rounded) (+ e 1))))))))))
+
+(define ($exact->fl num den)            ; den > 0
+  (if (< num 0)
+      (fl- 0.0 ($nonneg->fl (- 0 num) den))
+      ($nonneg->fl num den)))
+
 (define ($->fl x)
   (cond
    ((flonum? x) x)
    ((fixnum? x) (fixnum->flonum x))
-   ((%ratio? x) (fl/ ($->fl (%ratio-num x)) ($->fl (%ratio-den x))))
+   ((%ratio? x) ($exact->fl (%ratio-num x) (%ratio-den x)))
    (else ($bn->fl x))))
 (%target-case
  (js)
  (wasm
+  ;; The limb layer's one rounding operation, and so the one place it
+  ;; could disagree with the JS target's exact BigInt layer: a Horner
+  ;; accumulation over base-16384 limbs rounds ONCE PER LIMB.  Round
+  ;; once instead, in the exact layer both targets share.  (The JS
+  ;; branch stays on the host's Number(bigint), already one correctly
+  ;; rounded step -- two mechanisms, one answer, pinned against each
+  ;; other by test/determinism-battery.ss.)
   (define ($bn->fl x)
-    (let* ((m (%bignum-limbs x))
-           (base (fixnum->flonum 16384))
-           (mag (let loop ((i (- ($mag-len m) 1)) (acc (fixnum->flonum 0)))
-                  (if (< i 0)
-                      acc
-                      (loop (- i 1)
-                            (fl+ (fl* acc base)
-                                 (fixnum->flonum (vector-ref m i))))))))
-      (if ($bn-neg? x) (fl- (fixnum->flonum 0) mag) mag)))))
+    (if ($bn-neg? x)
+        (fl- 0.0 ($nonneg->fl ($bn-negate x) 1))
+        ($nonneg->fl x 1)))))
 
 (define ($add2 a b)
   (cond
