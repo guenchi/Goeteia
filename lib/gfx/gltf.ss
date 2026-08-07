@@ -67,7 +67,8 @@
 (library (gfx gltf)
   (export gltf? gltf-prims gltf-images gltf-parse gltf-fetch!
           gltf-load-textures! gltf-draw!
-          gltf-anims gltf-animation-names gltf-animate!
+          gltf-anims gltf-animation-names gltf-animation-duration
+          gltf-animate!
           gltf-animate-blend! gltf-weights! gprim-morph
           anim-machine anim-machine? anim-state anim-goto! anim-update!
           gltf-joint-matrices gltf-joint-palette! gltf-joint-count
@@ -901,6 +902,14 @@
         (if (< k 0)
             acc
             (loop (- k 1) (cons (vector-ref (vector-ref as k) 0) acc))))))
+
+  ;; clip `ai`'s length in seconds -- the largest timestamp over its
+  ;; channels, the period gltf-animate! wraps its clock into.  A
+  ;; clip whose keyframes all sit at t = 0 measures 0.0 -- that is
+  ;; the constant pose gltf-animate! reads as one, so a caller
+  ;; dividing by this has to say what it means by zero length
+  (define (gltf-animation-duration g ai)
+    (vector-ref (vector-ref (gltf-anims g) ai) 2))
 
   ;; ---- the animation state machine ----
   ;; The pattern every animated character repeats, packaged: named

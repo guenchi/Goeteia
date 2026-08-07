@@ -16,6 +16,8 @@
 ;; Copyright (c) 2026 guenchi. MIT license; see LICENSE.
 (library (gfx mat)
   (export flsin flcos fltan
+          flasin flacos flatan flatan2
+          q-slerp
           v3 v3-x v3-y v3-z
           v3-add v3-sub v3-scale v3-dot v3-cross v3-normalize
           v3-set! v3-copy! v3-add! v3-sub! v3-scale! v3-cross!
@@ -56,6 +58,129 @@
              (else r)))))
   (define (flcos x) (flsin (fl+ x $mat-pi/2)))
   (define (fltan x) (fl/ (flsin x) (flcos x)))
+
+  ;; ---- inverse trig: reduce to one small interval, one series ----
+  ;; wasm has no inverse trigonometry either, so these are built the
+  ;; same way as flsin: fold the argument into an interval where one
+  ;; series converges fast, sum it, and put the answer back with an
+  ;; identity.  Both series stop at the first term whose magnitude is
+  ;; below 1e-18 -- compared squared, the prelude has no flabs -- so
+  ;; what is left is the reductions' few ulps.  Swept against a
+  ;; host's Math at 20001 points each, the worst gap was 1.4e-15
+  ;; (acos) and under 1e-15 for the other three: the guarantee these
+  ;; carry is 1e-7 over the whole domain, which is the accuracy
+  ;; test/mat-invtrig.ss holds them to against that second
+  ;; implementation.
+  ;;
+  ;; Arguments are flonums, as for flsin -- these sit in the same
+  ;; per-frame paths.
+  (define $mat-pi/4 0.7853981633974483)
+  (define $mat-tan-pi/8 0.41421356237309515)  ; sqrt(2) - 1
+
+  ;; asin on |x| <= 1/2 by its Maclaurin series x + x^3/6 + 3x^5/40
+  ;; + ..., each term from the one before:
+  ;;   t_n = t_{n-1} * x^2 * (2n-1)^2 / ((2n)(2n+1))
+  ;; The ratio rises to x^2 <= 1/4, so the cutoff arrives within
+  ;; ~30 terms at the interval's edge and at once at its center.
+  ;; The term count is capped as well: no comparison against a NaN
+  ;; is ever true, and a summation that only knows how to stop on
+  ;; one would hang the frame instead of returning a NaN
+  (define $mat-series-cap 64.0)
+  ;; 1e-18, and its square: the reader of the self-hosted compiler
+  ;; has no exponent syntax, so small constants are written out
+  (define $mat-series-eps 0.000000000000000001)
+  (define $mat-series-eps2 (fl* $mat-series-eps $mat-series-eps))
+  (define ($mat-asin-poly x)            ; |x| <= 0.5
+    (let ((x2 (fl* x x)))
+      (let sum ((n 1.0) (term x) (acc x))
+        (let* ((e (fl* 2.0 n))
+               (o (fl- e 1.0))
+               (term (fl/ (fl* term (fl* x2 (fl* o o)))
+                          (fl* e (fl+ e 1.0)))))
+          (if (or (fl<? (fl* term term) $mat-series-eps2)
+                  (fl<? $mat-series-cap n))
+              (fl+ acc term)
+              (sum (fl+ n 1.0) term (fl+ acc term)))))))
+
+  ;; atan on |t| <= tan(pi/8) by Gregory's series t - t^3/3 + t^5/5
+  ;; - ...; the ratio is t^2 <= 0.172, so ~21 terms reach the cutoff
+  (define ($mat-atan-poly t)            ; |t| <= tan(pi/8)
+    (let ((t2 (fl* t t)))
+      (let sum ((n 1.0) (p (fl* t t2)) (sgn -1.0) (acc t))
+        (let ((term (fl* sgn (fl/ p (fl+ (fl* 2.0 n) 1.0)))))
+          (if (or (fl<? (fl* term term) $mat-series-eps2)
+                  (fl<? $mat-series-cap n))
+              (fl+ acc term)
+              (sum (fl+ n 1.0) (fl* p t2) (fl- 0.0 sgn)
+                   (fl+ acc term)))))))
+
+  ;; halve the argument once with asin x = pi/2 - 2 asin(sqrt((1-x)/2))
+  ;; so that |x| > 1/2 lands back in the series' interval -- and so
+  ;; that the answer near |x| = 1, where the series itself converges
+  ;; arbitrarily slowly, comes out of a well-conditioned sqrt.
+  ;;
+  ;; |x| > 1 is CLAMPED, not rejected: a dot product of two unit
+  ;; vectors leaves [-1, 1] by an ulp or two as a matter of course,
+  ;; and an angle of NaN poisons everything downstream of it.
+  (define ($mat-asin-unit x)            ; 0 <= x, clamped at 1
+    (if (fl<? x 0.5)
+        ($mat-asin-poly x)
+        (fl- $mat-pi/2
+             (fl* 2.0 ($mat-asin-poly
+                       (flsqrt (fl* 0.5 (fl- 1.0 (if (fl<? 1.0 x) 1.0 x)))))))))
+
+  (define (flasin x)
+    (if (fl<? x 0.0)
+        (fl- 0.0 ($mat-asin-unit (fl- 0.0 x)))
+        ($mat-asin-unit x)))
+
+  ;; acos runs the half-angle identity in its own right rather than
+  ;; subtracting flasin from pi/2: near |x| = 1 the difference would
+  ;; cancel away the small answer's leading digits
+  (define (flacos x)
+    (cond ((fl<? 1.0 x) 0.0)            ; clamped, as for flasin
+          ((fl<? x -1.0) $mat-pi)
+          ((fl<? 0.5 x)
+           (fl* 2.0 ($mat-asin-poly (flsqrt (fl* 0.5 (fl- 1.0 x))))))
+          ((fl<? x -0.5)
+           (fl- $mat-pi
+                (fl* 2.0 ($mat-asin-poly
+                          (flsqrt (fl* 0.5 (fl+ 1.0 x)))))))
+          (else (fl- $mat-pi/2 ($mat-asin-poly x)))))
+
+  ;; atan by two reductions: x > 1 goes through atan x = pi/2 -
+  ;; atan(1/x) (which also answers +inf), then the remainder of
+  ;; [tan(pi/8), 1] through atan x = pi/4 + atan((x-1)/(x+1))
+  (define ($mat-atan-nonneg x)          ; 0 <= x, +inf included
+    (if (fl<? 1.0 x)
+        (fl- $mat-pi/2 ($mat-atan-unit (fl/ 1.0 x)))
+        ($mat-atan-unit x)))
+  (define ($mat-atan-unit x)            ; 0 <= x <= 1
+    (if (fl<? $mat-tan-pi/8 x)
+        (fl+ $mat-pi/4 ($mat-atan-poly (fl/ (fl- x 1.0) (fl+ x 1.0))))
+        ($mat-atan-poly x)))
+  (define (flatan x)
+    (if (fl<? x 0.0)
+        (fl- 0.0 ($mat-atan-nonneg (fl- 0.0 x)))
+        ($mat-atan-nonneg x)))
+
+  ;; the four-quadrant angle of (x, y), in (-pi, pi], signed as the
+  ;; host's Math.atan2 is: y > 0 above the axis, +pi on the negative
+  ;; x axis, 0 at the origin (where an angle is meaningless but a
+  ;; NaN is worse).  Negative zero is NOT distinguished -- a y of
+  ;; -0.0 reads as +0.0, so the negative x axis answers +pi where
+  ;; the host would answer -pi
+  (define (flatan2 y x)
+    (cond ((fl<? 0.0 x) (flatan (fl/ y x)))
+          ((fl<? x 0.0)
+           (if (fl<? y 0.0)
+               (fl- (flatan (fl/ y x)) $mat-pi)
+               (fl+ (flatan (fl/ y x)) $mat-pi)))
+          ((fl<? 0.0 y) $mat-pi/2)
+          ((fl<? y 0.0) (fl- 0.0 $mat-pi/2))
+          ;; both zero -- and a NaN argument lands here too, since
+          ;; no comparison against one is true
+          (else 0.0)))
 
   ;; ---- vec3 ----
   (define (v3 x y z) (vector ($mat-fl x) ($mat-fl y) ($mat-fl z)))
@@ -334,6 +459,61 @@
               (fl- 1.0 (fl* 2.0 (fl+ xx yy)))
               0.0
               0.0 0.0 0.0 1.0)))
+
+  ;; spherical linear interpolation between two unit quaternions
+  ;; #(x y z w), the shape (gfx gltf) stores rotations in: the great
+  ;; arc travelled at a CONSTANT angular rate, which is what an
+  ;; nlerp of the same pair does not give (it takes the same path,
+  ;; but eases in and out around the midpoint).  Antipodal inputs
+  ;; name the same rotation, so a negative dot product flips b and
+  ;; the short way round is always the one taken.
+  ;;
+  ;; t is not clamped: outside [0, 1] the arc continues past its
+  ;; ends, which is what an extrapolating controller wants.  Within
+  ;; a nine-digit dot product of parallel the two are lerped and
+  ;; renormalized instead -- there the arc is shorter than the
+  ;; rounding on sin of its angle, and dividing by that sine would
+  ;; amplify it without bound.
+  ;;
+  ;; (gltf-animate! keeps its documented nlerp; this is for code
+  ;; that wants the rate, e.g. an IK or camera solver.)
+  (define (q-slerp a b t)
+    (let* ((d (fl+ (fl+ (fl* (vector-ref a 0) (vector-ref b 0))
+                        (fl* (vector-ref a 1) (vector-ref b 1)))
+                   (fl+ (fl* (vector-ref a 2) (vector-ref b 2))
+                        (fl* (vector-ref a 3) (vector-ref b 3)))))
+           (sgn (if (fl<? d 0.0) -1.0 1.0))
+           (d (fl* sgn d))
+           (blend
+            (lambda (wa wb)              ; wa*a + wb*(sgn*b)
+              (let ((wb (fl* wb sgn)))
+                (vector (fl+ (fl* wa (vector-ref a 0))
+                             (fl* wb (vector-ref b 0)))
+                        (fl+ (fl* wa (vector-ref a 1))
+                             (fl* wb (vector-ref b 1)))
+                        (fl+ (fl* wa (vector-ref a 2))
+                             (fl* wb (vector-ref b 2)))
+                        (fl+ (fl* wa (vector-ref a 3))
+                             (fl* wb (vector-ref b 3))))))))
+      (if (fl<? 0.999999999 d)
+          (let* ((q (blend (fl- 1.0 t) t))
+                 (n (flsqrt (fl+ (fl+ (fl* (vector-ref q 0) (vector-ref q 0))
+                                      (fl* (vector-ref q 1) (vector-ref q 1)))
+                                 (fl+ (fl* (vector-ref q 2) (vector-ref q 2))
+                                      (fl* (vector-ref q 3) (vector-ref q 3)))))))
+            (vector (fl/ (vector-ref q 0) n) (fl/ (vector-ref q 1) n)
+                    (fl/ (vector-ref q 2) n) (fl/ (vector-ref q 3) n)))
+          (let* ((th (flacos d))
+                 ;; sin th, taken from th and not as sqrt(1 - d^2):
+                 ;; at the near end of the range 1 - d^2 cancels to a
+                 ;; few significant digits, and both weights would
+                 ;; carry the same wrong scale -- a quaternion off
+                 ;; the unit sphere, which is a rotation with a
+                 ;; scale baked into it
+                 (s (flsin th))
+                 (wa (fl/ (flsin (fl* (fl- 1.0 t) th)) s))
+                 (wb (fl/ (flsin (fl* t th)) s)))
+            (blend wa wb)))))
 
   (define (m4-perspective fovy aspect near far)
     (let* ((f (fl/ 1.0 (fltan (fl/ ($mat-fl fovy) 2.0))))
