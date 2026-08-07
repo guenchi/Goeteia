@@ -78,10 +78,20 @@ wider values, or use lookup tables for hashing-style code.
 
 ## Capacity limits in the graphics stack
 
-- **32 joints per skin.** The skinning palette is a
-  `uniform mat4 u_joints[32]`; `gltf-parse` refuses skins beyond
-  it.  Modern humanoid rigs (fingers, face) commonly exceed this —
-  a UBO/texture palette path is planned but not present.
+- **256 joints per skin, and 32 on the ESSL 1.00 path.** There are
+  two palette carriers, and which one applies is a property of the
+  *program*, not of the asset.  `gltf-skin-shader` declares
+  `uniform mat4 u_joints[32]` and works on any WebGL 1 context;
+  `gltf-skin-shader3` declares `layout(std140) uniform Skin { mat4
+  u_joints[256]; }` and needs WebGL 2 (build it with
+  `gltf-skin-program3!`, or `fx-program3!` plus a
+  `gl-uniform-block!` to `gltf-skin-binding`).  `gltf-parse` refuses
+  a skin past 256 — that is what a conforming WebGL 2 context
+  guarantees, since `MAX_UNIFORM_BLOCK_SIZE` is at least 16384 bytes
+  and std140 gives a `mat4` array a 64-byte stride.  A skin between
+  33 and 256 joints loads, but drawing it with a 32-slot program is
+  refused by `gltf-draw!` rather than silently truncated.  A small
+  skin is legal on either.
 - **Staging memory only grows.** `fx-alloc!` is a bump allocator
   with no `free`; every `gltf-fetch!` of a new asset leaks the
   previous one's staging bytes.  Fine for dozens of reloads in an

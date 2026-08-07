@@ -40,6 +40,7 @@
 ;; Copyright (c) 2026 guenchi. MIT license; see LICENSE.
 (library (gfx glsl)
   (export glsl->string glsl-attributes glsl-uniforms glsl-varyings
+          glsl-uniform-blocks
           glsl300-vs->string glsl300-fs->string)
   (import (rnrs))
 
@@ -227,14 +228,23 @@
       ((uniform-block)
        ;; members carry explicit highp: the vertex default is highp,
        ;; a mediump fragment default would otherwise disagree, and
-       ;; block layouts must match exactly across stages
+       ;; block layouts must match exactly across stages.  A member
+       ;; may be an array -- ((array T N) name) -- which is how a
+       ;; block carries a palette; std140 gives a mat4 array the
+       ;; tight 64-byte stride, so such a block maps one to one onto
+       ;; a run of matrices in staging memory
        (string-append
         "layout(std140) uniform " (symbol->string (cadr f)) " { "
         (apply string-append
                (map (lambda (m)
-                      (string-append "highp "
-                                     (symbol->string (car m)) " "
-                                     (symbol->string (cadr m)) "; "))
+                      (if (pair? (car m))
+                          (string-append
+                           "highp " (symbol->string (cadr (car m))) " "
+                           (symbol->string (cadr m))
+                           "[" (number->string (caddr (car m))) "]; ")
+                          (string-append "highp "
+                                         (symbol->string (car m)) " "
+                                         (symbol->string (cadr m)) "; ")))
                     (cddr f)))
         "}; "))
       (else (form->glsl f))))
@@ -294,4 +304,16 @@
        ((null? fs) '())
        ((eq? (caar fs) 'varying)
         (cons (caddr (car fs)) (loop (cdr fs))))
+       (else (loop (cdr fs))))))
+
+  ;; ((Name member ...) ...) in order -- the blocks a program must
+  ;; wire to binding points (gl-uniform-block!).  Members come along
+  ;; unchanged, so a caller can read a block's shape as well as its
+  ;; name
+  (define (glsl-uniform-blocks forms)
+    (let loop ((fs forms))
+      (cond
+       ((null? fs) '())
+       ((eq? (caar fs) 'uniform-block)
+        (cons (cdr (car fs)) (loop (cdr fs))))
        (else (loop (cdr fs)))))))

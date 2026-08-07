@@ -148,9 +148,16 @@ float literal with the fraction in hundredths (`(fl 2)` → `"2.0"`,
 noise; `+ - * /` are infix and `< > <= >= ==` compare; anything else is
 a function call. `glsl300-vs->string` / `glsl300-fs->string` emit
 `#version 300 es`, where `uniform-block` becomes a std140 block and
-`out` forms declare pinned MRT outputs. `glsl-attributes`,
-`glsl-uniforms`, and `glsl-varyings` read the interface back out of the
-forms — how `(gfx fx)` wires programs automatically.
+`out` forms declare pinned MRT outputs. A block member may itself be an
+array — `((array mat4 256) u_joints)` — which is how a block carries a
+palette; std140 gives a `mat4` array the tight 64-byte stride, so such a
+block maps one to one onto a run of matrices in staging memory.
+`glsl-attributes`, `glsl-uniforms`, `glsl-varyings` and
+`glsl-uniform-blocks` read the interface back out of the forms — how
+`(gfx fx)` wires programs automatically, and what
+`fx-program-blocks` reports for a built program (block members never
+reach the uniform table, so that is the only place to ask whether a
+program carries one).
 
 ### `(gfx wgsl)`
 
@@ -411,7 +418,23 @@ Skinning is a dimension rather than a shader variant:
 `(gltf-skin-shader vs)` turns any static vertex shader into its skinned
 form — padding the slots the interleave always carries, rewriting
 `a_pos`/`a_normal`/`a_tangent` through the joint matrix, and leaving the
-varyings alone so the same fragment shader still pairs. A renderer
+varyings alone so the same fragment shader still pairs. The palette it
+declares is `uniform mat4 u_joints[32]`, which is all ESSL 1.00 can
+carry; `(gltf-skin-shader3 vs)` is the same combinator with the other
+carrier — a std140 block `Skin { mat4 u_joints[256]; }` — for rigs with
+fingers and a face. The two differ in nothing but that declaration: the
+shader body reads `u_joints[i]` either way, and the built-in
+`gltf-skin-vs` / `gltf-skin-vs3` are both derived from `mesh-tex-vs`
+rather than written out. `(gltf-skin-program3! vs fs)` builds the big
+one and wires its block to `gltf-skin-binding` (1, leaving 0 to the
+`(gfx scene)` frame-globals block) in one call. `gltf-draw!` then picks
+the upload from the *program*: a `u_joints` uniform means the
+three-word `cmd-uniform-matrices4s!` path, a `Skin` block means
+`cmd-ubo-data!` + `cmd-bind-ubo!`. The two are mutually exclusive by
+construction — a block member has no uniform location of its own — so
+nothing depends on declaration order, a small skin draws on either, and
+the one combination that cannot work, a skin past 32 on a 32-slot
+program, is refused by name instead of truncated. A renderer
 driving its own shaders reads `gltf-prim-world` for a primitive's
 current model matrix — the identity for a skinned one, since glTF has
 a skinned mesh ignore its node transform and the palette already
