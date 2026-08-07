@@ -439,6 +439,72 @@ works on any GLB bytes already in staging, so parsing verifies headlessly
 `fx-gltf-tex.html` (textured), `fx-fox.html` (the rigged Fox, Survey /
 Walk / Run crossfade on keys 1-3).
 
+### `(gfx glb)` — writing GLB
+
+The other direction: a mesh built or edited in staging memory leaves as
+a file any glTF tool reads. `glb-write!` wraps an interleaved vertex
+block and an index block that are *already there* — nothing is repacked
+— and hands back `(base . length)`, the same pair `gltf-parse` takes, so
+a round trip is one expression.
+
+```scheme
+(define loc (glb-write!
+              (list (list '(position normal uv) vbase vcount ibase icount
+                          'color (vector 0.8 0.2 0.2 1.0)))))
+(gltf-parse (car loc) (cdr loc))       ; read it straight back, or
+                                       ; copy the range out to a Blob
+```
+
+A primitive is a plain list — `(layout vbase vcount ibase icount
+. options)` — not a record only this library can build, so a mesh
+generator, a decoder or a parsed asset can all feed it. `layout` names
+the attributes present in the order they occupy the interleave, from
+the same vocabulary `gprim-layout` reports: `position` `normal` `uv`
+`tangent` `color`, each float32 at 12/12/8/16/16 bytes. `glb-stride`
+and `glb-offset` give a layout's byte stride and an attribute's place
+inside it, which is what a generator writing the vertices needs anyway.
+The options are a key/value tail: `color` for a `baseColorFactor`
+material (absent means no material, and the loader's own default
+answers), `index-u32?` for the index width — defaulting to `#t` past
+65536 vertices, where `(gfx gltf)` switches too — and `stride` for a
+padded interleave. `icount` 0 writes a non-indexed primitive.
+
+What comes out is one buffer, two bufferViews per primitive (vertices
+with a `byteStride`, indices without), one accessor per attribute plus
+one per index array, one mesh holding every primitive, one node, one
+scene — with the JSON chunk space-padded and the BIN chunk zero-padded
+to the 4-byte alignment the container specification requires, and with
+POSITION's mandatory `min`/`max` computed from the data rather than
+guessed. Indices are checked against the vertex count as they are
+written: an index that names a vertex the primitive does not own is
+refused here rather than drawing garbage in a viewer that never says
+why.
+
+Round trip: for a layout in the canonical interleave order (`position
+normal`, then `uv`, then `tangent`, then `color`) `gltf-parse`
+reproduces the vertex bytes exactly — `test/glb.ss` compares them byte
+for byte. Other layouts are written faithfully but come back
+canonicalized, because the loader always gives a primitive a normal
+(`+y` when the file has none) and always carries a uv slot once
+anything past normal is present. Exporting a parsed asset therefore
+needs no adapter beyond the accessors `(gfx gltf)` already exports:
+
+```scheme
+(glb-write!
+ (map (lambda (p)
+        (list (gprim-layout p) (gprim-vbase p)
+              (quotient (gprim-vbytes p) (gprim-stride p))
+              (gprim-ibase p) (gprim-icount p)
+              'color (gprim-color p)
+              'index-u32? (gprim-index-u32? p)))
+      (gltf-prims g)))
+```
+
+Static meshes only for now: skins, animations, morph targets, textures,
+cameras and node hierarchies are not written, and a layout naming
+`joints` or `weights` is refused rather than written as something a
+reader would misinterpret.
+
 ### `(gfx ktx)` — KTX2 decode/transcode
 
 The KTX2 container plus the Basis Universal ETC1S/BasisLZ decoder and the
