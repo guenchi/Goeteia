@@ -71,6 +71,7 @@ import { boot, render } from './live.js';
         { label: 'skybox.ss', file: 'demos/fx-skybox.ss' },
         { label: 'deferred.ss', file: 'demos/fx-deferred.ss' },
         { label: 'particles.ss', file: 'demos/gpu-particles.ss' },
+        { label: 'export.ss', file: 'demos/export-asset.ss' },
       ];
       const sources = [];
       let cur = 0;

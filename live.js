@@ -27,6 +27,8 @@ const LIB_FILES = [
     'lib/gfx/fx.ss',
     'lib/gfx/post.ss',
     'lib/gfx/gpu.ss',
+    'lib/web/json.ss',
+    'lib/gfx/glb.ss',
 ];
 
 const enc = new TextEncoder();
