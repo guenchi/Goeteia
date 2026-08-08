@@ -1,0 +1,42 @@
+# Goeteia
+
+> Goeteia is a self-hosting Scheme that compiles to WebAssembly GC (and
+> to plain JavaScript), with a web and graphics toolkit written in the
+> same language: DOM, CSS, reactive state, WebGL/GLSL and glTF are all
+> Scheme libraries, so a whole page — markup, interaction, 3D — is one
+> program in one language and no JavaScript is written by hand. The
+> compiler, the prelude and the runtime ship in one npm package; Node
+> 22+ is the only prerequisite.
+
+`docs/llm/` is a substrate meant to be **injected as context**: it is
+written for a model that has never seen this language and has to emit a
+page that compiles and runs the first time. `manifest.json` says which
+layers to include for a given kind of page, and what each one costs in
+bytes. Each tier document is built around one complete program, and the
+test suite compiles that program, runs it, judges it, and asserts the
+document carries the source byte for byte — so what is shown is what
+was verified.
+
+## The page substrate (inject these)
+
+- [Core](docs/llm/core.md): the shape of every page — the `.ss` IS the browser half, its two hosts (`#app`, `#c`), the whole `(web dom)` vocabulary, which imports a task needs, and the DO/DON'T table for the traps that actually bite. Always include this one.
+- [Manifest](docs/llm/manifest.json): which layers to inject for which task, the byte cost of each combination, and the check spec each example is verified against.
+- [T1 — a static page](docs/llm/t1-static.md): building elements into `#app`, `set-inner-html!` versus real elements, stylesheets through `(web css)`.
+- [T2 — an interactive page](docs/llm/t2-interactive.md): creating and wiring controls, the `js->number` fixnum trap at the JS boundary, rounding.
+- [T3 — meshes in three dimensions](docs/llm/t3-mesh3d.md): `fx-init!` on the canvas the page already has, `fx-program!` from shader forms, the `(gfx mesh)` generators, column-major mat4s.
+- [T4 — a fragment shader](docs/llm/t4-shader.md): `glsl->string` as a pure function, float literals, reserved words refused at generation time, `fx-fullscreen!`.
+- [T5 — an articulated, animated scene](docs/llm/t5-animated.md): a rig as a chain of `m4-mul` frames, controls and animation in one program.
+
+## Reference
+
+- [Manual](README.md): the whole language and library reference — syntax, the standard procedures, `(web *)`, `(gfx *)`, the mount-point family, and the build model.
+- [Verifying a page](docs/verify.md): `goeteia verify` and `goeteia pack` — the four stages (compile, smoke, draw, interact), the check-spec schema, and the mock world a page is judged in.
+- [Numeric limits and traps](docs/limits.md): the i31 fixnum range, what the reader does and does not accept, the shader and staging capacities.
+- [Graphics](docs/graphics.md): the `(gfx *)` libraries in depth.
+- [Numeric determinism](docs/determinism.md): which equalities across hosts, targets and optimization levels the language guarantees.
+- [The JavaScript backend](docs/js-backend.md): the `--js` target and how it mirrors the wasm one.
+
+## Optional
+
+- [Examples](examples/): 46 standalone programs, each runnable with `goeteia <file.ss>`, several with a page to open beside them.
+- [Tests](test/): the suite, including the page fixtures in `test/pages/` whose verdicts are known.

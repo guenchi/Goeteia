@@ -192,4 +192,19 @@ if ${NODE-node} test/raster-diff.mjs; then
 else
     echo "FAIL test/raster-diff.mjs"; fail=1
 fi
+if ${NODE-node} test/verify.mjs; then
+    echo "ok   test/verify.mjs"
+else
+    echo "FAIL test/verify.mjs"; fail=1
+fi
+if ${NODE-node} test/pack.mjs; then
+    echo "ok   test/pack.mjs"
+else
+    echo "FAIL test/pack.mjs"; fail=1
+fi
+if ${NODE-node} test/llm-substrate.mjs; then
+    echo "ok   test/llm-substrate.mjs"
+else
+    echo "FAIL test/llm-substrate.mjs"; fail=1
+fi
 exit $fail

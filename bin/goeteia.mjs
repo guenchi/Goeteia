@@ -4,6 +4,8 @@
 //   goeteia compile <input.ss> [output.wasm]   compile to a wasm module
 //   goeteia run <module.wasm> [input-file]      run a compiled module
 //   goeteia <input.ss> [input-file]             compile and run in one step
+//   goeteia verify <page.ss>                    judge a browser-half page
+//   goeteia pack <page.ss> <out.html>           one self-contained page
 //
 // The self-hosted compiler (goeteia.wasm) and the prelude ship inside
 // this package, so no external toolchain is required — just Node 22+.
@@ -24,8 +26,13 @@ Usage:
   goeteia <input.ss> [input-file]             compile and run in one step
   goeteia repl                                interactive session
   goeteia dev [port]                          live-reload dev server (cwd)
+  goeteia verify <page.ss> [options]          compile, run and judge a page
+  goeteia pack <page.ss> <out.html> [options] one self-contained .html
   goeteia --version                           print the version
   goeteia --help                              show this message
+
+\`verify --help\` and \`pack --help\` list their own options; the check
+spec verify takes is documented in docs/verify.md.
 `);
     process.exit(code);
 }
@@ -62,6 +69,18 @@ async function main() {
         if (cmd === 'dev') {
             startDevServer({ port: Number(argv[1]) || 8100 });
             return;
+        }
+
+        // verify and pack pull in the mock browser and the packager;
+        // load them only when asked so the common paths stay light
+        if (cmd === 'verify') {
+            const { runVerify } = await import('../rt/verify.mjs');
+            process.exit(await runVerify(argv.slice(1)));
+        }
+
+        if (cmd === 'pack') {
+            const { runPack } = await import('../rt/pack.mjs');
+            process.exit(await runPack(argv.slice(1)));
         }
 
         if (cmd === 'repl') {

@@ -1,0 +1,288 @@
+{
+  "name": "goeteia-page-substrate",
+  "version": "1",
+  "purpose": "context injected with a request so a model that has never seen Goeteia emits a page that compiles and runs the first time",
+  "host": {
+    "shape": "the .ss IS the browser half: its top level runs in a page that is already open",
+    "dom": "#app",
+    "canvas": "#c",
+    "canvas_size": [
+      800,
+      600
+    ],
+    "filesystem": "none -- call-with-output-file fails at run time"
+  },
+  "toolchain": {
+    "compile": "goeteia compile page.ss page.wasm",
+    "verify": "goeteia verify page.ss [--needs draw,interact] [--checks spec.json]",
+    "pack": "goeteia pack page.ss out.html [--selfcheck]",
+    "note": "verify compiles the source with the self-hosted compiler and drives the result in one step; its verdict format and check-spec schema are documented in docs/verify.md"
+  },
+  "budgets": {
+    "core.md": 9216,
+    "tier": 6144
+  },
+  "files": [
+    {
+      "path": "core.md",
+      "bytes": 8545,
+      "budget": 9216,
+      "layer": 0,
+      "role": "always inject: the browser-half page shape and its two hosts, the (web dom) vocabulary, import sets, the DO/DONT table"
+    },
+    {
+      "path": "t1-static.md",
+      "bytes": 3822,
+      "budget": 6144,
+      "layer": 1,
+      "name": "static",
+      "example": "examples/t1.ss",
+      "example_bytes": 2920,
+      "for": [
+        "a marketing or docs page",
+        "anything with no live behaviour"
+      ],
+      "teaches": [
+        "the browser-half shape: the page exists, #app is the host",
+        "create-element / append-child! / set-text! / set-attribute!",
+        "set-inner-html! delivers a string, not elements",
+        "css->string and unit hundredths"
+      ],
+      "checks": {
+        "needs_draw": false,
+        "needs_interact": false,
+        "custom": [
+          {
+            "kind": "text_blocks_min",
+            "n": 5
+          },
+          {
+            "kind": "dom_text_min_length",
+            "n": 120
+          }
+        ]
+      }
+    },
+    {
+      "path": "t2-interactive.md",
+      "bytes": 3708,
+      "budget": 6144,
+      "layer": 2,
+      "name": "interactive",
+      "example": "examples/t2.ss",
+      "example_bytes": 2824,
+      "for": [
+        "forms, counters, controls",
+        "anything with page state"
+      ],
+      "teaches": [
+        "a control is built and wired by the program, never preset",
+        "add-event-listener! and (js-undefined)",
+        "the num helper at the JS boundary",
+        "fl->fx truncates: round with +0.5"
+      ],
+      "checks": {
+        "needs_draw": false,
+        "needs_interact": true,
+        "custom": [
+          {
+            "kind": "input_count_min",
+            "n": 2
+          },
+          {
+            "kind": "inputs_change_independently",
+            "indices": [
+              0,
+              1
+            ],
+            "by": "text"
+          }
+        ]
+      }
+    },
+    {
+      "path": "t3-mesh3d.md",
+      "bytes": 4658,
+      "budget": 6144,
+      "layer": 3,
+      "name": "mesh3d",
+      "example": "examples/t3.ss",
+      "example_bytes": 3573,
+      "for": [
+        "a 3D scene",
+        "a model or product viewer",
+        "anything with a camera"
+      ],
+      "teaches": [
+        "fx-init! takes the canvas the page already has",
+        "fx-program! wires a shader from its own forms",
+        "the (gfx mesh) generators and their full-extent sizes",
+        "fx-loop!: one bridge call per frame",
+        "(gfx mat) column-major mat4s and m4-mul parent-first"
+      ],
+      "checks": {
+        "needs_draw": true,
+        "needs_interact": false,
+        "custom": [
+          {
+            "kind": "draws_min",
+            "n": 3
+          },
+          {
+            "kind": "animates"
+          }
+        ]
+      }
+    },
+    {
+      "path": "t4-shader.md",
+      "bytes": 4851,
+      "budget": 6144,
+      "layer": 4,
+      "name": "shader",
+      "example": "examples/t4.ss",
+      "example_bytes": 3547,
+      "for": [
+        "a shadertoy-style effect",
+        "a procedural background",
+        "any fragment-shader question"
+      ],
+      "teaches": [
+        "glsl->string is pure; shaders compose",
+        "(fl W F) hundredths, strings for more places",
+        "shader functions with parameters, and return",
+        "reserved words are refused at generation time",
+        "fx-fullscreen! and the auto-wired u_time/u_resolution"
+      ],
+      "checks": {
+        "needs_draw": true,
+        "needs_interact": false,
+        "custom": [
+          {
+            "kind": "draws_min",
+            "n": 1
+          },
+          {
+            "kind": "animates"
+          },
+          {
+            "kind": "some_uniform_varies_over_time"
+          },
+          {
+            "kind": "max_vertices_per_frame",
+            "n": 12
+          }
+        ]
+      }
+    },
+    {
+      "path": "t5-animated.md",
+      "bytes": 4846,
+      "budget": 6144,
+      "layer": 5,
+      "name": "animated",
+      "example": "examples/t5.ss",
+      "example_bytes": 3193,
+      "for": [
+        "a rig, an arm, an orrery",
+        "several controllable degrees of freedom",
+        "animation and interaction in one scene"
+      ],
+      "teaches": [
+        "a hierarchy is m4-mul: parent frame first, child transform second",
+        "putting a pivot at a limb end instead of its middle",
+        "controls writing state that the frame callback reads",
+        "sliders entering the chain at different depths stay independent",
+        "the skinned-asset round trip, in brief"
+      ],
+      "checks": {
+        "needs_draw": true,
+        "needs_interact": true,
+        "custom": [
+          {
+            "kind": "input_count_min",
+            "n": 2
+          },
+          {
+            "kind": "draws_min",
+            "n": 3
+          },
+          {
+            "kind": "inputs_change_independently",
+            "indices": [
+              0,
+              1
+            ],
+            "by": "draws"
+          }
+        ]
+      }
+    }
+  ],
+  "injection": [
+    {
+      "task": "static page, no live behaviour",
+      "include": [
+        "core.md",
+        "t1-static.md"
+      ],
+      "bytes": 12367
+    },
+    {
+      "task": "page with state, controls or forms",
+      "include": [
+        "core.md",
+        "t1-static.md",
+        "t2-interactive.md"
+      ],
+      "bytes": 16075
+    },
+    {
+      "task": "3D scene or model viewer",
+      "include": [
+        "core.md",
+        "t1-static.md",
+        "t3-mesh3d.md"
+      ],
+      "bytes": 17025
+    },
+    {
+      "task": "shader effect / procedural visuals",
+      "include": [
+        "core.md",
+        "t4-shader.md"
+      ],
+      "bytes": 13396
+    },
+    {
+      "task": "a rig, an orrery, or several controllable degrees of freedom",
+      "include": [
+        "core.md",
+        "t2-interactive.md",
+        "t3-mesh3d.md",
+        "t5-animated.md"
+      ],
+      "bytes": 21757
+    },
+    {
+      "task": "unknown, or a page mixing several of the above",
+      "include": [
+        "core.md",
+        "t1-static.md",
+        "t2-interactive.md",
+        "t3-mesh3d.md",
+        "t4-shader.md",
+        "t5-animated.md"
+      ],
+      "bytes": 30430
+    }
+  ],
+  "verification": {
+    "test": "test/llm-substrate.mjs",
+    "what": "every example is put through goeteia verify -- all four stages: compile, smoke against a mock DOM and a recording WebGL context, draw/interact, then the custom checks recorded as this file's \"checks\" field -- and every tier document is asserted to carry its example source byte for byte, within budget, with these byte counts matching the files on disk",
+    "mutations": [
+      "a fixnum operand is injected into an fl* inside t3's frame callback: the smoke stage must go red, which is what proves the harness runs code rather than counting files",
+      "a line of an example is edited without updating the document that shows it: the byte-for-byte assertion must go red, which is what keeps the code a model is handed identical to the code that was verified"
+    ]
+  }
+}

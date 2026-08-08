@@ -641,7 +641,15 @@ $ npx goeteia run program.wasm                   # run a compiled module
 $ npx goeteia program.ss                         # compile and run in one step
 $ npx goeteia repl                               # interactive session
 $ npx goeteia dev [port]                          # live-reload dev server (cwd)
+$ npx goeteia verify page.ss --needs draw,interact  # compile, run and judge a page
+$ npx goeteia pack page.ss out.html --selfcheck  # one self-contained .html
 ```
+
+`verify` compiles a page, runs it against a mock DOM and a recording
+WebGL context, and answers with a structured verdict — including
+whether it really drew and whether input really changed anything;
+`pack` ships the result as a single file that fetches nothing. Both are
+[docs/verify.md](docs/verify.md).
 
 Without installing, the same steps run straight from a checkout:
 
