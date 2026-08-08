@@ -187,4 +187,9 @@ if ${NODE-node} test/determinism.mjs; then
 else
     echo "FAIL test/determinism.mjs"; fail=1
 fi
+if ${NODE-node} test/raster-diff.mjs; then
+    echo "ok   test/raster-diff.mjs"
+else
+    echo "FAIL test/raster-diff.mjs"; fail=1
+fi
 exit $fail

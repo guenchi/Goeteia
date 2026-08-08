@@ -14,6 +14,7 @@ declarative scenes and the compressed-asset pipeline.
 4. [Math](#4-math)
 5. [The compressed-asset pipeline](#5-the-compressed-asset-pipeline)
 6. [Effects and games toolkit](#6-effects-and-games-toolkit)
+7. [CPU rasterization](#7-cpu-rasterization)
 
 ---
 
@@ -929,3 +930,121 @@ top-left origin. Image sprite sheets ride a separate premultiplied path:
 source rectangles under `'premul` blending. Example:
 `examples/breakout.html` (bricks, ball, paddle, and the score text in a
 single draw).
+
+## 7. CPU rasterization
+
+`(gfx raster)` is a rasterizer with no GPU under it and no canvas in
+front of it: orbit camera → vertex projection → screen-space scanline →
+z-buffer → perspective-correct barycentrics, all of it arithmetic over
+staging memory. It verifies headlessly and answers identically on the
+Wasm and the JS backend, which is what makes it usable as the geometric
+core of a *fitting* pipeline — searching for the camera pose that best
+explains a photograph, baking photographs back onto a UV atlas, deciding
+what a given view can actually see. Shading, textures and image I/O are
+deliberately absent; those belong to the caller.
+
+```scheme
+(define n     (rmesh-vertex-count mesh))
+(define scr   (make-rmask 256 256 (fx-alloc! (rmask-bytes 256 256))))
+(define scratch (fx-alloc! (raster-scratch-bytes n)))
+(define cam   (rcam 35.0 15.0 300.0 45.0 0.0 70.0 0.0))  ; az el dist fov target
+(render-mask! scr mesh cam scratch)
+(mask-iou scr reference)                                 ; the measure of fit
+```
+
+**The camera** is an orbit around `target`: `az` degrees about +Y (at
+az=0 the camera sits towards +Z and looks at −Z, increasing az swings it
+towards +X), `el` degrees of elevation (positive lifts the camera and
+tips it down), `roll` about the view direction (positive turns the
+*picture* clockwise), `fov` the **vertical** field of view, and
+`shift-u` / `shift-v` translating target along the camera's own right
+and up axes — how "the subject is off-centre in frame" is said without
+opening two more degrees of freedom that move world coordinates. `near`
+clips; `far` is metadata that travels along and is never applied.
+`make-rcam` takes all twelve, with `#f` for `near`/`far` meaning the
+defaults derived from `dist`; `rcam` is the seven-argument shorthand.
+`rcam->list` / `list->rcam` move a camera through a fixed field order,
+so a pose serialized by another tool reconstructs without either side
+owning a private layout.
+
+`rcam-project` answers `#(sx sy depth)` or `#f` when the point is at or
+behind the eye plane; `rcam-ray` is the inverse, `#(ox oy oz dx dy dz)`,
+and every point along it with t > 0 projects back onto the screen point
+it came from. Screen coordinates run x right over [0,W] and y
+**downwards** over [0,H], with pixel centres at (i+.5, j+.5).
+
+**The input face is wide and the record is one.** Everything per-vertex
+— positions, normals, UVs, colours, a scalar — is a *count, a component
+count, and a reader*: `rattr-f32` reads interleaved 32-bit floats out of
+staging (base, stride, byte offset: exactly the shape a glTF
+primitive's vertex block already has, so `(rattr-f32 (gprim-vbase p)
+(gprim-stride p) 0 n 3)` needs no repacking), `rattr-f64` the same at
+double width, `rattr-vector` a flat Scheme vector, `rattr-proc` anything
+else. Indices are the same idea: `ridx-u16`, `ridx-u32`, `ridx-vector`,
+`ridx-range` (the non-indexed draw). Positions are just an attribute
+whose first three components get read, so a source carrying a whole
+interleaved vertex is accepted where positions are wanted, and
+`frame-interp!` interpolates at whatever width the attribute declares
+without a second interface.
+
+**Two rendering paths, on purpose.** `render-mask!` wants only the
+silhouette, so it builds no depth buffer and computes no barycentrics;
+`render-frame!` builds the full visibility buffer (per pixel: triangle
+id, perspective-correct barycentrics, 1/depth). Neither culls backfaces,
+so for one and the same camera their silhouettes must agree *byte for
+byte* — `frame-mask!` writes the second one and the test compares them.
+Two separately written fills being wrong in the very same way is far
+less likely than either being wrong alone, which is the whole reason for
+keeping both.
+
+Buffers are caller-owned: `rmask-bytes`, `rframe-bytes` and
+`raster-scratch-bytes` size them, `make-rmask` / `make-rframe` name a
+base. Queries over a rendered frame are `frame-tri`, `frame-depth`
+(`#f` where nothing was rasterized — a sentinel infinity would have to
+be compared correctly by every caller), `frame-bary!`, `frame-interp!`,
+and `frame-point-visible?`, which is the criterion a baker needs:
+project a world point, and let it through when the pixel it lands on
+holds its own triangle or a depth no nearer than its own within a
+relative bias.
+
+**One footprint rule, in one place.** `tri-spans!` decides coverage —
+the pixel centre lies inside the triangle — and hands back half-open
+`[x0, x1)` spans per scanline. A triangle that covers no pixel centre at
+all (a sliver, or one collapsed to a point) falls back to the single
+cell holding its centroid, so no triangle ever has an empty footprint
+and nothing vanishes from a coverage figure while also escaping the
+checks that look for empty regions. `tri-spans!` neither clips nor
+wraps: the row window is a parameter and the column clamp is the
+caller's, so the same rule serves a viewport that clips and an atlas
+that repeats without either policy being buried inside it.
+
+Two edges of the perspective-correct interpolation are worth knowing,
+because both were real defects before they were comments:
+
+- **The two barycentric numerators are ordered.** Reversing the terms
+  inside either one yields −l1/−l2, and l0 = 1−l1−l2 still sums to 1 with
+  a roughly correct depth. Only attribute interpolation *inside* the
+  triangle comes out wrong — which neither the mask nor the outline can
+  reveal at all, so nothing but an interpolation test catches it.
+- **Sub-pixel triangles interpolate at their centroid.** The centroid
+  fallback cell lies *outside* the triangle it stands for, so the
+  extrapolated weights there can be arbitrarily large — large enough to
+  drive 1/depth negative. Weights that leave the triangle collapse to
+  (1/3, 1/3, 1/3): on a sub-pixel triangle there is no better answer for
+  depth or attributes anyway, and it is what makes the two rendering
+  paths' footprints agree strictly.
+
+Trigonometry is reduced **in degrees**, not in radians, so that a
+quarter turn is an integer and cos 0 comes back as exactly 1.0. A
+reduction that has to evaluate a sine series at π/2 answers 1.0 minus a
+few parts in 1e12, and on a 300-unit orbit that error reaches the eye
+position multiplied by `dist`. Folded onto [0,45] degrees the series
+argument never leaves [0, π/4], where its truncation is far below an
+ulp, and the cosine comes from `sqrt(1 − sin²)`.
+
+`test/raster.ss` pins the conventions against hand-computed screen
+coordinates and a pixel-by-pixel countable 8×8 footprint;
+`test/raster-diff.mjs` renders the same mesh under the same fixture
+cameras through both compiler backends and, when a Python reference
+implementation is pointed at by `GOETEIA_RASTERLIB`, compares the masks
+with it byte for byte and reports the timing of both.
