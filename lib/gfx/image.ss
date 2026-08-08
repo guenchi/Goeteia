@@ -26,6 +26,42 @@
 ;; output shape for a wide set of inputs.  A caller sizing a buffer
 ;; needs w*h*4 bytes and nothing else.
 ;;
+;; MULTIPLE VALUES, NOT AGGREGATES.  Every arrow above with more than
+;; one thing after it returns that many VALUES: png-info three,
+;; png-decode! and tga-decode! two, tga-info four, crc32 and adler32
+;; two 16-bit halves each.  None of them is a list, a vector or a
+;; pair, so a caller has to receive them --
+;;
+;;   (let-values (((w h ch) (png-info src len)))
+;;     ...)
+;;   (call-with-values (lambda () (png-decode! src len dst))
+;;     (lambda (w h) ...))
+;;
+;; -- and binding the call with a plain `let' is not a way to reach
+;; them.  png-encode-size and png-encode! are the single-valued ones;
+;; they return one number each.
+;;
+;; PNG-DECODE!'S SCRATCH IS PART OF ITS CONTRACT.  The zlib stream
+;; inflates to h * (1 + w*channels) bytes of FILTERED SCANLINES before
+;; any of it becomes RGBA, and that region has to live somewhere
+;; writable:
+;;
+;;   (png-decode! src len dst)                ; scratch = dst + w*h*4
+;;   (png-decode! src len dst scratch)        ; scratch somewhere else
+;;   (png-decode! src len dst scratch limit)  ; ... and bounded
+;;
+;; Left out, scratch is taken to be the region DIRECTLY ABOVE the RGBA
+;; output.  That default is convenient -- one buffer, no arithmetic at
+;; the call -- but it means the buffer at dst must be
+;; w*h*4 + h*(1 + w*channels) bytes, not w*h*4, and that whatever a
+;; caller parked in the tail of it is overwritten by the decode.
+;; Passed explicitly, the output really does need only w*h*4.  The
+;; optional `scratch-len' bounds the scratch, turning a region that is
+;; too small into a named error instead of a wild write; it defaults
+;; to exactly the length required, which bounds nothing but the
+;; decoder's own arithmetic.  Channel count comes from png-info, so a
+;; caller sizing scratch ahead of the decode asks first.
+;;
 ;; Sizes and offsets are counted with `+' and `*'; only genuinely
 ;; bit-shaped quantities reach bitwise operators, and never above
 ;; 2^29 -- see the CRC32 note below and docs/limits.md.
@@ -507,6 +543,15 @@
         (error 'image "sub-byte PNG samples are not supported"))
       ($channels ct)))
 
+  ;; (png-info src slen) -> THREE VALUES: width, height, channels --
+  ;; not a vector and not a list.  Receive them with let-values or
+  ;; call-with-values.  `channels' is the SOURCE's count (1 grey, 2
+  ;; grey+alpha, 3 RGB, 4 RGBA, and 1 for a palette index); the
+  ;; decoded output is RGBA8 regardless, so this is the number that
+  ;; sizes png-decode!'s scratch, h * (1 + w*channels), and never the
+  ;; number that sizes its output.  Everything png-decode! refuses is
+  ;; refused here too, at the same place and by the same name, so a
+  ;; caller can ask before committing a buffer.
   (define (png-info src slen)
     ($src-init! src slen)
     (let* ((s ($png-scan $src-start))
@@ -671,13 +716,20 @@
                 (px (+ x 1)))))
           (row (+ y 1))))))
 
-  ;; (png-decode! src slen dst [scratch [scratch-len]]) -> w h
+  ;; (png-decode! src slen dst [scratch [scratch-len]])
+  ;;   -> TWO VALUES: width, height.  Receive them with let-values or
+  ;;      call-with-values; the pixels are RGBA8 at `dst'.
   ;;
   ;; `scratch' holds the filtered scanlines the zlib stream inflates
-  ;; to -- h * (1 + w*channels) bytes.  Left out, it is taken to be
-  ;; the region directly above the RGBA output, so a caller with one
-  ;; big buffer need not think about it; passed explicitly, the RGBA
-  ;; output needs only w*h*4 bytes.  `scratch-len' bounds it.
+  ;; to -- h * (1 + w*channels) bytes, with `channels' as png-info
+  ;; reports it.  LEFT OUT IT DEFAULTS TO dst + w*h*4, the region
+  ;; directly above the RGBA output, so a caller with one big buffer
+  ;; need not think about it -- but that buffer then has to be
+  ;; w*h*4 + h*(1 + w*channels) bytes long and its tail is
+  ;; overwritten.  Passed explicitly, the RGBA output needs only
+  ;; w*h*4.  `scratch-len' bounds it, and a scratch shorter than the
+  ;; scanlines is a named error rather than a wild write.  See the
+  ;; contract section in this file's header.
   (define (png-decode! src slen dst . rest)
     ($src-init! src slen)
     (let* ((s ($png-scan $src-start))

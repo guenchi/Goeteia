@@ -241,6 +241,26 @@ Two sharp edges besides the cost:
 
 ## Animation semantics
 
+- **`gltf-animate!` wraps its clock, so `t = duration` is the
+  clip's FIRST keyframe, not its last.**  The phase is
+  `t - dur*floor(t/dur)`, a half-open `[0, dur)`, which is right
+  for a clip that loops and wrong for every question of the form
+  "what does this clip end on".  Asking `gltf-animate!` for the
+  end pose silently returns the start pose: no error, no NaN, just
+  a joint at the wrong angle — and on a clip that turns a joint
+  most of the way round, wrong by most of a turn.  Negative `t`
+  wraps too, by floor rather than truncation, so `-0.25` of a
+  one-second clip reads `0.75`.  Use **`gltf-pose-at!`** where the
+  clock should be held at both ends instead — scrubbing, seeking,
+  reading a final pose, sampling `N+1` times inclusive of both
+  ends, holding the last frame of a one-shot.  Inside `[0, dur)`
+  the two are the same function, which is exactly why the
+  difference goes unnoticed until an endpoint is asked for.
+- **A clip's duration is its largest timestamp**, not the span of
+  its timestamps, and both entry points clamp or wrap into
+  `[0, duration]`.  Keyframes at negative times are therefore
+  unreachable through either.
+
 The deliberate deviations from the glTF ideal — nlerp instead of
 slerp between rotation keys, wholesale node reset when a clip
 poses, the one-transition animation machine, skinned normals

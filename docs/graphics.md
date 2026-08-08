@@ -480,6 +480,62 @@ fade correctly — `gltf-weights!` /
 fades. `gltf-animation-names` and `gltf-animation-duration` report a
 clip's name and its length in seconds — the period `gltf-animate!`
 wraps its clock into.
+
+Clip time comes in both flavours, and the difference is a contract
+rather than a detail. `gltf-animate!` **wraps**: its clock is
+`t - dur*floor(t/dur)`, the half-open interval `[0, dur)`, which is
+what a playing clip wants and which makes `t = dur` read as `t = 0` —
+the *first* keyframe, not the last. `gltf-pose-at!` is the same
+sampling with the clock **held** at both ends, `[0, dur]` inclusive:
+past the end it stays on the last keyframe, before the start it stays
+on the first, and inside the clip the two are the same function.
+
+```scheme
+(gltf-pose-at! g ai (gltf-animation-duration g ai))   ; the END pose
+(gltf-animate! g ai (gltf-animation-duration g ai))   ; the START pose
+```
+
+Reach for `gltf-pose-at!` when scrubbing a timeline, seeking, reading
+a clip's final pose, sampling `N+1` evenly spaced times inclusive of
+both ends, or holding the last frame of a one-shot instead of
+restarting it; `gltf-animate!` is the loop. Both clamp the clock to
+the clip's own domain, so a clip carrying keyframes at negative
+timestamps reaches them through neither. `test/gltf-pose.ss` pins the
+pair apart at `t = dur`.
+
+A pose does not have to come from a clip at all.
+`gltf-node-translation`, `gltf-node-rotation` and `gltf-node-scale`
+read one node's local transform (as a fresh 3-, 4- and 3-vector), and
+their `-set!` forms write it — loose components, one vector or one
+list, whichever the caller already has, widened to flonums on the way
+in because a pose parsed out of JSON carries an exact `0` wherever a
+lane is exactly zero. Writing a local **is** the pose:
+`gltf-joint-palette!` recomposes every global from exactly those slots
+on every call, and `gltf-draw!` / `gltf-skin-positions!` /
+`gltf-skin-normals!` call it, so an IK solve, a motion-capture
+retarget or a ragdoll poses the skeleton with no library code
+involved, no dirty flag and nothing to invalidate. What *does*
+overwrite a hand write is a clip — `gltf-animate!`, `gltf-pose-at!`
+and `gltf-animate-blend!` reset the nodes their clip touches to bind
+and then write these same slots — so pose by hand after sampling, or
+on nodes no clip touches.
+
+```scheme
+(gltf-node-rotation-set! g joint (q-mul (gltf-node-rotation g joint) dq))
+(gltf-node-translation-set! g root 0.0 1.5 0.0)
+(gltf-joint-palette! g 0)               ; already reflects both
+```
+
+`gltf-node-parent` gives a node's parent index (`-1` at a root) for
+walking the chain. `gltf-node-matrix?` says whether the node carries
+glTF's *matrix* form of a transform rather than TRS: such a node
+ignores its TRS slots entirely — `$node-local` and the palette both
+read the matrix in preference — so the three setters **refuse it by
+name** instead of writing slots that pose nothing, and they check
+before writing, so a refused call leaves the node exactly as it was.
+An importer that wants the TRS path on such an asset has to decompose
+the matrix itself.
+
 The skeleton composes without a boxed matrix anywhere: each node's local
 is `m4s-tqs!` in closed form, parent chains multiply in SIMD
 parents-first into a resident staging arena, and `gltf-joint-palette!`
@@ -1172,6 +1228,29 @@ and `inflate!`, `zlib-inflate!`, `crc32` and `adler32` are exported
 on their own.  All 32-bit arithmetic rides 16-bit halves, clear of
 the fixnum bitwise bound.
 
+Two contracts are easy to trip over. First, **these entry points
+return multiple values, not aggregates**: `png-info` hands back three
+(width, height, source channels), `png-decode!` and `tga-decode!` two,
+`tga-info` four, `crc32` and `adler32` two 16-bit halves each. Receive
+them, never bind the call with a plain `let`.
+
+```scheme
+(let-values (((w h ch) (png-info src len)))
+  (png-decode! src len dst (+ dst (* w h 4)) (* h (+ 1 (* w ch)))))
+```
+
+Second, **`png-decode!`'s scratch is part of its contract**. The zlib
+stream inflates to `h * (1 + w*channels)` bytes of filtered scanlines
+before any of it becomes RGBA, and that region has to live somewhere
+writable. Omit the argument and it defaults to `dst + w*h*4`, directly
+above the output — convenient, but the buffer at `dst` must then be
+`w*h*4 + h*(1 + w*channels)` bytes and its tail is overwritten. Pass
+one and the output really does need only `w*h*4`. The optional
+`scratch-len` bounds it, so a region that is too small is a named
+error instead of a wild write. `channels` is the *source's* count,
+which is what `png-info` reports and what sizes the scratch; the
+decoded output is RGBA8 either way.
+
 ## 9. Retargeting and CPU skinning
 
 `(gfx retarget)` moves a clip between skeletons without touching a
@@ -1193,3 +1272,20 @@ renormalize, so neither does this.  The output is packed vec3 f32
 at a staging base, which is an attribute `(gfx raster)` reads
 as-is: parse an asset, animate it, pose it, and render it, all
 without a GL context.
+
+The pose those two read is whatever the node table currently holds,
+which is not required to have come from a clip.
+`gltf-node-translation-set!`, `gltf-node-rotation-set!` and
+`gltf-node-scale-set!` write a node's local transform by name, and
+`gltf-joint-palette!` — which `gltf-skin-positions!` and
+`gltf-skin-normals!` both call — recomposes every global from those
+slots on every call, so a solver may write a joint and immediately
+read the skinned geometry back.  That closes the loop for retargeting
+and for motion capture: propose a pose, skin it on the CPU, measure
+it against the target, and iterate, with no GL context and no library
+edit anywhere in the cycle.  `gltf-node-parent` walks the chain and
+`gltf-node-matrix?` names the nodes this cannot pose (the setters
+refuse them rather than write slots the palette ignores).
+`gltf-pose-at!` samples a clip with the clock held instead of
+wrapped, which is what a solver seeding itself from a reference
+clip's *end* pose needs — see §5.

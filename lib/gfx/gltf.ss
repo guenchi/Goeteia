@@ -35,6 +35,21 @@
 ;; packed vec3 f32 -- the layout (gfx raster)'s rattr-f32 reads, so
 ;; a posed skinned mesh rasterizes without a GL context at all.
 ;;
+;; A pose does not have to come from a clip.  gltf-node-translation /
+;; -rotation / -scale and their -set! forms name the node table's TRS
+;; slots, and writing one IS the pose: gltf-joint-palette! recomposes
+;; every global from those slots on every call, so an inverse
+;; kinematics solve, a motion-capture retarget or a ragdoll poses the
+;; skeleton with no library code involved.  gltf-node-matrix? tells a
+;; caller which nodes cannot be posed that way (the setters refuse
+;; them), gltf-node-parent walks the chain.
+;;
+;; Clip time comes in both flavours: gltf-animate! WRAPS t into
+;; [0, duration), which is what a playing clip wants and means t =
+;; duration reads as the first keyframe; gltf-pose-at! CLAMPS it to
+;; [0, duration], which is what scrubbing, seeking and reading a
+;; clip's end pose want.
+;;
 ;; (gltf-parse base len) works on any GLB bytes already in staging
 ;; memory, so parsing verifies headlessly; gltf-fetch! is the
 ;; browser-side loader (fetch -> one bulk copy into staging).
@@ -74,8 +89,12 @@
   (export gltf? gltf-prims gltf-images gltf-parse gltf-fetch!
           gltf-load-textures! gltf-draw!
           gltf-anims gltf-nodes gltf-skins
+          gltf-node-translation gltf-node-rotation gltf-node-scale
+          gltf-node-translation-set! gltf-node-rotation-set!
+          gltf-node-scale-set!
+          gltf-node-parent gltf-node-matrix?
           gltf-animation-names gltf-animation-duration
-          gltf-animate!
+          gltf-animate! gltf-pose-at!
           gltf-animate-blend! gltf-weights! gprim-morph
           anim-machine anim-machine? anim-state anim-goto! anim-update!
           gltf-joint-matrices gltf-joint-palette! gltf-joint-count
@@ -430,6 +449,107 @@
            (p (vector-ref v 11)))
       (if (< p 0) local (m4-mul ($node-global g p) local))))
 
+  ;; ---- named access to one node's local transform ----
+  ;; The table `gltf-nodes' hands out is raw: twelve slots per node,
+  ;; 0..2 translation, 3..6 rotation as (x y z w), 7..9 scale, 10 the
+  ;; matrix form or #f, 11 the parent index.  These name that layout,
+  ;; so a caller posing a skeleton itself never writes a slot number
+  ;; and a change to the layout is one edit, here.
+  ;;
+  ;; WRITING A LOCAL IS THE POSE.  gltf-joint-palette! recomposes
+  ;; every node's global from exactly these slots on EVERY call, and
+  ;; gltf-draw!, gltf-skin-positions! and gltf-skin-normals! all call
+  ;; it, so a write shows in the very next draw: no global is cached
+  ;; and there is nothing to invalidate.  What does overwrite a hand
+  ;; write is a clip: gltf-animate! / gltf-pose-at! /
+  ;; gltf-animate-blend! reset the nodes their clip touches to bind
+  ;; and then write these same slots.  Pose by hand AFTER sampling a
+  ;; clip, or on nodes no clip touches.
+  ;;
+  ;;   (gltf-node-rotation-set! g 5 (gltf-node-rotation g 3))
+  ;;   (gltf-node-translation-set! g 5 0.0 1.5 0.0)   ; loose is equal
+  ;;   (gltf-joint-palette! g 0)                      ; already current
+  ;;
+  ;; A node carrying the matrix form ignores its TRS slots entirely --
+  ;; $node-local and the palette both read slot 10 in preference -- so
+  ;; the setters REFUSE such a node by name rather than write slots
+  ;; that pose nothing.  gltf-node-matrix? asks ahead of time; an
+  ;; importer that wants the TRS path can decompose slot 10 itself and
+  ;; clear it.
+  ;;
+  ;; Each of these boxes a small vector, which an inner optimizer loop
+  ;; writing one lane per step may not want; gltf-nodes stays exported
+  ;; and the paragraph above is the definition of what its slots mean,
+  ;; so the raw path remains legitimate.  Check gltf-node-matrix? once
+  ;; at load if you take it -- that check is the one the raw path
+  ;; loses, and losing it poses nothing, silently.
+  (define ($gltf-node who g i)
+    (let ((nodes (gltf-nodes g)))
+      (unless (and (fixnum? i) (>= i 0) (< i (vector-length nodes)))
+        (error who "node index out of range" i))
+      (vector-ref nodes i)))
+
+  (define (gltf-node-parent g i)
+    (vector-ref ($gltf-node 'gltf-node-parent g i) 11))   ; -1 at a root
+
+  (define (gltf-node-matrix? g i)
+    (if (vector-ref ($gltf-node 'gltf-node-matrix? g i) 10) #t #f))
+
+  ;; the getters copy: what one hands back must not be a second,
+  ;; unchecked way to write the slots the setters guard
+  (define (gltf-node-translation g i)
+    (let ((v ($gltf-node 'gltf-node-translation g i)))
+      (vector (vector-ref v 0) (vector-ref v 1) (vector-ref v 2))))
+
+  (define (gltf-node-rotation g i)
+    (let ((v ($gltf-node 'gltf-node-rotation g i)))
+      (vector (vector-ref v 3) (vector-ref v 4)
+              (vector-ref v 5) (vector-ref v 6))))
+
+  (define (gltf-node-scale g i)
+    (let ((v ($gltf-node 'gltf-node-scale g i)))
+      (vector (vector-ref v 7) (vector-ref v 8) (vector-ref v 9))))
+
+  ;; the components loose, or one vector or list of them: a getter's
+  ;; result feeds the matching setter unchanged, and so does whatever
+  ;; shape the caller's own quaternion code already produces
+  (define ($trs-in who n rest)
+    (let ((v (if (and (pair? rest) (null? (cdr rest)))
+                 (let ((a (car rest)))
+                   (cond ((vector? a) a)
+                         ((or (pair? a) (null? a)) (list->vector a))
+                         (else (error who "not a transform" a))))
+                 (list->vector rest))))
+      (unless (= (vector-length v) n)
+        (error who "wrong component count" (vector-length v)))
+      v))
+
+  ;; the refusal is checked before any slot is written, so a rejected
+  ;; call leaves the node exactly as it found it
+  (define ($trs-set! who g i base n rest)
+    (let ((node ($gltf-node who g i))
+          (v ($trs-in who n rest)))
+      (when (vector-ref node 10)
+        (error who "node carries a matrix transform, not TRS" i))
+      (let cp ((j 0))
+        (when (< j n)
+          (vector-set! node (+ base j) ($gltf-fl (vector-ref v j)))
+          (cp (+ j 1))))))
+
+  ;; the values widen: a pose read out of JSON carries an exact 0 in
+  ;; any lane that is exactly zero, and every TRS slot is flonum only
+  (define (gltf-node-translation-set! g i . rest)
+    ($trs-set! 'gltf-node-translation-set! g i 0 3 rest))
+
+  ;; the quaternion is NOT renormalized here -- a caller composing
+  ;; several rotations wants to normalize once, at the end, and a
+  ;; silent normalize would hide a drifting product
+  (define (gltf-node-rotation-set! g i . rest)
+    ($trs-set! 'gltf-node-rotation-set! g i 3 4 rest))
+
+  (define (gltf-node-scale-set! g i . rest)
+    ($trs-set! 'gltf-node-scale-set! g i 7 3 rest))
+
   (define ($gltf-skin-table json bin)
     (let* ((sk (json-ref json "skins"))
            (n (if sk (vector-length sk) 0))
@@ -771,6 +891,20 @@
           (fl- tf (fl* dur (flfloor (fl/ tf dur))))
           0.0)))
 
+  ;; the same clock CLAMPED instead of wrapped: [0, duration], both
+  ;; ends included.  Negative t reads as 0 -- the clock's start, at
+  ;; which every channel holds its own first key (a track whose first
+  ;; key sits past 0 still reads that key, because $chan-sample!
+  ;; clamps its interpolant before the track begins).  A clip's
+  ;; duration is its LARGEST timestamp, not the span of its
+  ;; timestamps, so keys at negative times are as unreachable through
+  ;; this clock as they are through $anim-time's wrap: the domain is
+  ;; the same either way, and only the mapping onto it differs.
+  (define ($anim-time-held anim t)
+    (let ((dur (vector-ref anim 2))
+          (tf ($gltf-fl t)))
+      (if (fl<? tf 0.0) 0.0 (if (fl<? dur tf) dur tf))))
+
   ;; return every channel this clip drives to its bind value, so the
   ;; sample that follows produces a COMPLETE pose: a channel the
   ;; clip lacks must read as bind, never as whatever ran before.
@@ -804,13 +938,18 @@
           (gltf-prims g)))
        (vector-ref anim 3))))
 
-  (define ($anim-sample! g anim t)
-    (let ((chans (vector-ref anim 1))
-          (tw ($anim-time anim t)))
+  ;; every channel of the clip written at ONE already-resolved clock
+  ;; reading -- the wrapping and the clamping entry points differ in
+  ;; nothing but which reading they hand in
+  (define ($anim-sample-at! g anim tw)
+    (let ((chans (vector-ref anim 1)))
       (let loop ((c 0))
         (when (< c (vector-length chans))
           ($chan-sample! g (vector-ref chans c) tw 1.0)
           (loop (+ c 1))))))
+
+  (define ($anim-sample! g anim t)
+    ($anim-sample-at! g anim ($anim-time anim t)))
 
   ;; run proc over the union of two clips' touched nodes, once each
   (define ($union-nodes! g a b proc)
@@ -823,13 +962,44 @@
                     (proc i)))
                 (append (vector-ref a 3) (vector-ref b 3)))))
 
-  ;; sample animation `ai` at time t (looping over its duration):
-  ;; every channel this clip drives writes its node's TRS, and every
-  ;; channel it does not drive returns to the bind pose
+  ;; sample animation `ai` at time t: every channel this clip drives
+  ;; writes its node's TRS, and every channel it does not drive
+  ;; returns to the bind pose.
+  ;;
+  ;; t LOOPS, and that is a contract, not an implementation detail:
+  ;; the clock is t - dur*floor(t/dur), so it lives in [0, dur) with
+  ;; the RIGHT end open.  t = dur is therefore t = 0, the FIRST
+  ;; keyframe -- not the last.  A clip that turns a joint through most
+  ;; of a circle reads at its own end as if nothing had happened yet,
+  ;; and a caller stepping a clip once through its length lands on the
+  ;; start rather than the finish.  Negative t wraps too (floor, not
+  ;; truncation, so -0.25 of a one-second clip reads 0.75).
+  ;; gltf-pose-at! is the same sampling with the clock CLAMPED, which
+  ;; is what a caller scrubbing, seeking or measuring an end pose
+  ;; wants; this one is what a playing clip wants.
   (define (gltf-animate! g ai t)
     (let ((anim (vector-ref (gltf-anims g) ai)))
       ($anim-reset! g anim)
       ($anim-sample! g anim t)))
+
+  ;; sample animation `ai` at time t with the clock HELD at both ends
+  ;; instead of wrapped: t past the clip's duration poses its last
+  ;; keyframe and stays there, negative t poses its first.  Identical
+  ;; to gltf-animate! everywhere strictly inside [0, duration) -- the
+  ;; same reset, the same channels, the same interpolation -- so the
+  ;; two are interchangeable for a playing clip and differ exactly at
+  ;; and past the end.
+  ;;
+  ;;   (gltf-pose-at! g ai (gltf-animation-duration g ai))  ; the END
+  ;;   (gltf-animate! g ai (gltf-animation-duration g ai))  ; the START
+  ;;
+  ;; Use this to read a clip's final pose, to scrub a timeline, to
+  ;; sample a clip at N+1 evenly spaced times inclusive of both ends,
+  ;; and to hold the last frame of a one-shot instead of restarting it.
+  (define (gltf-pose-at! g ai t)
+    (let ((anim (vector-ref (gltf-anims g) ai)))
+      ($anim-reset! g anim)
+      ($anim-sample-at! g anim ($anim-time-held anim t))))
 
   ;; the crossfade: pose ai at ti and aj at tj INDEPENDENTLY, each
   ;; as a complete pose, then blend with weight k (0 = all ai,
