@@ -1042,9 +1042,113 @@ position multiplied by `dist`. Folded onto [0,45] degrees the series
 argument never leaves [0, π/4], where its truncation is far below an
 ulp, and the cosine comes from `sqrt(1 − sin²)`.
 
-`test/raster.ss` pins the conventions against hand-computed screen
-coordinates and a pixel-by-pixel countable 8×8 footprint;
-`test/raster-diff.mjs` renders the same mesh under the same fixture
-cameras through both compiler backends and, when a Python reference
-implementation is pointed at by `GOETEIA_RASTERLIB`, compares the masks
-with it byte for byte and reports the timing of both.
+### Texturing, and the way back
+
+The visibility buffer says *where* every surface point landed. Shading
+says what colour it had, and the query below says which texel that
+colour came from — the two directions a dense fitting loop needs:
+render a pose, compare the render with the photograph, and push the
+disagreement back onto the atlas along the very rays that carried the
+colour out.
+
+```scheme
+(define atlas (make-rimg tw th (fx-alloc! (rimg-bytes tw th))))
+(png-decode! src slen (rimg-base atlas))          ; (gfx image) fills it
+(define shot  (make-rimg 256 256 (fx-alloc! (rimg-bytes 256 256))))
+(define uv    (rattr-f32 (gprim-vbase p) (gprim-stride p) 12 n 2))
+
+(render-textured! fr mesh cam uv atlas 'bilinear shot scratch)
+(frame-texel fr mesh uv atlas 130 84)             ; -> #(tx ty), or #f
+(frame-diff shot reference silhouette out)        ; -> out = sum count max
+```
+
+`rimg` is one container for two roles — the atlas a render samples and
+the colour frame a render writes are both *w×h texels of four bytes,
+row 0 at the base*, which is exactly what `png-decode!` leaves behind.
+Two record types would only have obliged callers to convert between
+them. What differs is the sampling rule, and that lives in the samplers.
+
+**The sampling conventions** are stated in one place and assumed
+nowhere else. `(u, v)` reach a sampler in the OpenGL sense — u right
+over [0,1], v **upwards** from the bottom edge, so row 0 is v = 1 — and
+coordinates outside [0,1] *repeat*, glTF's default wrap, under a floored
+modulus. glTF itself puts the UV origin at the top left, so a caller
+holding glTF texture coordinates samples at `(u, 1-v)`;
+`render-textured!`, `frame-texel` and `frame-splat!` apply that flip
+themselves. `rimg-texel!` names the texel a nearest sample reads,
+`rimg-nearest!` fetches it, `rimg-bilinear!` returns the four channels
+**un-quantized** as flonums so the caller decides whether the answer
+becomes a byte.
+
+Two details of that rule are load-bearing and neither is an accident:
+
+- **The nearest rule truncates towards zero, it does not floor.** On a
+  4-wide atlas, u in (−¼, 0) and u in [0, ¼) both name column 0, while
+  u = −¼ exactly names column 3. Flooring instead would shift every
+  negative-u sample by a column.
+- **1−v is taken twice on the glTF path and the pair is not
+  cancelled.** 1−(1−v) is not v to the last bit — v = 0.1 comes back as
+  0.09999999999999998 — and cancelling the two would move a texel
+  boundary by an ulp on every pixel whose sample lands on one.
+
+**Shading is layered on the visibility buffer, not fused into it.**
+`render-textured!` is `render-frame!` followed by `shade-textured!`, and
+both halves are exported: two textures through one pose pay for the
+geometry once, and the frame is left holding that pose so every query
+still applies to the picture just made. Pixels no triangle covered are
+written `(0,0,0,0)` — transparent black, so "no surface" is
+distinguishable from "a black surface" by alpha alone, which is what
+lets the loss below see the difference between wrongly empty and wrongly
+dark. `'nearest` copies the texel's bytes verbatim, with no rounding
+step anywhere on that path; `'bilinear` quantizes by `min(255, int(x +
+0.5))`.
+
+**`frame-texel` is the query, `frame-splat!` is the transpose.** The
+query answers "which texel did this pixel read" — `#f` at a background
+pixel — and it runs through the same rule the sampler fetches through,
+so a nearest render and the query cannot drift apart: the rendered pixel
+*is* `rimg-ref` of the texel it returns. Redistributing a correction is
+a different question, because under bilinear a pixel has no single
+texel, and `frame-splat!` answers that one instead: it calls
+`(proc px py tx ty w)` once per (pixel, texel) contribution — once per
+covered pixel with w = 1.0 under `'nearest`, four times with the
+sampler's own weights under `'bilinear`, so they sum to one and
+`Σ w·texel` reproduces the sample. Accumulating `w × correction` into
+texel (tx, ty) is what "spray the photograph back onto the UVs" means.
+Its `tri` argument selects one triangle, or `#f` for the whole frame.
+
+There is deliberately **no index from texel to pixels**: which pixels a
+texel reaches depends on the pose, so the only honest answer is
+"enumerate this view and keep what matches" — a caller after one texel
+filters on (tx, ty) inside `proc`. And `tri` narrows what is *emitted*,
+not what is walked: the scan is the whole frame either way, because a
+rendered frame carries no per-triangle bounding box and inventing one
+would be a second footprint rule beside `tri-spans!`. What it saves is
+the interpolation, the sampling and the callback — nearly all of the
+cost — so a caller splatting every triangle in turn should pass `#f`
+once and dispatch on `frame-tri` itself.
+
+`frame-diff` is the loss: |a − b| over the pixels a mask admits, filled
+into a caller's vector as *(sum, count, largest single-channel
+difference)*. **Alpha counts** — a render that put background where the
+photograph has surface differs from one that put a black surface there,
+and a sum over RGB alone reads both as (0,0,0). The sum comes back as a
+flonum: it is a whole number below 2⁵³ for any raster that fits in
+memory, so nothing is lost, and every consumer of a loss wants a flonum.
+The count and the maximum stay exact, because they are counts. A `#f`
+mask means every pixel; an empty mask reports a count of zero rather
+than a perfect match over a population of nothing.
+
+`test/raster.ss` pins the geometric conventions against hand-computed
+screen coordinates and a pixel-by-pixel countable 8×8 footprint;
+`test/raster-tex.ss` pins the sampling ones against a 4×4 atlas on an
+8×8 frame whose every expected byte is exact — the fixture's
+coefficients are chosen so that no bilinear result lands within a
+quarter of a rounding boundary, since a literal that is hostage to the
+last ulp tests the ulp and not the sampler. `test/raster-diff.mjs`
+renders the same mesh under the same fixture cameras through both
+compiler backends and, when a Python reference implementation is pointed
+at by `GOETEIA_RASTERLIB`, compares the masks, the visibility buffers
+and **both textured renders** with it byte for byte, checks the loss
+against a third computation done in JavaScript, and reports the timing
+of both.

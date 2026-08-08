@@ -8,9 +8,13 @@
 ;; that best explains a photograph, baking photographs back onto a UV
 ;; atlas, and deciding what a given view can actually see are all the
 ;; same three questions -- where does this vertex land, which pixels
-;; does this triangle cover, and what is in front of what.  Those and
-;; nothing else live here; shading, textures and image I/O are the
-;; caller's business and are deliberately absent.
+;; does this triangle cover, and what is in front of what.  On top of
+;; those sits one more pair, which closes the fitting loop rather than
+;; opening a renderer: sample a texture through the visibility buffer
+;; to get a picture, and say for any pixel which texel it read, so a
+;; correction measured on the picture can travel back up to the atlas
+;; it came from.  Image IO stays the caller's business -- (gfx image)
+;; decodes a PNG into exactly the RGBA8 block this module samples.
 ;;
 ;;   (define scr (make-rmask 256 256 (fx-alloc! (rmask-bytes 256 256))))
 ;;   (define scratch (fx-alloc! (raster-scratch-bytes nverts)))
@@ -72,7 +76,15 @@
           make-rframe rframe? rframe-base rframe-width rframe-height
           rframe-bytes rframe-clear! render-frame!
           frame-tri frame-depth frame-invd frame-bary!
-          frame-interp! frame-mask! frame-point-visible?)
+          frame-interp! frame-mask! frame-point-visible?
+          ;; RGBA8 rasters and the sampling rule
+          make-rimg rimg? rimg-base rimg-width rimg-height
+          rimg-bytes rimg-clear! rimg-ref rimg-set!
+          rimg-texel! rimg-nearest! rimg-bilinear!
+          ;; textured rendering, and the pixel <-> texel correspondence
+          render-textured! shade-textured!
+          frame-texel frame-texel! frame-splat!
+          frame-diff)
   (import (rnrs) (gfx mat))
 
   ;; ---------------------------------------------------------------
@@ -1093,5 +1105,420 @@
                                        (fl* wc2 g2))))))
                           (fill (+ x 1)))))))
                 (loop (+ s 1))))))))
+
+  ;; ---------------------------------------------------------------
+  ;; RGBA8 rasters
+  ;;
+  ;; One container for two roles: the texture a render samples, and
+  ;; the colour frame a render writes.  They are the same object --
+  ;; w*h texels of four bytes, row 0 at the base, exactly what
+  ;; `png-decode!' leaves behind -- and giving them two record types
+  ;; would only oblige callers to convert between them.  What differs
+  ;; is the *sampling* rule, and that lives in the samplers below, not
+  ;; in the container.
+
+  (define-record-type ($rimg $make-rimg rimg?)
+    (fields (immutable base rimg-base)
+            (immutable w rimg-width)
+            (immutable h rimg-height)))
+
+  (define (rimg-bytes w h) (* 4 (* w h)))
+
+  (define (make-rimg w h base)
+    (when (or (< w 1) (< h 1))
+      (error 'make-rimg "an RGBA8 raster needs a positive width and height"))
+    ($make-rimg base w h))
+
+  (define ($rimg-o img x y)
+    (+ (rimg-base img) (* 4 (+ (* y (rimg-width img)) x))))
+
+  ;; Raw indexing: channel k (0=R 1=G 2=B 3=A) of the texel at column
+  ;; x, row y.  No wrap and no clamp -- like `tri-spans!', this one
+  ;; neither knows nor decides what happens outside, so the same
+  ;; container serves a sampler that repeats and a frame that does not.
+  (define (rimg-ref img x y k) (%mem-u8-ref (+ ($rimg-o img x y) k)))
+
+  (define (rimg-set! img x y r g b a)
+    (let ((o ($rimg-o img x y)))
+      (%mem-u8-set! o r)
+      (%mem-u8-set! (+ o 1) g)
+      (%mem-u8-set! (+ o 2) b)
+      (%mem-u8-set! (+ o 3) a)))
+
+  (define (rimg-clear! img r g b a)
+    (let ((n (* (rimg-width img) (rimg-height img)))
+          (base (rimg-base img)))
+      (let loop ((i 0))
+        (when (< i n)
+          (let ((o (+ base (* 4 i))))
+            (%mem-u8-set! o r)
+            (%mem-u8-set! (+ o 1) g)
+            (%mem-u8-set! (+ o 2) b)
+            (%mem-u8-set! (+ o 3) a))
+          (loop (+ i 1))))))
+
+  ;; ---------------------------------------------------------------
+  ;; the sampling rule -- the one place it is written
+  ;;
+  ;; Conventions, stated here and assumed nowhere else:
+  ;;
+  ;;   * (u, v) reach a sampler in the OpenGL sense: u to the right
+  ;;     over [0,1] and v **upwards** from the bottom edge, so row 0
+  ;;     of the raster is at v = 1.
+  ;;   * Coordinates outside [0,1] REPEAT, which is glTF's default
+  ;;     wrap.  The modulus is floored, so u = -0.25 and u = 0.75 name
+  ;;     the same column.
+  ;;   * glTF puts the UV origin at the **top** left, so a caller
+  ;;     holding glTF texture coordinates samples at (u, 1-v).  The
+  ;;     frame-level entry points below apply that flip themselves;
+  ;;     nothing else in this module does.
+  ;;
+  ;; On that path 1-v is therefore taken twice -- once by the caller's
+  ;; flip and once inside the sampler -- and the pair is deliberately
+  ;; **not** cancelled.  1-(1-v) is not v to the last bit (v = 0.1
+  ;; returns 0.09999999999999998), the reference implementation this
+  ;; module is pinned to performs both subtractions, and cancelling
+  ;; them would move a texel boundary by an ulp on every pixel whose
+  ;; sample lands on one.  `$v-row' is that inner flip, named so the
+  ;; rule reads as a rule and not as an accident.
+
+  (define ($v-row v) (fl- 1.0 v))
+
+  ;; The floored modulus: `remainder' takes the sign of the dividend,
+  ;; and a texel column of -1 has to name the last column, not fail.
+  (define ($wrap i n)
+    (let ((r (remainder i n)))
+      (if (< r 0) (+ r n) r)))
+
+  ;; Truncation towards zero, pinned into the same safe window
+  ;; `$ifloor' uses so `%fl->fx' cannot trap.  It is truncation and
+  ;; not flooring on purpose: the reference reads the nearest texel as
+  ;; int(u*W), so u in (-1/W, 0) and u in [0, 1/W) both land on column
+  ;; 0.  That asymmetry is the rule as it stands, and a `floor' here
+  ;; would shift every negative-u sample by one column.
+  (define ($itrunc x)
+    (%fl->fx (fltruncate ($max (fl- 0.0 $col-limit) ($min $col-limit x)))))
+
+  ;; The nearest rule, one axis: `s' is the coordinate measured from
+  ;; the raster's low edge (column 0 / row 0) and `n' that axis' size.
+  (define ($near-i n s) ($wrap ($itrunc (fl* s (fixnum->flonum n))) n))
+
+  ;; The bilinear cell, one axis.  Sampling reads it forwards and
+  ;; splatting reads it backwards, so it is written once and both go
+  ;; through it: `$bi-c' the continuous texel coordinate, `$bi-lo' and
+  ;; `$bi-hi' the two texels it falls between, `$bi-t' the fraction.
+  (define ($bi-c n s) (fl- (fl* s (fixnum->flonum n)) 0.5))
+  (define ($bi-lo n c) ($wrap ($ifloor c) n))
+  (define ($bi-hi n c) ($wrap (+ ($ifloor c) 1) n))
+  (define ($bi-t c) (fl- c (flfloor c)))
+
+  ;; -> out[0] = column, out[1] = row: the single texel a nearest
+  ;; sample of (u, v) reads.  This is the query `frame-texel' answers
+  ;; per pixel, and it is the same arithmetic `rimg-nearest!' fetches
+  ;; through -- there is no second copy of it.
+  (define (rimg-texel! img u v out)
+    (vector-set! out 0 ($near-i (rimg-width img) u))
+    (vector-set! out 1 ($near-i (rimg-height img) ($v-row v)))
+    out)
+
+  ;; -> out[0..3] = R G B A, exact bytes.
+  (define (rimg-nearest! img u v out)
+    (let ((o ($rimg-o img
+                      ($near-i (rimg-width img) u)
+                      ($near-i (rimg-height img) ($v-row v)))))
+      (let loop ((k 0))
+        (when (< k 4)
+          (vector-set! out k (%mem-u8-ref (+ o k)))
+          (loop (+ k 1))))
+      out))
+
+  ;; -> out[0..3] = R G B A as flonums, un-quantized: the caller
+  ;; decides whether the answer becomes a byte, and if so by which
+  ;; rounding.  All four channels go through the same arithmetic --
+  ;; alpha is not a special case here, and a texture whose alpha
+  ;; varies is resampled as faithfully as its colour.
+  (define (rimg-bilinear! img u v out)
+    (let* ((w (rimg-width img))
+           (h (rimg-height img))
+           (cx ($bi-c w u))
+           (cy ($bi-c h ($v-row v)))
+           (tx ($bi-t cx))
+           (ty ($bi-t cy))
+           (mx (fl- 1.0 tx))
+           (my (fl- 1.0 ty))
+           (x0 ($bi-lo w cx))
+           (x1 ($bi-hi w cx))
+           (y0 ($bi-lo h cy))
+           (y1 ($bi-hi h cy))
+           (o00 ($rimg-o img x0 y0))
+           (o10 ($rimg-o img x1 y0))
+           (o01 ($rimg-o img x0 y1))
+           (o11 ($rimg-o img x1 y1)))
+      (let loop ((k 0))
+        (when (< k 4)
+          (let ((a (fl+ (fl* (fixnum->flonum (%mem-u8-ref (+ o00 k))) mx)
+                        (fl* (fixnum->flonum (%mem-u8-ref (+ o10 k))) tx)))
+                (b (fl+ (fl* (fixnum->flonum (%mem-u8-ref (+ o01 k))) mx)
+                        (fl* (fixnum->flonum (%mem-u8-ref (+ o11 k))) tx))))
+            (vector-set! out k (fl+ (fl* a my) (fl* b ty))))
+          (loop (+ k 1))))
+      out))
+
+  ;; A sampled channel back to a byte: the reference's min(255,
+  ;; int(x + 0.5)).  Over the range a sample can actually take -- 0 to
+  ;; 255, since samples and weights are both non-negative -- flooring
+  ;; and truncating agree, so this is that expression and not a
+  ;; near-miss of it.  The clamp before `%fl->fx' is not the rounding
+  ;; policy but the trap guard: that primitive faults outside the
+  ;; fixnum range, and a caller who reaches this with a value it never
+  ;; should must still get a byte back rather than a crash.
+  (define ($quant x)
+    (let ((n (%fl->fx (flfloor (fl+ ($min 255.5 ($max 0.0 x)) 0.5)))))
+      (if (> n 255) 255 n)))
+
+  ;; 'nearest -> #t, 'bilinear -> #f, anything else -> an error, and
+  ;; the error is raised once at the top of a render rather than once
+  ;; per pixel.
+  (define ($nearest-mode? who mode)
+    (cond ((eq? mode 'nearest) #t)
+          ((eq? mode 'bilinear) #f)
+          (else
+           (error who "sampling mode must be 'nearest or 'bilinear"))))
+
+  ;; The glTF flip, at the one boundary where glTF's convention meets
+  ;; the sampler's.  See the note above on why it is not fused with
+  ;; `$v-row'.
+  (define ($gltf-v v) (fl- 1.0 v))
+
+  ;; ---------------------------------------------------------------
+  ;; shading a visibility buffer with a texture
+  ;;
+  ;; This is the "render" half of a dense fitting loop: given a pose
+  ;; already rasterized into `fr', an attribute carrying UVs and an
+  ;; atlas, produce the picture that pose predicts.  It is layered on
+  ;; `render-frame!' rather than fused into it -- the visibility
+  ;; buffer knows nothing of colour, and a caller that wants two
+  ;; different textures through one pose pays for the geometry once.
+  ;;
+  ;; Pixels no triangle covered are written (0, 0, 0, 0): transparent
+  ;; black, so a background pixel is distinguishable from a black
+  ;; surface by the alpha channel alone and `frame-diff' can see the
+  ;; difference between "wrongly empty" and "wrongly dark".
+  ;;
+  ;; -> the number of pixels a triangle covered.
+
+  (define (shade-textured! fr mesh uv tex mode dst)
+    (unless (and (= (rframe-width fr) (rimg-width dst))
+                 (= (rframe-height fr) (rimg-height dst)))
+      (error 'shade-textured! "frame and destination sizes differ"))
+    (when (< (rattr-ncomp uv) 2)
+      (error 'shade-textured! "texture coordinates need two components"))
+    (let* ((near? ($nearest-mode? 'shade-textured! mode))
+           (w (rframe-width fr))
+           (h (rframe-height fr))
+           (db (rimg-base dst))
+           (tw (rimg-width tex))
+           (th (rimg-height tex))
+           ;; one scratch vector for the whole render, at whatever
+           ;; width the UV attribute declares -- an interleaved vertex
+           ;; block is accepted here exactly as it is for positions
+           (a (make-vector (rattr-ncomp uv) 0.0))
+           (c (make-vector 4 0.0)))
+      (let rows ((y 0) (covered 0))
+        (if (= y h)
+            covered
+            (let cols ((x 0) (n covered))
+              (if (= x w)
+                  (rows (+ y 1) n)
+                  (let ((o (+ db (* 4 (+ (* y w) x)))))
+                    (if (not (frame-interp! fr mesh uv x y a))
+                        (begin
+                          (%mem-u8-set! o 0)
+                          (%mem-u8-set! (+ o 1) 0)
+                          (%mem-u8-set! (+ o 2) 0)
+                          (%mem-u8-set! (+ o 3) 0)
+                          (cols (+ x 1) n))
+                        (let ((u (vector-ref a 0))
+                              (v ($gltf-v (vector-ref a 1))))
+                          (if near?
+                              ;; the bytes are already bytes; going
+                              ;; through a flonum and back would only
+                              ;; invent a rounding step
+                              (let ((s ($rimg-o tex ($near-i tw u)
+                                                ($near-i th ($v-row v)))))
+                                (%mem-u8-set! o (%mem-u8-ref s))
+                                (%mem-u8-set! (+ o 1) (%mem-u8-ref (+ s 1)))
+                                (%mem-u8-set! (+ o 2) (%mem-u8-ref (+ s 2)))
+                                (%mem-u8-set! (+ o 3) (%mem-u8-ref (+ s 3))))
+                              (begin
+                                (rimg-bilinear! tex u v c)
+                                (%mem-u8-set! o ($quant (vector-ref c 0)))
+                                (%mem-u8-set! (+ o 1) ($quant (vector-ref c 1)))
+                                (%mem-u8-set! (+ o 2) ($quant (vector-ref c 2)))
+                                (%mem-u8-set! (+ o 3)
+                                              ($quant (vector-ref c 3)))))
+                          (cols (+ x 1) (+ n 1)))))))))))
+
+  ;; Geometry and shading in one call, for the common case where the
+  ;; visibility buffer is wanted only to be shaded.  It is literally
+  ;; the two halves in sequence: `fr' is left holding the pose, so
+  ;; every query below (`frame-texel', `frame-splat!',
+  ;; `frame-point-visible?') still applies to the picture just made.
+  (define (render-textured! fr mesh cam uv tex mode dst scratch)
+    (render-frame! fr mesh cam scratch)
+    (shade-textured! fr mesh uv tex mode dst))
+
+  ;; ---------------------------------------------------------------
+  ;; pixel -> texel
+  ;;
+  ;; Which texel did this pixel read?  -> #t with out[0] the texel
+  ;; column and out[1] the texel row, or #f where the pixel is
+  ;; background.  It runs through `frame-interp!' and the same
+  ;; `$near-i' the sampler fetches through, so a nearest-mode render
+  ;; and this query cannot disagree: the rendered pixel is by
+  ;; construction `rimg-ref' of the texel this returns.
+  ;;
+  ;; Under 'bilinear a pixel has no single texel, and this answers the
+  ;; nearest one -- the right answer for "where on the atlas am I",
+  ;; and the wrong one for redistributing a correction, which is what
+  ;; `frame-splat!' below is for.
+
+  (define (frame-texel! fr mesh uv tex x y out)
+    (when (< (rattr-ncomp uv) 2)
+      (error 'frame-texel! "texture coordinates need two components"))
+    (let ((a (make-vector (rattr-ncomp uv) 0.0)))
+      (and (frame-interp! fr mesh uv x y a)
+           (begin
+             (rimg-texel! tex (vector-ref a 0)
+                          ($gltf-v (vector-ref a 1)) out)
+             #t))))
+
+  (define (frame-texel fr mesh uv tex x y)
+    (let ((out (make-vector 2 0)))
+      (and (frame-texel! fr mesh uv tex x y out) out)))
+
+  ;; ---------------------------------------------------------------
+  ;; texel <- pixel: the transpose of sampling
+  ;;
+  ;; `proc' is called (proc px py tx ty w) once per (pixel, texel)
+  ;; contribution, and the return value is how many times it was
+  ;; called.  Under 'nearest that is once per covered pixel with
+  ;; w = 1.0; under 'bilinear four times per covered pixel, with
+  ;; exactly the four weights the sampler gave those four texels, so
+  ;; they sum to one and sum(w * texel) reproduces the sample.
+  ;; Spraying a per-pixel correction back onto the atlas is then
+  ;; accumulating w*correction into texel (tx, ty), which is what
+  ;; "project the photograph back onto the UVs" means.
+  ;;
+  ;; `tri' selects one triangle, or #f for every covered pixel.
+  ;;
+  ;; There is no index from texel to pixels, and deliberately none:
+  ;; which pixels a texel reaches depends on the pose, so the only
+  ;; honest answer is "enumerate this view and keep what matches" --
+  ;; a caller after one texel filters on (tx, ty) inside `proc'.
+  ;;
+  ;; `tri' narrows what is *emitted*, not what is walked: the scan is
+  ;; the whole frame either way, since a rendered frame carries no
+  ;; per-triangle bounding box and inventing one would be a second
+  ;; footprint rule beside `tri-spans!'.  What it saves is the
+  ;; interpolation, the sampling and the callback, which is nearly all
+  ;; of the cost; a caller splatting every triangle in turn should
+  ;; pass #f once and dispatch on `frame-tri' itself.
+
+  (define (frame-splat! fr mesh uv tex mode tri proc)
+    (when (< (rattr-ncomp uv) 2)
+      (error 'frame-splat! "texture coordinates need two components"))
+    (let* ((near? ($nearest-mode? 'frame-splat! mode))
+           (w (rframe-width fr))
+           (h (rframe-height fr))
+           (tw (rimg-width tex))
+           (th (rimg-height tex))
+           (a (make-vector (rattr-ncomp uv) 0.0)))
+      (let rows ((y 0) (n 0))
+        (if (= y h)
+            n
+            (let cols ((x 0) (n n))
+              (if (= x w)
+                  (rows (+ y 1) n)
+                  (if (and tri (not (= tri (frame-tri fr x y))))
+                      (cols (+ x 1) n)
+                      (if (not (frame-interp! fr mesh uv x y a))
+                          (cols (+ x 1) n)
+                          ;; `s' is the row coordinate the sampler
+                          ;; reaches after both flips, so splatting
+                          ;; walks into exactly the cell sampling
+                          ;; walked out of
+                          (let ((u (vector-ref a 0))
+                                (s ($v-row ($gltf-v (vector-ref a 1)))))
+                            (if near?
+                                (begin
+                                  (proc x y ($near-i tw u) ($near-i th s) 1.0)
+                                  (cols (+ x 1) (+ n 1)))
+                                (let* ((cx ($bi-c tw u))
+                                       (cy ($bi-c th s))
+                                       (tu ($bi-t cx))
+                                       (tv ($bi-t cy))
+                                       (mu (fl- 1.0 tu))
+                                       (mv (fl- 1.0 tv))
+                                       (x0 ($bi-lo tw cx))
+                                       (x1 ($bi-hi tw cx))
+                                       (y0 ($bi-lo th cy))
+                                       (y1 ($bi-hi th cy)))
+                                  (proc x y x0 y0 (fl* mu mv))
+                                  (proc x y x1 y0 (fl* tu mv))
+                                  (proc x y x0 y1 (fl* mu tv))
+                                  (proc x y x1 y1 (fl* tu tv))
+                                  (cols (+ x 1) (+ n 4)))))))))))))
+
+  ;; ---------------------------------------------------------------
+  ;; the loss
+  ;;
+  ;; |a - b| over the pixels a mask admits, filled into out:
+  ;;
+  ;;   out[0]  the sum over all four channels, as a flonum
+  ;;   out[1]  how many pixels were compared
+  ;;   out[2]  the largest single-channel difference
+  ;;
+  ;; Alpha counts.  A render that put background where the photograph
+  ;; has surface differs from one that put a black surface there, and
+  ;; a difference summed over RGB alone cannot tell those apart --
+  ;; both read (0,0,0).  `mask' is an `rmask' whose non-zero bytes
+  ;; select, or #f for every pixel.
+  ;;
+  ;; The sum is a flonum rather than an exact integer: it is a whole
+  ;; number below 2^53 for any raster that fits in memory, so nothing
+  ;; is lost, and every consumer of a loss wants a flonum anyway.
+  ;; The count and the maximum stay exact, because they are counts.
+
+  (define (frame-diff a b mask out)
+    (let ((w (rimg-width a)) (h (rimg-height a)))
+      (unless (and (= w (rimg-width b)) (= h (rimg-height b)))
+        (error 'frame-diff "frame sizes differ"))
+      (when mask
+        (unless (and (= w (rmask-width mask)) (= h (rmask-height mask)))
+          (error 'frame-diff "frame and mask sizes differ")))
+      (let ((pa (rimg-base a))
+            (pb (rimg-base b))
+            (mb (and mask (rmask-base mask)))
+            (n (* w h)))
+        (let loop ((i 0) (sum 0.0) (cnt 0) (mx 0))
+          (if (= i n)
+              (begin
+                (vector-set! out 0 sum)
+                (vector-set! out 1 cnt)
+                (vector-set! out 2 mx)
+                out)
+              (if (and mb (= 0 (%mem-u8-ref (+ mb i))))
+                  (loop (+ i 1) sum cnt mx)
+                  (let ((o (* 4 i)))
+                    (let chan ((k 0) (s sum) (m mx))
+                      (if (= k 4)
+                          (loop (+ i 1) s (+ cnt 1) m)
+                          (let* ((p (%mem-u8-ref (+ pa o k)))
+                                 (q (%mem-u8-ref (+ pb o k)))
+                                 (d (if (< p q) (- q p) (- p q))))
+                            (chan (+ k 1)
+                                  (fl+ s (fixnum->flonum d))
+                                  (if (> d m) d m))))))))))))
 
   )
