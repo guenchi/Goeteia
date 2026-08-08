@@ -362,6 +362,119 @@ func -> string -> procedure -> any
 (Node only.) Open `path` for writing, call `(proc port)`, close, and
 return its value.
 
+#### `(web fs)`: Whole Files In and Out of Staging Memory
+
+The ports above give a file one character at a time. `(web fs)` gives
+it as **bytes in staging memory**, which is where every `(gfx …)`
+decoder wants its input and where every encoder leaves its output — a
+GLB to parse, a PNG to decode, an encoded image to write back.
+
+The destination block is the caller's. There is one bump heap and
+`(gfx fx)` owns it, so a second allocator would hand the same bytes
+out twice; `(web fs)` therefore imports nothing but `(rnrs)`, and a
+page that reads a file does not drag the GL harness in.
+
+```scheme
+(define base (fx-alloc! 900000))                   ; the caller allocates
+(define n (fs-slurp! "asset.glb" base 900000))
+(define g (gltf-parse base n))
+```
+
+**Host body.** A filesystem is not something every host has: a browser
+page has none, and neither do the verify and compile hosts. Every open
+fails there, and `(web fs)` says so *by name* rather than trapping
+deeper down. `fs-exists?` answers `#f` — on a host with no filesystem
+nothing exists, which is the true answer. The readers raise naming the
+path, because a failed read-open means either a missing file or a host
+without a filesystem and the two are indistinguishable from inside.
+The writers raise naming the *host*, because a failed write-open is
+not ambiguous: a host with a filesystem accepts the open and defers
+any failure to the close.
+
+```
+procedure: (fs-slurp! path base)   (fs-slurp! path base cap)
+
+func -> string -> int -> int
+```
+Read the whole file into staging memory at `base`; answer the byte
+count. With `cap` the read is refused past `base + cap`. A file that
+outgrows either that or the staging memory is a **named error at the
+byte that would leave it** — not a trap with no path in it, and not a
+quiet overwrite of whatever `fx-alloc!` handed out next. The two
+bounds are reported apart: one calls for a bigger block, the other for
+a bigger memory.
+
+```
+procedure: (fs-spit! path base len)
+
+func -> string -> int -> int -> int
+```
+Write `len` bytes of staging memory starting at `base`; answer `len`.
+
+```
+procedure: (fs-slurp-string path)   (fs-spit-string! path s)
+
+func -> string -> string   /   func -> string -> string -> int
+```
+The whole file as a Scheme string, and the reverse (answering the byte
+count). A Goeteia string is UTF-8 bytes and these move one byte per
+character, so a UTF-8 file arrives unchanged — this is the shape
+`(web json)` reads.
+
+```
+procedure: (fs-exists? path)   (fs-size path)
+
+func -> string -> boolean   /   func -> string -> int
+```
+Whether the file can be opened for reading, and its length in bytes.
+`fs-exists?` never raises. `fs-size` reads the whole file to count it
+(the host offers no `stat`), so a caller about to slurp the file
+anyway should slurp it and take the count `fs-slurp!` returns rather
+than ask twice.
+
+### `(web args)`: Command-Line Arguments
+
+A program used to have exactly one channel in from its runner —
+standard input, which `rt/run.mjs` fills from a file named on the
+command line. That makes "which variant is this run" and "what is the
+input" the same stream. `(web args)` is the second channel.
+
+Everything after a bare `--` is the program's own argv; an invocation
+without one means exactly what it always meant.
+
+```
+$ node rt/run.mjs prog.wasm input.txt -- --frames 34 out/
+```
+
+```scheme
+(import (rnrs) (web args))
+(args-count)          ; => 3
+(args-list)           ; => ("--frames" "34" "out/")
+(args-ref 0)          ; => "--frames"
+```
+
+The host publishes the list at `__goeteia_argv`, the same way a host
+hands a worker its canvas (`__goeteia_canvas`) and the module its
+memory (`__goeteia_mem`) — the bridge resolves `__goeteia_*` per
+instance, so this needed no new wasm import and no compiler change.
+`rt/runjs.mjs` publishes it identically, so both targets read the same
+arguments.
+
+**Host body.** A host that publishes nothing gives a program zero
+arguments: `args-count` answers 0 and `args-list` answers `()`, on a
+browser page as much as under a runner invoked without `--`. It is
+`args-ref` out of range that raises, and it raises by name — an
+argument the caller believed was there and is not should stop the run
+at the point of the mistake, not read back as `#f`.
+
+```
+procedure: (args-count)   (args-list)   (args-ref i)
+
+func -> int   /   func -> list   /   func -> int -> string
+```
+How many arguments the host published, all of them as a list of
+strings, and the `i`th one.
+
 ### Hashtables
 
 Hash tables with `eq?` or `equal?` keys. `make-hashtable` takes a
@@ -1847,6 +1960,34 @@ func -> number -> number -> number -> number -> vector
 Projection matrices. `m4-look-at eye center up` builds a view;
 `m4-translate`, `m4-scale`, `m4-rotate-x/-y/-z`, `m4-from-quat` build
 model transforms; `flsin`/`flcos`/`fltan` are the library's own trig.
+
+```
+procedure: (q-mul a b)   (q-conj q)   (q-neg q)   (q-dot a b)   (q-normalize q)
+
+func -> vector -> vector -> vector   /   func -> vector -> vector
+```
+Quaternion algebra over 4-element vectors `#(x y z w)` — the shape
+glTF stores node rotations in, and the shape `m4-from-quat` reads.
+
+`q-mul` is the Hamilton product in the composition order the matrices
+use: `R(q-mul a b)` = `R(a)` · `R(b)`, so `(q-mul q r)` turns `q` by
+`r` expressed in **q's own frame**, which is what posing a joint by a
+local twist means. It does not commute.
+
+`q-conj` negates the vector part and keeps the scalar one; on a *unit*
+quaternion that is the inverse rotation and `(q-mul q (q-conj q))` is
+`#(0 0 0 1)`, while on a non-unit one the product is the squared norm.
+`q-neg` negates *every* lane, and `q` and `(q-neg q)` are the **same**
+rotation (the double cover) — which is why a track that must not take
+the long way round flips a key whose dot with the previous one is
+negative. `q-normalize` divides by the norm, answering the identity
+rather than four NaNs for the zero quaternion, which is not a rotation
+and has no direction to keep. `q-slerp a b t` interpolates two unit
+quaternions along the shortest arc at a constant angular rate.
+
+Like the rest of this library they assume flonum components: they are
+the per-frame hot path, and a rotation read out of the node table is
+flonum in every lane.
 
 ```
 procedure: (m4-inverse m)
