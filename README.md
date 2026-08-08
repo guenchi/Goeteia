@@ -160,6 +160,28 @@ The UI, text and network stack over the JS bridge, in `lib/web/`:
   message / SSE event is one datum, matching Igropyr's
   `ws-send-sexpr!` / `sse-send-sexpr!` on the server; multi-line
   datums survive SSE framing intact
+- `(web fs)` — whole files in and out of **staging memory**, which is
+  where every `(gfx ...)` decoder wants its input and where every
+  encoder leaves its output: `fs-slurp!` / `fs-spit!` for bytes,
+  `fs-slurp-string` / `fs-spit-string!` for text, plus `fs-exists?`
+  and `fs-size`.  The destination block is the caller's — there is
+  one bump heap and `(gfx fx)` owns it — so this library imports
+  nothing but `(rnrs)` and a page that reads a file does not drag the
+  GL harness in.  `fs-slurp!` takes an optional capacity and refuses
+  a file that would outgrow it, by name, instead of scribbling into
+  the next block.  A host with no filesystem (a browser page, and the
+  verify and compile hosts) is a *named* answer rather than a trap:
+  `fs-exists?` is `#f`, the readers raise naming the path, the
+  writers raise naming the host
+- `(web args)` — the arguments a host started this program with:
+  `args-count`, `args-ref`, `args-list`.  A program used to have
+  exactly one channel in from its runner — standard input — so
+  "which variant is this run" and "what is the input" were the same
+  stream; this is the second one.  `node rt/run.mjs prog.wasm
+  input.txt -- --frames 34 out/` gives the program the three
+  arguments after the `--` and leaves the input file alone.  A host
+  that publishes nothing gives zero arguments, on a browser page as
+  much as under a runner invoked without `--`
 - `(conjure mode body...)` — the mount point as a language form: a
   site generator holds Scheme code for the browser inline, and the
   compiler builds it into the page while compiling the generator.
@@ -657,6 +679,7 @@ Without installing, the same steps run straight from a checkout:
 $ node rt/compile.mjs goeteia.wasm program.ss program.wasm
 $ node rt/compile.mjs --script program.ss program.wasm   # -O0: skip the slow opt passes, faster compile
 $ node rt/run.mjs program.wasm
+$ node rt/run.mjs program.wasm input.txt -- --frames 34   # stdin, then argv: (web args)
 ```
 
 The same source also compiles to a plain-JavaScript ES module, for
@@ -664,7 +687,7 @@ engines without Wasm GC — see [The JS target](#the-js-target):
 
 ```
 $ node rt/compile.mjs --js goeteia.wasm program.ss program.js
-$ node rt/runjs.mjs program.js                  # same io hooks, same printed result
+$ node rt/runjs.mjs program.js                  # same io hooks, same argv, same printed result
 ```
 
 A program is a sequence of top-level definitions and expressions; the

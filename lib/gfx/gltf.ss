@@ -92,7 +92,7 @@
           gltf-node-translation gltf-node-rotation gltf-node-scale
           gltf-node-translation-set! gltf-node-rotation-set!
           gltf-node-scale-set!
-          gltf-node-parent gltf-node-matrix?
+          gltf-node-count gltf-node-parent gltf-node-matrix?
           gltf-animation-names gltf-animation-duration
           gltf-animate! gltf-pose-at!
           gltf-animate-blend! gltf-weights! gprim-morph
@@ -488,6 +488,11 @@
       (unless (and (fixnum? i) (>= i 0) (< i (vector-length nodes)))
         (error who "node index out of range" i))
       (vector-ref nodes i)))
+
+  ;; how many nodes the table holds -- the bound every index above is
+  ;; checked against, and the loop bound a caller walking the whole
+  ;; skeleton needs without reaching for the raw table
+  (define (gltf-node-count g) (vector-length (gltf-nodes g)))
 
   (define (gltf-node-parent g i)
     (vector-ref ($gltf-node 'gltf-node-parent g i) 11))   ; -1 at a root

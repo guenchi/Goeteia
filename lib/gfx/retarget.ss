@@ -129,27 +129,9 @@
   (define ($rt-fl-min a b) (if (fl<? a b) a b))
   (define ($rt-fl-max a b) (if (fl<? a b) b a))
 
-  ;; The one quaternion operation (gfx mat) does not already carry.
-  ;; q-slerp is the other one, and it is used as it stands.
-  (define ($rt-q-norm q)
-    (let ((n (flsqrt (fl+ (fl+ (fl* (vector-ref q 0) (vector-ref q 0))
-                               (fl* (vector-ref q 1) (vector-ref q 1)))
-                          (fl+ (fl* (vector-ref q 2) (vector-ref q 2))
-                               (fl* (vector-ref q 3) (vector-ref q 3)))))))
-      (if (fl<? 0.0 n)
-          (vector (fl/ (vector-ref q 0) n) (fl/ (vector-ref q 1) n)
-                  (fl/ (vector-ref q 2) n) (fl/ (vector-ref q 3) n))
-          (vector 0.0 0.0 0.0 1.0))))
-
-  (define ($rt-q-dot a b)
-    (fl+ (fl+ (fl* (vector-ref a 0) (vector-ref b 0))
-              (fl* (vector-ref a 1) (vector-ref b 1)))
-         (fl+ (fl* (vector-ref a 2) (vector-ref b 2))
-              (fl* (vector-ref a 3) (vector-ref b 3)))))
-
-  (define ($rt-q-neg q)
-    (vector (fl- 0.0 (vector-ref q 0)) (fl- 0.0 (vector-ref q 1))
-            (fl- 0.0 (vector-ref q 2)) (fl- 0.0 (vector-ref q 3))))
+  ;; The quaternion algebra this file used to keep its own copies of
+  ;; -- normalize, dot and negate -- now comes from (gfx mat)
+  ;; alongside q-slerp, which was always used as it stands.
 
   ;; ---- options: a key/value tail, so a later revision can add one
   ;; without disturbing a caller -----------------------------------
@@ -305,8 +287,7 @@
       (let* ((skin (vector-ref skins si))
              (jn (vector-ref skin 0))
              (nj (vector-length jn))
-             (nodes (gltf-nodes g))
-             (nn (vector-length nodes))
+             (nn (gltf-node-count g))
              (pos (make-vector nn -1))
              (parents (make-vector nj -1))
              (kids (make-vector nj '()))
@@ -325,23 +306,20 @@
         (let loop ((k 0))
           (when (< k nj)
             (let* ((ni (vector-ref jn k))
-                   (v (vector-ref nodes ni))
                    (nm ($rt-node-name names ni))
-                   (pn (vector-ref v 11)))
-              (when (vector-ref v 10)
+                   (pn (gltf-node-parent g ni)))
+              (when (gltf-node-matrix? g ni)
                 (error who "a joint is given as a matrix, not TRS" nm))
-              (let ((sx (vector-ref v 7)) (sy (vector-ref v 8))
-                    (sz (vector-ref v 9)))
+              (let* ((s (gltf-node-scale g ni))
+                     (sx (vector-ref s 0)) (sy (vector-ref s 1))
+                     (sz (vector-ref s 2)))
                 (when (or (fl<? $rt-scale-tol ($rt-fl-abs (fl- sx 1.0)))
                           (fl<? $rt-scale-tol ($rt-fl-abs (fl- sy 1.0)))
                           (fl<? $rt-scale-tol ($rt-fl-abs (fl- sz 1.0))))
                   (error who "a joint carries a non-unit scale" nm)))
               (vector-set! nms k nm)
-              (vector-set! bt k (vector (vector-ref v 0) (vector-ref v 1)
-                                        (vector-ref v 2)))
-              (vector-set! bq k ($rt-q-norm
-                                 (vector (vector-ref v 3) (vector-ref v 4)
-                                         (vector-ref v 5) (vector-ref v 6))))
+              (vector-set! bt k (gltf-node-translation g ni))
+              (vector-set! bq k (q-normalize (gltf-node-rotation g ni)))
               (vector-set! parents k
                            (if (and (integer? pn) (>= pn 0))
                                (vector-ref pos pn)
@@ -543,7 +521,7 @@
   (define ($rt-tracks g ai)
     (let* ((anim (vector-ref (gltf-anims g) ai))
            (chans (vector-ref anim 1))
-           (nn (vector-length (gltf-nodes g)))
+           (nn (gltf-node-count g))
            (out (make-vector nn #f)))
       (let loop ((c 0))
         (when (< c (vector-length chans))
@@ -702,13 +680,13 @@
                                                ($rt-sample (vector-ref slot 2)
                                                         (vector-ref slot 3)
                                                         t #t))))
-                                  ($rt-q-norm (if s s (vector-ref sbq si))))
+                                  (q-normalize (if s s (vector-ref sbq si))))
                                 (vector-ref dbq di)))
                          ;; one hemisphere per track: a sign flip
                          ;; between keys is a rotation the long way
                          ;; round for every reader that lerps
-                         (q (if (and prev (fl<? ($rt-q-dot q prev) 0.0))
-                                ($rt-q-neg q)
+                         (q (if (and prev (fl<? (q-dot q prev) 0.0))
+                                (q-neg q)
                                 q)))
                     (vector-set! rot f q)
                     (when tr
@@ -858,13 +836,12 @@
     (vector-ref ($rt-plan 'retarget-report src ci dst opts) 1))
 
   ;; ---- writing the target out ------------------------------------
-  (define ($rt-node->desc names i v)
+  (define ($rt-node->desc names g i)
     (list ($rt-name-lookup names i)
-          (vector-ref v 11)
-          (vector (vector-ref v 0) (vector-ref v 1) (vector-ref v 2))
-          (vector (vector-ref v 3) (vector-ref v 4)
-                  (vector-ref v 5) (vector-ref v 6))
-          (vector (vector-ref v 7) (vector-ref v 8) (vector-ref v 9))))
+          (gltf-node-parent g i)
+          (gltf-node-translation g i)
+          (gltf-node-rotation g i)
+          (gltf-node-scale g i)))
 
   ;; CUBICSPLINE is the one shape the parser splits and the writer
   ;; wants whole: in-tangent, value, out-tangent, per key.
@@ -909,7 +886,6 @@
                     (if (eq? k 'yes) #t k)))
            (si ($rt-option opts 'skin 0))
            (skins (gltf-skins dst))
-           (nodes (gltf-nodes dst))
            (name (car clip))
            (old (let loop ((as (vector->list (gltf-anims dst))) (acc '()))
                   (cond ((not keep?) '())
@@ -934,12 +910,11 @@
                     'color (gprim-color p)
                     'index-u32? (gprim-index-u32? p)))
             (gltf-prims dst))
-       'nodes (let loop ((i (- (vector-length nodes) 1)) (acc '()))
+       'nodes (let loop ((i (- (gltf-node-count dst) 1)) (acc '()))
                 (if (< i 0)
                     acc
                     (loop (- i 1)
-                          (cons ($rt-node->desc names i (vector-ref nodes i))
-                                acc))))
+                          (cons ($rt-node->desc names dst i) acc))))
        'mesh-node mesh-node
        'skin (list (vector-ref (vector-ref skins si) 0)
                    (vector-ref (vector-ref skins si) 1))

@@ -7,7 +7,13 @@ import path from 'path';
 import { pathToFileURL } from 'url';
 import { makeJsBridge, callMain } from './jsbridge.mjs';
 
-export async function runModule(bytes, input = []) {
+// `args` is the program's own argv, which (web args) reads back at
+// __goeteia_argv.  The bridge's instance global resolves __goeteia_*
+// through its own map first and falls through to the real global, so
+// publishing here is enough -- no new wasm import, and a module that
+// never imports (web args) is unaffected.
+export async function runModule(bytes, input = [], args = []) {
+    globalThis.__goeteia_argv = args.map(String);
     const out = [];
     let pos = 0;
 
@@ -77,13 +83,19 @@ export function decode(v, ex) {
 
 if (process.argv[1] &&
     import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
-    const file = process.argv[2];
+    // everything after a bare `--` is the program's argv, not ours;
+    // an invocation without one is exactly what it was before
+    const cut = process.argv.indexOf('--');
+    const mine = cut < 0 ? process.argv : process.argv.slice(0, cut);
+    const theirs = cut < 0 ? [] : process.argv.slice(cut + 1);
+    const file = mine[2];
     if (!file) {
-        console.error('usage: node run.mjs <module.wasm> [input-file]');
+        console.error(
+            'usage: node run.mjs <module.wasm> [input-file] [-- args...]');
         process.exit(1);
     }
-    const input = process.argv[3] ? fs.readFileSync(process.argv[3]) : [];
-    runModule(fs.readFileSync(file), input)
+    const input = mine[3] ? fs.readFileSync(mine[3]) : [];
+    runModule(fs.readFileSync(file), input, theirs)
         .then(({ text, result }) => {
             if (text) process.stdout.write(text);
             if (text && !text.endsWith('\n') && result) process.stdout.write('\n');

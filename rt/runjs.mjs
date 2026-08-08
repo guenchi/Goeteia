@@ -7,7 +7,12 @@ import fs from 'fs';
 import path from 'path';
 import { pathToFileURL } from 'url';
 
-export async function runJsModule(file, input = []) {
+// `args` is published the way run.mjs publishes it: the JS target's
+// instance global resolves __goeteia_* through its own map and falls
+// through to the real global, so (web args) reads the same list from
+// either target.
+export async function runJsModule(file, input = [], args = []) {
+    globalThis.__goeteia_argv = args.map(String);
     const m = await import(pathToFileURL(path.resolve(file)).href);
     const out = [];
     let pos = 0;
@@ -65,13 +70,17 @@ export function decode(v, rt) {
 
 if (process.argv[1] &&
     import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
-    const file = process.argv[2];
+    const cut = process.argv.indexOf('--');
+    const mine = cut < 0 ? process.argv : process.argv.slice(0, cut);
+    const theirs = cut < 0 ? [] : process.argv.slice(cut + 1);
+    const file = mine[2];
     if (!file) {
-        console.error('usage: node runjs.mjs <module.js> [input-file]');
+        console.error(
+            'usage: node runjs.mjs <module.js> [input-file] [-- args...]');
         process.exit(1);
     }
-    const input = process.argv[3] ? fs.readFileSync(process.argv[3]) : [];
-    runJsModule(file, input)
+    const input = mine[3] ? fs.readFileSync(mine[3]) : [];
+    runJsModule(file, input, theirs)
         .then(({ text, result }) => {
             if (text) process.stdout.write(text);
             if (text && !text.endsWith('\n') && result) process.stdout.write('\n');

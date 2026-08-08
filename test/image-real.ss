@@ -16,7 +16,7 @@
 ;; below.  If they are not there this test says which one is missing
 ;; and fails: a decoder verified only against files this same code
 ;; wrote is not verified.
-(import (rnrs) (web js) (gfx gl) (gfx fx) (gfx gltf) (gfx image))
+(import (rnrs) (web js) (web fs) (gfx gl) (gfx fx) (gfx gltf) (gfx image))
 
 (define GLB-PATH "/Users/guenchi/Workspace/10/mocap-real/base.glb")
 (define TGA-D "/Users/guenchi/Workspace/model/PC_MA_F_D.tga")
@@ -43,28 +43,21 @@
          (set! fails (cons name fails)))
        ok))))
 
-;; ---- read a file into staging memory, byte by byte ---------------
+;; ---- reading the assets ------------------------------------------
+;; The bytes come in through (web fs), which is where the shim
+;; protocol this file used to open-code now lives; `cap' is the size
+;; of the block fx-alloc! handed out, so an asset that outgrew its
+;; block is named instead of scribbling over the next one.
+;;
 ;; The assets are machine-local (a converted rig and its source
 ;; textures) and cannot ship with a public repository, so this test
 ;; is an opt-in gate: when they are absent it says so, loudly, names
 ;; what to provide, and passes -- the accepted pattern, never a
 ;; silent skip.
-(define (asset-present? path)
-  (string-for-each (lambda (c) (%path-byte (char->integer c))) path)
-  (let ((fd (%open-read)))
-    (if (< fd 0) #f (begin (%fclose fd) #t))))
+(define (asset-present? path) (fs-exists? path))
 
-(define (read-file! path base)          ; -> byte count
-  (string-for-each (lambda (c) (%path-byte (char->integer c))) path)
-  (let ((fd (%open-read)))
-    (when (< fd 0)
-      (display "  missing asset: ") (display path) (newline)
-      (error 'image-real "an asset this test needs is not on this machine"))
-    (let loop ((i 0))
-      (let ((b (%fread fd)))
-        (if (< b 0)
-            (begin (%fclose fd) i)
-            (begin (%mem-u8-set! (+ base i) b) (loop (+ i 1))))))))
+(define (read-file! path base cap)      ; -> byte count
+  (fs-slurp! path base cap))
 
 ;; FNV-1a over staging memory, as two 16-bit halves: a 32-bit product
 ;; would otherwise have to pass through a bitwise operator, and those
@@ -112,7 +105,7 @@
   ;; staging comes from the fx bump heap, so nothing collides with
   ;; what gltf-parse allocates for the mesh
   (define GLB (fx-alloc! 900000))
-  (define glb-n (read-file! GLB-PATH GLB))
+  (define glb-n (read-file! GLB-PATH GLB 900000))
   (define g (gltf-parse GLB glb-n))
   (define imgs (gltf-images g))
 
@@ -145,7 +138,7 @@
          (equal? (fnv PNGDST 1048576) '(56440 56607)))    ; 0xDC78DD1F
 
     ;; ---- the TGA the PNG was made from --------------------------
-    (let ((tga-d-n (read-file! TGA-D TGASRC)))
+    (let ((tga-d-n (read-file! TGA-D TGASRC 700000)))
       (chk "diffuse TGA: 512x512, 24-bit, run-length (type 10)"
            (let-values (((w h bpp tp) (tga-info TGASRC tga-d-n)))
              (equal? (list w h bpp tp) '(512 512 24 10))))
@@ -173,7 +166,7 @@
          (> (spread PNGDST 1048576 401) 2000))
 
     ;; ---- the other two TGAs: 32-bit RLE, and a normal map --------
-    (let ((tga-m-n (read-file! TGA-M TGASRC)))
+    (let ((tga-m-n (read-file! TGA-M TGASRC 700000)))
       (chk "metallic TGA: 512x512, 32-bit, run-length"
            (let-values (((w h bpp tp) (tga-info TGASRC tga-m-n)))
              (equal? (list w h bpp tp) '(512 512 32 10))))
@@ -188,7 +181,7 @@
     (chk "metallic TGA alpha varies"
          (> (spread (+ TGADST 3) 1048573 1004) 500))
 
-    (let ((tga-n-n (read-file! TGA-N TGASRC)))
+    (let ((tga-n-n (read-file! TGA-N TGASRC 700000)))
       (chk "normal TGA: 512x512, 24-bit, run-length"
            (let-values (((w h bpp tp) (tga-info TGASRC tga-n-n)))
              (equal? (list w h bpp tp) '(512 512 24 10))))

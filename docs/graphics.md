@@ -363,11 +363,42 @@ its whole domain (measured within a few ulps of a host `Math`).
 answering NaN, because a dot product of two unit vectors leaves that
 interval by an ulp as a matter of course; `flatan2` follows
 `Math.atan2`'s signs, answers 0 at the origin, and does not
-distinguish negative zero. `q-slerp` interpolates two unit
-quaternions `#(x y z w)` along the shortest arc at a constant angular
-rate (`t` unclamped, near-parallel pairs falling back to a normalized
-lerp) — the rate is what separates it from the nlerp
-`gltf-animate!` samples with.
+distinguish negative zero.
+
+**Quaternions** are 4-element vectors `#(x y z w)` — the shape
+`(gfx gltf)` stores node rotations in, and the shape `m4-from-quat`
+reads. The algebra is `q-mul`, `q-conj`, `q-neg`, `q-dot` and
+`q-normalize`:
+
+- `q-mul` is the Hamilton product in the composition order the
+  matrices use: `R(q-mul a b)` = `R(a)` · `R(b)`, so
+  `(q-mul q r)` turns `q` by `r` expressed in **q's own frame** —
+  which is what posing a joint by a local twist means. It does not
+  commute; the operands the other way round give the other frame's
+  answer.
+- `q-conj` negates the vector part and keeps the scalar one. On a
+  **unit** quaternion that is the inverse rotation and
+  `(q-mul q (q-conj q))` is `#(0 0 0 1)`; on a non-unit one the
+  product is the squared norm, so normalize a long-composed chain
+  first.
+- `q-neg` negates *every* lane. `q` and `(q-neg q)` are the **same**
+  rotation (the double cover) — which is why a track that must not
+  take the long way round flips a key whose dot with the previous
+  one is negative. That makes it a different operation from
+  `q-conj`, which is a different *rotation*.
+- `q-normalize` divides by the norm, answering the identity rather
+  than four NaNs for the zero quaternion, which is not a rotation
+  and has no direction to keep.
+- `q-slerp` interpolates two unit quaternions along the shortest arc
+  at a constant angular rate (`t` unclamped, near-parallel pairs
+  falling back to a normalized lerp) — the rate is what separates it
+  from the nlerp `gltf-animate!` samples with.
+
+Like the rest of the file these assume flonum components; they are
+the per-frame hot path, and a rotation read out of the node table is
+flonum in every lane. `test/mat-quat.ss` judges them by their laws
+(associativity, the norm law, the anti-homomorphism, the double
+cover) against the rotation matrices they have to agree with.
 
 ```scheme
 (define proj (m4-perspective 0.9 (/ 800.0 600.0) 0.1 100.0))
@@ -526,6 +557,9 @@ on nodes no clip touches.
 (gltf-joint-palette! g 0)               ; already reflects both
 ```
 
+`gltf-node-count` is how many nodes the table holds — the bound every
+index above is checked against, and the loop bound for walking the
+whole skeleton without reaching for the raw table.
 `gltf-node-parent` gives a node's parent index (`-1` at a root) for
 walking the chain. `gltf-node-matrix?` says whether the node carries
 glTF's *matrix* form of a transform rather than TRS: such a node
@@ -1283,7 +1317,8 @@ slots on every call, so a solver may write a joint and immediately
 read the skinned geometry back.  That closes the loop for retargeting
 and for motion capture: propose a pose, skin it on the CPU, measure
 it against the target, and iterate, with no GL context and no library
-edit anywhere in the cycle.  `gltf-node-parent` walks the chain and
+edit anywhere in the cycle.  `gltf-node-count` bounds the walk,
+`gltf-node-parent` walks the chain and
 `gltf-node-matrix?` names the nodes this cannot pose (the setters
 refuse them rather than write slots the palette ignores).
 `gltf-pose-at!` samples a clip with the clock held instead of

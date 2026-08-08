@@ -17,7 +17,7 @@
 (library (gfx mat)
   (export flsin flcos fltan
           flasin flacos flatan flatan2
-          q-slerp
+          q-mul q-conj q-neg q-dot q-normalize q-slerp
           v3 v3-x v3-y v3-z
           v3-add v3-sub v3-scale v3-dot v3-cross v3-normalize
           v3-set! v3-copy! v3-add! v3-sub! v3-scale! v3-cross!
@@ -460,6 +460,73 @@
               0.0
               0.0 0.0 0.0 1.0)))
 
+  ;; ---- quaternion algebra ----
+  ;; A quaternion is a 4-element vector #(x y z w), the shape
+  ;; (gfx gltf) stores node rotations in and the shape q-slerp and
+  ;; m4-from-quat already speak.  Like the rest of this file the
+  ;; operations assume flonum components -- they are the per-frame
+  ;; hot path, and a glTF rotation read out of the node table is
+  ;; flonum in every lane.
+  ;;
+  ;; These were written three times over before they were written
+  ;; once: a retarget kept its own norm/dot/negate, a fitting loop
+  ;; its own Hamilton product.  The algebra is not application
+  ;; knowledge and belongs here.
+
+  (define (q-dot a b)
+    (fl+ (fl+ (fl* (vector-ref a 0) (vector-ref b 0))
+              (fl* (vector-ref a 1) (vector-ref b 1)))
+         (fl+ (fl* (vector-ref a 2) (vector-ref b 2))
+              (fl* (vector-ref a 3) (vector-ref b 3)))))
+
+  ;; The Hamilton product, in the composition order rotation
+  ;; matrices use: R(q-mul a b) = R(a) * R(b), so (q-mul q r) turns
+  ;; q by r expressed in q's OWN frame -- which is what posing a
+  ;; joint by a local twist means.  It is not commutative; swapping
+  ;; the operands gives the other frame's answer.
+  (define (q-mul a b)
+    (let ((ax (vector-ref a 0)) (ay (vector-ref a 1))
+          (az (vector-ref a 2)) (aw (vector-ref a 3))
+          (bx (vector-ref b 0)) (by (vector-ref b 1))
+          (bz (vector-ref b 2)) (bw (vector-ref b 3)))
+      (vector (fl+ (fl+ (fl* aw bx) (fl* ax bw))
+                   (fl- (fl* ay bz) (fl* az by)))
+              (fl+ (fl+ (fl* aw by) (fl* ay bw))
+                   (fl- (fl* az bx) (fl* ax bz)))
+              (fl+ (fl+ (fl* aw bz) (fl* az bw))
+                   (fl- (fl* ax by) (fl* ay bx)))
+              (fl- (fl* aw bw)
+                   (fl+ (fl+ (fl* ax bx) (fl* ay by)) (fl* az bz))))))
+
+  ;; The conjugate: the vector part negated, the scalar part kept.
+  ;; On a UNIT quaternion that is the inverse rotation, and
+  ;; (q-mul q (q-conj q)) is the identity #(0 0 0 1).  On a
+  ;; non-unit one it is not -- the product is the squared norm --
+  ;; so normalize first if the input has been composed for a while.
+  (define (q-conj q)
+    (vector (fl- 0.0 (vector-ref q 0)) (fl- 0.0 (vector-ref q 1))
+            (fl- 0.0 (vector-ref q 2)) (vector-ref q 3)))
+
+  ;; Every component negated.  q and (q-neg q) are the SAME rotation
+  ;; (the double cover), which is why a track that must not take the
+  ;; long way round flips a key whose dot with the previous one is
+  ;; negative.  Distinct from q-conj, which is a different rotation.
+  (define (q-neg q)
+    (vector (fl- 0.0 (vector-ref q 0)) (fl- 0.0 (vector-ref q 1))
+            (fl- 0.0 (vector-ref q 2)) (fl- 0.0 (vector-ref q 3))))
+
+  ;; Back onto the unit sphere.  A zero quaternion is not a rotation
+  ;; and has no direction to keep, so it answers the identity rather
+  ;; than NaNs: a chain of composed rotations that collapsed should
+  ;; carry on posing something, and the caller who wants to know
+  ;; asks q-dot of the input with itself.
+  (define (q-normalize q)
+    (let ((n (flsqrt (q-dot q q))))
+      (if (fl<? 0.0 n)
+          (vector (fl/ (vector-ref q 0) n) (fl/ (vector-ref q 1) n)
+                  (fl/ (vector-ref q 2) n) (fl/ (vector-ref q 3) n))
+          (vector 0.0 0.0 0.0 1.0))))
+
   ;; spherical linear interpolation between two unit quaternions
   ;; #(x y z w), the shape (gfx gltf) stores rotations in: the great
   ;; arc travelled at a CONSTANT angular rate, which is what an
@@ -478,10 +545,7 @@
   ;; (gltf-animate! keeps its documented nlerp; this is for code
   ;; that wants the rate, e.g. an IK or camera solver.)
   (define (q-slerp a b t)
-    (let* ((d (fl+ (fl+ (fl* (vector-ref a 0) (vector-ref b 0))
-                        (fl* (vector-ref a 1) (vector-ref b 1)))
-                   (fl+ (fl* (vector-ref a 2) (vector-ref b 2))
-                        (fl* (vector-ref a 3) (vector-ref b 3)))))
+    (let* ((d (q-dot a b))
            (sgn (if (fl<? d 0.0) -1.0 1.0))
            (d (fl* sgn d))
            (blend
@@ -496,13 +560,7 @@
                         (fl+ (fl* wa (vector-ref a 3))
                              (fl* wb (vector-ref b 3))))))))
       (if (fl<? 0.999999999 d)
-          (let* ((q (blend (fl- 1.0 t) t))
-                 (n (flsqrt (fl+ (fl+ (fl* (vector-ref q 0) (vector-ref q 0))
-                                      (fl* (vector-ref q 1) (vector-ref q 1)))
-                                 (fl+ (fl* (vector-ref q 2) (vector-ref q 2))
-                                      (fl* (vector-ref q 3) (vector-ref q 3)))))))
-            (vector (fl/ (vector-ref q 0) n) (fl/ (vector-ref q 1) n)
-                    (fl/ (vector-ref q 2) n) (fl/ (vector-ref q 3) n)))
+          (q-normalize (blend (fl- 1.0 t) t))
           (let* ((th (flacos d))
                  ;; sin th, taken from th and not as sqrt(1 - d^2):
                  ;; at the near end of the range 1 - d^2 cancels to a
