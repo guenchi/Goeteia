@@ -15,6 +15,8 @@ declarative scenes and the compressed-asset pipeline.
 5. [The compressed-asset pipeline](#5-the-compressed-asset-pipeline)
 6. [Effects and games toolkit](#6-effects-and-games-toolkit)
 7. [CPU rasterization](#7-cpu-rasterization)
+8. [Images without a host](#8-images-without-a-host)
+9. [Retargeting and CPU skinning](#9-retargeting-and-cpu-skinning)
 
 ---
 
@@ -1152,3 +1154,42 @@ at by `GOETEIA_RASTERLIB`, compares the masks, the visibility buffers
 and **both textured renders** with it byte for byte, checks the loss
 against a third computation done in JavaScript, and reports the timing
 of both.
+
+## 8. Images without a host
+
+`(gfx image)` reads and writes pixels in pure Scheme, so headless
+pipelines no longer lean on a browser or a Python helper for their
+image IO.  `png-decode!` runs a complete RFC 1950/1951 inflate —
+stored, fixed and dynamic Huffman, multi-IDAT streams — plus all
+five scanline filters, for 8-bit greyscale, RGB, RGBA and palette
+images; interlacing and 16-bit samples are named refusals.
+`png-encode!` writes valid PNGs with stored deflate blocks
+(correct first; a compressing encoder is a later increment), and
+`tga-decode!` covers uncompressed and RLE truecolor.  Inputs come
+from staging or a bytevector, output is RGBA8 at a staging base —
+exactly the shape `rimg` samples and `render-textured!` writes —
+and `inflate!`, `zlib-inflate!`, `crc32` and `adler32` are exported
+on their own.  All 32-bit arithmetic rides 16-bit halves, clear of
+the fixnum bitwise bound.
+
+## 9. Retargeting and CPU skinning
+
+`(gfx retarget)` moves a clip between skeletons without touching a
+bone length: rotations copy locally, only the root chain carries
+translation — scaled by the ratio of the two bind extents against
+the destination's own bind offsets — and joints resolve by an
+explicit map first, normalized names second (case folding,
+namespace and rig-prefix stripping), bind pose last.  The channels
+come out in the exact shape `glb-write!`'s `'anims` consumes, and
+`retarget-glb-node-names` recovers joint names from a GLB's JSON
+chunk, since parsed node records do not keep them.
+
+`gltf-skin-positions!` and `gltf-skin-normals!` pose a skinned
+primitive on the CPU: the same one-blended-matrix linear blend the
+skinned shaders run, through the same f32 lane kernels in the same
+order, so the CPU pose is the GPU pose rather than an
+approximation.  Weights are used as stored — the shader does not
+renormalize, so neither does this.  The output is packed vec3 f32
+at a staging base, which is an attribute `(gfx raster)` reads
+as-is: parse an asset, animate it, pose it, and render it, all
+without a GL context.
