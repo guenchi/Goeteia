@@ -20,27 +20,28 @@
         "engine actually eats: a rigged, skinned, textured, animated character. "
         "That gap is the industry's chokepoint, and closing it does not need a "
         "bigger model. It needs a pipeline where every step is checkable by a "
-        "machine — because an AI can only iterate where it can " (em "verify") ". "
-        "That pipeline is what this stack is built for."))
+        "machine, because an AI can only iterate where it can " (em "verify") ". "
+        "The rest of this page is that pipeline, layer by layer."))
 
    `(section
      ,(layer "1" "The loop is the machine"
-            '("Propose, project, compare, correct — every stage below is that "
+            '("Propose, project, compare, correct. Every stage below is that "
               "same shape."))
      (div (@ (class "layer-body"))
-       (p "The accuracy of the result comes from the loop, not from any single "
-          "estimate. An initial guess only decides how many iterations it takes, "
-          "and an iteration here is milliseconds of CPU math.")
+       (p "Accuracy comes from the loop rather than from any single estimate. A "
+          "good initial guess only buys you fewer iterations, and an iteration "
+          "here costs milliseconds of CPU math.")
        (ul (@ (class "points"))
-         (li (b "Data all the way down.") " The mesh is bytes you can read, the "
-             "skeleton is a tree you can walk, the shader is a list you can "
-             "rewrite — and the rendered frame comes back out as bytes too. "
-             "That is what makes the loop closable at all; it is the "
+         (li (b "Data all the way down,") " including the frame that comes back. "
+             "A mesh is bytes you can read, a skeleton is a tree you can walk, a "
+             "shader is a list you can rewrite, and the render lands in memory as "
+             "bytes as well. Without that there is nothing for the loop to close "
+             "on; it is the "
              (a (@ (href "why.html")) "homoiconic argument") " pointed at "
              "geometry.")
-         (li (b "No eyes required until the very end.") " A human is asked for "
-             "the judgement a program genuinely cannot make, and for nothing "
-             "before it."))))
+         (li (b "No eyes are required until the very end,") " which is where a "
+             "human gets asked for the one judgement a program genuinely cannot "
+             "make. Everything before it is settled by measurement."))))
 
    `(section
      ,(layer "2" "Skeleton from video"
@@ -50,31 +51,31 @@
          (li (b "The camera comes from the silhouette.") " Rasterize the mesh's "
              "outline on the CPU, compare against the reference mask, search. "
              "No gradients, no GPU.")
-         (li (b "The joints come from reprojection.") " 2D keypoints from any "
-             "off-the-shelf pose model initialize the skeleton; then the loop "
-             "refines it — hypothesize joints, project them into the view, "
+         (li (b "The joints come from reprojection,") " starting with 2D "
+             "keypoints out of any off-the-shelf pose model. From there the loop "
+             "takes over — hypothesize joints, project them into the view, "
              "measure the pixel residual, adjust.")
          (li (b "Anatomy is a regularizer, not a hope.") " Left/right symmetry "
-             "and constant bone length are not assumptions to wish for; they "
-             "collapse the search space.")
-         (li (b "Depth ambiguity dies under multiple frames.") " One skeleton "
-             "has to explain all of them at once."))))
+             "and constant bone length go into the solver as constraints, and "
+             "they collapse the search space.")
+         (li (b "Depth ambiguity dies under multiple frames,") " because one "
+             "skeleton has to explain all of them at once."))))
 
    `(section
      ,(layer "3" "Texture from reference"
             '("Projection baking, and then the loop again."))
      (div (@ (class "layer-body"))
        (p "Baking sprays the reference views onto the mesh and down into UV "
-          "space: the correspondence between a pixel in a view and a texel in "
-          "the atlas is one perspective projection — pure arithmetic. So the "
-          "correction runs backwards through the same projection. "
-          (em "The left cheek is too dark") " becomes exactly which texels to "
+          "space. A pixel in a view and a texel in the atlas are related by one "
+          "perspective projection, which is pure arithmetic, so the correction "
+          "runs backwards through that same projection: "
+          (em "the left cheek is too dark") " becomes exactly which texels to "
           "change.")
        (ul (@ (class "points"))
-         (li (b "A texture lint stands guard underneath.") " UV coverage, dead "
-             "islands, seam color mismatch, whole-image misalignment — "
-             "generated garbage is rejected by a program before any human looks "
-             "at it."))))
+         (li (b "A texture lint stands guard underneath,") " checking UV "
+             "coverage, dead islands, seam color mismatch and whole-image "
+             "misalignment. Generated garbage gets rejected by a program before "
+             "any human looks at it."))))
 
    `(section
      ,(layer "4" "Skinning under feedback"
@@ -85,10 +86,10 @@
           "a reference frame, compare the deformed silhouette, nudge the "
           "weights, watch the result in the same second.")
        (ul (@ (class "points"))
-         (li (b "And behind the eye, validators.") " Bone lengths must not "
-             "stretch, symmetry must hold, no vertex's normal may collapse. "
-             "Wrong skinning is caught by an assertion, not by QA three weeks "
-             "later."))))
+         (li (b "And behind the eye, validators:") " bone lengths must not "
+             "stretch, symmetry must hold, no vertex's normal may collapse. A "
+             "failed assertion stops the run, so wrong skinning surfaces during "
+             "the edit instead of in QA three weeks later."))))
 
    `(section
      ,(layer "5" "Motion capture without the stage"
@@ -96,16 +97,17 @@
               "suit."))
      (div (@ (class "layer-body"))
        (p "With the skeleton pinned, per-frame solving is the easy direction: "
-          "bone lengths are locked, only rotations remain. Frames chain into "
-          "clips, temporal smoothing eats the jitter, and validators check what "
-          "matters — feet on the ground, bones constant, amplitude in range. "
-          "The source library stops being " (em "actors we can hire") " and "
-          "becomes " (em "every video ever shot") ".")
-       (p "And the output is not frozen capture data. A clip here is editable "
+          "bone lengths are locked, so only rotations remain. Frames chain into "
+          "clips, temporal smoothing eats the jitter, and validators check that "
+          "the feet stay on the ground, that bones stay constant and that "
+          "amplitude stays in range. The source library stops being "
+          (em "actors we can hire") " and becomes " (em "every video ever shot")
+          ".")
+       (p "The output is not frozen capture data either. A clip here is editable "
           "text: compress the strike from six frames to three, exaggerate the "
           "windup — then " (em "measure") " that the timing changed the way the "
-          "director asked. Optical capture delivers data you clean; this "
-          "delivers material you keep working.")))
+          "director asked. Optical capture gives you data to clean up; these "
+          "clips stay editable for as long as the shot is in the game.")))
 
    `(section
      ,(layer "6" "A family per line, not a model per month"
@@ -113,22 +115,23 @@
      (div (@ (class "layer-body"))
        (p "Game production never wants one model. It wants a family — every "
           "fence length, forty crates, a lamp post per district. Here a "
-          "parameterized model is a function, and a macro stamps the family "
-          "out at expansion time; the variation lives in arguments, not in "
-          "an artist's afternoon.")
+          "parameterized model is a function and a macro stamps the family "
+          "out at expansion time, so the variation lives in arguments rather "
+          "than in an artist's afternoon.")
        (ul (@ (class "points"))
-         (li (b "The asset is source code.") " A character is kilobytes of "
-             "text, not hundreds of megabytes of binary — so git can diff "
-             "it, a review can read it, a merge can reconcile two people's "
-             "changes to the same prop.")
-         (li (b "Validators are the gate.") " Generated variants pass "
-             "through the same computable checks as everything else — "
-             "degenerate triangles, collapsed normals, broken symmetry never "
-             "reach a human eye. Generate wide, filter hard.")
-         (li (b "Honest scope.") " This eats hard-surface work — props, "
+         (li (b "Assets are source code.") " A character is kilobytes of "
+             "text rather than hundreds of megabytes of binary, so git diffs "
+             "it like anything else and a reviewer can read the change. Two "
+             "people editing the same prop merge the ordinary way.")
+         (li (b "Every generated variant goes through the same computable "
+                "checks as everything else,") " so degenerate triangles, "
+             "collapsed normals and broken symmetry never reach a human eye. "
+             "Making a hundred variants and keeping four is cheap once the "
+             "filtering is mechanical.")
+         (li (b "Honest scope:") " this eats hard-surface work, meaning props, "
              "kits, architecture, the bulk of any asset list. Sculpted "
-             "hero organics stay in the sculptor's tools; fitting them is "
-             "the pipeline above."))))
+             "hero organics stay in the sculptor's tools, and fitting them is "
+             "what the pipeline above is for."))))
 
    `(section
      ,(layer "7" "Light enough for a fleet"
@@ -140,19 +143,20 @@
           "cannot merge. Ten agents on one project means nine waiting.")
        (ul (@ (class "points"))
          (li (b "Ten worktrees, one laptop.") " Scenes, shaders, meshes and "
-             "animation logic are all text, so agents work in parallel git "
-             "worktrees — each with second-scale compiles and headless "
-             "assertions — and converge by ordinary merge. Nothing in the "
+             "animation logic are all text, so agents can work in parallel git "
+             "worktrees, each with second-scale compiles and headless "
+             "assertions, and converge by ordinary merge. Nothing in the "
              "loop needs a window.")
-         (li (b "The workbench is a browser tab.") " The whole compiler "
-             "crosses the wire in under 60KB and runs in the page — a "
+         (li (b "The workbench is a browser tab,") " since the whole compiler "
+             "crosses the wire in under 60KB and runs in the page. A "
              "Chromebook or a tablet is enough to model, skin and iterate.")
          (li (b "Disposable 3D, at conversation scale.") " Generating, "
              "compiling and running all happen on one surface, so an AI can "
              "hand you an interactive 3D demo the way it hands you a "
              "paragraph — made to answer one question, then thrown away."))
-       (p "Throughput in the AI era is bounded by how parallel your "
-          "environment lets the agents be — this one was shaped for it.")))
+       (p "Throughput here is bounded by how many agents the environment lets "
+          "run at once, and that is the constraint this stack was shaped "
+          "around.")))
 
    `(section
      ,(layer "8" "Why this stack, specifically"
@@ -161,21 +165,21 @@
      (div (@ (class "layer-body"))
        (ul (@ (class "points"))
          (li (b "A complete glTF 2.0 skeletal pipeline that verifies headless.")
-             " Joint matrices, vertex streams and animation samplers are all "
-             "assertable from a terminal.")
+             " Joint matrices, vertex streams and animation samplers can all be "
+             "asserted on from a terminal.")
          (li (b "Shaders are data.") " Lighting is written once as an "
-             "s-expression; the skinned variant is derived from it "
-             "mechanically, by a combinator that checks its own output — "
-             "so a fitting loop can rewrite rendering the same way it "
+             "s-expression, and the skinned variant is derived from it "
+             "mechanically by a combinator that checks its own output. A "
+             "fitting loop can therefore rewrite rendering the same way it "
              "rewrites geometry.")
-         (li (b "Pixel readback.") " The machine can see the frame it just "
-             "rendered — which is the half of the loop everything else "
-             "depends on.")
+         (li (b "Pixel readback,") " so the machine can see the frame it just "
+             "rendered — the half of the loop that everything above depends "
+             "on.")
          (li (b "Second-scale compilation, and an asset memory writable at "
-                "runtime.") " Together they close the iteration to something an "
-             "agent can drive thousands of times a day — with the solver "
-             "arithmetic (inverse trig, constant-rate slerp) already in the "
-             "box."))
+                "runtime.") " Together they close the iteration down to "
+             "something an agent can drive thousands of times a day. The solver "
+             "arithmetic it needs (inverse trig, constant-rate slerp) is "
+             "already in the box."))
        (p "The API detail lives in the "
           (a (@ (href "manual.html#3d-and-webgl")) "manual") "; the point of "
           "this page is what the pieces add up to. The agent that drives them "
@@ -187,9 +191,9 @@
      (div (@ (class "layer-body"))
        (p "The camera-from-silhouette solver, the projection baker and the "
           "texture lint exist, and they hold themselves to round-trip fixtures: "
-          "synthetic views baked back to the atlas and compared, recovered "
-          "cameras checked against ground truth — every claim a computable "
-          "assertion.")
+          "synthetic views are baked back to the atlas and compared, and "
+          "recovered cameras are checked against ground truth. Each of those "
+          "claims is a computable assertion.")
        (p "The per-frame pose solver is in progress. The GLB writer, "
           "lighting-from-reference and the feedback protocol for vision "
           "models come next.")
