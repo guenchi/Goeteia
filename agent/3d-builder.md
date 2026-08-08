@@ -132,13 +132,16 @@ Before any shader reaches a page:
   not a bug you should try to fix in an app.
 - LINEAR rotation is shortest-path nlerp, not slerp. The runtime has
   NO inverse trigonometry (`flacos`/`flatan` do not exist): no IK,
-  no angle-from-vector. Build orientations directly as orthonormal
-  bases, the way a face-matrix does.
-- The joint palette caps at 32 mat4s. Count bones before promising a
-  character loads.
-- Clip durations are parsed but not exported; until
-  `gltf-animation-duration` lands, take durations from the source
-  asset (frames / rate) and say so in a comment. One-shot pattern:
+  (corrected 2026-08-07: flasin/flacos/flatan/flatan2 and q-slerp
+  now live in (gfx mat) -- angle-from-vector and constant-rate
+  quaternion interpolation are available; orthonormal-basis
+  construction remains a fine trig-free alternative).
+- Two skin carriers (corrected 2026-08-07): the ESSL 1.00 uniform
+  array carries 32 joints; gltf-skin-program3!'s std140 uniform
+  block carries 256. The PROGRAM decides the carrier, not the
+  asset -- gltf-parse accepts up to 256 joints.
+- `gltf-animation-duration` is exported (corrected 2026-08-07) --
+  read clip lengths from it, never hardcode. One-shot pattern:
   play, count the duration down, fade back to idle; a hold-last
   clip (death) freezes the machine instead of fading.
 - To ask "is this animation broken or just subtle", measure it:
