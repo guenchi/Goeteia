@@ -29,6 +29,12 @@
 ;; before now needs a shader that declares them -- compose one with
 ;; gltf-skin-shader or declare a_tangent/a_color yourself).
 ;;
+;; Skinning also runs on the CPU: gltf-skin-positions! and
+;; gltf-skin-normals! apply the current pose's joint palette to a
+;; skinned primitive and write the result into staging as tightly
+;; packed vec3 f32 -- the layout (gfx raster)'s rattr-f32 reads, so
+;; a posed skinned mesh rasterizes without a GL context at all.
+;;
 ;; (gltf-parse base len) works on any GLB bytes already in staging
 ;; memory, so parsing verifies headlessly; gltf-fetch! is the
 ;; browser-side loader (fetch -> one bulk copy into staging).
@@ -73,6 +79,7 @@
           gltf-animate-blend! gltf-weights! gprim-morph
           anim-machine anim-machine? anim-state anim-goto! anim-update!
           gltf-joint-matrices gltf-joint-palette! gltf-joint-count
+          gltf-skin-positions! gltf-skin-normals! gprim-vcount
           gltf-skin-vs gltf-skin-shader
           gltf-skin-vs3 gltf-skin-shader3 gltf-skin-program3!
           gltf-skin-binding gltf-skin-block-joints
@@ -1028,12 +1035,17 @@
   ;; every node's global matrix, a local-matrix scratch, the
   ;; inverse-bind matrices (written once), and each skin's palette;
   ;; plus a topological order so globals fill parents-first with no
-  ;; recursion
+  ;; recursion.  The last 80 bytes are the CPU skinning kernel's
+  ;; scratch (one blended matrix plus one vec4), allocated here so
+  ;; it shares the asset's lifetime -- a lazily grabbed static would
+  ;; outlive an fx-release! and hand the kernel somebody else's
+  ;; bytes.
   (define ($gltf-pal-arena nodes skins)
     (and (> (vector-length skins) 0)
          (let* ((nn (vector-length nodes))
                 (globals (fx-alloc! (* nn 64)))
                 (scratch (fx-alloc! 64))
+                (cpu (fx-alloc! 80))
                 (order (make-vector nn 0))
                 (done (make-vector nn #f)))
            ;; parents before children; roots (parent -1) lead
@@ -1067,7 +1079,8 @@
                         (put (+ i 1))))
                     (vector-set! per k (vector ib pb n)))
                   (skin (+ k 1))))
-              per)))))
+              per)
+            cpu))))
 
   (define (gltf-joint-count g si)
     (vector-length (vector-ref (vector-ref (gltf-skins g) si) 0)))
@@ -1123,6 +1136,151 @@
                       (+ ib (* k 64)))
             (comp (+ k 1))))
         pb)))
+
+  ;; ---- CPU skinning: the same pose, with no GL context ----
+  ;; The palette poses vertices on the GPU, inside the vertex
+  ;; shader, so the posed geometry never exists on this side.  A
+  ;; caller that needs the geometry ITSELF -- the software
+  ;; rasterizer, a silhouette fit, a collision proxy, a screenshot
+  ;; oracle -- has to run the same blend here.  These two write the
+  ;; result into staging as tightly packed vec3 f32, which is
+  ;; exactly what (gfx raster)'s rattr-f32 reads:
+  ;;
+  ;;   (define dst (fx-alloc! (* 12 (gprim-vcount p))))
+  ;;   (gltf-animate! g 0 t)
+  ;;   (gltf-skin-positions! g p dst)
+  ;;   (rattr-f32 dst 12 0 (gprim-vcount p) 3)
+  ;;
+  ;; The blend is the shader's, matrix first:
+  ;;   S = w.x*P[j.x] + w.y*P[j.y] + w.z*P[j.z] + w.w*P[j.w]
+  ;;   position = S * (pos, 1)     normal = normalize(S * (nrm, 0))
+  ;; -- ONE matrix built per vertex and then applied, not four
+  ;; transforms summed.  The two agree in exact arithmetic, but the
+  ;; first is what gltf-skin-vs computes, and it runs here through
+  ;; the same f32 lane kernels in the same order, so the CPU pose is
+  ;; the GPU pose rather than something merely near it.
+  ;;
+  ;; Weights ride through exactly as the stream carries them.  glTF
+  ;; requires them to sum to one and the shader does not
+  ;; renormalize; renormalizing here would put the two paths on
+  ;; different geometry for precisely the assets where it mattered.
+  ;;
+  ;; Normals get the blended matrix, not its inverse transpose --
+  ;; the same deliberate deviation the shader makes, for the same
+  ;; reason, so a non-uniformly scaled joint is wrong identically on
+  ;; both sides instead of wrong in two different ways.
+
+  ;; how many vertices a primitive's interleave carries.  Callers
+  ;; size their own destination with it, so it is part of the API
+  ;; rather than a derivation each of them repeats.
+  (define (gprim-vcount p)
+    (quotient (gprim-vbytes p) (gprim-stride p)))
+
+  ;; one influence's palette matrix address.  An index outside the
+  ;; skin is a broken asset: reading it would silently blend some
+  ;; other allocation's bytes into the pose, so it is named here.
+  (define ($skin-pal-at pb nj s jo c who)
+    (let ((j (%fl->fx (%mem-f32-ref (+ s jo (* 4 c))))))
+      (when (or (< j 0) (>= j nj))
+        (error who "joint index outside the skin's palette" j nj))
+      (+ pb (* j 64))))
+
+  ;; the shared kernel.  `src' names the interleaved attribute to
+  ;; transform, `point?' says whether the homogeneous coordinate is
+  ;; 1 (a position, translation applies) or 0 (a direction), and
+  ;; `unit?' asks for the result to come back renormalized.
+  (define ($skin-blend! g p dst who src point? unit?)
+    (let ((si ($gprim-skin p)))
+      (unless si
+        (error who "primitive is not skinned" (gprim-layout p)))
+      (let* ((layout (gprim-layout p))
+             (so ($layout-offset layout src))
+             (jo ($layout-offset layout 'joints))
+             (wo ($layout-offset layout 'weights)))
+        ;; before the palette composes, not after: a layout that
+        ;; cannot be blended is the caller's mistake to hear about
+        (unless (and so jo wo)
+          (error who "primitive layout carries no such attribute"
+                 src layout))
+        (let* ((stride (gprim-stride p))
+               (count (gprim-vcount p))
+               (vbase (gprim-vbase p))
+               (nj (gltf-joint-count g si))
+               ;; the CURRENT animation state's palette, refreshed
+               ;; here -- posing is what the caller asked for.  Both
+               ;; entry points refresh, so a caller wanting positions
+               ;; AND normals from one pose pays for the skeleton
+               ;; twice; the skeleton is joints, the mesh is
+               ;; thousands of vertices, and keeping them independent
+               ;; is worth that.
+               (pb (gltf-joint-palette! g si))
+               (sk (vector-ref ($gltf-pal g) 4))
+               (rv (+ sk 64)))
+          (let vert ((v 0) (s vbase) (d dst))
+            (when (< v count)
+              ;; S, one column of four lanes at a time
+              (let ((a0 ($skin-pal-at pb nj s jo 0 who))
+                    (a1 ($skin-pal-at pb nj s jo 1 who))
+                    (a2 ($skin-pal-at pb nj s jo 2 who))
+                    (a3 ($skin-pal-at pb nj s jo 3 who))
+                    (w0 (%mem-f32-ref (+ s wo)))
+                    (w1 (%mem-f32-ref (+ s wo 4)))
+                    (w2 (%mem-f32-ref (+ s wo 8)))
+                    (w3 (%mem-f32-ref (+ s wo 12))))
+                (let col ((c 0))
+                  (when (< c 4)
+                    (let ((o (* c 16)))
+                      (%f32x4-scale! (+ sk o) (+ a0 o) w0)
+                      (%f32x4-axpy! (+ sk o) (+ sk o) (+ a1 o) w1)
+                      (%f32x4-axpy! (+ sk o) (+ sk o) (+ a2 o) w2)
+                      (%f32x4-axpy! (+ sk o) (+ sk o) (+ a3 o) w3))
+                    (col (+ c 1)))))
+              ;; S * (attr, 1) for a point, S * (attr, 0) for a
+              ;; direction -- still in lanes
+              (let ((x (%mem-f32-ref (+ s so)))
+                    (y (%mem-f32-ref (+ s so 4)))
+                    (z (%mem-f32-ref (+ s so 8))))
+                (%f32x4-scale! rv sk x)
+                (%f32x4-axpy! rv rv (+ sk 16) y)
+                (%f32x4-axpy! rv rv (+ sk 32) z)
+                (when point?
+                  (%f32x4-axpy! rv rv (+ sk 48) 1.0)))
+              (let ((ox (%mem-f32-ref rv))
+                    (oy (%mem-f32-ref (+ rv 4)))
+                    (oz (%mem-f32-ref (+ rv 8))))
+                (if unit?
+                    ;; a degenerate result (every influence weighted
+                    ;; zero, or a collapsed joint) has no direction
+                    ;; to report -- it goes out as it came rather
+                    ;; than becoming a division by zero
+                    (let ((n (flsqrt (fl+ (fl+ (fl* ox ox) (fl* oy oy))
+                                          (fl* oz oz)))))
+                      (if (fl<? 0.0 n)
+                          (begin
+                            (%mem-f32-set! d (fl/ ox n))
+                            (%mem-f32-set! (+ d 4) (fl/ oy n))
+                            (%mem-f32-set! (+ d 8) (fl/ oz n)))
+                          (begin
+                            (%mem-f32-set! d ox)
+                            (%mem-f32-set! (+ d 4) oy)
+                            (%mem-f32-set! (+ d 8) oz))))
+                    (begin
+                      (%mem-f32-set! d ox)
+                      (%mem-f32-set! (+ d 4) oy)
+                      (%mem-f32-set! (+ d 8) oz))))
+              (vert (+ v 1) (+ s stride) (+ d 12))))
+          count))))
+
+  ;; pose one skinned primitive's positions into `dst' (12 bytes a
+  ;; vertex, tightly packed); returns the vertex count
+  (define (gltf-skin-positions! g p dst)
+    ($skin-blend! g p dst 'gltf-skin-positions! 'position #t #f))
+
+  ;; the same for normals, renormalized.  A separate pass by design:
+  ;; a silhouette fit wants positions alone and should not pay for
+  ;; normals it throws away.
+  (define (gltf-skin-normals! g p dst)
+    ($skin-blend! g p dst 'gltf-skin-normals! 'normal #f #t))
 
   ;; the skinning vertex shader: 4 joints x 4 weights per vertex,
   ;; pair with mesh-tex-fs (or mesh-lit-fs won't match the varyings)
@@ -1957,18 +2115,31 @@
   ;; ones can cancel out in the total (vec2 + vec4 spans the same 24
   ;; bytes as vec3 + vec3) and then every offset past the first is
   ;; wrong while the stride looks right.
-  (define ($layout-attr-schema layout)
-    (map (lambda (a)
-           (case a
-             ((position) '(a_pos . 3))
-             ((normal) '(a_normal . 3))
-             ((uv) '(a_uv . 2))
-             ((tangent) '(a_tangent . 4))
-             ((color) '(a_color . 4))
-             ((joints) '(a_joints . 4))
-             ((weights) '(a_weights . 4))
-             (else (cons a 0))))
-         layout))
+  ;; one interleaved attribute's shader name and component count --
+  ;; the single place the widths are written down, so the shader
+  ;; contract below and the byte offsets above cannot disagree
+  (define ($layout-attr a)
+    (case a
+      ((position) '(a_pos . 3))
+      ((normal) '(a_normal . 3))
+      ((uv) '(a_uv . 2))
+      ((tangent) '(a_tangent . 4))
+      ((color) '(a_color . 4))
+      ((joints) '(a_joints . 4))
+      ((weights) '(a_weights . 4))
+      (else (cons a 0))))
+
+  (define ($layout-attr-schema layout) (map $layout-attr layout))
+
+  ;; where one attribute starts inside a vertex, or #f when the
+  ;; layout does not carry it: the canonical order IS the byte
+  ;; order, so the offset is the widths before it
+  (define ($layout-offset layout a)
+    (let scan ((l layout) (off 0))
+      (cond ((null? l) #f)
+            ((eq? (car l) a) off)
+            (else (scan (cdr l)
+                        (+ off (* 4 (cdr ($layout-attr (car l))))))))))
 
   ;; draw every primitive; geometry uploads on its first frame.
   ;; prog is an fx-program over mesh-lit-vs/-fs (or any shader with
