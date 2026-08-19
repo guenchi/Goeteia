@@ -130,4 +130,37 @@
         (loop (cdr g) (+ i 1)
               (if (= (%mem-u8-ref (+ DST i)) (car g)) bad (+ bad 1))))))
 
-(and vertex-ok index-ok oct-ok fox-index-ok exp-ok)
+;; ---- version-1 channel type 2: the 32-bit XOR-rotate stream ----
+;; No gltfpack golden reaches it, so these two are built by hand from
+;; the wire format: header A1, one control byte (all four planes
+;; literal), four literal planes of bs bytes each, then the tail
+;; (last vertex + one channel byte).  The words carry high bytes on
+;; purpose: 0x3F800000 is 1.0f, the byte pattern every real float
+;; column is full of, and past the fixnum range if the decode ever
+;; assembles the word as one number.
+(define c2a-comp     ; rot 0: the words 0x3F800000 then 0x00000000
+  (quote (161 255 0 0 0 0 128 0 63 0 0 0 0 0 2)))
+(define c2a-gold (quote (0 0 128 63 0 0 128 63)))
+(define c2b-comp     ; rot 24: 0x000000FF rotates into 0xFF000000
+  (quote (161 255 255 0 0 0 0 0 0 0 0 0 0 0 130)))
+(define c2b-gold (quote (0 0 0 255 0 0 0 255)))
+
+(load! SRC c2a-comp)
+(meshopt-vertex! SRC (llen c2a-comp) DST 2 4)
+(define c2-rot0-ok (check-dec c2a-gold))
+(load! SRC c2b-comp)
+(meshopt-vertex! SRC (llen c2b-comp) DST 2 4)
+(define c2-rot24-ok (check-dec c2b-gold))
+
+;; rot 17 is not a whole-byte rotation: 0x00000081 << 17 carries a
+;; bit across a byte edge (0x01020000), which byte-aligned rotations
+;; alone would never notice
+(define c2c-comp
+  (quote (161 255 129 0 0 0 0 0 0 0 0 0 0 0 242)))
+(define c2c-gold (quote (0 0 2 1 0 0 2 1)))
+(load! SRC c2c-comp)
+(meshopt-vertex! SRC (llen c2c-comp) DST 2 4)
+(define c2-rot17-ok (check-dec c2c-gold))
+
+(and vertex-ok index-ok oct-ok fox-index-ok exp-ok
+     c2-rot0-ok c2-rot24-ok c2-rot17-ok)

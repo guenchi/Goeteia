@@ -236,31 +236,47 @@
                       (d (+ i 1) np)))))
             (pair (+ h 1)))))
        (else
-        ;; type 2: one 32-bit XOR-rotate stream over the whole column
+        ;; type 2: one 32-bit XOR-rotate stream over the whole column.
+        ;; The word never exists as one number: assembled 32-bit
+        ;; values pass the fixnum range (real float columns carry
+        ;; high bytes), and bitwise operators trap on them -- the
+        ;; same constraint the image CRC works around.  So rot splits
+        ;; into a byte rotation s and a bit shift r, and each output
+        ;; byte of rotl32 is cut from the two source bytes that land
+        ;; on it; the xor then runs bytewise too.
         (let* ((rot (bitwise-and (- 32 (bitwise-arithmetic-shift-right chan 4))
-                                 31)))
+                                 31))
+               (s (bitwise-arithmetic-shift-right rot 3))
+               (r (bitwise-and rot 7)))
           (let d ((i 0)
-                  (p (+ (vector-ref last k)
-                        (* 256 (vector-ref last (+ k 1)))
-                        (* 65536 (vector-ref last (+ k 2)))
-                        (* 16777216 (vector-ref last (+ k 3))))))
+                  (p0 (vector-ref last k))
+                  (p1 (vector-ref last (+ k 1)))
+                  (p2 (vector-ref last (+ k 2)))
+                  (p3 (vector-ref last (+ k 3))))
             (unless (= i bs)
-              (let* ((v (+ (vector-ref $mo-plane i)
-                           (* 256 (vector-ref $mo-plane2 i))
-                           (* 65536 (vector-ref $mo-plane3 i))
-                           (* 16777216 (vector-ref $mo-plane4 i))))
-                     (vr (bitwise-and
-                          (bitwise-ior
-                           (bitwise-arithmetic-shift-left v rot)
-                           (bitwise-arithmetic-shift-right v (- 32 rot)))
-                          #xFFFFFFFF))
-                     (np (bitwise-xor p vr)))
-                (let w ((j 0))
-                  (when (< j 4)
-                    ($u8! (+ obase (* i stride) k j)
-                          (bitwise-arithmetic-shift-right np (* j 8)))
-                    (w (+ j 1))))
-                (d (+ i 1) np)))))))))
+              (let* ((b (vector (vector-ref $mo-plane i)
+                                (vector-ref $mo-plane2 i)
+                                (vector-ref $mo-plane3 i)
+                                (vector-ref $mo-plane4 i)))
+                     ;; byte j of rotl32(v, 8s+r): the high r bits of
+                     ;; source byte (j-s-1) slide under byte (j-s)
+                     (rb (lambda (j)
+                           (let ((hi (vector-ref b (bitwise-and (- j s) 3)))
+                                 (lo (vector-ref b (bitwise-and (- j s 1) 3))))
+                             (bitwise-and
+                              (bitwise-arithmetic-shift-right
+                               (+ lo (* 256 hi))
+                               (- 8 r))
+                              255))))
+                     (n0 (bitwise-xor p0 (rb 0)))
+                     (n1 (bitwise-xor p1 (rb 1)))
+                     (n2 (bitwise-xor p2 (rb 2)))
+                     (n3 (bitwise-xor p3 (rb 3))))
+                ($u8! (+ obase (* i stride) k) n0)
+                ($u8! (+ obase (* i stride) k 1) n1)
+                ($u8! (+ obase (* i stride) k 2) n2)
+                ($u8! (+ obase (* i stride) k 3) n3)
+                (d (+ i 1) n0 n1 n2 n3)))))))))
 
   ;; ---- the index codec (TRIANGLES) ----
   (define (meshopt-index! src slen dst count stride)
