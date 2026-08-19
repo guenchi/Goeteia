@@ -2489,8 +2489,10 @@
                  (fx-uniform! prog 'u_mvp (m4-mul vp world))
                  (when (fx-uniform? prog 'u_model)
                    (fx-uniform! prog 'u_model world))))
-           (fx-uniform! prog 'u_color (vector-ref c 0) (vector-ref c 1)
-                        (vector-ref c 2) (vector-ref c 3))
+           ;; optional like u_model: a flat user shader may omit it
+           (when (fx-uniform? prog 'u_color)
+             (fx-uniform! prog 'u_color (vector-ref c 0) (vector-ref c 1)
+                          (vector-ref c 2) (vector-ref c 3)))
            (if (gprim-index-u32? p)
                (cmd-draw-elements32! GL-TRIANGLES (gprim-icount p))
                (cmd-draw-elements! GL-TRIANGLES (gprim-icount p))))))

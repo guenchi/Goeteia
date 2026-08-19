@@ -399,6 +399,30 @@
     (cmd-flush!)
     #t))
 
+;; ---- a fragment shader without u_color must still draw ----
+;; every library fragment shader declares u_color, so an
+;; unconditional upload never fires in-tree; a user-written flat
+;; shader omits it and the draw must not refuse the primitive.
+;; The window also proves no stray u_color upload was attempted.
+(define no-color-fs
+  '((precision mediump float)
+    (varying vec3 v_n)
+    (define (main) void
+      (set! gl_FragColor (vec4 (fl 1) (fl 0) (fl 0) (fl 1))))))
+(define no-color-prog (fx-program! no-model-vs no-color-fs))
+(define no-u-color-ok
+  (guard (e (#t #f))
+    (let ((mark (log-len)))
+      (cmd-begin!)
+      (gltf-draw! ga no-color-prog (m4-identity))
+      (cmd-flush!)
+      (and (= 1 (count-log-from "drawElements" mark))
+           (= 0 (count-log-from "uniform4f:U:u_color" mark))))))
+;; and a program that DOES declare it keeps receiving the material
+;; color -- the guard must skip, not drop, the upload
+(define u-color-upload-ok
+  (> (count-log "uniform4f:U:u_color") 0))
+
 ;; ---- a node expressed as a matrix ----
 ;; a matrix node keeps its transform in a slot the pose arena does
 ;; not snapshot and no channel writes; $node-local reads it in
@@ -641,7 +665,8 @@
      nmap-bound-ok combinator-layout-ok base-tex-optional-ok
      animated-world-ok matrix-node-ok matrix-reset-ok
      prim-world-split-ok skinned-prim-world-ok
-     no-u-model-ok textured-pred-ok textured-preload-ok
+     no-u-model-ok no-u-color-ok u-color-upload-ok
+     textured-pred-ok textured-preload-ok
      untextured-preload-ok skinned-draw-identity-ok
      width-guard-ok width-table-ok instance-guard-ok
      skinned-root-ok unskinned-root-ok)
