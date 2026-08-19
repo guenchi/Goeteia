@@ -18,10 +18,10 @@
 ;; wrote is not verified.
 (import (rnrs) (web js) (web fs) (gfx gl) (gfx fx) (gfx gltf) (gfx image))
 
-(define GLB-PATH "/Users/guenchi/Workspace/10/mocap-real/base.glb")
-(define TGA-D "/Users/guenchi/Workspace/model/PC_MA_F_D.tga")
-(define TGA-M "/Users/guenchi/Workspace/model/PC_MA_F_M.tga")
-(define TGA-N "/Users/guenchi/Workspace/model/PC_MA_F_N.tga")
+(define GLB-PATH "/Users/guenchi/Workshop/10/mocap-real/base.glb")
+(define TGA-D "/Users/guenchi/Workshop/model/PC_MA_F_D.tga")
+(define TGA-M "/Users/guenchi/Workshop/model/PC_MA_F_M.tga")
+(define TGA-N "/Users/guenchi/Workshop/model/PC_MA_F_N.tga")
 
 (define fails '())
 
