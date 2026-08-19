@@ -4,7 +4,7 @@
   (export js-ref? js-global js-undefined js-eq? js-truthy?
           js-get js-set! js-call js-method js-new js-index
           string->js js->string number->js js->number ->js js-eval
-          js-await)
+          js-await js-callback-error!)
   (import (rnrs))
 
   (define (js-ref? x) (%js-ref? x))
@@ -49,6 +49,29 @@
      ((procedure? v) (%js-fn v))
      (else (error '->js "cannot convert to a JS value" v))))
 
+  ;; A raise inside a callback cannot cross back into the host --
+  ;; the callback answers undefined so the host's event loop stays
+  ;; alive -- but it must not be silent either: an error raised on
+  ;; every animation frame is otherwise invisible.  The report goes
+  ;; through a replaceable hook; the default writes the host console.
+  (define ($cb-report e)
+    (js-method (js-get (js-global) "console") "error"
+               (cond ((error? e)
+                      (let ((w (condition-who e)))
+                        (string-append
+                         "callback error: "
+                         (cond ((symbol? w) (symbol->string w))
+                               ((string? w) w)
+                               (else "?"))
+                         ": " (condition-message e))))
+                     ((symbol? e)
+                      (string-append "callback raise: "
+                                     (symbol->string e)))
+                     (else "callback raise: (non-condition)"))))
+  (define $cb-error $cb-report)
+  (define (js-callback-error! f)
+    (set! $cb-error (if f f $cb-report)))
+
   ;; the host calls this with the closure when a wrapped JS function
   ;; is invoked; arguments arrive through the cb imports
   (define ($jscb f)
@@ -56,7 +79,10 @@
       (let gather ((i (- n 1)) (args '()))
         (if (< i 0)
             (%js-cb-ret
-             (guard (e (#t (js-undefined)))
+             (guard (e (#t
+                        ;; a failing hook must not mask the answer
+                        (guard (e2 (#t #f)) ($cb-error e))
+                        (js-undefined)))
                (->js (apply f args))))
             (gather (- i 1) (cons (%js-cb-arg i) args))))))
   (export $jscb)
