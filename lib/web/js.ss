@@ -63,7 +63,11 @@
                          (cond ((symbol? w) (symbol->string w))
                                ((string? w) w)
                                (else "?"))
-                         ": " (condition-message e))))
+                         ": "
+                         ;; error does not police its msg argument;
+                         ;; a non-string here must not cost the report
+                         (let ((m (condition-message e)))
+                           (if (string? m) m "(non-string message)")))))
                      ((symbol? e)
                       (string-append "callback raise: "
                                      (symbol->string e)))

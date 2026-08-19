@@ -63,4 +63,16 @@
                    globalThis.__cberr.push(a.join(' '))")
        (js-method (js-eval "[1]") "map" (lambda _ (raise 'plain)))
        (js-eval "console.error = globalThis.__cbconsole")
-       (js-truthy? (js-eval "__cberr.length === 1"))))
+       (js-truthy? (js-eval "__cberr.length === 1")))
+     ;; error does not police its msg argument; a condition carrying
+     ;; a non-string message must not cost the report (a formatter
+     ;; raise inside the hook would be swallowed silently)
+     (begin
+       (js-eval "globalThis.__cberr = [];
+                 globalThis.__cbconsole = console.error;
+                 console.error = (...a) =>
+                   globalThis.__cberr.push(a.join(' '))")
+       (js-method (js-eval "[1]") "map" (lambda _ (error 'oddball 123)))
+       (js-eval "console.error = globalThis.__cbconsole")
+       (and (js-truthy? (js-eval "__cberr.length === 1"))
+            (js-truthy? (js-eval "__cberr[0].includes('oddball')")))))
