@@ -2325,7 +2325,9 @@
 
   ;; draw every primitive; geometry uploads on its first frame.
   ;; prog is an fx-program over mesh-lit-vs/-fs (or any shader with
-  ;; the same a_pos/a_normal layout and u_mvp/u_model/u_color).
+  ;; the same a_pos/a_normal layout and u_mvp; u_model, u_color and
+  ;; the texture samplers upload only where the program declares
+  ;; them).
   ;; An optional root matrix prefixes every node's world transform --
   ;; spin the whole asset with (m4-rotate-y t) and lighting follows.
   ;; blend base + sum(w_k * delta_k) back into the staging stream

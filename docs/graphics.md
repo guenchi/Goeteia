@@ -1079,6 +1079,11 @@ interleaved vertex is accepted where positions are wanted, and
 `frame-interp!` interpolates at whatever width the attribute declares
 without a second interface.
 
+`render-mask!` owns the whole mask — it clears at entry.
+`render-mask-add!` is the accumulating entry: it unions the mesh into
+whatever the mask already holds, which is how a multi-primitive asset
+renders into one silhouette. Both return the mask's set-pixel count.
+
 **Two rendering paths, on purpose.** `render-mask!` wants only the
 silhouette, so it builds no depth buffer and computes no barycentrics;
 `render-frame!` builds the full visibility buffer (per pixel: triangle

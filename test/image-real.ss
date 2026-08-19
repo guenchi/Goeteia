@@ -50,10 +50,13 @@
 ;; block is named instead of scribbling over the next one.
 ;;
 ;; The assets are machine-local (a converted rig and its source
-;; textures) and cannot ship with a public repository, so this test
-;; is an opt-in gate: when they are absent it says so, loudly, names
-;; what to provide, and passes -- the accepted pattern, never a
-;; silent skip.
+;; textures) and cannot ship with a public repository.  When they are
+;; absent this test says so, loudly, names what to provide, and FAILS
+;; -- the extra output alone breaks the expected-output match, so on
+;; a machine without the fixtures the suite is red, never silently
+;; green.  That is the intent stated at the top of this file: a
+;; decoder verified only against files this same code wrote is not
+;; verified.
 (define (asset-present? path) (fs-exists? path))
 
 (define (read-file! path base cap)      ; -> byte count
