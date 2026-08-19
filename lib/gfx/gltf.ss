@@ -2010,13 +2010,20 @@
               (when (< k icount)
                 (%mem-i32-set! at (idx k))
                 (pack (+ k 1) (+ at 4))))
+            ;; two u16 halves, stored bytewise: the packed i32 value
+            ;; itself would pass 2^29 once the odd-position index
+            ;; reaches 8192, which is past the fixnum range -- the
+            ;; store must never materialise it as one number
             (let pack ((k 0) (at ibase))
               (when (< k icount)
-                (%mem-i32-set! at
-                               (+ (idx k)
-                                  (* 65536 (if (< (+ k 1) icount)
-                                               (idx (+ k 1))
-                                               0))))
+                (let ((lo (idx k))
+                      (hi (if (< (+ k 1) icount) (idx (+ k 1)) 0)))
+                  (%mem-u8-set! at (bitwise-and lo 255))
+                  (%mem-u8-set! (+ at 1)
+                                (bitwise-arithmetic-shift-right lo 8))
+                  (%mem-u8-set! (+ at 2) (bitwise-and hi 255))
+                  (%mem-u8-set! (+ at 3)
+                                (bitwise-arithmetic-shift-right hi 8)))
                 (pack (+ k 2) (+ at 4)))))
         ($make-gprim vbase vbytes ibase ibytes icount u32?
                      ($material-color json (json-ref prim "material"))
