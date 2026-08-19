@@ -71,7 +71,7 @@
           ;; masks
           make-rmask rmask? rmask-base rmask-width rmask-height
           rmask-bytes rmask-clear! rmask-ref rmask-set! rmask-count
-          render-mask! mask-iou
+          render-mask! render-mask-add! mask-iou
           ;; visibility buffer
           make-rframe rframe? rframe-base rframe-width rframe-height
           rframe-bytes rframe-clear! render-frame!
@@ -716,8 +716,15 @@
 
   ;; Silhouette only: the union of every triangle's footprint, which
   ;; is independent of z ordering, so there is no depth buffer and no
-  ;; barycentric here at all.
+  ;; barycentric here at all.  render-mask! owns the whole mask -- it
+  ;; clears at entry; render-mask-add! unions this mesh into whatever
+  ;; the mask already holds, which is how a multi-primitive asset
+  ;; renders into one mask.  Both return the mask's set-pixel count.
   (define (render-mask! mask mesh cam scratch)
+    (rmask-clear! mask)
+    (render-mask-add! mask mesh cam scratch))
+
+  (define (render-mask-add! mask mesh cam scratch)
     (let* ((w (rmask-width mask))
            (h (rmask-height mask))
            (mb (rmask-base mask))
@@ -727,7 +734,6 @@
            (spans (make-vector (tri-spans-capacity 0 h) 0))
            (poly (make-vector 24 0.0))
            (tmp (make-vector 18 0.0)))
-      (rmask-clear! mask)
       (project-vertices! mesh cam w h scratch)
       (let tri ((t 0))
         (when (< t nt)

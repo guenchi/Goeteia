@@ -806,6 +806,36 @@
                        tri8-cam stage-scratch)
          (mask8-equal? stage-mask tri8-mask))))
 
+;; =========================== 10. accumulating a second silhouette
+;;
+;; render-mask! clears at entry, so rendering an asset's primitives
+;; one after another leaves only the last one in the mask.  The
+;; accumulate entry render-mask-add! keeps what is already there,
+;; letting a multi-primitive asset union into one mask without a
+;; per-primitive copy.  The second triangle below lands on rows 6-7,
+;; disjoint from tri8's rows 1-5 footprint, so union arithmetic is
+;; exact: counts add, and tri8's pixel (1,1) either survives (add)
+;; or does not (plain).
+
+(define tri8b-pos
+  (rattr-vector (vector 4.2 -4.2 0.0  6.8 -4.4 0.0  4.4 -6.8 0.0) 3))
+(define tri8b (make-rmesh tri8b-pos (ridx-range 3)))
+(define acc-mask (make-rmask 8 8 (alloc! (rmask-bytes 8 8))))
+(define acc-b-count (render-mask! acc-mask tri8b tri8-cam tri8-scratch))
+(define accumulate-ok
+  (and (> acc-b-count 0)
+       ;; the plain entry clears: after A then B, only B remains
+       (let* ((c1 (render-mask! acc-mask tri8 tri8-cam tri8-scratch))
+              (c2 (render-mask! acc-mask tri8b tri8-cam tri8-scratch)))
+         (and (= c1 17) (= c2 acc-b-count)
+              (= 0 (rmask-ref acc-mask 1 1))))
+       ;; the add entry unions: A then +B holds both footprints
+       (let* ((c1 (render-mask! acc-mask tri8 tri8-cam tri8-scratch))
+              (c2 (render-mask-add! acc-mask tri8b tri8-cam tri8-scratch)))
+         (and (= c1 17)
+              (= c2 (+ 17 acc-b-count))
+              (= 1 (rmask-ref acc-mask 1 1))))))
+
 ;; ---------------------------------------------------------------
 (define main-ok
   (and projection-ok elevation-ok basis-ok behind-ok serialize-ok ray-ok
@@ -813,6 +843,6 @@
        perspective-ok barycentric-ok sliver-ok
        zbuffer-ok visibility-ok iou-ok
        degeneracy-ok near-clip-ok near-clip-literal-ok
-       near-plane-position-ok input-face-ok))
+       near-plane-position-ok input-face-ok accumulate-ok))
 
 main-ok
