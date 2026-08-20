@@ -1,6 +1,7 @@
 ;; 3D math for raw-GL scenes: vec3 and column-major mat4 over plain
 ;; flonum vectors.  Pure -- no host, verifies headlessly -- and the
-;; trig is our own (range-reduced polynomials in flonum arithmetic),
+;; trig is the system's own (range-reduced polynomials in flonum
+;; arithmetic: sin/cos/tan live in the prelude, the inverses below),
 ;; so both compiler hosts emit identical bytes, the same reasoning
 ;; that computes IEEE bits for flonum literals in pure Scheme.
 ;;
@@ -33,31 +34,43 @@
 
   (define ($mat-fl v) (if (flonum? v) v (exact->inexact v)))
 
-  ;; ---- trig: reduce to [-pi/2, pi/2], one odd polynomial ----
+  ;; ---- trig: the prelude carries the implementation (reduce to
+  ;; [-pi/2, pi/2], one odd polynomial); these names stay so the
+  ;; matrix library's export surface does not move.  They bind the
+  ;; prelude's FLONUM layer rather than the R6RS entries, which would
+  ;; add a widening step on a per-frame path.  The constants stay for
+  ;; the inverse trig below.
+  ;;
+  ;; (fl* x 1.0) is NOT redundant, however much it looks it.  The
+  ;; compiler's f64 parameter specialization is whole-program: it
+  ;; keeps $sin-fl's parameter unboxed only while EVERY call site in
+  ;; the program provably passes a flonum.  A bare symbol can be such
+  ;; a proof -- the pass accepts one that is itself a specialized
+  ;; parameter of the enclosing function -- but these wrappers' own
+  ;; parameters do not qualify, so forwarding x bare from here is not,
+  ;; and one wrapper like that, merely linked in, costs every other
+  ;; caller.  Measured at 40M calls (user time): 0.37 with the
+  ;; explicit expression, 0.45 without.
+  ;;
+  ;; What it buys is conditional on the whole program, not
+  ;; absolute: one that ALSO uses the prelude's generic sin/cos/tan
+  ;; (whose argument passes through $->fl) demotes the layer again and
+  ;; measures 0.46.  Not every indirection costs it -- taking flsin
+  ;; itself as a first-class value still measures 0.36 -- so the rule
+  ;; to carry away is the general one, not a list of shapes: the layer
+  ;; stays fast only while EVERY call site in the program provably
+  ;; passes a flonum.  A graphics page that just calls these gets the
+  ;; fast path.
+  ;;
+  ;; It must stay a MULTIPLICATION: (fl+ x 0.0) looks equally harmless
+  ;; and collapses -0.0 to +0.0, changing (flsin -0.0) -- test/trig.ss
+  ;; pins that with a run-time-built negative zero.
   (define $mat-pi 3.141592653589793)
-  (define $mat-2pi 6.283185307179586)
   (define $mat-pi/2 1.5707963267948966)
 
-  (define ($mat-sin-poly x)             ; |x| <= pi/2, error < 1e-9
-    (let ((x2 (fl* x x)))
-      (fl* x
-           (fl- 1.0 (fl* (fl/ x2 6.0)
-                (fl- 1.0 (fl* (fl/ x2 20.0)
-                     (fl- 1.0 (fl* (fl/ x2 42.0)
-                          (fl- 1.0 (fl* (fl/ x2 72.0)
-                               (fl- 1.0 (fl* (fl/ x2 110.0)
-                                    (fl- 1.0 (fl* (fl/ x2 156.0)
-                                         (fl- 1.0 (fl/ x2 210.0)))))))))))))))))
-
-  (define (flsin x)
-    (let* ((k (flfloor (fl+ (fl/ x $mat-2pi) 0.5)))
-           (r (fl- x (fl* k $mat-2pi))))    ; r in [-pi, pi]
-      ($mat-sin-poly
-       (cond ((fl<? $mat-pi/2 r) (fl- $mat-pi r))
-             ((fl<? r (fl- 0.0 $mat-pi/2)) (fl- (fl- 0.0 $mat-pi) r))
-             (else r)))))
-  (define (flcos x) (flsin (fl+ x $mat-pi/2)))
-  (define (fltan x) (fl/ (flsin x) (flcos x)))
+  (define (flsin x) ($sin-fl (fl* x 1.0)))
+  (define (flcos x) ($cos-fl (fl* x 1.0)))
+  (define (fltan x) ($tan-fl (fl* x 1.0)))
 
   ;; ---- inverse trig: reduce to one small interval, one series ----
   ;; wasm has no inverse trigonometry either, so these are built the
@@ -72,8 +85,7 @@
   ;; test/mat-invtrig.ss holds them to against that second
   ;; implementation.
   ;;
-  ;; Arguments are flonums, as for flsin -- these sit in the same
-  ;; per-frame paths.
+  ;; Arguments are flonums -- these sit in the same per-frame paths.
   (define $mat-pi/4 0.7853981633974483)
   (define $mat-tan-pi/8 0.41421356237309515)  ; sqrt(2) - 1
 

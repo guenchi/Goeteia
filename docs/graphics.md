@@ -353,8 +353,10 @@ backend's for now. Example: `examples/sgpu-scene.html`.
 ## 4. Math
 
 `(gfx mat)` is vec3 and column-major mat4 over plain flonum vectors —
-pure, verifies headlessly, with its own range-reduced trig (`flsin`,
-`flcos`, `fltan`) so both compiler hosts emit identical bytes.
+pure, verifies headlessly. Its `flsin`, `flcos` and `fltan` bind the
+prelude's range-reduced trig (the flonum layer under `sin`/`cos`/`tan`,
+one implementation for the whole system) so both compiler hosts emit
+identical bytes.
 
 The inverses come the same way — `flasin`, `flacos`, `flatan`,
 `flatan2`, each a reduction onto one series, accurate to 1e-7 across

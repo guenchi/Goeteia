@@ -2853,8 +2853,10 @@
 ;; (never used as a value) may take some parameters as raw f64: a
 ;; parameter qualifies when every call site passes a flonum
 ;; expression for it, and the body then computes over the unboxed
-;; parameter instead of unwrapping it on every use -- flsin/flcos and
-;; the collide predicates are the customers.  Results stay boxed, so
+;; parameter instead of unwrapping it on every use -- the prelude's
+;; $sin-fl family (which is why the trig implementation is split into
+;; a flonum layer and the widening R6RS entries) and the collide
+;; predicates are the customers.  Results stay boxed, so
 ;; callers only change by passing f64.  Qualification is a
 ;; monotonic-demotion fixpoint: whether a call-site argument is a
 ;; flonum expression can itself depend on the enclosing function's

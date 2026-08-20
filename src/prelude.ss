@@ -1503,6 +1503,89 @@
       ($cx 0 (flsqrt ($->fl (- 0 x))))
       (flsqrt ($->fl x))))
 
+;; ---- R6RS division: div/mod floor the remainder into [0, |d|),
+;; div0/mod0 center it in [-|d|/2, |d|/2).  Exact integers only --
+;; deliberately narrower than R6RS's real contract -- so the answers
+;; are always exact and the sign corrections are total.  Built on
+;; the truncating quotient/remainder generics, so fixnums and
+;; bignums route the same.
+(define ($div-check who n d)
+  (unless (and (or (fixnum? n) (%bignum? n))
+               (or (fixnum? d) (%bignum? d)))
+    (errorf who "operands must be exact integers"))
+  (when (= d 0) (errorf who "division by zero")))
+(define ($div n d)
+  (let ((q (quotient n d)) (r (remainder n d)))
+    (if (< r 0) (if (< d 0) (+ q 1) (- q 1)) q)))
+(define ($mod n d)
+  (let ((r (remainder n d)))
+    (if (< r 0) (if (< d 0) (- r d) (+ r d)) r)))
+(define (div n d) ($div-check 'div n d) ($div n d))
+(define (mod n d) ($div-check 'mod n d) ($mod n d))
+(define (div0 n d)
+  ($div-check 'div0 n d)
+  (let ((q ($div n d)) (r ($mod n d)))
+    (if (< (+ r r) (abs d))
+        q
+        (if (< d 0) (- q 1) (+ q 1)))))
+(define (mod0 n d)
+  ($div-check 'mod0 n d)
+  (let ((r ($mod n d)))
+    (if (< (+ r r) (abs d))
+        r
+        (- r (abs d)))))
+
+;; ---- trigonometry: reduce to [-pi/2, pi/2], one odd polynomial ----
+;; The single supply of sin/cos/tan, in two layers.  $sin-fl and
+;; friends take a FLONUM and are the whole implementation; sin/cos/tan
+;; are the R6RS entries and only widen their argument.  The split
+;; exists so the flonum layer can qualify for the compiler's f64
+;; parameter specialization, which a generic $->fl on the way in
+;; would disqualify.
+;;
+;; Measured, so nobody has to re-derive it: 40M calls, user time.
+;; Calling $sin-fl directly costs 0.36 -- the same as the old
+;; arrangement where the implementation lived in (gfx mat).  But
+;; qualification is WHOLE-PROGRAM: one retained call site that cannot
+;; be proved to pass a flonum demotes the function for every caller,
+;; so merely linking a wrapper that forwards a boxed parameter puts it
+;; back to 0.45.  That is why (gfx mat)'s wrappers hand over an
+;; explicitly flonum expression rather than the bare parameter.
+;;
+;; Accuracy: error < 1e-9 measured up to |x| ~ 1e6.  Past that the
+;; single-step 2pi reduction degrades with amplitude (measured ~2.4e-8
+;; at 2^29), because k*2pi is itself rounded once.
+(define $trig-pi 3.141592653589793)
+(define $trig-2pi 6.283185307179586)
+(define $trig-pi/2 1.5707963267948966)
+
+(define ($sin-poly x)                   ; |x| <= pi/2, error < 1e-9
+  (let ((x2 (fl* x x)))
+    (fl* x
+         (fl- 1.0 (fl* (fl/ x2 6.0)
+              (fl- 1.0 (fl* (fl/ x2 20.0)
+                   (fl- 1.0 (fl* (fl/ x2 42.0)
+                        (fl- 1.0 (fl* (fl/ x2 72.0)
+                             (fl- 1.0 (fl* (fl/ x2 110.0)
+                                  (fl- 1.0 (fl* (fl/ x2 156.0)
+                                       (fl- 1.0 (fl/ x2 210.0)))))))))))))))))
+
+;; the flonum layer: what the per-frame paths call
+(define ($sin-fl x)
+  (let* ((k (flfloor (fl+ (fl/ x $trig-2pi) 0.5)))
+         (r (fl- x (fl* k $trig-2pi))))     ; r in [-pi, pi]
+    ($sin-poly
+     (cond ((fl<? $trig-pi/2 r) (fl- $trig-pi r))
+           ((fl<? r (fl- 0.0 $trig-pi/2)) (fl- (fl- 0.0 $trig-pi) r))
+           (else r)))))
+(define ($cos-fl x) ($sin-fl (fl+ x $trig-pi/2)))
+(define ($tan-fl x) (fl/ ($sin-fl x) ($cos-fl x)))
+
+;; the R6RS entries: widen, then hand over
+(define (sin v) ($sin-fl ($->fl v)))
+(define (cos v) ($cos-fl ($->fl v)))
+(define (tan v) ($tan-fl ($->fl v)))
+
 ;; ---- the string library ----
 
 (define (make-string n . fill)
