@@ -66,6 +66,19 @@ Check `lib/gfx/` before hand-rolling: `post` bloom/SSAO, `ibl`,
 `collide` raycasts, `scene`, `sprite` 2D+text, `sdf`, `gpu`/`sgpu`
 WebGPU, `stats` a HUD.
 
+## Coming from R6RS
+
+| you reach for | what to write |
+|---|---|
+| `mod` `div` `mod0` `div0` | exist — exact integers only |
+| `modulo` | none; `mod` differs on a negative divisor |
+| `sin` `cos` | exist — error < 1e-9 up to \|x\| ≈ 1e6 |
+| `tan` | exists; no absolute error bound (`docs/limits.md`) |
+| `flsin` `flcos` `fltan` | `(gfx mat)`, same implementation as `sin`/`cos` |
+| `asin` `acos` `atan` | `flasin` `flacos` `flatan2`, `(gfx mat)` |
+| `expt` | none — write the literal, or multiply |
+| `fx-clear!` | `cmd-clear!`, from `(gfx gl)` |
+
 ## 3D quick facts
 
 - `(fx-init! canvas)` takes **any canvas that already exists** — here

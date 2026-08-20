@@ -25,7 +25,7 @@
   "files": [
     {
       "path": "core.md",
-      "bytes": 8545,
+      "bytes": 9101,
       "budget": 9216,
       "layer": 0,
       "role": "always inject: the browser-half page shape and its two hosts, the (web dom) vocabulary, import sets, the DO/DONT table"
@@ -226,7 +226,7 @@
         "core.md",
         "t1-static.md"
       ],
-      "bytes": 12367
+      "bytes": 12923
     },
     {
       "task": "page with state, controls or forms",
@@ -235,7 +235,7 @@
         "t1-static.md",
         "t2-interactive.md"
       ],
-      "bytes": 16075
+      "bytes": 16631
     },
     {
       "task": "3D scene or model viewer",
@@ -244,7 +244,7 @@
         "t1-static.md",
         "t3-mesh3d.md"
       ],
-      "bytes": 17025
+      "bytes": 17581
     },
     {
       "task": "shader effect / procedural visuals",
@@ -252,7 +252,7 @@
         "core.md",
         "t4-shader.md"
       ],
-      "bytes": 13396
+      "bytes": 13952
     },
     {
       "task": "a rig, an orrery, or several controllable degrees of freedom",
@@ -262,7 +262,7 @@
         "t3-mesh3d.md",
         "t5-animated.md"
       ],
-      "bytes": 21757
+      "bytes": 22313
     },
     {
       "task": "unknown, or a page mixing several of the above",
@@ -274,7 +274,7 @@
         "t4-shader.md",
         "t5-animated.md"
       ],
-      "bytes": 30430
+      "bytes": 30986
     }
   ],
   "verification": {

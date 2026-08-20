@@ -101,6 +101,59 @@ R6RS list helper `exists` are not provided.  Compose them locally
 operations.  Inverse trigonometry (`flasin`/`flacos`/`flatan`/
 `flatan2`) lives in `(gfx mat)`, not in the prelude.
 
+`div`, `mod`, `div0` and `mod0` are present but accept **exact
+integers only** — deliberately narrower than R6RS, which defines them
+over the reals.  A flonum, a ratio or a zero divisor raises.  There is
+no `modulo`: `mod` is the floored operation and answers in `[0,|d|)`,
+so it differs from R5RS `modulo` whenever the divisor is negative
+(`(modulo 7 -2)` is `-1`; `(mod 7 -2)` is `1`).  There is no `expt`
+either — write the literal, or build it by multiplication.
+
+## Trigonometric accuracy
+
+`sin` and `cos` reduce the argument with one rounded subtraction of
+`k*2pi` and then evaluate one odd polynomial.  Two consequences are
+worth knowing before trusting a digit:
+
+**The bound degrades with amplitude.** Error is under `1e-9` measured
+up to `|x| ~ 1e6`.  Past that the reduction itself is what loses
+precision, because `k*2pi` is rounded once: at `2^29` the measured
+error is about `2.4e-8`.  Nothing warns you; the answer just gets
+less right the further out you go.
+
+**`tan` carries no absolute bound at all.** It is `sin/cos`, and for
+`t = s/c` the first-order error is
+
+```
+dt ~ ds/c - s*dc/c^2
+```
+
+so the numerator's error is amplified by `1/cos x` and the
+denominator's by about `1/cos^2 x`.  `tan` can therefore degrade far
+faster than the two functions it is built from — measured `1.2e-9` at
+`x = 942508`, where `cos x ~ 0.35`, nowhere near a pole and well
+inside the `1e6` domain that holds for `sin`/`cos`.
+
+At the poles it diverges outright, and **the sign of the divergence is
+not a libm's**:
+
+| x | goeteia | a host libm |
+|---|---|---|
+| `1.5707` | error ~`5.6e-8` | — |
+| `1.5707963267948966` (pi/2) | `+inf` | ~`1.63e16` |
+| `4.71238898038469` (3pi/2) | `-inf` | ~`+5.4e15` |
+
+The mechanism is the reduction: it lands `cos` on **exactly** zero
+where a libm's cosine is a tiny non-zero of a particular sign, so the
+quotient overflows and takes its sign from the numerator alone.  A
+caller that branches on `(fl<? (tan x) 0.0)` near a pole will disagree
+with a host libm about which side it is on.  Away from the poles and
+at small `|x|`, `tan` is as good as `sin`/`cos`.
+
+`(gfx mat)`'s `flsin`, `flcos` and `fltan` are the same implementation
+under other names — one polynomial for the whole system — so all of
+the above applies to them unchanged.
+
 ## No exponent syntax in the self-hosted reader
 
 **Symptom**: a file compiles under the Chez-hosted driver
