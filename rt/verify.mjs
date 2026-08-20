@@ -274,6 +274,7 @@ function tagsIn(html) {
 
 export function makeWorld({ width = 800, height = 600 } = {}) {
     const gl = [];                 // every recorded GL call, in order
+    const c2d = [];                // every recorded 2d-context call
     const nodes = [];              // every element ever created
     const listeners = [];          // {el, type, fn}
     const byId = new Map();
@@ -290,6 +291,26 @@ export function makeWorld({ width = 800, height = 600 } = {}) {
         rand ^= rand << 5; rand >>>= 0;
         return rand / 4294967296;
     };
+
+    // ---- recording 2d ---------------------------------------------
+    // The glyph-atlas path needs a 2d context that MEASURES
+    // deterministically: 8 px per code point (code points, not UTF-16
+    // units, so an astral glyph counts once), making layout in the
+    // mock world a pure function of the string.  Drawing records into
+    // its own log; nothing rasterizes.
+    function make2D() {
+        return {
+            font: '', textBaseline: '', fillStyle: '',
+            measureText(s) { return { width: 8 * [...String(s)].length }; },
+            fillText(s, x, y) { c2d.push({ op: 'fillText', text: String(s), x, y }); },
+            fillRect(x, y, w, h) { c2d.push({ op: 'fillRect', x, y, w, h }); },
+            drawImage(src, x, y) { c2d.push({ op: 'drawImage', x, y }); },
+            clearRect() {}, save() {}, restore() {},
+            getImageData: (x, y, w, h) =>
+                ({ width: w, height: h, data: new Uint8ClampedArray(w * h * 4) }),
+            putImageData() {},
+        };
+    }
 
     // ---- recording WebGL ------------------------------------------
     const rec = (op, extra) => { gl.push({ op, ...extra }); };
@@ -453,7 +474,22 @@ export function makeWorld({ width = 800, height = 600 } = {}) {
             focus() {}, blur() {},
             querySelector: () => null,
             querySelectorAll: () => [],
-            getContext(kind) { return this._gl ||= makeGL(); },
+            // One context object PER KIND, stable across repeat calls.
+            // This is a harness contract, not an imitation of a real
+            // canvas: a real one binds to the first mode it hands out
+            // and answers null for an incompatible second request.
+            // Here every kind gets its own object, so a page that asks
+            // for two never receives the same one twice and the mock
+            // cannot silently conflate them.  Every non-2d kind still
+            // records into the same world.gl log.
+            getContext(kind) {
+                const k = String(kind);
+                // a null-prototype map: a plain {} would answer
+                // getContext("constructor") or "__proto__" with an
+                // inherited prototype member instead of a mock
+                this._ctx ||= Object.create(null);
+                return this._ctx[k] ||= (k === '2d' ? make2D() : makeGL());
+            },
             transferControlToOffscreen() { return this; },
             toDataURL: () => 'data:,',
             requestPointerLock() {}, requestFullscreen() {},
@@ -523,7 +559,7 @@ export function makeWorld({ width = 800, height = 600 } = {}) {
     const driven = new Set();
 
     const world = {
-        gl, nodes, listeners, byId, console: console_, root, driven,
+        gl, c2d, nodes, listeners, byId, console: console_, root, driven,
         get now() { return now; },
         // Which controls the harness is ABLE to drive.  Frozen before
         // the act and used by every snapshot, so the set is identical
@@ -1061,11 +1097,103 @@ export const CUSTOM = {
     manual: s => ({ manual: true, ok: null, detail: s.note || 'needs human judgement' }),
 };
 
+// The fields each kind reads, declared beside the handlers so the two
+// move together.  A misspelt field is the same failure as a misspelt
+// spec key one level up: `by` mistyped silently selects the default
+// projection and the check quietly asks a different question, `note`
+// mistyped silently becomes the default manual text.  `kind` and
+// `hint` belong to every entry.
+export const CUSTOM_FIELDS = {
+    dom_text_matches: ['pattern', 'flags'],
+    dom_text_min_length: ['n'],
+    dom_text_count: ['pattern', 'flags', 'min'],
+    element_count: ['tag', 'min', 'max'],
+    text_blocks_min: ['n'],
+    console_matches: ['pattern', 'flags'],
+    draws_min: ['n'],
+    gl_op_present: ['op'],
+    uniform_present: ['name'],
+    animates: [],
+    uniform_varies_over_time: ['name'],
+    max_vertices_per_frame: ['n'],
+    some_uniform_varies_over_time: [],
+    input_count_min: ['n'],
+    input_changes: ['index', 'by'],
+    pointer_changes: ['by'],
+    keys_change: ['by'],
+    inputs_change_independently: ['indices', 'by'],
+    manual: ['note'],
+};
+const ENTRY_FIELDS = ['kind', 'hint'];
+
+// -> an error string, or null when the entry's fields are all known
+export function checkEntryFields(entry) {
+    // own-property lookup: a kind named "toString" or "__proto__"
+    // would otherwise pick up an inherited member and throw here,
+    // turning an unknown kind into a crash instead of a verdict
+    const legal = Object.hasOwn(CUSTOM_FIELDS, entry.kind)
+        ? CUSTOM_FIELDS[entry.kind] : undefined;
+    // An unknown KIND is deliberately not gated here: it is reported
+    // per entry, with the list of kinds, and it can never silently
+    // pass -- so it stays a check failure.  A field is the opposite
+    // case and needs this gate precisely because a misspelt one WOULD
+    // pass, quietly asking a different question.
+    if (!legal) return null;
+    const bad = Object.keys(entry).filter(
+        k => !legal.includes(k) && !ENTRY_FIELDS.includes(k));
+    if (!bad.length) {
+        // `by` names a projection, and that name indexes a table:
+        // an unknown one must be refused rather than looked up, or
+        // "toString" would select an inherited member instead of a
+        // projection.  Own-property, for the same reason.
+        // typeof first: a property key coerces, so ["page"] would
+        // otherwise pass hasOwn and then select that projection
+        if (legal.includes('by') && entry.by !== undefined
+            && !(typeof entry.by === 'string'
+                 && Object.hasOwn(PROJECT, entry.by))) {
+            const kinds = Object.keys(PROJECT).map(k => `"${k}"`).join(', ');
+            // JSON.stringify, not interpolation: ["page"] would
+            // otherwise print as page and the message would name a
+            // bad value that appears in the legal list
+            return `unknown projection ${JSON.stringify(entry.by)} for check `
+                   + `kind "${entry.kind}": "by" takes ${kinds}`;
+        }
+        return null;
+    }
+    const allowed = [...legal, ...ENTRY_FIELDS].map(f => `"${f}"`).join(', ');
+    return `unknown field${bad.length > 1 ? 's' : ''} `
+           + bad.map(k => `"${k}"`).join(', ')
+           + ` for check kind "${entry.kind}": it takes ${allowed}`;
+}
+
 // ---------------------------------------------------------------- //
 // 5. the pipeline
 // ---------------------------------------------------------------- //
 
 export const DEFAULT_CHECKS = { needs_draw: false, needs_interact: false, custom: [] };
+
+// The whole top-level vocabulary of a check spec.  A key outside it
+// is a typo or somebody else's schema, and a misspelt requirement
+// silently NOT enforced is the worst outcome a verifier has -- so
+// refuse it by name, from the CLI and the library entries alike.
+export function assertCheckKeys(checks) {
+    const legal = Object.keys(DEFAULT_CHECKS);
+    const bad = Object.keys(checks || {}).filter(k => !legal.includes(k));
+    if (bad.length)
+        throw new Error(
+            `unknown check spec key${bad.length > 1 ? 's' : ''} `
+            + bad.map(k => `"${k}"`).join(', ')
+            + `: a check spec takes ${legal.map(k => `"${k}"`).join(', ')}`);
+    // one level down, same rule: an entry's fields must be ones its
+    // kind reads.  (An unknown KIND stays a per-entry check failure --
+    // it cannot silently pass, so it needs no gate here.)
+    for (const entry of (checks && checks.custom) || []) {
+        if (!entry || typeof entry !== 'object' || Array.isArray(entry))
+            throw new Error('every entry in "custom" must be an object with a "kind"');
+        const err = checkEntryFields(entry);
+        if (err) throw new Error(err);
+    }
+}
 
 // A wasm trap says four words and names no line.  These are the ones
 // this toolchain actually produces, each with the Scheme-level cause;
@@ -1099,6 +1227,7 @@ export function trapHint(msg) {
 }
 
 export async function verifyBytes(bytes, checks = DEFAULT_CHECKS, opts = {}) {
+    assertCheckKeys(checks);
     const spec = { ...DEFAULT_CHECKS, ...checks };
     const errors = [];
     const results = [];
@@ -1183,7 +1312,7 @@ export async function verifyBytes(bytes, checks = DEFAULT_CHECKS, opts = {}) {
     }
 
     for (const c of (spec.custom || [])) {
-        const h = CUSTOM[c.kind];
+        const h = Object.hasOwn(CUSTOM, c.kind) ? CUSTOM[c.kind] : undefined;
         if (!h) {
             results.push({ kind: c.kind, ok: false, detail: `unknown check kind "${c.kind}"` });
             if (stage === 'done') stage = 'custom';
@@ -1222,6 +1351,7 @@ export async function verifyBytes(bytes, checks = DEFAULT_CHECKS, opts = {}) {
 }
 
 export async function verifyFile(sourceFile, checks = DEFAULT_CHECKS, opts = {}) {
+    assertCheckKeys(checks);           // before any compile work
     const t0 = Date.now();
     const c = await compile(sourceFile, opts);
     if (!c.ok) {
@@ -1262,6 +1392,7 @@ export function readChecks(arg) {
     }
     if (!spec || typeof spec !== 'object' || Array.isArray(spec))
         throw new Error('--checks must be a JSON object');
+    assertCheckKeys(spec);
     return spec;
 }
 
@@ -1304,14 +1435,30 @@ function report(r, source) {
     return lines.join('\n');
 }
 
+// The flags this CLI understands: the boolean ones, and the ones
+// that take a value.  A misspelt option name has to be refused for
+// the same reason a misspelt spec key is -- `--neds draw` would
+// otherwise run with nothing required and report a pass.
+export const VERIFY_BOOL_FLAGS = ['json', 'script'];
+export const VERIFY_VALUE_FLAGS = ['needs', 'checks', 'out', 'wasm'];
+
 export async function runVerify(argv) {
     const args = {};
     const pos = [];
+    const badFlag = a => {
+        const all = [...VERIFY_BOOL_FLAGS, ...VERIFY_VALUE_FLAGS]
+            .map(f => `--${f}`).sort().join(', ');
+        console.error(`goeteia verify: unknown option ${a}; this command takes `
+                      + `${all}, --help\n${VERIFY_USAGE}`);
+        return 2;
+    };
     for (let i = 0; i < argv.length; i++) {
         const a = argv[i];
         if (a === '--json' || a === '--script') args[a.slice(2)] = true;
         else if (a === '--help' || a === '-h') { console.log(VERIFY_USAGE); return 0; }
         else if (a.startsWith('--')) {
+            const name = a.slice(2);
+            if (!VERIFY_VALUE_FLAGS.includes(name)) return badFlag(a);
             // a value-taking flag left dangling is a typo, not a
             // request to run with nothing required
             const v = argv[++i];
@@ -1319,7 +1466,7 @@ export async function runVerify(argv) {
                 console.error(`goeteia verify: ${a} needs a value\n${VERIFY_USAGE}`);
                 return 2;
             }
-            args[a.slice(2)] = v;
+            args[name] = v;
         }
         else pos.push(a);
     }

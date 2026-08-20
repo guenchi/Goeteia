@@ -30,7 +30,8 @@ import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 import {
-    compile, parseNeeds, readChecks, runVerify, scenario, signature, verifyFile,
+    compile, makeWorld, parseNeeds, readChecks, runVerify, scenario,
+    signature, verifyBytes, verifyFile,
 } from '../rt/verify.mjs';
 
 const PAGES = path.resolve(
@@ -170,4 +171,191 @@ test('the CLI refuses a dangling flag instead of running with nothing required',
     assert.equal(await runVerify([page('gradient.ss'), '--needs']), 2);
     assert.equal(await runVerify([]), 2);
     assert.equal(await runVerify([page('gradient.ss'), '--needs', 'draws']), 2);
+});
+
+test('an unknown top-level spec key is refused by name', async () => {
+    // library boundary FIRST: both entries must throw on their own --
+    // a whitelist living only in the CLI's readChecks would leave
+    // programmatic callers running with a misspelt requirement
+    // silently unenforced
+    await assert.rejects(
+        () => verifyFile(page('static.ss'), { checks: [] }),
+        /unknown check spec key "checks".*"needs_draw".*"needs_interact".*"custom"/s);
+    const c = await compile(page('static.ss'), {});
+    assert.ok(c.ok);
+    await assert.rejects(
+        () => verifyBytes(c.wasm, { needs_drow: true }),
+        /unknown check spec key "needs_drow"/);
+    // the CLI answers bad usage: exit 2, and stderr names the bad key
+    // together with the whole legal set
+    const errs = [];
+    const orig = console.error;
+    console.error = (...a) => errs.push(a.join(' '));
+    let code;
+    try {
+        code = await runVerify(
+            [page('static.ss'), '--checks', '{"checks":[]}']);
+    } finally { console.error = orig; }
+    assert.equal(code, 2);
+    const text = errs.join('\n');
+    for (const want of ['"checks"', 'needs_draw', 'needs_interact', 'custom'])
+        assert.ok(text.includes(want), `stderr lacks ${want}: ${text}`);
+});
+
+test('normalized and explicitly-empty spellings stay legal', async () => {
+    // --needs draw produces whitelisted keys; an explicit custom: []
+    // is a declaration of zero checks, not a typo; and the two merge
+    assert.equal(await runVerify([page('gradient.ss'), '--needs', 'draw']), 0);
+    assert.equal(await runVerify(
+        [page('gradient.ss'), '--checks', '{"custom":[]}', '--needs', 'draw']),
+        0);
+});
+
+test('a glyph-atlas page draws through both mock contexts', async () => {
+    const c = await compile(page('spritetext.ss'), {});
+    assert.ok(c.ok, JSON.stringify(c.errors || []));
+    const r = await verifyBytes(c.wasm, { needs_draw: true });
+    assert.equal(r.ok, true, `stage ${r.stage}\n${why(r)}`);
+    assert.ok(r.stats.draws > 0, 'the sprite page must issue GL draws');
+    // the verdict deliberately omits the world; one scenario exposes
+    // both logs
+    const t = await scenario(c.wasm, {});
+    const ops = t.world.c2d.map(e => e.op);
+    assert.ok(ops.includes('fillText'), `2d log has no fillText: ${ops.join(',')}`);
+    const texts = t.world.c2d.filter(e => e.op === 'fillText').map(e => e.text);
+    assert.ok(texts.some(s => /\S/.test(s)), 'no non-blank glyph was rasterized');
+    assert.ok(t.world.gl.some(e => e.op.startsWith('draw')),
+              'the GL log lost its draws');
+});
+
+test('the 2d mock keeps its contract', () => {
+    const w = makeWorld({});
+    w.install();
+    try {
+        const cv = globalThis.document.createElement('canvas');
+        const ctx = cv.getContext('2d');
+        // writable state, read back as written
+        ctx.font = '16px monospace';
+        ctx.textBaseline = 'top';
+        ctx.fillStyle = '#fff';
+        assert.equal(ctx.font, '16px monospace');
+        assert.equal(ctx.textBaseline, 'top');
+        assert.equal(ctx.fillStyle, '#fff');
+        // deterministic measure: 8 px per CODE POINT, so the astral
+        // glyph counts once, not twice
+        assert.equal(ctx.measureText('').width, 0);
+        assert.equal(ctx.measureText('A').width, 8);
+        assert.equal(ctx.measureText('A\u{1F600}').width, 16);
+        assert.equal(ctx.measureText('A').width, ctx.measureText('A').width);
+        // all three drawing ops land in the world's 2d log
+        ctx.fillText('hi', 1, 2);
+        ctx.fillRect(0, 0, 2, 2);
+        ctx.drawImage(cv, 0, 0);
+        assert.deepEqual(w.c2d.map(e => e.op),
+                         ['fillText', 'fillRect', 'drawImage']);
+        // per-kind caching on ONE canvas: every kind gets its OWN
+        // object -- a real canvas does not hand "webgl" and "webgl2"
+        // the same context -- each stable across repeat calls, and
+        // every GL kind still records into the one world.gl log
+        const gl = cv.getContext('webgl2');
+        const gl1 = cv.getContext('webgl');
+        assert.notEqual(gl, ctx);
+        assert.notEqual(gl1, gl, '"webgl" and "webgl2" must be distinct contexts');
+        assert.equal(cv.getContext('2d'), ctx);
+        assert.equal(cv.getContext('webgl2'), gl);
+        assert.equal(cv.getContext('webgl'), gl1);
+        const before = w.gl.length;
+        gl.drawArrays('TRIANGLES', 0, 3);
+        gl1.drawArrays('TRIANGLES', 0, 3);
+        assert.equal(w.gl.length, before + 2,
+                     'every GL kind records into the one world.gl log');
+        assert.equal(w.gl[w.gl.length - 1].op, 'drawArrays');
+    } finally { w.uninstall(); }
+});
+
+test('the CLI refuses an unknown option name', async () => {
+    // the sibling of the spec-key whitelist, one level out: `--neds
+    // draw` used to parse as an ignored option, so a page that draws
+    // nothing verified "ok" with the requirement silently dropped
+    const errs = [];
+    const orig = console.error;
+    console.error = (...a) => errs.push(a.join(' '));
+    let code;
+    try {
+        code = await runVerify([page('nodraw.ss'), '--neds', 'draw']);
+    } finally { console.error = orig; }
+    assert.equal(code, 2);
+    const text = errs.join('\n');
+    assert.ok(text.includes('--neds'), `stderr does not name the bad option: ${text}`);
+    assert.ok(text.includes('--needs'), `stderr does not list the legal ones: ${text}`);
+    // and the correctly-spelled flag still reaches the draw stage,
+    // where this fixture belongs (exit 1, not 0 and not 2)
+    assert.equal(await runVerify([page('nodraw.ss'), '--needs', 'draw']), 1);
+});
+
+test('a misspelt field inside a custom entry is refused by name', async () => {
+    // `by` picks the projection; mistyped, it silently selects the
+    // default and the check quietly asks a different question
+    await assert.rejects(
+        () => verifyFile(page('slider.ss'),
+                         { custom: [{ kind: 'input_changes', index: 0, bye: 'text' }] }),
+        e => {
+            assert.match(e.message, /"bye"/);              // the bad field
+            assert.match(e.message, /input_changes/);      // the kind
+            assert.match(e.message, /"index".*"by"/s);     // its legal fields
+            return true;
+        });
+    // hint is legal on every entry, and a correct spelling passes
+    const r = await verifyFile(page('static.ss'),
+        { custom: [{ kind: 'text_blocks_min', n: 3, hint: 'add paragraphs' }] });
+    assert.equal(r.ok, true, why(r));
+});
+
+test('each whitelist mounting point is load-bearing on its own', async () => {
+    // readChecks: the CLI's own parse path, checked directly -- no
+    // other assertion here reaches it with a bad key
+    assert.throws(() => readChecks('{"cheks":{}}'), /unknown check spec key "cheks"/);
+    // verifyFile: a bad key must be refused BEFORE compiling, so this
+    // uses a source that cannot compile.  If the gate moved to
+    // verifyBytes alone, this would come back as a compile error and
+    // the key mistake would be invisible.
+    await assert.rejects(
+        () => verifyFile(page('unclosed.ss'), { needs_drow: true }),
+        /unknown check spec key "needs_drow"/);
+});
+
+test('prototype-named strings are data, not lookups', async () => {
+    // Every table keyed by a user-supplied string is a place where
+    // "toString" or "__proto__" can pick up an inherited member
+    // instead of being refused.  Each assertion below goes red if its
+    // own-property guard is reverted.
+    const w = makeWorld({});
+    w.install();
+    try {
+        const cv = globalThis.document.createElement('canvas');
+        for (const k of ['constructor', 'toString', '__proto__']) {
+            const ctx = cv.getContext(k);
+            assert.ok(ctx && typeof ctx === 'object' && 'drawArrays' in ctx,
+                      `getContext(${JSON.stringify(k)}) handed back a prototype member`);
+        }
+    } finally { w.uninstall(); }
+    // an unknown KIND that happens to name a prototype member stays a
+    // verdict, exactly like any other unknown kind -- not a crash.
+    // The verdict has to be the UNKNOWN-KIND one: without the
+    // own-property guard, CUSTOM["toString"] is Object.prototype's
+    // own toString, which is callable, so it runs as a handler and
+    // its garbage result still lands as a failed check at this same
+    // stage.  Asserting ok/stage alone would stay green through that.
+    const r = await verifyFile(page('static.ss'), { custom: [{ kind: 'toString' }] });
+    assert.equal(r.ok, false);
+    assert.equal(r.stage, 'custom');
+    assert.match(checkOf(r, 'toString').detail, /unknown check kind "toString"/);
+    assert.match(r.errors.find(e => e.stage === 'custom').hint,
+                 /implemented kinds:/);
+    // and an unknown PROJECTION is refused by name rather than looked
+    // up on Object.prototype
+    await assert.rejects(
+        () => verifyFile(page('slider.ss'),
+                         { custom: [{ kind: 'input_changes', index: 0, by: 'toString' }] }),
+        /unknown projection "toString"/);
 });

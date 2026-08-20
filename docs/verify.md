@@ -103,6 +103,13 @@ two booleans.
 | `needs_interact` | boolean | run the interact stage (default `false`) |
 | `custom` | array | assertions, each an object with a `kind` (default `[]`) |
 
+Those three are the whole top-level vocabulary. Any other top-level
+key is refused **by name**, with the legal set listed — exit 2 from
+the CLI, a throw from `verifyBytes`/`verifyFile` — because a misspelt
+requirement silently not enforced is the one answer a verifier must
+never give. An explicit `custom: []` is a declaration of zero checks
+and stays legal.
+
 Every entry in `custom` may carry a `hint` string, which is attached to
 the verdict's error when that entry fails.
 
@@ -202,6 +209,37 @@ changed" a comparison of command streams and not of pixels. Nothing is
 rendered, so a shader that compiles to a black screen still passes:
 a mock's testimony is weak evidence, and when it disagrees with a real
 browser, believe the browser and fix the mock.
+
+`getContext("2d")` answers a recording 2d context of its own — the
+glyph-atlas path of `(gfx sprite)` runs on it — whose `measureText`
+is deterministic: 8 px per code point. Each canvas keeps one context
+per kind, so a page that touches both gets two stable objects and two
+logs.
+
+### What the world can and cannot do
+
+The mock world is **deterministic and offline**, and three of its
+stubs are easy to misread:
+
+- **No network.** `fetch` *exists* but every call rejects with
+  `no network in the mock world` — a poisoned stub, deliberately, so
+  a run never depends on what a server said that day. That means
+  `typeof fetch` probing cannot tell this world from a browser:
+  **capability probes must use the library predicates**, not feature
+  sniffing. Note that `(fetch-direct?)` answers whether the host has
+  real JSPI suspension — it judges the *await mechanism*, not the
+  network, and is `#t` under node with the flag while `fetch` still
+  rejects.
+- **The clocks are frozen.** `Date.now` answers one constant forever;
+  `performance.now` and the timer queue advance only when the harness
+  pumps a frame. So two runs of the same bytes agree byte for byte —
+  the differential interaction verdict rests on exactly this.
+- **`Math.random` is seeded.** It answers the same sequence every
+  run; nothing in a verdict may hinge on luck.
+
+One global, not two: `js-eval` code and `(js-global)` see the same
+`globalThis` — the bridge evaluates in the instance's global — so a
+value planted through either is visible through the other.
 
 ## Adding a check kind
 
