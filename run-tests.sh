@@ -6,6 +6,17 @@
 # first line declares the expected output as ";; expect: <value>".
 cd "$(dirname "$0")"
 fail=0
+# Compiler output goes to a directory unique to THIS invocation.  The
+# paths used to be fixed (/tmp/goeteia-test*.wasm), so two runs of this
+# script at once overwrote each other's artifacts: the second run's
+# `cmp` compared bytes from two different tests and reported cross-host
+# failures for most of the tree, with a `got` from whichever test wrote
+# last.  Three times across two batches, and every time the red looked
+# exactly like a real defect -- so the cost is not the wasted run, it is
+# that the evidence from a colliding run is worthless in BOTH
+# directions.
+T=$(mktemp -d "${TMPDIR:-/tmp}/goeteia-tests.XXXXXX") || exit 1
+trap 'rm -rf "$T"' EXIT INT TERM
 # enable JSPI (js-await suspension) when this node accepts the flag
 JSPI=""
 if ${NODE-node} --experimental-wasm-jspi -e 1 >/dev/null 2>&1; then
@@ -29,45 +40,45 @@ run_js() { # jsfile testfile
 }
 for t in test/*.ss; do
     want=$(head -1 "$t" | sed 's/^;; expect: //')
-    if ! ./bin/goeteiac "$t" /tmp/goeteia-test.wasm; then
+    if ! ./bin/goeteiac "$t" "$T/test.wasm"; then
         echo "FAIL $t (stage0 compile error)"; fail=1; continue
     fi
-    got=$(run_one /tmp/goeteia-test.wasm "$t")
+    got=$(run_one "$T/test.wasm" "$t")
     if [ "$got" = "$want" ]; then
         echo "ok   $t"
     else
         echo "FAIL $t (stage0: want '$want', got '$got')"; fail=1
     fi
     if [ -f goeteia.wasm ]; then
-        if ! ${NODE-node} rt/compile.mjs goeteia.wasm "$t" /tmp/goeteia-test1.wasm 2>/dev/null; then
+        if ! ${NODE-node} rt/compile.mjs goeteia.wasm "$t" "$T/test1.wasm" 2>/dev/null; then
             echo "FAIL $t (stage1 compile error)"; fail=1; continue
         fi
-        got=$(run_one /tmp/goeteia-test1.wasm "$t")
+        got=$(run_one "$T/test1.wasm" "$t")
         if [ "$got" = "$want" ]; then
             echo "ok   $t (stage1)"
         else
             echo "FAIL $t (stage1: want '$want', got '$got')"; fail=1
         fi
         # both hosts must emit identical bytes from identical source
-        if ! cmp -s /tmp/goeteia-test.wasm /tmp/goeteia-test1.wasm; then
+        if ! cmp -s "$T/test.wasm" "$T/test1.wasm"; then
             echo "FAIL $t (cross-host: stage0/stage1 bytes differ)"; fail=1
         fi
     fi
     # the JS target answers to the same oracle
-    if ! ./bin/goeteiac --js "$t" /tmp/goeteia-test.js; then
+    if ! ./bin/goeteiac --js "$t" "$T/test.js"; then
         echo "FAIL $t (js compile error)"; fail=1; continue
     fi
-    got=$(run_js /tmp/goeteia-test.js "$t")
+    got=$(run_js "$T/test.js" "$t")
     if [ "$got" = "$want" ]; then
         echo "ok   $t (js)"
     else
         echo "FAIL $t (js: want '$want', got '$got')"; fail=1
     fi
     if [ -f goeteia.wasm ]; then
-        if ! ${NODE-node} rt/compile.mjs --js goeteia.wasm "$t" /tmp/goeteia-test1.js 2>/dev/null; then
+        if ! ${NODE-node} rt/compile.mjs --js goeteia.wasm "$t" "$T/test1.js" 2>/dev/null; then
             echo "FAIL $t (stage1 js compile error)"; fail=1; continue
         fi
-        if ! cmp -s /tmp/goeteia-test.js /tmp/goeteia-test1.js; then
+        if ! cmp -s "$T/test.js" "$T/test1.js"; then
             echo "FAIL $t (cross-host: stage0/stage1 JS text differs)"; fail=1
         fi
     fi
@@ -216,6 +227,11 @@ if ${NODE-node} test/llm-substrate.mjs; then
     echo "ok   test/llm-substrate.mjs"
 else
     echo "FAIL test/llm-substrate.mjs"; fail=1
+fi
+if ${NODE-node} --test test/sexpr-mjs.mjs >/dev/null 2>&1; then
+    echo "ok   test/sexpr-mjs.mjs"
+else
+    echo "FAIL test/sexpr-mjs.mjs"; fail=1
 fi
 if ${NODE-node} --test test/docs.mjs >/dev/null 2>&1; then
     echo "ok   test/docs.mjs"
