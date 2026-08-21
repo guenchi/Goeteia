@@ -6,17 +6,27 @@
 set -e
 cd "$(dirname "$0")"
 
-cat src/compiler.ss src/js-backend.ss src/wasm-driver.ss > /tmp/goeteia-self-src.ss
+# Intermediates go to a directory unique to THIS invocation.  The paths
+# used to be fixed under /tmp, so two rebuilds at once overwrote each
+# other's source and stage2, and the fixpoint `cmp` below would then be
+# comparing artifacts from two different runs -- which can read either
+# way.  A false green there is the worse half: it would certify a
+# compiler that never reproduced itself.  (run-tests.sh had the same
+# defect and the same fix.)
+T=$(mktemp -d "${TMPDIR:-/tmp}/goeteia-self.XXXXXX") || exit 1
+trap 'rm -rf "$T"' EXIT INT TERM
+
+cat src/compiler.ss src/js-backend.ss src/wasm-driver.ss > "$T/self-src.ss"
 
 echo "stage1: Chez-hosted compiler compiling the compiler..."
-./bin/goeteiac /tmp/goeteia-self-src.ss goeteia.wasm
+./bin/goeteiac "$T/self-src.ss" goeteia.wasm
 echo "  goeteia.wasm: $(wc -c < goeteia.wasm) bytes"
 
 echo "stage2: self-hosted compiler compiling the compiler..."
-${NODE-node} rt/compile.mjs goeteia.wasm /tmp/goeteia-self-src.ss /tmp/goeteia-stage2.wasm
-echo "  stage2: $(wc -c < /tmp/goeteia-stage2.wasm) bytes"
+${NODE-node} rt/compile.mjs goeteia.wasm "$T/self-src.ss" "$T/stage2.wasm"
+echo "  stage2: $(wc -c < "$T/stage2.wasm") bytes"
 
-if cmp -s goeteia.wasm /tmp/goeteia-stage2.wasm; then
+if cmp -s goeteia.wasm "$T/stage2.wasm"; then
     echo "fixpoint: stage1 == stage2"
 else
     echo "FIXPOINT FAILED: stage1 and stage2 differ"
