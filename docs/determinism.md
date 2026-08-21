@@ -289,7 +289,45 @@ Verified over 833 conversions (bignums, ratios, `sqrt` of exact
 integers, and `1/n` for large `n`): both targets identical, none off
 the oracle.
 
-### What the fix cost
+### D3 — the two hosts disagreed about a string line continuation
+*(fixed; witness kept as `test/string-continuation.ss`)*
+
+**Symptom**: a source file whose only unusual feature was a string
+literal broken across lines compiled to *different bytes* on the two
+hosts — 182515 against 182521 for `test/sexpr-anchors.ss`, and a
+different `--js` text as well. Both binaries ran and both printed `#t`,
+so nothing but the cross-host comparison could see it.
+
+Witness — `"a\<newline>  b"`:
+
+| host | before | after |
+|---|---|---|
+| stage0 (Chez's reader) | length 2 | length 2 |
+| stage1 (self-hosted) | length 5 | length 2 |
+| R6RS §4.2.5 | length 2 | |
+
+**Cause**: `%read-string` in `src/prelude.ss` had no case for a line
+continuation. R6RS says a backslash followed by intraline whitespace, a
+line ending and more intraline whitespace stands for **nothing** — it is
+how a long literal is broken across source lines, and it is not an
+escape. The pair fell through to `%read-escape`'s `else`, which returns
+the byte itself, so it became a newline and the following indentation
+survived with it. Chez elides the continuation correctly, so the two
+readers built different strings from the same bytes.
+
+**Why it surfaced now**: nothing in the tree had ever used the escape.
+The first file to use it was a test, and the cross-host check turned
+red the same day. That is the shape this document exists for — the
+defect was three years' worth of latent and cost nothing until a source
+file exercised it, and no amount of running the programs would have
+found it, because both hosts' programs *worked*.
+
+**Family**: D1 was decimal literals read differently, this is a string
+escape read differently. Both are the reader disagreeing with Chez about
+what a literal denotes, and both were invisible to every test that only
+checked what a program does.
+
+### What the D1 and D2 fixes cost
 
 `goeteia.wasm` grows from 439602 to 448085 bytes. The whole delta is
 the new prelude code: rebuilding from the pre-fix prelude reproduces

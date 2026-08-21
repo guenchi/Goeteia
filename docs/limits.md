@@ -109,6 +109,16 @@ so it differs from R5RS `modulo` whenever the divisor is negative
 (`(modulo 7 -2)` is `-1`; `(mod 7 -2)` is `1`).  There is no `expt`
 either — write the literal, or build it by multiplication.
 
+**Since 2026-08-21** the reader handles a string **line continuation**
+as R6RS §4.2.5 requires: a backslash followed by intraline whitespace, a
+line ending and more intraline whitespace produces *nothing*, so a long
+literal can be broken across source lines. A backslash followed by
+intraline whitespace and then no line ending is now an **error**; before
+that date it silently produced that byte, and the continuation itself
+became a newline — which meant the same source read as two different
+strings under this reader and under Chez's. See `docs/determinism.md`
+D3.
+
 ## Trigonometric accuracy
 
 `sin` and `cos` reduce the argument with one rounded subtraction of

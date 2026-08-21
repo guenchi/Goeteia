@@ -640,8 +640,41 @@
       (errorf 'read (string-append "string opened at " (%at-line line col)
                                    " never closed")))
      ((= b 92)                                     ; backslash
-      (%read-string line col (cons (%read-escape (%next-byte)) acc)))
+      ;; A LINE CONTINUATION is not an escape: R6RS 4.2.5 says a
+      ;; backslash followed by intraline whitespace, a line ending and
+      ;; more intraline whitespace stands for NOTHING -- it is how a
+      ;; long string literal is broken across source lines.  Without
+      ;; this the pair fell through to %read-escape's `else` and became
+      ;; a newline character, so the same source read as two different
+      ;; strings depending on whose reader saw it: Chez elides it, this
+      ;; one did not, and a file using the escape compiled to different
+      ;; bytes on the two hosts.
+      (let ((n (%peek-byte)))
+        (if (or (%intraline-ws? n) (%line-ending? n))
+            (begin (%skip-string-continuation line col)
+                   (%read-string line col acc))
+            (%read-string line col (cons (%read-escape (%next-byte)) acc)))))
      (else (%read-string line col (cons b acc))))))
+
+(define (%intraline-ws? b) (or (= b 32) (= b 9)))
+(define (%line-ending? b) (or (= b 10) (= b 13)))
+
+;; the backslash is already consumed; take the rest of the continuation
+;; and produce nothing
+(define (%skip-string-continuation line col)
+  (let skip ()
+    (when (%intraline-ws? (%peek-byte)) (%next-byte) (skip)))
+  (let ((b (%next-byte)))
+    (unless (%line-ending? b)
+      (errorf 'read
+              (string-append "a backslash in the string opened at "
+                             (%at-line line col)
+                             " is followed by whitespace and then no line "
+                             "ending, which is not an escape")))
+    ;; CR LF is ONE line ending
+    (when (and (= b 13) (= (%peek-byte) 10)) (%next-byte)))
+  (let skip ()
+    (when (%intraline-ws? (%peek-byte)) (%next-byte) (skip))))
 (define (%read-escape b)
   ;; translate the byte after a backslash; \" and \\ fall through to
   ;; themselves, \n \t \r become the control characters
