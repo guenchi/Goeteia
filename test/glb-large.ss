@@ -77,29 +77,76 @@
       ;; a byte-order slip in the u16 repack would keep every count
       ;; right while corrupting every triangle
       (let* ((pib (gprim-ibase p))
+             ;; ALL FOUR bytes of a u32 index.  Byte 3 was left out, so
+             ;; the top eight bits of every index went unread -- and
+             ;; since it is always zero here that omission could not
+             ;; show.  It is always zero for a reason worth writing
+             ;; down: a non-zero byte 3 means an index naming vertex
+             ;; 2^24 or beyond, and 2^24 vertices at 32 bytes each is
+             ;; half a gigabyte of staging before any index buffer
+             ;; exists.  So byte 3 is asserted to BE zero rather than
+             ;; exercised as data; what it guards against is a writer
+             ;; putting something else there.
              (rd (if u32?
                      (lambda (k)
                        (+ (%mem-u8-ref (+ pib (* 4 k)))
                           (* 256 (%mem-u8-ref (+ pib (* 4 k) 1)))
-                          (* 65536 (%mem-u8-ref (+ pib (* 4 k) 2)))))
+                          (* 65536 (%mem-u8-ref (+ pib (* 4 k) 2)))
+                          (* 16777216 (%mem-u8-ref (+ pib (* 4 k) 3)))))
                      (lambda (k)
                        (+ (%mem-u8-ref (+ pib (* 2 k)))
-                          (* 256 (%mem-u8-ref (+ pib (* 2 k) 1))))))))
+                          (* 256 (%mem-u8-ref (+ pib (* 2 k) 1)))))))
+             (width (if u32? 4 2))
+             ;; the probe set: the ends, and -- where the index values
+             ;; reach that far -- each side of the boundary a u16 index
+             ;; cannot cross.  Named one by one rather than as a range,
+             ;; because 65535 and 65536 are the two that matter and a
+             ;; sampled range can miss both.
+             (ks (append (list 0 1 2 (- icount 3) (- icount 2) (- icount 1))
+                         (if (> icount 65537)
+                             (list 65534 65535 65536 65537)
+                             '()))))
         (check (string-append name " index values")
-               (let probe ((ks (list 0 1 2
-                                     (- icount 3) (- icount 2)
-                                     (- icount 1)))
-                           (ok #t))
+               (let probe ((ks ks) (ok #t))
                  (if (null? ks) ok
                      (probe (cdr ks)
                             (and ok
                                  (= (rd (car ks))
-                                    (remainder (car ks) nv)))))))))))
+                                    (remainder (car ks) nv)))))))
+        ;; ...and the same probes compared BYTE FOR BYTE against what
+        ;; the writer was handed.  Assembling both sides with the same
+        ;; arithmetic would agree about a pair of swapped bytes; this
+        ;; does not, because it never assembles anything.
+        (check (string-append name " index bytes match the input")
+               (let probe ((ks ks) (ok #t))
+                 (if (null? ks) ok
+                     (probe (cdr ks)
+                            (and ok
+                                 (let byte ((b 0) (ok #t))
+                                   (if (= b width)
+                                       ok
+                                       (byte (+ b 1)
+                                             (and ok
+                                                  (= (%mem-u8-ref
+                                                      (+ pib (* width (car ks)) b))
+                                                     (%mem-u8-ref
+                                                      (+ ib (* width (car ks)) b)))))))))))) 
+        (when u32?
+          (check (string-append name " byte 3 is zero at reachable sizes")
+                 (let probe ((ks ks) (ok #t))
+                   (if (null? ks) ok
+                       (probe (cdr ks)
+                              (and ok (= 0 (%mem-u8-ref
+                                            (+ pib (* 4 (car ks)) 3)))))))))))))
 
 ;; the sizes around the once-failing boundary, and both index widths
 (round-trip "small" 1000 1000 #f)
 (round-trip "boundary" 8381 16416 #f)
 (round-trip "wide" 16589 32832 #f)
-(round-trip "u32" 70000 16416 #t)
+;; ntri chosen so icount passes 65536: with icount 49248 every index
+;; value stayed under 65535 and the u32 path was exercised without a
+;; single index needing more than sixteen bits.  22334 triangles is
+;; 67002 indices, so the values themselves cross the boundary.
+(round-trip "u32" 70000 22334 #t)
 
 (= fails 0)
