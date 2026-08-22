@@ -1,6 +1,10 @@
 ;; expect: #t
 (import (web js))
 (define G (js-global))
+;; the conditions a deliberately failing hook was handed.  Lives out
+;; here because two clauses share it: the one that installs the hook
+;; and the one that checks #f really replaced it.
+(define seen '())
 (and ;; property chains and method calls on real host objects
      (js-ref? G)
      (= (js->number (js-method (js-get G "Math") "floor" 3.7)) 3)
@@ -75,4 +79,58 @@
        (js-method (js-eval "[1]") "map" (lambda _ (error 'oddball 123)))
        (js-eval "console.error = globalThis.__cbconsole")
        (and (js-truthy? (js-eval "__cberr.length === 1"))
-            (js-truthy? (js-eval "__cberr[0].includes('oddball')")))))
+            (js-truthy? (js-eval "__cberr[0].includes('oddball')"))))
+     ;; ---- a hook that fails on its own account ------------------------
+     ;; The reporting channel is caller-supplied, so it can raise.  $jscb
+     ;; guards it separately from the callback it is reporting on -- the
+     ;; inner guard has been there since the channel was added, and this
+     ;; is coverage for it rather than a fix, so it is not red before
+     ;; anything.  What it must hold: a hook failing does not take the
+     ;; answer with it, does not take the host with it, and does not
+     ;; quietly stop being the hook.
+     (begin
+       (js-callback-error! (lambda (e) (set! seen (cons e seen)) (raise 'hook-died)))
+       (let ((r1 (js-method (js-eval "[1]") "map"
+                            (lambda _ (error 'first "one" 1))))
+             (r2 (js-method (js-eval "[1]") "map"
+                            (lambda _ (error 'second "two" 2)))))
+         ;; IDENTITY, not falsity: a callback answering 0, "" or false
+         ;; would satisfy `(not (js-truthy? ...))` just as well, and the
+         ;; contract is that it answers undefined.
+         (and (js-eq? (js-index r1 0) (js-undefined))
+              (js-eq? (js-index r2 0) (js-undefined))
+              ;; BOTH calls reached the hook -- a hook that unhooked
+              ;; itself after failing once would pass a single-call test
+              (= 2 (length seen))
+              ;; and each got its own condition, not the hook's raise
+              (eq? 'second (condition-who (car seen)))
+              (eq? 'first (condition-who (cadr seen)))
+              (string=? "two" (condition-message (car seen)))
+              (string=? "one" (condition-message (cadr seen)))
+              ;; the HOST is still there: a later callback runs and its
+              ;; value comes back.  "No crash" is not observable from
+              ;; inside the thing that would have crashed, so it is
+              ;; witnessed by a sentinel that has to survive the trip.
+              (= 4242 (js->number
+                       (js-index (js-method (js-eval "[1]") "map"
+                                            (lambda _ 4242))
+                                 0))))))
+     ;; ...and #f really REPLACES the hook, rather than leaving it in
+     ;; place, installing a no-op, or chaining the old one behind the
+     ;; default.  The console assertion alone cannot tell the last of
+     ;; those apart -- a composite reporter that ran the old hook and
+     ;; then the default would print exactly the expected line -- so the
+     ;; old hook's own record is checked for silence as well.
+     (let ((before (length seen)))
+       (js-callback-error! #f)
+       (js-eval "globalThis.__cberr = [];
+                 globalThis.__cbconsole = console.error;
+                 console.error = (...a) =>
+                   globalThis.__cberr.push(a.join(' '))")
+       (js-method (js-eval "[1]") "map" (lambda _ (error 'after-restore "back" 7)))
+       (js-eval "console.error = globalThis.__cbconsole")
+       (and (js-truthy? (js-eval "__cberr.length === 1"))
+            (js-truthy? (js-eval "__cberr[0].includes('after-restore')"))
+            (js-truthy? (js-eval "__cberr[0].includes('back')"))
+            ;; the replaced hook saw nothing of it
+            (= before (length seen)))))
