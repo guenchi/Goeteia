@@ -1243,8 +1243,16 @@
   ;; one material's pass: the shared uniforms once, then each node
   ;; nearest first -- opaque geometry drawn front to back hands the
   ;; depth test the whole occluded fragment bill (early z).  The tex
-  ;; pass keys on the texture slot first, so equal textures bind
-  ;; once, nearest first within each
+  ;; pass keys on the texture slot first, so nodes sharing a texture
+  ;; are ADJACENT, nearest first within each run.
+  ;;
+  ;; They still bind it once each: the draw path calls
+  ;; cmd-bind-texture! for every visible textured node, with no memory
+  ;; of what is already bound.  This comment used to say the sort made
+  ;; equal textures bind once, which is the benefit the sort was FOR
+  ;; and not a thing the code does -- two nodes on one slot issue two
+  ;; binds.  Adjacency is what makes skipping the repeat possible; the
+  ;; skipping is not written.
   ;; a node with color alpha below one is translucent: it skips the
   ;; opaque pass and joins tr (tagged with this program and setup)
   ;; for the later back-to-front blended pass
