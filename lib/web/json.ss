@@ -257,8 +257,25 @@
                ;; tightening it here alone splits the pair.
                (else (write-char ch p) (loop (+ i 1))))))))
       ;; JSON numbers by hand: string->number has no exponents, so the
-      ;; value is assembled exactly (digits / 10^frac * 10^exp as an
-      ;; exact ratio) and rounded once to a flonum when fractional
+      ;; value is assembled exactly -- digits / 10^frac * 10^exp as an
+      ;; exact ratio -- and `exact->inexact` is called on it ONCE, when
+      ;; the number is fractional.
+      ;;
+      ;; That is what this code does.  It is NOT a promise that the
+      ;; result is the correctly rounded double for the real number the
+      ;; text denotes: that depends on `exact->inexact`, and today the
+      ;; runtime's gets it wrong in the subnormal range.  Measured, on
+      ;; the exact ratio itself rather than through this parser:
+      ;;
+      ;;   24703282292062328/10^340  ->  0.0
+      ;;   correct (round to nearest) ->  2^-1074, the least subnormal
+      ;;
+      ;; The same ratio converts the same wrong way on the wasm and the
+      ;; js target, so it is not something this file can fix; the wrong
+      ;; value arrives here already made.  Filed against the runtime
+      ;; with the printing defects it shares a cause with -- there is no
+      ;; correctly rounded conversion in either direction, decimal to
+      ;; binary or binary to decimal.
       (define (digit v) (and (<= 48 v) (<= v 57) (- v 48)))
       (define (scan-digits i limit)
         (let loop ((j i) (acc 0) (k 0))
