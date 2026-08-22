@@ -12,12 +12,35 @@
 ;;   true/false -> #t/#f, null -> 'null
 ;;
 ;; (string->json s)   parse; raises #(json-error msg pos) on bad input
-;; (json->string x)   serialize (alists -> objects, vectors -> arrays;
-;;                    a NON-EMPTY plain list also serializes as an
-;;                    array.  '() is the empty OBJECT "{}", not "[]" --
-;;                    an empty list cannot say which it meant, and the
+;; (json->string x)   serialize.  Vectors are arrays.  A LIST is an
+;;                    object when EVERY element is a pair whose car is
+;;                    a string or a symbol, and an array otherwise --
+;;                    the whole list is read, not just its head:
+;;
+;;                      (("a" . 1))       -> {"a":1}     an object
+;;                      ((("a" . 1)))     -> [{"a":1}]   an array of one
+;;                      (1 2 3)           -> [1,2,3]
+;;
+;;                    (Reading only the head is what used to happen,
+;;                    and a list of objects has a pair for its head
+;;                    too, so `[{"a":1},{"b":2}]` taken apart with
+;;                    json-array->list and handed back crashed the
+;;                    runtime.)
+;;
+;;                    '() is the empty OBJECT "{}", not "[]" -- an
+;;                    empty list cannot say which it meant, and the
 ;;                    alist branch is the one that owns it.  Build the
-;;                    empty array as #().)
+;;                    empty array as #().
+;;
+;;                    RAISES `error` on a value with no JSON reading:
+;;                    a char, a procedure, a bytevector, an improper
+;;                    pair, the unspecified value.  ⚠ CHANGED: those
+;;                    used to serialize as `null`, silently, which is
+;;                    a legal value of the wrong type and one the
+;;                    caller may have meant -- nothing downstream
+;;                    could tell.  If you were relying on that, the
+;;                    fix is to convert before calling: 'null for a
+;;                    JSON null, a string for anything textual.
 ;; (json-ref x k ...) path access: string/symbol key for objects,
 ;;                    integer index for arrays; #f when absent
 ;; (json-array? x)    is this datum a JSON array?  A NAME for vector?,
