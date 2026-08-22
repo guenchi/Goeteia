@@ -13,13 +13,28 @@
 ;;
 ;; (string->json s)   parse; raises #(json-error msg pos) on bad input
 ;; (json->string x)   serialize (alists -> objects, vectors -> arrays;
-;;                    plain lists also serialize as arrays)
+;;                    a NON-EMPTY plain list also serializes as an
+;;                    array.  '() is the empty OBJECT "{}", not "[]" --
+;;                    an empty list cannot say which it meant, and the
+;;                    alist branch is the one that owns it.  Build the
+;;                    empty array as #().)
 ;; (json-ref x k ...) path access: string/symbol key for objects,
 ;;                    integer index for arrays; #f when absent
+;; (json-array? x)    is this datum a JSON array?  A NAME for vector?,
+;;                    because the answer is the thing people get wrong
+;; (json-array->list x) an array's elements as a list, one level deep
+;;
+;; ONE SHAPE TRIPS EVERYONE: a JSON array is a VECTOR here, not a list.
+;; `(list? (json-ref doc "items"))` is #f for every array that ever
+;; existed, and it is #f in the quiet way -- no error, no warning, just
+;; a branch that never runs.  An object is an alist, so `list?` IS true
+;; of objects, which is exactly backwards from the guess.  Ask
+;; json-array? instead; it exists to be the name that says so.
 ;;
 ;; Copyright (c) 2026 guenchi. MIT license; see LICENSE.
 (library (web json)
-  (export string->json json->string json-ref)
+  (export string->json json->string json-ref
+          json-array? json-array->list)
   (import (rnrs))
 
   (define (jfail msg pos)
@@ -36,6 +51,13 @@
   (define $max-exponent 400)
 
   ;; ---- parser -----------------------------------------------------------
+
+  ;; One definition each, above both users: the reader refuses a
+  ;; literal that reads as an infinity and the writer refuses to spell
+  ;; one, and those two answers have to come from the same predicate or
+  ;; they can drift into disagreeing about the same value.
+  (define (fl-nan? v) (not (fl=? v v)))
+  (define (fl-inf? v) (and (fl=? v (fl* v 2.0)) (not (fl=? v 0.0))))
 
   (define (string->json s)
     (let ((n (string-length s)))
@@ -132,6 +154,48 @@
           (b! (bitwise-ior #x80 (bitwise-and (bitwise-arithmetic-shift-right cp 12) #x3F)))
           (b! (bitwise-ior #x80 (bitwise-and (bitwise-arithmetic-shift-right cp 6) #x3F)))
           (b! (bitwise-ior #x80 (bitwise-and cp #x3F))))))
+      ;; ---- known deviations from RFC 8259 ----------------------------
+      ;; This reader has deviations from RFC 8259's read grammar, some
+      ;; of them accepting what the RFC forbids and some refusing what
+      ;; it requires.  WHICH ONES THEY ARE IS NOT WRITTEN HERE.  The
+      ;; list, the classification and the clause each one answers to
+      ;; live in test/json-rfc-surface.ss, row by row, and that table
+      ;; owns them.
+      ;;
+      ;; NEVER RESTATE A COUNT OR A LIST OF THE DEVIATIONS HERE.  An
+      ;; earlier version of this note did -- it said the set was closed
+      ;; at two -- and a third was found later.  The rule is not that
+      ;; the number was wrong; it is that the number was written in the
+      ;; wrong file.  Whoever discovers the next one will be editing the
+      ;; parser and the table, and has no reason to open this comment,
+      ;; so a total stated here goes false with NOBODY PRESENT to notice.
+      ;; A fact whose falsifier is standing somewhere else cannot be
+      ;; kept true by care, only by not being written down twice.  (Note
+      ;; that a self-destruct clause does not save it either: such a
+      ;; clause protects a claim that might be WRONG, not a claim that
+      ;; is not this file's to make.)
+      ;;
+      ;; Single-line notes at the sites below are a different thing and
+      ;; are fine: the person who makes "this branch accepts X" false is
+      ;; editing that branch, so the falsifier is present.
+      ;;
+      ;; LOCKSTEP.  The deviations are shared with (igropyr json), the
+      ;; reader this one was ported from; each side parses what the
+      ;; other's writer produced.  Tightening one HERE alone would fix
+      ;; this reader's conformance and at the same moment split the
+      ;; pair: input one side takes and the other refuses, which is the
+      ;; failure the pairing exists to prevent and the worse of the two.
+      ;; The choice is not "defect or no defect" but which defect, and
+      ;; the answer is that both move together or neither does.  The
+      ;; surface table is the place that records what "together" means;
+      ;; the counterpart holds the same table under the same row names.
+      ;;
+      ;; What is NOT shared, and so must not be assumed: the two readers
+      ;; bound a number token differently, and this one accumulates
+      ;; digits itself instead of delegating to string->number.  The
+      ;; counterpart therefore had a deviation this side never had, and
+      ;; that is why agreement is MEASURED row by row rather than
+      ;; inferred from the shared ancestry.
       (define (parse-string i)          ; i points after the opening quote
         (let ((p (open-output-string)))
           (let loop ((i i))
@@ -159,6 +223,19 @@
                              (unless (and (<= (+ i 12) n)
                                           (char=? (string-ref s (+ i 6)) #\\)
                                           (char=? (string-ref s (+ i 7)) #\u))
+                               ;; Refused although RFC 8259 allows it
+                               ;; (section 7 spells the escape as %x75
+                               ;; 4HEXDIG with no pairing rule, and
+                               ;; section 9 says a parser MUST accept
+                               ;; what the grammar allows).  Goeteia
+                               ;; strings are UTF-8 byte strings and a
+                               ;; lone surrogate has no UTF-8 encoding,
+                               ;; so conforming means emitting WTF-8 and
+                               ;; calling it a string.  Deliberate, and
+                               ;; shared with (igropyr json); if these
+                               ;; two branches ever start accepting,
+                               ;; that is a lockstep change and this
+                               ;; note goes with them.
                                (jfail "lone high surrogate" i))
                              (let ((lo (hex4 (+ i 8))))
                                (unless (and (>= lo #xDC00) (<= lo #xDFFF))
@@ -173,6 +250,11 @@
                              (utf8-write! p v)
                              (loop (+ i 6))))))
                     (else (jfail "bad escape" i)))))
+               ;; Any other character, INCLUDING the control characters
+               ;; RFC 8259 section 7 requires to be escaped (unescaped
+               ;; starts at %x20).  Known deviation, shared with
+               ;; (igropyr json), pinned in test/json-rfc-surface.ss;
+               ;; tightening it here alone splits the pair.
                (else (write-char ch p) (loop (+ i 1))))))))
       ;; JSON numbers by hand: string->number has no exponents, so the
       ;; value is assembled exactly (digits / 10^frac * 10^exp as an
@@ -188,6 +270,31 @@
                         (loop (+ j 1) (+ (* acc 10) d) (+ k 1)))
                     (values acc k j)))
               (values acc k j))))
+      ;; This scanner does not distinguish `0` from `[1-9][0-9]*`, so
+      ;; "01" is taken.  RFC 8259 section 6 forbids that; it is a known
+      ;; deviation, shared with (igropyr json), pinned in
+      ;; test/json-rfc-surface.ss.  Tightening it here alone splits the
+      ;; pair -- see the lockstep note above parse-string.
+      ;; Every inexact value this reader hands back goes through here.
+      ;; A literal past the flonum range reads as an infinity, and the
+      ;; writer turns infinities into `null` -- so accepting one lets a
+      ;; NUMBER become NULL across a round trip, silently, and in place
+      ;; inside arrays and objects ("[1e309,1]" -> "[null,1]").  RFC
+      ;; 8259 section 6 lets a parser limit the range it accepts;
+      ;; refusing here is that limit, and it is the answer (igropyr
+      ;; json) already gives, so the two readers keep ONE acceptance
+      ;; surface instead of disagreeing about this input.
+      ;;
+      ;; The judge is the VALUE, not a digit count.  $max-exponent
+      ;; bounds the WORK before it is done (it stops pow10 from
+      ;; building a thousand-digit bignum) and this bounds the RESULT;
+      ;; they are not two spellings of one rule, and neither covers the
+      ;; other -- "0.5e400" overflows with an exponent well inside the
+      ;; work bound, and a long enough integer part overflows with no
+      ;; exponent at all.  NaN is not checked because nothing here can
+      ;; produce one: the mantissa is exact and pow10 is positive.
+      (define (finite! v at)
+        (if (fl-inf? v) (jfail "number out of range" at) v))
       (define (parse-number i)
         (let* ((neg (char=? (string-ref s i) #\-))
                (start (if neg (+ i 1) i)))
@@ -205,8 +312,60 @@
                                        (memv (string-ref s k0) '(#\+ #\-))
                                        (string-ref s k0)))
                            (k (if esign (+ k0 1) k0)))
-                       (let-values (((ep ek j2) (scan-digits k 3)))
+                       ;; THREE judges here, and they are independent;
+                       ;; do not fold any two of them together.
+                       ;;
+                       ;;   how many digits  -- $max-number-digits,
+                       ;;     below.  RFC 8259's `exp = e [minus/plus]
+                       ;;     1*DIGIT` sets no limit, so this only
+                       ;;     bounds the scan, and it used to be THREE:
+                       ;;     that made "1e0001" -- value ten -- a
+                       ;;     parse error, which is not a range or a
+                       ;;     precision limit and so was a plain
+                       ;;     deviation, and one the counterpart did
+                       ;;     not share.
+                       ;;   at least one    -- `(= ek 0)` just below.
+                       ;;   how big         -- $max-exponent, and then
+                       ;;     finite! on the value.
+                       ;;
+                       ;; Widening the first must not touch the third.
+                       ;; "1e400" is refused for its VALUE and "1e0001"
+                       ;; was refused for its LENGTH; they read alike
+                       ;; from the outside, and folding the two would
+                       ;; have quietly undone the range fix while every
+                       ;; test for either one alone stayed green.
+                       (let-values (((ep ek j2)
+                                     (scan-digits k $max-number-digits)))
                          (when (= ek 0) (jfail "bad number" i))
+                         ;; ⚠ WHY THIS LINE IS HERE, because no test
+                         ;; can tell you.  Delete it and nothing goes
+                         ;; red: the finiteness check below refuses the
+                         ;; same inputs one step later, so every row in
+                         ;; test/json-rfc-surface.ss still passes.  What
+                         ;; happens instead is that the parser stops
+                         ;; answering -- measured, not guessed: with
+                         ;; this line removed the suite ran past a
+                         ;; two-minute timeout with no output, because
+                         ;; pow10 was building a bignum with an
+                         ;; attacker-chosen number of digits.
+                         ;;
+                         ;; It was not always load-bearing.  While the
+                         ;; exponent scan was capped at three digits
+                         ;; `ep` could not exceed 999 and this was
+                         ;; decoration.  Widening that cap -- required,
+                         ;; because RFC 8259's `exp` puts no limit on
+                         ;; the digit count -- is what turned it into
+                         ;; the only thing between untrusted input and
+                         ;; unbounded work.  A change elsewhere altered
+                         ;; what THIS line is for, and nothing in the
+                         ;; diff said so.
+                         ;;
+                         ;; So: this bounds the WORK.  finite! bounds
+                         ;; the VALUE.  $max-number-digits bounds the
+                         ;; SCAN.  Three judges, three reasons, and
+                         ;; refusals name which one fired so they stay
+                         ;; distinguishable (test/json.ss asks for the
+                         ;; message by name).  Do not fold them.
                          (when (> ep $max-exponent)
                            (jfail "exponent out of range" k))
                         (let* ((m0 (/ (+ (* ip (pow10 fk)) fp) (pow10 fk)))
@@ -214,12 +373,14 @@
                                (v (if (and esign (char=? esign #\-))
                                       (/ mant (pow10 ep))
                                       (* mant (pow10 ep)))))
-                          (values (exact->inexact v) j2))))
+                          (values (finite! (exact->inexact v) i) j2))))
                     (let ((v (if dot?
-                                 (exact->inexact
-                                  (let ((m (/ (+ (* ip (pow10 fk)) fp)
-                                              (pow10 fk))))
-                                    (if neg (- m) m)))
+                                 (finite!
+                                  (exact->inexact
+                                   (let ((m (/ (+ (* ip (pow10 fk)) fp)
+                                               (pow10 fk))))
+                                     (if neg (- m) m)))
+                                  i)
                                  (if neg (- ip) ip))))
                       (values v j))))))))
       ;; top level: one value, then only whitespace
@@ -251,15 +412,21 @@
        s)
       (get-output-string p)))
 
-  (define (fl-nan? v) (not (fl=? v v)))
-  (define (fl-inf? v) (and (fl=? v (fl* v 2.0)) (not (fl=? v 0.0))))
 
   (define (number->json v)
     (cond
      ((and (integer? v) (exact? v)) (number->string v))
-     ((flonum? v)
-      (if (or (fl-nan? v) (fl-inf? v)) "null" (number->string v)))
-     ((exact? v) (number->string (exact->inexact v)))   ; ratio
+     ;; A ratio becomes a flonum and then takes the SAME branch as one
+     ;; that arrived as a flonum.  It used to call number->string on the
+     ;; conversion directly, skipping the non-finite test just below --
+     ;; so a ratio too large for a double came out as whatever the host
+     ;; prints for an infinity, which is not JSON on any host.  One
+     ;; policy ("non-finite is written null"), one place that applies
+     ;; it: a second conversion site is a second place for the policy to
+     ;; be missing from, and this is what that looked like.
+     ((or (flonum? v) (exact? v))
+      (let ((f (if (flonum? v) v (exact->inexact v))))
+        (if (or (fl-nan? f) (fl-inf? f)) "null" (number->string f))))
      (else (error 'json->string "JSON numbers must be real" v))))
 
   (define (json->string x)
@@ -310,6 +477,9 @@
 
   ;; ---- path access -------------------------------------------------------
 
+  ;; arrays are VECTORS, objects alists -- see the header note.  The
+  ;; single step json-ref folds, and where anyone tracing a path access
+  ;; lands first.
   (define (ref1 x k)
     (cond
      ((and (vector? x) (integer? k))
@@ -323,5 +493,33 @@
            (else (loop (cdr l)))))))
      (else #f)))
 
+  ;; A JSON array is a vector; an object is an alist.  So `list?` says
+  ;; #f for every array and #t for every object -- backwards from what a
+  ;; caller reaching for it expects, and silent either way, since a
+  ;; wrong branch here just does not run.  This is the same predicate
+  ;; `vector?` under a name that answers the question actually being
+  ;; asked, which is the only thing that makes it worth exporting: a
+  ;; name is where this knowledge can live.
+  (define (json-array? x) (vector? x))
+
+  ;; The elements of an array, as a list.  SHALLOW: an element that is
+  ;; itself an array comes back as a vector, because converting the
+  ;; whole tree would silently change what every nested `json-array?`
+  ;; answers -- a conversion that reaches further than the caller
+  ;; expects is worse than one that stops where it says.
+  ;;
+  ;; A non-array argument RAISES rather than answering something. The
+  ;; alternative -- '() for a non-vector -- would turn the mistake this
+  ;; whole note is about into an empty loop body, which is the same
+  ;; silence one level over.
+  (define (json-array->list x)
+    (unless (vector? x)
+      (error 'json-array->list
+             "not a JSON array (arrays are vectors here; objects are alists)"
+             x))
+    (let loop ((i (- (vector-length x) 1)) (acc '()))
+      (if (< i 0) acc (loop (- i 1) (cons (vector-ref x i) acc)))))
+
+  ;; arrays are VECTORS -- see the header note before writing (list? ...)
   (define (json-ref x . keys)
     (fold-left (lambda (acc k) (and acc (ref1 acc k))) x keys)))
