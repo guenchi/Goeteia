@@ -170,23 +170,67 @@
  ;; side rejects a document the other accepts, which is the thing the
  ;; pairing exists to prevent.  Narrow what you emit, not what you
  ;; accept.
+ ;; The predicate decides what may LEAVE, so every one of its branches
+ ;; is driven THROUGH json->string.  Asserting it elsewhere would leave
+ ;; the writer's use of it unpinned -- and the boundaries are where an
+ ;; off-by-one lives: `< b 194` vs `< b 193` is the whole difference
+ ;; between refusing an overlong C1 BF and emitting it.
  (let* ((u8 (lambda bs (apply string (map integer->char bs))))
-        (refused? (lambda (x) (guard (e (#t #t)) (json->string x) #f))))
-   (and (refused? (u8 #x80))                    ; a lone continuation byte
-        (refused? (u8 #xFF))                    ; never a UTF-8 byte at all
-        (refused? (u8 #xE4 #xB8))               ; two of a three-byte run
-        (refused? (u8 #xC0 #x80))               ; overlong NUL
-        (refused? (u8 #xED #xA0 #x80))          ; a surrogate half
-        (refused? (list (cons "k" (u8 #x80))))  ; and nested, not just bare
-        (refused? (vector (u8 #x80)))
-        ;; ...and the should-GREEN half, or "refuse everything" passes
-        (string=? "\"hi\"" (json->string "hi"))
-        (string=? (u8 34 #xE4 #xB8 #xAD 34) (json->string (u8 #xE4 #xB8 #xAD)))
-        (string? (json->string (u8 #xF0 #x9F #x98 #x80)))
-        ;; the reader is deliberately unchanged
-        (guard (e (#t #f))
-          (string=? (u8 #x80)
-                    (string->json (string-append "\"" (u8 #x80) "\""))))))
+        (refused? (lambda (x) (guard (e (#t #t)) (json->string x) #f)))
+        (quoted (lambda bs (apply u8 (append '(34) bs '(34)))))
+        ;; a REFUSAL on the should-green side must fail by name, not
+        ;; take the file down: json->string raises, and an unguarded
+        ;; call inside the chain below turns "the writer wrongly
+        ;; refused this" into a trap with no message.  Measured:
+        ;; refusing the whole two-byte branch did exactly that.
+        (emits (lambda (want x) (guard (e (#t #f))
+                                  (string=? want (json->string x))))))
+   (and
+    ;; ---- refused: every way a byte string can fail to be UTF-8 ----
+    (refused? (u8 #x80))                   ; a lone continuation byte
+    (refused? (u8 #xBF))                   ; the other end of that range
+    (refused? (u8 #xC0 #x80))              ; overlong NUL
+    (refused? (u8 #xC1 #xBF))              ; overlong, upper end of C0/C1
+    (refused? (u8 #xE0 #x80 #x80))         ; overlong three-byte
+    (refused? (u8 #xF0 #x80 #x80 #x80))    ; overlong four-byte
+    (refused? (u8 #xED #xA0 #x80))         ; a surrogate half, low end
+    (refused? (u8 #xED #xBF #xBF))         ; and its high end
+    (refused? (u8 #xF4 #x90 #x80 #x80))    ; one past U+10FFFF
+    (refused? (u8 #xF5 #x80 #x80 #x80))    ; a lead byte that never starts one
+    (refused? (u8 #xFF))
+    (refused? (u8 #xE4 #xB8))              ; two of a three-byte run
+    (refused? (u8 #xF0 #x9F #x98))         ; three of a four-byte run
+    ;; ...nested, not just bare, and in a KEY as well as a value: the
+    ;; key path converts symbols and strings separately, so it is a
+    ;; second place for the check to be missing from
+    (refused? (list (cons "k" (u8 #x80))))
+    (refused? (list (cons (u8 #x80) 1)))
+    (refused? (vector (u8 #x80)))
+    (refused? (list (cons 'k (u8 #x80))))
+
+    ;; ---- accepted, with the EXACT bytes -- or "refuse everything"
+    ;; and "drop a byte" both pass.  The four-byte case used to assert
+    ;; only that a string came back, which a writer dropping the lead
+    ;; byte also satisfies.
+    (emits "\"hi\"" "hi")
+    (emits (quoted #xC2 #x80) (u8 #xC2 #x80))           ; 2-byte low end
+    (emits (quoted #xDF #xBF) (u8 #xDF #xBF))           ; 2-byte high end
+    (emits (quoted #xE0 #xA0 #x80) (u8 #xE0 #xA0 #x80)) ; 3-byte low end
+    (emits (quoted #xED #x9F #xBF) (u8 #xED #x9F #xBF)) ; last before surrogates
+    (emits (quoted #xEE #x80 #x80) (u8 #xEE #x80 #x80)) ; first after them
+    (emits (quoted #xEF #xBF #xBF) (u8 #xEF #xBF #xBF)) ; 3-byte high end
+    (emits (quoted #xF0 #x90 #x80 #x80) (u8 #xF0 #x90 #x80 #x80)) ; 4-byte low
+    (emits (quoted #xF4 #x8F #xBF #xBF) (u8 #xF4 #x8F #xBF #xBF)) ; 4-byte high
+    (emits (quoted #xE4 #xB8 #xAD) (u8 #xE4 #xB8 #xAD))
+    (emits (quoted #xF0 #x9F #x98 #x80) (u8 #xF0 #x9F #x98 #x80))
+
+    ;; the reader is deliberately unchanged, and gives the bytes BACK --
+    ;; "it was accepted" alone is satisfied by a reader that took them
+    ;; and returned something else
+    (guard (e (#t #f))
+      (string=? (u8 #x80) (string->json (quoted #x80))))
+    (guard (e (#t #f))
+      (string=? (u8 #xED #xA0 #x80) (string->json (quoted #xED #xA0 #x80))))))
 
  ;; ---- the writer's control-character family, all 32 of it --------
  ;; RFC 8259 section 7 requires every character below %x20 to be

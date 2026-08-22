@@ -143,21 +143,46 @@
 ;; ---- bytes that are not UTF-8 at all ------------------------------
 ;; RFC 8259 section 8.1 requires JSON text exchanged between systems to
 ;; be UTF-8, so a text carrying a lone continuation byte is not JSON
-;; text.  This reader takes it and hands back the byte unchanged, and
-;; the writer emits it again -- measured, not inferred.
+;; text.  This reader takes it and hands back the byte unchanged.
 ;;
-;; Whether that is a DEVIATION is a narrower question than it looks.
-;; Section 9 says a parser MUST accept every text that conforms to the
-;; grammar and MAY accept non-JSON forms or extensions; taking a
-;; malformed one is the second sentence, not a breach of the first.
-;; So these rows are not filed with A, C and D: they record an
-;; extension, and the writer's half of it is the part worth watching --
-;; a byte string that was never UTF-8 goes back out as "JSON text".
+;; The WRITER no longer emits it.  These lines used to say it did --
+;; "measured, not inferred" -- and that was true when written and stale
+;; by the end of the same batch: the writer gained a check and this
+;; paragraph did not move.  The writer's half is pinned in test/json.ss;
+;; nothing here calls it.
+;;
+;; Whether the reader's acceptance is a DEVIATION is a narrower question
+;; than it looks.  Section 9 says a parser MUST accept every text that
+;; conforms to the grammar and MAY accept non-JSON forms or extensions;
+;; taking a malformed one is the second sentence, not a breach of the
+;; first.  So these rows are not filed with A, C and D: they record an
+;; extension, kept because the counterpart reader accepts it too.
 (define X81 "section 8.1, JSON text SHALL be encoded in UTF-8; section 9, a parser MAY accept non-JSON forms")
 (row "X/lone-cont"  (qbytes #x80)      'ACCEPT X81)
 (row "X/lone-ff"    (qbytes #xFF)      'ACCEPT X81)
 (row "X/truncated"  (qbytes #xE4 #xB8) 'ACCEPT X81)   ; two of a three-byte run
 (row "X/overlong"   (qbytes #xC0 #x80) 'ACCEPT X81)   ; overlong NUL
+(row "X/surrogate"  (qbytes #xED #xA0 #x80) 'ACCEPT X81) ; a raw surrogate half
+(row "X/past-max"   (qbytes #xF4 #x90 #x80 #x80) 'ACCEPT X81) ; past U+10FFFF
+
+;; ...and that the bytes come back UNCHANGED, which "it was accepted"
+;; does not say.  `status` throws the parsed value away, so every row
+;; above is satisfied by a reader that takes these and returns
+;; something else -- mapping every byte >= 0x80 to `?` passes all of
+;; them.  Preservation is the property that makes the acceptance worth
+;; recording: a reader that mangles is not interoperable with the
+;; counterpart either, it just fails later.
+(let loop ((cases (list (list #x80) (list #xFF) (list #xE4 #xB8)
+                        (list #xC0 #x80) (list #xED #xA0 #x80)
+                        (list #xF4 #x90 #x80 #x80))))
+  (unless (null? cases)
+    (let* ((bs (car cases))
+           (want (apply u8 bs))
+           (got (guard (e (#t 'raised)) (string->json (apply qbytes bs)))))
+      (unless (and (string? got) (string=? got want))
+        (fail (string-append "X/preserved " (number->string (car bs)))
+              got "section 8.1 -- accepted, and handed back as it arrived")))
+    (loop (cdr cases))))
 
 ;; ---- section 7, the escape set: all eight, plus \u -----------------
 (define E7 "section 7, char = unescaped / escape ( %x22 / %x5C / %x2F / %x62 / %x66 / %x6E / %x72 / %x74 / %x75 4HEXDIG ); escape = %x5C")
