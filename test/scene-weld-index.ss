@@ -207,9 +207,19 @@
        (and (= 65536 (mesh-vert-count at-boundary))
             (= 65535 (mesh-vert-count under))
             (> (mesh-vert-count over) 65536)))
+(define just-over (mesh-heightmap 1.0 1.0 0 65536 flat))     ; 65537
+
+;; ONE past the boundary, not a thousand.  `over` is 66521 vertices,
+;; so moving the threshold from "> 65536" to "> 65537" left every row
+;; here green -- measured -- while a mesh of exactly 65537 vertices
+;; would have been indexed as u16, whose largest index is 65535.  That
+;; is silent corruption, and the fixture that was supposed to guard
+;; against it sat 985 vertices away from the edge.
 (check "and the mesh layer draws the line in the same place"
        (and (not (mesh-index-u32? at-boundary))
             (not (mesh-index-u32? under))
+            (= 65537 (mesh-vert-count just-over))
+            (mesh-index-u32? just-over)
             (mesh-index-u32? over)))
 
 (define (draw-one m)
