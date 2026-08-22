@@ -800,8 +800,27 @@
 (define (max a b) (if (< a b) b a))
 (define (min a b) (if (< a b) a b))
 
+;; A list has FINITE length by definition, so a chain that cycles is
+;; not one and #f is the only answer -- but the answer has to ARRIVE.
+;; The body used to be
+;;     (if (null? x) #t (and (pair? x) (list? (cdr x))))
+;; and `and` expands to `if`, which puts that call in tail position:
+;; on a circular list it did not overflow the stack, it span forever.
+;; No exception, no output, no return.  Of the ways this can go wrong
+;; -- wrong answer, crash, hang -- the hang is the only one that does
+;; not even say that something went wrong, and in a browser it takes
+;; the tab with it.
+;;
+;; Two cursors, one stepping twice: they meet if and only if the chain
+;; cycles, and neither outruns a proper list's end.
 (define (list? x)
-  (if (null? x) #t (and (pair? x) (list? (cdr x)))))
+  (let loop ((slow x) (fast x))
+    (cond ((null? fast) #t)
+          ((not (pair? fast)) #f)
+          ((null? (cdr fast)) #t)
+          ((not (pair? (cdr fast))) #f)
+          (else (let ((fast (cdr (cdr fast))) (slow (cdr slow)))
+                  (and (not (eq? fast slow)) (loop slow fast)))))))
 
 (define (memv x ls) (memq x ls))
 (define (assv x ls) (assq x ls))

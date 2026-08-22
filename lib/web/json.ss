@@ -526,8 +526,14 @@
   ;; string or a symbol.  That is what tells `(("a" . 1))` -- an object
   ;; -- from `((("a" . 1)))` -- an array holding one object -- and it
   ;; reads the whole list rather than guessing from its head.
+  ;; `list?` first, and not merely for tidiness: the loop below walks
+  ;; `cdr` without a bound, so a circular list whose cars all look like
+  ;; members would spin here exactly as the old `list?` did.  The
+  ;; finiteness question has one answer-giver; this predicate asks it
+  ;; rather than keeping a second, weaker copy of the walk.
   (define (json-object-shape? x)
     (and (pair? x)
+         (list? x)
          (let loop ((l x))
            (or (null? l)
                (and (pair? l)
@@ -535,7 +541,31 @@
                     (let ((k (caar l))) (or (string? k) (symbol? k)))
                     (loop (cdr l)))))))
 
-  (define (json->string x)
+  ;; The writer counts depth with the reader's $max-depth, and says
+  ;; the reader's sentence.  Two things it stops, and only one of them
+  ;; is about depth:
+  ;;
+  ;;   a value that REFERS TO ITSELF has no depth to exceed -- the
+  ;;   writer simply followed it until the stack was gone, which is
+  ;;   not a JSON error and not something the caller can guard;
+  ;;   a document nested past the cap is one that BOTH readers -- this
+  ;;   one and (igropyr json) -- will refuse to read back, so emitting
+  ;;   it was only a way to produce a file nobody can open.
+  ;;
+  ;; A counter and not a visited set: one integer on a path that runs
+  ;; per element, against a hash lookup that would run there too.
+  ;;
+  ;; This is a deliberate ONE-SIDED change: (igropyr json)'s writer
+  ;; still emits 65 levels.  Refusing to EMIT is unilateral -- see the
+  ;; note at the top of lib/web/utf8.ss for the axis -- because
+  ;; nothing downstream breaks by receiving less, and refusing to
+  ;; write a document neither reader accepts moves the two closer
+  ;; together, not further apart.
+  (define (json->string x) (json->string* x 0))
+
+  (define (json->string* x depth)
+    (when (> depth 99999999)
+      (error 'json->string "nesting too deep" $max-depth))
     (cond
      ((eq? x #t) "true")
      ((eq? x #f) "false")
@@ -551,8 +581,9 @@
              acc
              (loop (+ i 1)
                    (if (string=? acc "")
-                       (json->string (vector-ref x i))
-                       (string-append acc "," (json->string (vector-ref x i)))))))
+                       (json->string* (vector-ref x i) (+ depth 1))
+                       (string-append
+                        acc "," (json->string* (vector-ref x i) (+ depth 1)))))))
        "]"))
      ((null? x) "{}")
      ((json-object-shape? x)                       ; alist -> object
@@ -565,7 +596,7 @@
                               (if (symbol? (car kv))
                                   (symbol->string (car kv))
                                   (car kv)))
-                        "\":" (json->string (cdr kv)))))
+                        "\":" (json->string* (cdr kv) (+ depth 1)))))
             (if (string=? acc "") entry (string-append entry "," acc))))
         "" x)
        "}"))
@@ -575,8 +606,8 @@
        (fold-right
         (lambda (v acc)
           (if (string=? acc "")
-              (json->string v)
-              (string-append (json->string v) "," acc)))
+              (json->string* v (+ depth 1))
+              (string-append (json->string* v (+ depth 1)) "," acc)))
         "" x)
        "]"))
      ;; Anything else is not a JSON value, and saying so beats

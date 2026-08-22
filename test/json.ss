@@ -14,6 +14,25 @@
   (let loop ((i 0) (acc "")) (if (= i n) acc (loop (+ i 1) (string-append acc t)))))
 (define (deep n) (string-append (rep n "[") (rep n "]")))
 (define (deep1 n) (string-append (rep n "[") "1" (rep n "]")))
+(define (write-fails? v)
+  (guard (e (#t #t)) (json->string v) #f))
+(define (write-ok? v)
+  (guard (e (#t #f)) (json->string v) #t))
+(define (has-sub? hay ndl)
+  (let ((h (string-length hay)) (k (string-length ndl)))
+    (let loop ((i 0))
+      (and (<= (+ i k) h)
+           (or (string=? ndl (substring hay i (+ i k))) (loop (+ i 1)))))))
+(define (write-saying? frag v)
+  (guard (e (#t (has-sub? (condition-message e) frag))) (json->string v) #f))
+(define (nestv n)        ; n vectors deep, innermost holds a number
+  (let loop ((i 0) (v 1)) (if (= i n) v (loop (+ i 1) (vector v)))))
+(define (nestv-empty n)  ; n vectors deep, innermost is empty
+  (let loop ((i 1) (v (vector))) (if (= i n) v (loop (+ i 1) (vector v)))))
+(define (nestl n)        ; n plain lists deep -> nested arrays
+  (let loop ((i 0) (v 1)) (if (= i n) v (loop (+ i 1) (list v)))))
+(define (nesto n)        ; n alists deep -> nested objects
+  (let loop ((i 0) (v 1)) (if (= i n) v (loop (+ i 1) (list (cons "k" v))))))
 (define (deep-obj n) (string-append (rep n "{\"k\":") "1" (rep n "}")))
 
 (and
@@ -394,6 +413,50 @@
  (parse-fails? (deep 66))
  (parse-fails? (deep1 200))
  (parse-fails? (deep1 5000))        ; and nowhere near a stack
+
+ ;; ---- the writer nests by the same counter ------------------------
+ ;; A self-referential value has no depth at all, and the writer used
+ ;; to follow it until the stack ran out -- not a JSON error, and not
+ ;; something the caller can guard.  The counter that stops it is the
+ ;; reader's, reused: one integer, no visited set on the hot path.
+ ;;
+ ;; Refusing to EMIT is unilateral (see lib/web/utf8.ss on which side
+ ;; of a codec may move alone), and this direction narrows nothing a
+ ;; peer can observe: a value that cycles never became bytes, and a
+ ;; 65-deep document is one BOTH readers refuse to read back.
+ ;; TWO cycles, and one word covered both for two rounds.  They fail
+ ;; in different places and are stopped by different things, so each
+ ;; row names the gate that answered -- "an error was raised" cannot
+ ;; tell them apart, and cannot tell either of them from a third thing
+ ;; going wrong on the way.
+ ;;
+ ;;   a self-referential VECTOR recurses without end: depth catches it
+ ;;   a circular LIST has a finite depth and an endless SPINE, and
+ ;;   never reaches the counter at all -- `list?` answers #f, the
+ ;;   clause it would have chosen is not taken, and it lands on the
+ ;;   final else with everything else that has no JSON reading.
+ (write-saying? "nesting too deep"
+                (let ((v (vector #f))) (vector-set! v 0 v) v))
+ (write-saying? "not a JSON value"
+                (let ((l (list 1))) (set-cdr! l l) l))
+ ;; cars that DO look like object members, so the shape predicate's
+ ;; own unbounded walk is the one under test here
+ (write-saying? "not a JSON value"
+                (let ((l (list (cons "a" 1)))) (set-cdr! l l) l))
+ (write-ok? (nestv 64))             ; the reader's boundary, exactly
+ (write-fails? (nestv 65))
+ (write-ok? (nestv-empty 65))       ; and the same free level for []
+ (write-fails? (nestv-empty 66))
+ ;; Three container shapes reach the writer, and each carries the
+ ;; depth on its own line of code: a vector, a plain list, an alist.
+ ;; Counting in one of them and not the others reads exactly like
+ ;; counting -- from a vector-only table.
+ (write-ok? (nestl 64))             ; plain list -> array
+ (write-fails? (nestl 65))
+ (write-ok? (nesto 64))             ; alist -> object
+ (write-fails? (nesto 65))
+ ;; the should-GREEN half: ordinary documents are untouched
+ (string=? "[[[1]]]" (json->string (nestv 3)))
 
  ;; ---- numbers past the flonum range ------------------------------
  ;; These used to be ACCEPTED, and the value they produced was an
