@@ -27,7 +27,7 @@
 ;; Copyright (c) 2026 guenchi. MIT license; see LICENSE.
 (library (web sexpr)
   (export sexpr->string string->sexpr)
-  (import (rnrs) (web js))
+  (import (rnrs) (web js) (web utf8))
 
   (define max-depth 64)
   (define max-token 65536)
@@ -170,42 +170,10 @@
 
   ;; ---- writer ------------------------------------------------------------
 
-  ;; Is this byte string well-formed UTF-8?  The shortest-form and
-  ;; surrogate-range rules are included: an overlong encoding or a
-  ;; surrogate half is exactly the "accepted here, different there"
-  ;; case this checks for.
-  (define (utf8-cont? b) (and (>= b 128) (< b 192)))
-  (define (utf8-well-formed? s)
-    (let ((n (string-length s)))
-      (let loop ((i 0))
-        (if (>= i n)
-            #t
-            (let ((b (char->integer (string-ref s i))))
-              (define (cont k) (and (< (+ i k) n)
-                                    (utf8-cont? (char->integer
-                                                 (string-ref s (+ i k))))))
-              (define (b2 k) (char->integer (string-ref s (+ i k))))
-              (cond
-               ((< b 128) (loop (+ i 1)))
-               ((< b 194) #f)                      ; continuation or overlong
-               ((< b 224) (and (cont 1) (loop (+ i 2))))
-               ((< b 240)
-                (and (cont 1) (cont 2)
-                     ;; no overlong, no surrogate half
-                     (let ((cp (+ (* (- b 224) 4096)
-                                  (* (- (b2 1) 128) 64)
-                                  (- (b2 2) 128))))
-                       (and (>= cp 2048) (not (and (>= cp 55296) (< cp 57344)))))
-                     (loop (+ i 3))))
-               ((< b 245)
-                (and (cont 1) (cont 2) (cont 3)
-                     (let ((cp (+ (* (- b 240) 262144)
-                                  (* (- (b2 1) 128) 4096)
-                                  (* (- (b2 2) 128) 64)
-                                  (- (b2 3) 128))))
-                       (and (>= cp 65536) (<= cp 1114111)))
-                     (loop (+ i 4))))
-               (else #f)))))))
+  ;; utf8-well-formed? used to live here.  It moved to (web utf8)
+  ;; when (web json)'s writer needed the same rule: two copies of one
+  ;; predicate is two places for it to drift, and this one is not more
+  ;; this module's than the other's.
 
   ;; Exact integers and ratios reach the wire as their printed numeral,
   ;; and the reader will not accept one past the token cap.  Same limit,

@@ -159,6 +159,35 @@
  ;; ...and it does answer for the thing it is for
  (equal? '(1) (json-array->list (vector 1)))
 
+ ;; ---- the writer will not emit bytes that are not UTF-8 ----------
+ ;; RFC 8259 section 8.1: JSON text shall be UTF-8.  A Goeteia string
+ ;; is a byte string, so a caller can hold one that never was, and the
+ ;; writer used to copy it out and call the result JSON text.
+ ;;
+ ;; Asymmetric on purpose: the READER still takes these.  Section 9
+ ;; permits accepting non-JSON forms, and the reader this one is paired
+ ;; with takes them too -- refusing on one side only would mean one
+ ;; side rejects a document the other accepts, which is the thing the
+ ;; pairing exists to prevent.  Narrow what you emit, not what you
+ ;; accept.
+ (let* ((u8 (lambda bs (apply string (map integer->char bs))))
+        (refused? (lambda (x) (guard (e (#t #t)) (json->string x) #f))))
+   (and (refused? (u8 #x80))                    ; a lone continuation byte
+        (refused? (u8 #xFF))                    ; never a UTF-8 byte at all
+        (refused? (u8 #xE4 #xB8))               ; two of a three-byte run
+        (refused? (u8 #xC0 #x80))               ; overlong NUL
+        (refused? (u8 #xED #xA0 #x80))          ; a surrogate half
+        (refused? (list (cons "k" (u8 #x80))))  ; and nested, not just bare
+        (refused? (vector (u8 #x80)))
+        ;; ...and the should-GREEN half, or "refuse everything" passes
+        (string=? "\"hi\"" (json->string "hi"))
+        (string=? (u8 34 #xE4 #xB8 #xAD 34) (json->string (u8 #xE4 #xB8 #xAD)))
+        (string? (json->string (u8 #xF0 #x9F #x98 #x80)))
+        ;; the reader is deliberately unchanged
+        (guard (e (#t #f))
+          (string=? (u8 #x80)
+                    (string->json (string-append "\"" (u8 #x80) "\""))))))
+
  ;; ---- the writer's control-character family, all 32 of it --------
  ;; RFC 8259 section 7 requires every character below %x20 to be
  ;; escaped.  The writer names three of them (\n \r \t) and sends the

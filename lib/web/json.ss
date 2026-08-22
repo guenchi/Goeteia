@@ -35,7 +35,7 @@
 (library (web json)
   (export string->json json->string json-ref
           json-array? json-array->list)
-  (import (rnrs))
+  (import (rnrs) (web utf8))
 
   (define (jfail msg pos)
     (raise (vector 'json-error msg pos)))
@@ -418,7 +418,23 @@
   (define (hex-char v)
     (string-ref "0123456789abcdef" v))
 
+  ;; WRITE side only.  RFC 8259 section 8.1: JSON text exchanged
+  ;; between systems shall be encoded in UTF-8, so a byte string that
+  ;; is not UTF-8 cannot go out as JSON text -- and a Goeteia string is
+  ;; a byte string, so nothing upstream guarantees it is.  Refused here
+  ;; rather than emitted, which is the writer's half of Postel: what
+  ;; leaves is narrower than what arrives.
+  ;;
+  ;; The READ side keeps taking such bytes on purpose.  Section 9 lets
+  ;; a parser accept non-JSON forms, and the reader this one is paired
+  ;; with accepts them too; tightening one side alone would make one
+  ;; side refuse a document the other takes.  That asymmetry is the
+  ;; failure the pairing exists to prevent, and it is why this check is
+  ;; here and not in parse-string.  Same predicate as (web sexpr)'s
+  ;; writer, from (web utf8), because it is the same rule.
   (define (json-escape s)
+    (unless (utf8-well-formed? s)
+      (error 'json->string "string is not well-formed UTF-8" s))
     (let ((p (open-output-string)))
       (string-for-each
        (lambda (ch)
