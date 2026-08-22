@@ -1246,19 +1246,37 @@
            (aspect (fl/ ($sgl-fl (fx-width)) ($sgl-fl (fx-height))))
            (eye (v3 (vector-ref cam 3) (vector-ref cam 4)
                     (vector-ref cam 5)))
-           ;; where the camera looks, unit length: the blended pass
-           ;; orders by depth along this, not by distance from eye
+           ;; where the camera looks, unit length.  Two readers: the
+           ;; blended pass orders by depth along it, and the view basis
+           ;; below needs to know whether it is parallel to Y.
            (fwd (v3-normalize
                  (v3-sub (v3 (vector-ref cam 6) (vector-ref cam 7)
                              (vector-ref cam 8))
                          eye)))
+           (flabs (lambda (x) (if (fl<? x 0.0) (fl- 0.0 x) x)))
            (vp (m4-mul
                 (m4-perspective (vector-ref cam 0) aspect
                                 (vector-ref cam 1) (vector-ref cam 2))
                 (m4-look-at
                  eye
                  (v3 (vector-ref cam 6) (vector-ref cam 7) (vector-ref cam 8))
-                 (v3 0.0 1.0 0.0))))
+                 ;; The up vector must not be parallel to where the
+                 ;; camera looks: the basis is built from
+                 ;; cross(up, eye - target), and for a camera looking
+                 ;; straight down that cross product is zero.
+                 ;; Normalizing zero gives NaN, every entry of the MVP
+                 ;; that touches it follows, the draw call still goes
+                 ;; out, and the mesh simply is not there -- a top-down
+                 ;; view rendered blank with nothing reported.
+                 ;;
+                 ;; Y stays the up vector everywhere else, so no
+                 ;; ordinary camera's matrix changes; only a view within
+                 ;; a thousandth of vertical takes Z instead, and any
+                 ;; choice is as good as another once the roll is
+                 ;; unconstrained.
+                 (if (fl<? 0.999 (flabs (v3-y fwd)))
+                     (v3 0.0 0.0 1.0)
+                     (v3 0.0 1.0 0.0)))))
            (planes (m4-frustum-planes vp))
            (ld (v3-normalize (v3 (vector-ref light 0) (vector-ref light 1)
                                  (vector-ref light 2)))))

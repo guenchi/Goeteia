@@ -919,6 +919,64 @@
        (and (= far-idx (draw-n axis-a))
             (= near-idx (draw-n (+ axis-a 1)))))
 
+;; ---- 7i. a camera may look straight down ---------------------------
+;; The view basis is built with a fixed up vector of (0,1,0), and a
+;; camera looking along Y makes `cross(up, eye - target)` the zero
+;; vector; normalizing it gives NaN, and every entry of the MVP that
+;; touches it follows.  The draw call still goes out -- nothing errors
+;; -- and the mesh simply does not appear.  A top-down view is an
+;; ordinary thing to want, and every camera in the suite happened to be
+;; tilted, so the two answers were never allowed to differ.
+;;
+;; The cameras below are written out rather than passed in: a camera's
+;; (position x y z) does not take an unquote at all -- the expander
+;; only makes a hole for a single-valued attribute, so `,px` arrives as
+;; the literal form and is refused.  (It never worked; before this
+;; batch it stopped the runtime instead of saying so.)
+(define (mvp-nan-since from)
+  (let loop ((i from) (n 0))
+    (if (= i (log-length))
+        n
+        (let ((e (js->string (js-index gllog i))))
+          (loop (+ i 1)
+                (if (and (>= (string-length e) 19)
+                         (string=? "uniformMat4:U:u_mvp" (substring e 0 19))
+                         (let scan ((j 0))
+                           (cond ((> (+ j 3) (string-length e)) #f)
+                                 ((string=? "NaN" (substring e j (+ j 3))) #t)
+                                 (else (scan (+ j 1))))))
+                    (+ n 1) n))))))
+(define cam-down (log-length))
+(begin (cmd-begin!)
+       (sgl-draw! (sgl (camera (@ (fov 0.9) (position 0.0 10.0 0.0)
+                                  (look-at 0.0 0.0 0.0) (far 100.0)))
+                       (light (@ (direction 0.0 1.0 0.0) (ambient 0.25)))
+                       (mesh (@ (geometry (box 1 1 1)) (position 0.0 5.0 0.0)))))
+       (cmd-flush!))
+(check "a camera looking straight down has a finite mvp"
+       (= 0 (mvp-nan-since cam-down)))
+(define cam-up (log-length))
+(begin (cmd-begin!)
+       (sgl-draw! (sgl (camera (@ (fov 0.9) (position 0.0 0.0 0.0)
+                                  (look-at 0.0 5.0 0.0) (far 100.0)))
+                       (light (@ (direction 0.0 1.0 0.0) (ambient 0.25)))
+                       (mesh (@ (geometry (box 1 1 1)) (position 0.0 5.0 0.0)))))
+       (cmd-flush!))
+(check "...and one looking straight up"
+       (= 0 (mvp-nan-since cam-up)))
+;; should-GREEN, inside the same code: an ordinary camera and one a hair
+;; off vertical both already worked, and a fix that swapped the up
+;; vector unconditionally would change what they produce.
+(define cam-tilt (log-length))
+(begin (cmd-begin!)
+       (sgl-draw! (sgl (camera (@ (fov 0.9) (position 0.0 10.0 0.01)
+                                  (look-at 0.0 0.0 0.0) (far 100.0)))
+                       (light (@ (direction 0.0 1.0 0.0) (ambient 0.25)))
+                       (mesh (@ (geometry (box 1 1 1)) (position 0.0 5.0 0.0)))))
+       (cmd-flush!))
+(check "a camera a hair off vertical still has a finite mvp"
+       (= 0 (mvp-nan-since cam-tilt)))
+
 ;; ---- 8. the instanced path, at u32 --------------------------------
 ;; Instancing groups nodes by geo IDENTITY, and an injected mesh gets a
 ;; fresh geo every time -- so every node above was ineligible and the
