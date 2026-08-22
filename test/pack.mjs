@@ -208,6 +208,29 @@ test('an external reference is found however the attribute is spelled', () => {
         // what follows is script text and is never fetched
         ['<script src="a.js"/><img src="x.png">', ['a.js'],
          'a script tag does not self-close'],
+        // The end tag needs the same quote awareness as the opening
+        // one: the fix for `<script data-x=">" ...>` was applied to one
+        // half of the pair and not the other.
+        ['<script>0</script x="><img src=x.png>">', [],
+         'a > inside a quoted end-tag attribute does not end it'],
+        ['<script>0</scriptfoo><img src="x.png"></script><img src="y.png">',
+         ['y.png'], '</scriptfoo> is not an end tag for script'],
+        // The four text-holding elements, one TAG-SHAPED probe each.
+        // A probe has to be shaped like markup to discriminate: this
+        // function collects tags and ignores document text, so
+        // `<style>src=x.png</style>` is refused by the mutant too and
+        // pins nothing. (That was the first probe written here, and it
+        // could not fail -- the review that reported this branch got
+        // the direction right and the example wrong, and repeating the
+        // example would have added a green row that asserts nothing.)
+        // Each of these reddens when, and only when, its own element is
+        // dropped from the raw-element list.
+        ['<style><img src="x.png"></style>', [], 'a style body is text'],
+        ['<title><img src="x.png"></title>', [], 'so is a title'],
+        ['<textarea><img src="x.png"></textarea>', [], 'so is a textarea'],
+        ['<script><img src="x.png"></script>', [], 'so is a script'],
+        ['<style>a{background:url(bg.png)}</style><img src="x.png">',
+         ['x.png'], 'CSS url() is outside what this scans, by name'],
     ])
         assert.deepEqual(externalRefs(html), want, `${why}: ${html}`);
 });

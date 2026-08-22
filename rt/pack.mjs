@@ -159,11 +159,27 @@ function tagsOf(html) {
             // An end tag may carry attributes; they are a parse error
             // and the browser ignores them, but the tag still CLOSES.
             // `</script x>` was not recognized here, so everything
-            // after it was eaten as script text -- the false-negative
-            // direction again, from being stricter than the parser.
-            const close = new RegExp('</' + raw[1] + '(?=[\\s/>])[^>]*>', 'i');
-            const m = close.exec(s.slice(e + 1));
-            i = m ? e + 1 + m.index + m[0].length : s.length;
+            // after it was eaten as script text.
+            //
+            // And it ends where tagEnd says, not at the first `>`:
+            // `</script x="><img src=y>">` keeps that first `>` inside
+            // a quoted value, so a browser sees no img.  Using `[^>]*>`
+            // here was the SAME mistake already fixed for opening tags,
+            // left standing in the other half of the pair -- the fix
+            // and its twin, one file apart.
+            const name = raw[1].toLowerCase();
+            let j = e + 1;
+            for (;;) {
+                const at = s.toLowerCase().indexOf('</' + name, j);
+                if (at < 0) { j = s.length; break; }
+                const after = s[at + 2 + name.length];
+                if (after === undefined || /[\s/>]/.test(after)) {
+                    j = tagEnd(at) + 1;
+                    break;
+                }
+                j = at + 2 + name.length;      // `</scriptfoo`, not a close
+            }
+            i = j;
         } else {
             i = e + 1;
         }
