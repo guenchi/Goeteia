@@ -441,6 +441,44 @@
  ;; signed zero to carry
  (eqv? 0 (string->json "-0"))
 
+ ;; ---- numbers past the printer's fixnum cap ----------------------
+ ;; The integer part of a flonum was printed through %fl->fx, an i31
+ ;; fixnum that stops at 2^29-1.  Past that the printer emitted
+ ;; "<big-flonum>" and json->string RETURNED IT: the document read
+ ;; {"t":<big-flonum>}, which no parser accepts, from a call that
+ ;; reported success.  A millisecond timestamp is in that range.
+ ;;
+ ;; TWO assertions per case, on purpose.  The string comparison alone
+ ;; goes falsely red the day the spelling changes; the parse-back alone
+ ;; stays green the day "<big-flonum>" becomes "0".  Neither is the
+ ;; property; the property is that what we wrote is what comes back.
+ (string=? "{\"t\":1700000000000.0}"
+           (json->string (list (cons "t" 1700000000000.0))))
+ (equal? (list (cons "t" 1700000000000.0))
+         (string->json (json->string (list (cons "t" 1700000000000.0)))))
+ ;; Across the boundary, one row per value -- a loop here would let a
+ ;; single surviving case carry the others.
+ (eqv? 536870911.0 (string->json (json->string 536870911.0)))
+ (eqv? 536870912.0 (string->json (json->string 536870912.0)))
+ (eqv? 536870913.0 (string->json (json->string 536870913.0)))
+ (eqv? 1000000000000.0 (string->json (json->string 1000000000000.0)))
+ (eqv? 1700000000000.0 (string->json (json->string 1700000000000.0)))
+ (eqv? 9007199254740992.0
+       (string->json (json->string 9007199254740992.0)))
+ ;; eqv? and not = : = says nothing about the sign of a zero, and this
+ ;; batch has already repaired one defect that = could not see.
+ (eqv? (fl- 0.0 1700000000000.0)
+       (string->json (json->string (fl- 0.0 1700000000000.0))))
+ (eqv? (fl- 0.0 536870913.0)
+       (string->json (json->string (fl- 0.0 536870913.0))))
+ (char=? #\- (string-ref (json->string (fl- 0.0 1700000000000.0)) 0))
+ ;; measured, not assumed: the non-finite three are spelled null here,
+ ;; which is legal JSON and is what the header says.  Pinned so the new
+ ;; integer path cannot start letting them out as digits.
+ (string=? "null" (json->string (fl/ 1.0 0.0)))
+ (string=? "null" (json->string (fl- 0.0 (fl/ 1.0 0.0))))
+ (string=? "null" (json->string (fl/ 0.0 0.0)))
+
  ;; ---- nesting depth ----------------------------------------------
  ;; RFC 8259 section 9 lets a parser set a maximum depth of nesting,
  ;; and (igropyr json) sets it at 64 with "nesting too deep".  This
@@ -655,23 +693,48 @@
  ;; what the infinity bug produced -- would have been a stand-in for
  ;; the property rather than the property, and it passes for an output
  ;; that is not even JSON.  This asks for the value.
+ ;; TWO SPELLINGS, TWO PRINTERS.  In JSON text `1700000000000` and
+ ;; `1700000000000.0` are the same number; on this side they are not
+ ;; the same VALUE.  A numeral with no fraction and no exponent parses
+ ;; to an EXACT integer, and the writer spells it with the integer
+ ;; printer; add a `.0` and it parses to a flonum, and the writer goes
+ ;; through $display-flonum*.  Two paths, two sets of defects, and
+ ;; nothing in this file said so until a comment here claimed coverage
+ ;; it did not have: the undotted rows below round-tripped correctly
+ ;; before the printer was touched and after, because they never
+ ;; reached it.  Measured on the pre-fix tree, not reasoned.
+ ;;
+ ;; So both spellings are listed, and the dotted ones are the rows that
+ ;; the flonum repair is answerable for.  Measured, in isolation: with
+ ;; $display-flonum* short-circuited back to the placeholder, this list
+ ;; WITHOUT the dotted rows answers #t -- entirely green -- and WITH
+ ;; them it goes red.  The undotted rows caught nothing; they were
+ ;; added under a comment that said they had.
  (let loop ((xs '("0" "-0" "1" "-1" "1.5" "0.1" "1e0" "-0.5e01"
-                  "12345678901234567890" "536870911" "-2.5e-3")))
+                  "12345678901234567890" "536870911" "-2.5e-3"
+                  ;; exact integers -- the integer printer's path
+                  "536870912" "1000000000" "1700000000000"
+                  "9007199254740992"
+                  ;; flonums -- $display-flonum*'s path, the one this
+                  ;; batch repaired
+                  "536870912.0" "1700000000000.0" "-1700000000000.0"
+                  "9007199254740992.0")))
    (or (null? xs)
        (and (let ((v (string->json (car xs))))
               (equal? v (string->json (json->string v))))
             (loop (cdr xs)))))
 
  ;; ...and the boundary that property stops at, pinned so it cannot be
- ;; mistaken for covered.  The runtime cannot turn a large flonum into
- ;; text at all: $display-flonum* in src/prelude.ss gives up above the
- ;; i31 fixnum range and writes `<big-flonum>`.  That is `display`, and
- ;; number->string is display into a string, so display, write,
- ;; number->string and every string-append built on them share the one
- ;; broken path -- (web json) is simply the first consumer anyone
- ;; noticed, not the place the defect lives.  DELIBERATELY NOT FIXED
- ;; HERE: the fix is a real dtoa in the runtime, which is neither this
- ;; codec nor this batch.
+ ;; mistaken for covered.  What remains is the FRACTION: $display-frac
+ ;; in src/prelude.ss walks twelve digits of the true decimal expansion
+ ;; and stops, so an ordinary decimal changes value on the way out.
+ ;; That is `display`, and number->string is display into a string, so
+ ;; display, write, number->string and every string-append built on
+ ;; them share the one path -- (web json) is simply the first consumer
+ ;; anyone noticed, not the place the defect lives.  DELIBERATELY NOT
+ ;; FIXED HERE: the fix is a real dtoa, and dtoa was ruled out of this
+ ;; batch on purpose.  The INTEGER half of the same printer WAS fixed,
+ ;; separately and without inventing any rounding; see row 1 below.
  ;; ROWS THAT EXIST TO BE DELETED.  Each one asserts a defect, so each
  ;; one goes RED the day the defect is fixed -- that failure is the
  ;; signal to remove the row and widen the property above, not to
@@ -686,11 +749,20 @@
  ;; right too -- it is the signal to delete them and widen the property
  ;; above, never to update the expected text.
  ;;
- ;;   1. past the i31 fixnum range the printer gives up entirely and
- ;;      emits a placeholder, so json->string produces text that is
- ;;      not JSON -- worse than the infinity case fixed above, which
- ;;      at least produced a legal value of the wrong type
- (string=? "<big-flonum>" (json->string 1000000000.0))
+ ;;   1. FIXED, and this row is gone.  It read
+ ;;        (string=? "<big-flonum>" (json->string 1000000000.0))
+ ;;      and it went red the day $display-flonum* stopped giving up
+ ;;      above the i31 fixnum range -- which is what the paragraph
+ ;;      above says such a red means: delete the row, widen the
+ ;;      property.  What replaced it is NOT the round-trip list above:
+ ;;      that list's new dotted rows help, but the assertions that
+ ;;      actually answer for this repair are the ones near the top of
+ ;;      this file, under "numbers past the printer's fixnum cap" --
+ ;;      the object-shaped case and the six one-per-value rows.
+ ;;      Recorded rather than silently removed: with the row gone,
+ ;;      nothing else in this file would say the defect had existed,
+ ;;      and "why is there a gap in the numbering" is a worse question
+ ;;      than one sentence of history.
  ;;   2. the fraction is truncated at twelve digits rather than being
  ;;      rounded to the shortest form that reads back, so an ordinary
  ;;      decimal changes value on the way out

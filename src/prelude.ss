@@ -100,13 +100,41 @@
          (neg (fl<? x zero))
          (mag (if neg (fl- zero x) x)))
     (when neg ($wb 45))
-    (if (fl<? (fixnum->flonum 536870911) mag)
-        (%display-string "<big-flonum>" 0)
-        (let* ((ip (%fl->fx mag))
-               (frac (fl- mag (fixnum->flonum ip))))
-          (%display-digits ip)
-          ($wb 46)
-          ($display-frac frac 0)))))
+    (cond
+     ;; Infinity has no digits, and keeps the placeholder it has always
+     ;; had.  It is recognised by being its own double: nothing finite
+     ;; and non-zero satisfies that.
+     ((and (not (fl=? mag zero)) (fl=? mag (fl* mag (fixnum->flonum 2))))
+      (%display-string "<big-flonum>" 0))
+     ;; Past the FIXNUM cap, not past what a double can say.  %fl->fx
+     ;; below is an i31 and stops at 2^29-1, so everything above that
+     ;; used to print "<big-flonum>" -- and print it SUCCESSFULLY, which
+     ;; is how {"t":<big-flonum>} left (web json) for a millisecond
+     ;; timestamp with nothing raised anywhere.
+     ;;
+     ;; The integer part goes through the exact path instead: flfloor
+     ;; is exact, `exact` on an integral flonum is exact, and
+     ;; %display-digits reaches the bignum operations through the same
+     ;; generic quotient/remainder it already used.  No rounding is
+     ;; invented here and none should be: what comes out is the double's
+     ;; own value.  1.7e12 IS an exact integer as a double, so it prints
+     ;; as 1700000000000.0 and reads back as itself.
+     ;;
+     ;; This is not a shortest-representation printer.  0.1 still prints
+     ;; its true expansion, and making it print "0.1" is a separate
+     ;; piece of work (dtoa) that this deliberately does not start.
+     ((fl<? (fixnum->flonum 536870911) mag)
+      (let* ((ipf (flfloor mag))
+             (frac (fl- mag ipf)))
+        (%display-digits (exact ipf))
+        ($wb 46)
+        ($display-frac frac 0)))
+     (else
+      (let* ((ip (%fl->fx mag))
+             (frac (fl- mag (fixnum->flonum ip))))
+        (%display-digits ip)
+        ($wb 46)
+        ($display-frac frac 0))))))
 (define ($display-frac f i)
   ;; up to 12 digits, trimmed via lookahead: stop when the rest is 0
   (if (or (= i 12) (fl=? f (fixnum->flonum 0)))
