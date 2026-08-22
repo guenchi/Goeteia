@@ -498,10 +498,21 @@
        (and (both-refuse? 192 175) (both-refuse? 193 191)))
 (check "0xF5..0xFF are never lead bytes"
        (and (both-refuse? 245 128 128 128) (both-refuse? 255)))
+;; "at every length" was three of the six shapes a truncation can
+;; take: a 2-byte lead has one, a 3-byte lead two, a 4-byte lead three.
+;; The three that were missing are the ones where the lead byte is
+;; followed by NOTHING and the string simply ends -- measured, the
+;; predicate refused them all, but no test asked, and mutating it to
+;; accept a bare 0xF0 or 0xE4 left this whole suite green, and the
+;; whole gate with it.  A name that says "every" over a hand-written
+;; list is only as true as the list.
 (check "a truncated sequence, at every length"
-       (and (both-refuse? 228 184)                  ; 3-byte, one short
+       (and (both-refuse? 194)                       ; 2-byte, nothing after
+            (both-refuse? 228 184)                   ; 3-byte, one short
+            (both-refuse? 228)                       ; 3-byte, nothing after
             (both-refuse? 240 159 152)               ; 4-byte, one short
-            (both-refuse? 194)))                     ; 2-byte, nothing after
+            (both-refuse? 240 159)                   ; 4-byte, two short
+            (both-refuse? 240)))                     ; 4-byte, nothing after
 (check "a lead byte followed by a non-continuation"
        (both-refuse? 228 65 173))
 (check "the surrogate range is excluded"
