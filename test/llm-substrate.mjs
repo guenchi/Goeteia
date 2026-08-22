@@ -46,6 +46,53 @@ function fencedScheme(md, name) {
     return m[1];
 }
 
+// THE DENOMINATOR.  Every other assertion in this file walks
+// `manifest.files`, so what the manifest does not list, nothing here
+// looks at -- a document could drift from its example, fail verify, or
+// blow its budget for years and the suite would not say a word.
+// Measured, not feared: dropping t5-animated.md from the manifest with
+// the file still on disk left this whole suite green, and so did adding
+// a document whose code block does not compile.
+//
+// Note which assertion SHOULD have caught that: the one named "the
+// manifest describes the files that are actually there", which checked
+// only that each listed file exists at its listed size -- manifest to
+// disk, never disk to manifest.  A name that describes the missing
+// check precisely is the reason nobody goes looking: its reader
+// believes someone already did.
+//
+// So the two sets are compared here, both ways, and the failure names
+// the file -- "the two sets differ" would only send its reader off to
+// diff them by hand.
+test('docs/llm: the directory holds exactly what the manifest lists', () => {
+    const onDisk = new Set(
+        fs.readdirSync(LLM).filter(f => f.endsWith('.md')));
+    const listed = new Set(manifest.files.map(f => f.path));
+    for (const f of onDisk)
+        assert.ok(listed.has(f),
+            `docs/llm/${f} is on disk and not in manifest.json -- nothing `
+            + 'in this file checks it, so add a manifest entry or delete it');
+    for (const f of listed)
+        assert.ok(onDisk.has(f),
+            `manifest.json lists ${f}, which is not in docs/llm/`);
+
+    // examples/ the same way: an example nothing points at is checked
+    // by nothing, exactly like an unlisted document.
+    const exOnDisk = new Set(
+        fs.readdirSync(path.join(LLM, 'examples'))
+          .filter(f => f.endsWith('.ss'))
+          .map(f => `examples/${f}`));
+    const exListed = new Set(
+        manifest.files.filter(f => f.example).map(f => f.example));
+    for (const f of exOnDisk)
+        assert.ok(exListed.has(f),
+            `docs/llm/${f} is on disk and no manifest entry names it -- `
+            + 'it is never compiled, never verified, never compared');
+    for (const f of exListed)
+        assert.ok(exOnDisk.has(f),
+            `manifest.json names ${f}, which is not in docs/llm/examples/`);
+});
+
 test('docs/llm: the manifest describes the files that are actually there', () => {
     assert.ok(manifest.files.length >= 2, 'the manifest lists no documents');
     for (const f of manifest.files) {
@@ -69,6 +116,11 @@ test('docs/llm: the manifest describes the files that are actually there', () =>
     }
 });
 
+// "every tier document" is every document the MANIFEST lists.  That is
+// the same thing as every document only because "docs/llm: the
+// directory holds exactly what the manifest lists" says so -- named,
+// not "see above", because assertions get moved.  Weaken or delete
+// that one and this name goes quietly back to being false.
 test('docs/llm: every tier document carries its example byte for byte', () => {
     const withExample = manifest.files.filter(f => f.example);
     assert.ok(withExample.length > 0, 'no tier document has an example');
@@ -84,6 +136,9 @@ test('docs/llm: every tier document carries its example byte for byte', () => {
 // Compiling with the self-hosted compiler is a child process per
 // example, so this is the slow test in the suite; it is also the only
 // one that proves the substrate teaches code that runs.
+// "every example" is every example the MANIFEST names, and it means
+// every example for the same borrowed reason as the assertion above:
+// "docs/llm: the directory holds exactly what the manifest lists".
 test('docs/llm: every example passes goeteia verify', { timeout: 600000 }, async t => {
     for (const f of manifest.files.filter(x => x.example && x.checks)) {
         await t.test(f.example, async () => {
