@@ -634,7 +634,29 @@
   (define (cmd-clear! r g b a) (u! 1) (f! r) (f! g) (f! b) (f! a))
   (define (cmd-use-program! slot) (u! 2) (u! slot))
   (define (cmd-bind-buffer! slot) (u! 3) (u! slot))
-  (define (cmd-buffer-data! offset bytes) (u! 4) (u! offset) (u! bytes))
+  ;; The count is in BYTES.  The replayer views the range as float32s
+  ;; and takes `bytes >> 2` of them, so a count that is not a multiple
+  ;; of four would upload SHORT and silently: 2 bytes would upload
+  ;; nothing, 6 would upload 4.
+  ;;
+  ;; Refused here rather than widened there.  Widening the view -- a
+  ;; byte view uploads exactly the count -- was tried and reverted: it
+  ;; changes what every mock in the suite sees, turning six files'
+  ;; readable float assertions (`bufferData:-1.00,-1.00,1.00,...`) into
+  ;; byte dumps, and those assertions are worth more than the class is
+  ;; expensive.  Stating the precondition removes the same class and
+  ;; costs one AND per upload.
+  ;;
+  ;; No caller violates it today -- mesh f16 is 12 bytes a vertex,
+  ;; sprite batches n*192, the fx quad 32, a glTF stride 24 plus
+  ;; multiples of 8/16/32 -- so this is not a repair. It is the
+  ;; difference between a rule that holds and a rule that happens to.
+  (define (cmd-buffer-data! offset bytes)
+    (unless (zero? (bitwise-and bytes 3))
+      (error 'cmd-buffer-data!
+             "byte count must be a multiple of 4 (the upload is float32)"
+             bytes))
+    (u! 4) (u! offset) (u! bytes))
   (define (cmd-vertex-attrib! loc size stride offset)
     (u! 5) (u! loc) (u! size) (u! stride) (u! offset))
   ;; the HALF_FLOAT spelling: same wiring, two bytes a component --
