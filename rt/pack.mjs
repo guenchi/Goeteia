@@ -146,7 +146,15 @@ function tagsOf(html) {
         // Markup inside any of them is not markup -- a browser does not
         // fetch `<textarea><img src=x></textarea>`, and reporting it
         // would be a false red on a correct page.
-        const raw = /^<(script|style|textarea|title)\b/i.exec(s.slice(i, i + 10));
+        // NAME-ENDS-HERE, and `\b` is not it: `\b` sits between the `t`
+        // of script and the `-` of `<script-x>`, so a custom element
+        // whose name merely starts with one of these was read as a
+        // raw-text element and everything inside it went unseen.  This
+        // is the same mistake `\b` made in the attribute matcher, in a
+        // second place; and the closing scan below already had the rule
+        // right, so one function held two spellings of one rule.
+        const raw = /^<(script|style|textarea|title)(?=[\s/>]|$)/i
+              .exec(s.slice(i, i + 10));
         const e = tagEnd(i);
         out.push(s.slice(i, e + 1));          // the tag itself is markup
         // No self-closing exception: HTML has none for these elements.

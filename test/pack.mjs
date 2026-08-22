@@ -225,12 +225,57 @@ test('an external reference is found however the attribute is spelled', () => {
         // example would have added a green row that asserts nothing.)
         // Each of these reddens when, and only when, its own element is
         // dropped from the raw-element list.
+        //
+        // WHAT THE COVERAGE ACTUALLY WAS BEFORE THIS.  The message of
+        // 2450f4c says no case could tell the four apart, which is too
+        // wide.  Read out of `git show 738d6f3:test/pack.mjs`:
+        //
+        //   style      no case at all -- not a weak probe, none.  That
+        //              is why dropping style was the one mutation that
+        //              survived.
+        //   textarea   pinned on purpose: the tag-shaped probes above
+        //   title      were already there.
+        //   script     pinned by accident, by
+        //              `<script src="a.js"/><img src="x.png">`, whose
+        //              expected value excludes the image: stop treating
+        //              script as raw text and the image appears.
+        //
+        // This paragraph is itself a claim about a revision, so it was
+        // written by reading that revision and then sent to review with
+        // "check it against 738d6f3 rather than trusting it".  An
+        // earlier draft, written from what the file looks like NOW,
+        // named two probes that revision does not contain -- and it had
+        // already been read and agreed with twice before the check
+        // caught it.  A sentence about the past cannot be reviewed by
+        // people who remember the past; it has to be diffed.
+        //
+        // Written here rather than as a correction to the commit
+        // message because this is where a reader of these probes is,
+        // and because a published history is not rewritten to fix a
+        // sentence.
         ['<style><img src="x.png"></style>', [], 'a style body is text'],
         ['<title><img src="x.png"></title>', [], 'so is a title'],
         ['<textarea><img src="x.png"></textarea>', [], 'so is a textarea'],
         ['<script><img src="x.png"></script>', [], 'so is a script'],
         ['<style>a{background:url(bg.png)}</style><img src="x.png">',
          ['x.png'], 'CSS url() is outside what this scans, by name'],
+        // A custom element whose name merely BEGINS with one of the
+        // four is an ordinary element. `\\b` said otherwise, which is
+        // the same thing `\\b` got wrong about data-src -- one rule,
+        // two places, and only one of them had been fixed.
+        ['<script-x><img src="x.png"></script-x>', ['x.png'],
+         'script-x is a custom element, not a script'],
+        ['<style-x><img src="x.png"></style-x>', ['x.png'], 'nor style-x'],
+        ['<textarea-x><img src="x.png"></textarea-x>', ['x.png'],
+         'nor textarea-x'],
+        ['<title-x><img src="x.png"></title-x>', ['x.png'], 'nor title-x'],
+        // srcset takes the same three quotings as any attribute; only
+        // the double-quoted one was exercised, so narrowing the value
+        // pattern to `"[^"]*"` stayed green.
+        ["<img srcset='a.png 1x, b.png 2x'>", ['a.png', 'b.png'],
+         'a single-quoted srcset'],
+        ['<img srcset=a.png>', ['a.png'], 'an unquoted srcset'],
+        ['<img SRCSET="a.png 1x">', ['a.png'], 'and any casing of it'],
     ])
         assert.deepEqual(externalRefs(html), want, `${why}: ${html}`);
 });
