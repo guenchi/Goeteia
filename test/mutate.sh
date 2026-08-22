@@ -102,6 +102,63 @@ git -C "$REPO" worktree add --detach "$W/t" HEAD >/dev/null 2>&1
     [ -f "$REPO/$f" ] && { mkdir -p "$W/t/$(dirname "$f")"; cp "$REPO/$f" "$W/t/$f"; }
 done
 
+# ---- THE ONE PLACE A VERDICT IS BUILT --------------------------------
+#
+# There are two run modes here, and for two rounds running every
+# improvement landed on one of them: first "list all the failures
+# instead of the head", then the three-way classification of a red.
+# Both times the other mode kept the old behaviour, and both times the
+# reason for the change was written down twelve lines from the line
+# that still had the defect.  Two patches would have made it three.
+#
+# So the modes no longer build their own sentences.  They compute what
+# differs -- the scope, and the detail -- and hand it here.  A verdict
+# improved from now on is improved for both by construction, which is
+# the same move as the single announcer in test/lib/notrun.ss: when a
+# thing has one author it stops needing to be kept in step.
+#
+# `classify` names WHICH KIND of red, because they are not
+# interchangeable:
+#
+#   answered #f  the suite ran to its end and said no.  Later rows ran,
+#                so the failing rows name themselves.
+#   RAISED       a throw took the rest of the file with it.  Rows after
+#                it never ran, so a second regression hiding below is
+#                invisible in exactly the run that looked informative.
+#   DIED         worse: this runtime buffers stdout and a trap discards
+#                it, so the suite's output is EMPTY and the reason is
+#                only on stderr.  Nothing here attributes to a row.
+#   isolated     node:test runs each test separately, so a throw in one
+#                does not hide the others.  Said out loud rather than
+#                left blank, because a blank reads as "not classified"
+#                and this is a positive fact about the runner.
+classify() {  # stdout stderr [mjs]
+    _out="$1"; _err="$2"; _mode="$3"
+    if [ "$_mode" = mjs ]; then
+        printf ' (node:test — each test is isolated, so a throw does not hide later ones)'
+        return
+    fi
+    if [ -z "$_out" ] && [ -n "$_err" ]; then
+        printf ' (DIED: %s — stdout was discarded with it, so nothing here can be attributed to a row)' "$_err"
+        return
+    fi
+    case "$_out$_err" in
+      *illegal\ cast*|*unreachable*|*'call stack'*|*'Maximum call'*)
+        printf ' (RAISED — rows after the throw did not run, so this red cannot be attributed to a row)'; return ;;
+    esac
+    case "$(printf '%s' "$_out" | tail -1)" in
+      '#f') printf ' (answered #f — later rows still ran)' ;;
+    esac
+}
+
+verdict() {  # RED|GREEN|BLOCKED  scope  kind  detail
+    case "$1" in
+      RED)     printf '✅ RED (%s)%s <- %s%s\n' "$2" "$3" "$4" "$RL_NOTE" ;;
+      GREEN)   printf '🟢 GREEN (%s)%s%s\n'     "$2" "$3" "$RL_NOTE" ;;
+      BLOCKED) printf '⛔ %s%s\n'               "$4" "$RL_NOTE" ;;
+    esac
+}
+
 run_probe() { # dir -> stdout of the probe, or the word FAILED
     [ -n "$PROBE" ] || return 0
     cp "$REPO/$PROBE" "$1/__probe.ss" 2>/dev/null || cp "$PROBE" "$1/__probe.ss"
@@ -113,7 +170,7 @@ run_probe() { # dir -> stdout of the probe, or the word FAILED
 cp "$W/t/$FILE" "$W/pre.keep"      # the pre-mutation file, for the clean baseline
 before=$(run_probe "$W/t")
 
-python3 - "$W/t/$FILE" "$OLD" "$NEW" <<'PY' || { echo "⛔ NOT LANDED — the text to replace does not occur exactly once (no reading)$RL_NOTE"; exit 0; }
+python3 - "$W/t/$FILE" "$OLD" "$NEW" <<'PY' || { verdict BLOCKED "" "" "NOT LANDED — the text to replace does not occur exactly once (no reading)"; exit 0; }
 import io, sys
 p, old, new = sys.argv[1], sys.argv[2], sys.argv[3]
 s = io.open(p, encoding='utf-8').read()
@@ -128,10 +185,10 @@ cp "$W/t/$FILE" "$W/mutated.keep"  # ...and the mutated one, so the
 after=$(run_probe "$W/t")
 if [ -n "$PROBE" ]; then
     if [ "$before" = "FAILED" ] || [ "$after" = "FAILED" ]; then
-        echo "⛔ PROBE FAILED to build or run — no reading$RL_NOTE"; exit 0
+        verdict BLOCKED "" "" "PROBE FAILED to build or run — no reading"; exit 0
     fi
     if [ "$before" = "$after" ]; then
-        echo "⛔ INERT FOR THIS PROBE — the file changed and the probe still answers '$after'. Not evidence the claim is unpinned: the gate you removed may not be the one holding it. Mutate the conjunction before concluding$RL_NOTE"
+        verdict BLOCKED "" "" "INERT FOR THIS PROBE — the file changed and the probe still answers '$after'. Not evidence the claim is unpinned: the gate you removed may not be the one holding it. Mutate the conjunction before concluding"
         exit 0
     fi
 fi
@@ -163,9 +220,12 @@ if [ "$TARGET" = gate ]; then
             | sed 's/ ([0-9.]*ms)$//' | sort -u | head -4 \
             | tr '\n' '|' | cut -c1-240)
     if [ "$ec" -eq 0 ]; then
-        echo "🟢 GREEN — the whole gate notices nothing (ok=$N/$M)$RL_NOTE"
+        verdict GREEN "the whole gate notices nothing, ok=$N/$M" "" ""
     else
-        echo "✅ RED (ok=$N/$M) <- ${named:-unnamed failure}$RL_NOTE"
+        # a gate log holds many suites, so a raise inside one of them
+        # is classified from the log as a whole
+        verdict RED "ok=$N/$M" "$(classify "$(cat "$W/mut.log")" "" ss)" \
+                "${named:-unnamed failure}"
     fi
 else
     s=${TARGET%.ss}; s=${s%.mjs}
@@ -175,10 +235,11 @@ else
         # The oracle here is node --test's exit status, not a word in
         # its output -- same reason as the .ss branch below.
         if ( cd "$W/t" && timeout 600 ${NODE-node} --test "test/$s.mjs" > "$W/one.log" 2>&1 ); then n=0; else n=1; fi
+        cmode=mjs
         s="$s.mjs"
     else
         ( cd "$W/t" && rm -f __m.wasm && ./bin/goeteiac "test/$s.ss" __m.wasm >/dev/null 2>&1 ) || true
-        [ -f "$W/t/__m.wasm" ] || { echo "⛔ the mutant does not compile — no reading$RL_NOTE"; exit 0; }
+        [ -f "$W/t/__m.wasm" ] || { verdict BLOCKED "" "" "the mutant does not compile — no reading"; exit 0; }
         # stdout ONLY, and stderr kept apart -- run-tests.sh compares
         # `got=$(run_one ...)`, which captures stdout alone.  Folding
         # stderr in made this tool disagree with the gate about any
@@ -194,6 +255,7 @@ else
         # bare #f and say nothing else, and this tool reported those as
         # GREEN -- a verdict weaker than the gate's, which is the one
         # thing a mutation tool must never be.
+        cmode=ss
         want=$(head -1 "$W/t/test/$s.ss" | sed 's/^;; expect: //')
         got=$(cat "$W/one.log")
         # BASELINE FIRST, always.  A suite that does not answer its own
@@ -208,7 +270,7 @@ else
         base=""
         [ -f "$W/t/__b.wasm" ] && base=$( cd "$W/t" && timeout 400 ${NODE-node} rt/run.mjs __b.wasm 2>/dev/null )
         if [ "$base" != "$want" ]; then
-            echo "⛔ BASELINE NOT GREEN — test/$s.ss answers '$(echo "$base" | head -c 40)' before any mutation, so nothing here is a reading$RL_NOTE"
+            verdict BLOCKED "" "" "BASELINE NOT GREEN — test/$s.ss answers '$(echo "$base" | head -c 40)' before any mutation, so nothing here is a reading"
             exit 0
         fi
         if [ "$got" = "$want" ]; then n=0; else n=1; fi
@@ -230,8 +292,10 @@ else
                  | grep -v 'failing tests' | sed 's/ ([0-9.]*ms)$//' \
                  | sort -u | head -4 | tr '\n' '|' | cut -c1-200)
         [ -n "$detail" ] || detail="want '$(head -1 "$W/t/test/${s%.mjs}" 2>/dev/null | sed 's/^;; expect: //')', got '$(head -c 60 "$W/one.log")'"
-        echo "✅ RED (test/$s only — 1 suite, NOT the gate) <- $detail$RL_NOTE"
+        verdict RED "test/$s only — 1 suite, NOT the gate" \
+                "$(classify "$got" "$(head -1 "$W/one.err" 2>/dev/null)" "$cmode")" \
+                "$detail"
     else
-        echo "🟢 GREEN (test/$s only — 1 suite, NOT the gate; the gate may still notice)$RL_NOTE"
+        verdict GREEN "test/$s only — 1 suite, NOT the gate; the gate may still notice" "" ""
     fi
 fi

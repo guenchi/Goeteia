@@ -771,10 +771,14 @@
  ;;      twelfth digit to zero, which is why the underflow row above
  ;;      asks only that the value be positive
  (string=? "0.000000000000" (json->string (string->json "1e-320")))
- ;; Just under the boundary it still round-trips, which is what says
- ;; the rows above are about the printer's RANGE and not about every
- ;; fractional value.  536870911.5 does NOT belong here: the printer
- ;; compares against 536870911.0 and gives up on anything greater, so
- ;; the half is already past it -- an assumed boundary, measured.
+ ;; A value with a fraction still round-trips, which is what says the
+ ;; rows above are about the FRACTION's twelve digits and not about
+ ;; every non-integral value.
+ ;;
+ ;; This comment used to end "the printer compares against 536870911.0
+ ;; and gives up on anything greater, so 536870911.5 is already past
+ ;; it".  The assertion was right and the reason went stale the day the
+ ;; integer part stopped going through the i31 fixnum: 536870911.5 now
+ ;; prints as itself.  Re-measured rather than re-reasoned.
  (equal? (string->json "536870910.5")
          (string->json (json->string (string->json "536870910.5")))))

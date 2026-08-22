@@ -159,17 +159,21 @@ shortest-round-trip dtoa. The printer is `$display-flonum` in
 | `(fl+ 0.1 0.2)` | `0.300000000000` |
 | `(fl/ 1.0 3.0)` | `0.333333333333` |
 | `123456.78901234567` | `123456.789012345674` |
-| `1000000000.0` | `<big-flonum>` |
+| `1000000000.0` | `1000000000.0` |
+| `1700000000000.0` | `1700000000000.0` |
 | `(fl/ 1.0 0.0)` | `<big-flonum>` |
 | `(fl* -1.0 0.0)` | `0.0` |
 | `(fl/ 0.0 0.0)` | `+nan.0` |
 
 Three consequences:
 
-* **Magnitude 536870911 is the ceiling.** Anything larger, infinities
-  included, prints as `<big-flonum>` — a text golden over world-space
-  coordinates or timestamps can be comparing two literal strings that
-  say nothing.
+* **Infinities have no decimal expansion**, so they print as
+  `<big-flonum>` and `-<big-flonum>` — a token, not a number, and
+  `string->number` gives `#f` for it. A magnitude ceiling used to sit
+  here too: the integer part went through an i31 fixnum and gave up
+  above 536870911, so a text golden over world-space coordinates or
+  timestamps compared two literal strings that said nothing. It is
+  gone; the integer part is now exact at any magnitude a double holds.
 * **Twelve fractional digits, then truncation.** Two doubles that
   agree to 12 decimals print identically, so a text golden cannot see
   a low-bit difference. Section `fltext` pins the printer; the bit
