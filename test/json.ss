@@ -9,6 +9,12 @@
     (string->json s)
     #f))
 (define (near? v x) (and (< (- x 0.000001) v) (< v (+ x 0.000001))))
+;; A zero's sign, asked WITHOUT going through the printer: 1/-0.0 is
+;; negative infinity and 1/+0.0 is positive, which is the only way to
+;; tell them apart here.  (There is no -0.0 literal to compare with --
+;; this reader has none -- so the fixture below is built.)
+(define (neg-zero? v)
+  (and (flonum? v) (fl=? v 0.0) (fl<? (fl/ 1.0 v) 0.0)))
 (define (parse-ok? s) (guard (e (#t #f)) (string->json s) #t))
 (define (rep n t)
   (let loop ((i 0) (acc "")) (if (= i n) acc (loop (+ i 1) (string-append acc t)))))
@@ -409,6 +415,31 @@
  ;; and the two characters that must be escaped from outside the range
  (string=? "\"\\\"\"" (json->string "\""))
  (string=? "\"\\\\\"" (json->string "\\"))
+
+ ;; ---- the sign of a zero -----------------------------------------
+ ;; JSON's grammar has "-0.0", and (igropyr json) reads it as a
+ ;; NEGATIVE zero and writes it back as one -- measured against Chez,
+ ;; not assumed.  This reader answered +0.0, so one text got two
+ ;; values from the pair, silently: nothing downstream can see the
+ ;; difference except by dividing.
+ ;;
+ ;; Which is how it is asked here.  `display` cannot judge this: the
+ ;; printer has its own defect and spells a true negative zero "0.0",
+ ;; so a test that read the output would blame the wrong stage.  The
+ ;; criterion must not pass through the layer under suspicion.
+ (neg-zero? (string->json "-0.0"))
+ (neg-zero? (string->json "-0e5"))       ; the exponent path, no dot
+ (neg-zero? (string->json "-0.0e10"))
+ ;; the should-GREEN half: a sign check that fired too eagerly would
+ ;; read exactly the same from the three rows above
+ (not (neg-zero? (string->json "0.0")))
+ (not (neg-zero? (string->json "0e5")))
+ (not (neg-zero? (string->json "1.0")))
+ (neg-zero? (fl* -1.0 0.0))              ; the fixture really is one
+ ;; "-0" has no fraction and no exponent, so it stays an EXACT zero --
+ ;; that is the counterpart's answer too, and an integer has no
+ ;; signed zero to carry
+ (eqv? 0 (string->json "-0"))
 
  ;; ---- nesting depth ----------------------------------------------
  ;; RFC 8259 section 9 lets a parser set a maximum depth of nesting,

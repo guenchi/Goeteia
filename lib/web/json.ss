@@ -156,6 +156,29 @@
   ;; literal that reads as an infinity and the writer refuses to spell
   ;; one, and those two answers have to come from the same predicate or
   ;; they can drift into disagreeing about the same value.
+  ;; The sign of a zero cannot survive the exact stage: (- 0) is 0,
+  ;; and exact->inexact then has nothing left to carry.  So it is
+  ;; reapplied here, once, for every path that produces a flonum.
+  ;;
+  ;; It matters because "-0.0" is in JSON's grammar and (igropyr json)
+  ;; reads it as a negative zero and writes it back as one -- measured
+  ;; against Chez, not assumed.  A reader that answers +0.0 makes the
+  ;; two libraries give one text two values, with nothing downstream
+  ;; able to see the difference except by dividing.
+  ;;
+  ;; Built, not written: this compiler's reader has no literal for a
+  ;; negative zero (test/trig.ss says the same thing and builds its
+  ;; own).  And a MULTIPLICATION -- (fl+ x 0.0) collapses the sign,
+  ;; which is correct IEEE behaviour and exactly why it cannot be
+  ;; used here.
+  ;;
+  ;; "-0" is not this function's business: with no fraction and no
+  ;; exponent it stays an exact zero, which is what the counterpart
+  ;; answers too, and an exact zero has no sign to carry.
+  (define (signed-float v neg)
+    (let ((f (exact->inexact v)))
+      (if (and neg (fl=? f 0.0)) (fl* -1.0 0.0) f)))
+
   (define (fl-nan? v) (not (fl=? v v)))
   (define (fl-inf? v) (and (fl=? v (fl* v 2.0)) (not (fl=? v 0.0))))
 
@@ -499,13 +522,14 @@
                                (v (if (and esign (char=? esign #\-))
                                       (/ mant (pow10 ep))
                                       (* mant (pow10 ep)))))
-                          (values (finite! (exact->inexact v) i) j2))))
+                          (values (finite! (signed-float v neg) i) j2))))
                     (let ((v (if dot?
                                  (finite!
-                                  (exact->inexact
+                                  (signed-float
                                    (let ((m (/ (+ (* ip (pow10 fk)) fp)
                                                (pow10 fk))))
-                                     (if neg (- m) m)))
+                                     (if neg (- m) m))
+                                   neg)
                                   i)
                                  (if neg (- ip) ip))))
                       (values v j))))))))
