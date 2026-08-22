@@ -9,14 +9,31 @@
 ;; format into four consumers to reach twenty lines.  So it moved here,
 ;; unchanged.
 ;;
-;; ⚠ THIS IS FOR WRITERS.  A reader's acceptance surface is a wire
-;; contract: (web json) and (web sexpr) both deliberately ACCEPT some
-;; malformed input because the readers they are paired with -- in
-;; igropyr, a separate repository -- accept it too, and tightening one
-;; side alone means one side takes a document the other refuses.  If
-;; you are about to wire this into a reader, that is a lockstep change:
-;; confirm the counterpart first.  Refusing to EMIT malformed bytes has
-;; no such counterpart, which is why the writers may use it freely.
+;; ⚠ WHERE THIS MAY BE USED, and where using it is a decision someone
+;; else has to be part of.  Today:
+;;
+;;   (web sexpr) writer   uses it     refusing to emit is unilateral
+;;   (web json)  writer   uses it     same
+;;   (web sexpr) reader   USES IT     that codec's counterpart validates
+;;                                    too, so the two acceptance surfaces
+;;                                    still match -- it was a lockstep
+;;                                    decision, not a local one
+;;   (web json)  reader   does NOT    and must not start without one:
+;;                                    the reader it is paired with, in
+;;                                    igropyr, accepts malformed bytes
+;;
+;; So the rule is not "writers only" -- an earlier version of this note
+;; said that, and it was already false about (web sexpr) when it was
+;; written.  The rule is about WHO ELSE IS AFFECTED:
+;;
+;;   refusing to EMIT malformed bytes narrows what leaves, and nothing
+;;   downstream can be broken by receiving less; it is unilateral.
+;;   refusing to ACCEPT them narrows what a wire carries, and the peer
+;;   on that wire may still send it -- that is a lockstep change, and
+;;   the counterpart has to move with it.
+;;
+;; Wiring this into a reader is therefore allowed, and is a
+;; conversation, not a commit.
 ;;
 ;; One predicate, deliberately.  No "lenient" variant belongs here: a
 ;; weaker sibling under a friendlier name is a wrong answer left where
