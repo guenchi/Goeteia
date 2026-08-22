@@ -203,6 +203,13 @@
                (vector-ref ($sgl-nd-f nd) 13)
                ($sgl-nd-chain nd)))
 
+  ;; A node's COLOUR generation.  Deliberately not part of the above:
+  ;; that one answers "does the model matrix need rebuilding", and a
+  ;; colour never does.  This one answers "does anything an instance
+  ;; buffer holds need repacking", which is a different question about
+  ;; the same node.  Colour is per node, so there is no chain to fold.
+  (define ($sgl-node-cgen nd) (vector-ref ($sgl-nd-f nd) 14))
+
   ;; ---- the Env block: frame globals, uploaded once ----
   ;; std140: mat4 at 0, vec3 u_light at 64 with u_ambient packed in
   ;; its fourth float (76), vec3 u_eye at 80 -- 96 bytes.  Shaders
@@ -319,9 +326,17 @@
 
   (define ($sgl-mesh attrs ds chain cache lod)
     (let ((gspec #f) (mat 'lit) (tex #f)
-          ;; last slot: the transform generation matrix caches watch
+          ;; slot 13: the transform generation matrix caches watch.
+          ;; slot 14: the COLOUR generation, counted separately -- a
+          ;; colour does not move the model matrix, so bumping 13 for it
+          ;; would rebuild one for nothing, and that is why colour holes
+          ;; used to bump nothing at all.  Nothing was one too few: an
+          ;; instance group caches a buffer holding transforms AND rgba,
+          ;; and its key watched only 13, so a signal-driven colour
+          ;; changed while the key stood still and the group redrew last
+          ;; frame's colours for ever.
           (f (vector 0.0 0.0 0.0 0.0 0.0 0.0 1.0
-                     0.8 0.8 0.8 1.0 0.0 0.5 0)))
+                     0.8 0.8 0.8 1.0 0.0 0.5 0 0)))
       (for-each
        (lambda (a)
          (case (car a)
@@ -344,10 +359,10 @@
            ((rotation-y) ($sgl-set1! f 4 (cadr a) ds 13))
            ((rotation-z) ($sgl-set1! f 5 (cadr a) ds 13))
            ((scale) ($sgl-set1! f 6 (cadr a) ds 13))
-           ((color-r) ($sgl-set1! f 7 (cadr a) ds #f))
-           ((color-g) ($sgl-set1! f 8 (cadr a) ds #f))
-           ((color-b) ($sgl-set1! f 9 (cadr a) ds #f))
-           ((color-a) ($sgl-set1! f 10 (cadr a) ds #f))
+           ((color-r) ($sgl-set1! f 7 (cadr a) ds 14))
+           ((color-g) ($sgl-set1! f 8 (cadr a) ds 14))
+           ((color-b) ($sgl-set1! f 9 (cadr a) ds 14))
+           ((color-a) ($sgl-set1! f 10 (cadr a) ds 14))
            (else (error 'sgl "unknown mesh attribute" (car a)))))
        attrs)
       (unless gspec (error 'sgl "mesh needs a geometry"))
@@ -768,8 +783,39 @@
 
   ;; lit nodes sharing a geometry, two or more, become an instanced
   ;; group -- one buffer of matrix+color per instance, one draw
-  (define ($sgl-igroups! lits)
-    (let outer ((ns lits) (grouped '()) (groups '()) (singles '()))
+  ;; Only OPAQUE nodes are candidates.  Grouping was by geometry
+  ;; identity alone, and the translucent partition happens much later,
+  ;; so two translucent meshes that happened to share a literal spec
+  ;; went down the instanced pass -- which never turns blending on or
+  ;; takes depth writes off, because those are set up around the
+  ;; deferred singles.  The rule a user met was "adding a second
+  ;; identical mesh makes the first one opaque", and nothing in the
+  ;; scene they wrote says that.
+  ;;
+  ;; Excluded rather than grouped separately: a translucent instance
+  ;; group would need the blended pass's state and its back-to-front
+  ;; order, and it has neither.  Opaque sharing is untouched -- the
+  ;; check "an opaque pair sharing one geometry is still instanced"
+  ;; exists so this cannot be quietly turned into "nothing instances".
+  (define ($sgl-nd-translucent? nd)
+    (fl<? (vector-ref ($sgl-nd-f nd) 10) 1.0))
+
+  (define ($sgl-igroups! all)
+    ;; ONE pass, two lists.  Written as two filters first, and that was
+    ;; wrong twice over: the predicate appeared twice, and a node that
+    ;; the two disagreed about would be drawn TWICE -- once instanced
+    ;; and once blended.  (Measured, while mutating one of the two
+    ;; copies: blend on, instanced draw and plain draw both present, the
+    ;; same mesh rendered by both paths.)  A partition has one predicate
+    ;; by construction; two filters is a coincidence that has to hold.
+    (let* ((split (let part ((k all) (op '()) (tr '()))
+                    (cond ((null? k) (cons (reverse op) (reverse tr)))
+                          (($sgl-nd-translucent? (car k))
+                           (part (cdr k) op (cons (car k) tr)))
+                          (else (part (cdr k) (cons (car k) op) tr)))))
+           (lits (car split))
+           (translucent (cdr split)))
+    (let outer ((ns lits) (grouped '()) (groups '()) (singles translucent))
       (cond
        ((null? ns) (values (reverse groups) (reverse singles)))
        ((memq ($sgl-nd-geo (car ns)) grouped)
@@ -797,7 +843,7 @@
                                      (fx-alloc! (* (length mine) 80))
                                      (length mine) -1.0 -1 -1)
                              groups)
-                       singles))))))))
+                       singles)))))))))
 
   ;; ---- a frame: pure arithmetic over the current fields ----
   ;; the TRS matrix any 7-field transform vector describes
@@ -972,7 +1018,12 @@
            (res (+ scratch 352))
            ;; the group's transform generation: the sum moves iff any
            ;; instance's own or ancestor transform did
-           (gen (fold-left (lambda (a nd) (+ a ($sgl-node-gen nd)))
+           ;; The key must cover everything the cached buffer holds:
+           ;; transforms AND colours.  Both counters only ever go up, so
+           ;; a sum of both stands still exactly when every one of them
+           ;; does -- which is what "nothing moved" has to mean here.
+           (gen (fold-left (lambda (a nd) (+ a ($sgl-node-gen nd)
+                                             ($sgl-node-cgen nd)))
                            0 (vector-ref ig 1)))
            ;; issue the draw; upload the packed instances only when the
            ;; set was recomputed (up? = #t), else the buffer still holds
