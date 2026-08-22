@@ -67,6 +67,16 @@
 ;; the property is about.)
 (define gllog (js-get (js-global) "__gllog"))
 (define (log-length) (js->number (js-get gllog "length")))
+(define (log-count-since from prefix)
+  (let ((plen (string-length prefix)))
+    (let loop ((i from) (c 0))
+      (if (= i (log-length))
+          c
+          (let* ((e (js->string (js-index gllog i)))
+                 (hit (and (>= (string-length e) plen)
+                           (string=? prefix (substring e 0 plen)))))
+            (loop (+ i 1) (if hit (+ c 1) c)))))))
+
 (define (buffer-uploads-since from)
   (let loop ((i from) (c 0))
     (if (= i (log-length))
@@ -422,6 +432,50 @@
     (check "...and the trailing u32 part is still read four bytes at a time"
            (< bad 0))
     (when (>= bad 0) (report-mismatch rev-up '() bad))))
+
+;; ---- 7b. the third material group, PBR -----------------------------
+;; A scene sorts its meshes into three groups -- lit, textured, pbr --
+;; and each one draws through its own pass.  Part 6 makes the argument
+;; for the textured pass ("asserting the width on the lit path alone
+;; would leave half the writers unchecked") and then stops at two of
+;; three: no test in this file, or in the scene tests beside it, ever
+;; built a pbr node.  So the width rule was pinned on two passes and
+;; assumed on the third, and the pbr branch of the draw loop was
+;; reachable by nothing at all -- replacing its material test with #f,
+;; which drops u_albedo/u_metallic/u_roughness from every pbr draw,
+;; changed no assertion anywhere.
+;;
+;; A pbr mesh is spelled by giving it metallic/roughness, and it needs a
+;; probe in the scene; the geometry here is past 65536 vertices so the
+;; width question is asked down this pass too.
+(define pbr-sky (fx-texture!))
+(define pbr-lut (fx-texture!))
+(define pbr-draw (draw-count))
+(define pbr-up (uploads))
+(define pbr-log (log-length))
+(let ((sc (sgl (camera (@ (fov 0.9) (position 0.0 0.0 6.0)
+                          (look-at 0.0 0.0 0.0)))
+               (light (@ (direction 0.0 1.0 0.0) (ambient 0.25)))
+               (probe (@ (sky ,pbr-sky) (lut ,pbr-lut) (mips 5)))
+               (mesh (@ (geometry ,wide) (metallic 1.0) (roughness 0.3))))))
+  (cmd-begin!) (sgl-draw! sc) (cmd-flush!))
+
+(check "a pbr node draws"
+       (> (draw-count) pbr-draw))
+(check "a wide pbr geometry asks for UNSIGNED_INT, like the other two passes"
+       (string=? "UI" (draw-type pbr-draw)))
+(check "...as triangles"
+       (string=? "TRI" (draw-mode pbr-draw)))
+(check "...and its index buffer went up four bytes wide"
+       (= 4 (upload-width (upload-with pbr-up (mesh-index-count wide)))))
+;; and the uniforms that only this material sends.  Counting them is
+;; what makes the branch's disappearance visible: u_color goes out for
+;; lit and textured nodes, u_albedo/u_metallic/u_roughness only here.
+(check "a pbr draw sends the pbr uniforms, not the lit one"
+       (and (= 1 (log-count-since pbr-log "uniform4f:U:u_albedo"))
+            (= 1 (log-count-since pbr-log "uniform1f:U:u_metallic"))
+            (= 1 (log-count-since pbr-log "uniform1f:U:u_roughness"))
+            (= 0 (log-count-since pbr-log "uniform4f:U:u_color"))))
 
 ;; ---- 8. the instanced path, at u32 --------------------------------
 ;; Instancing groups nodes by geo IDENTITY, and an injected mesh gets a
