@@ -488,7 +488,15 @@
      ;; policy ("non-finite is written null"), one place that applies
      ;; it: a second conversion site is a second place for the policy to
      ;; be missing from, and this is what that looked like.
-     ((or (flonum? v) (exact? v))
+     ;; REAL, not "exact".  A JSON number is a real number, and that is
+     ;; the question this clause has to ask: an exact COMPLEX satisfies
+     ;; `exact?`, went through exact->inexact, and stopped the runtime
+     ;; on an illegal cast -- a trap, not the "JSON numbers must be
+     ;; real" error waiting two lines below.  Its inexact spelling
+     ;; reached that error and raised properly, so the two spellings of
+     ;; one wrong value behaved differently, and the worse one was the
+     ;; one a caller is more likely to write.
+     ((real? v)
       (let ((f (if (flonum? v) v (exact->inexact v))))
         (if (or (fl-nan? f) (fl-inf? f)) "null" (number->string f))))
      (else (error 'json->string "JSON numbers must be real" v))))

@@ -171,7 +171,17 @@
  ;; The symbol `null` still writes null; that is the documented
  ;; spelling and it goes through its own clause.
  (let ((refused? (lambda (x) (guard (e (#t #t)) (json->string x) #f))))
-   (and (refused? #\a)
+   (and
+        ;; a complex number is not a JSON number, and the two spellings
+        ;; took different routes: the inexact one fell to the last
+        ;; clause and raised, while the EXACT one satisfied `exact?`,
+        ;; went through exact->inexact, and stopped the runtime on an
+        ;; illegal cast -- a trap the caller cannot guard.  The clause
+        ;; asked "is it exact" when what it needed was "is it real".
+        (refused? 1+2i)
+        (refused? 1.0+2.0i)
+        (refused? -1/2+3i)
+        (refused? #\a)
         (refused? (cons 1 2))              ; a pair that is not an object
         (refused? car)
         (refused? (make-bytevector 2 0))
