@@ -123,6 +123,8 @@ if n != 1:
 io.open(p, 'w', encoding='utf-8').write(s.replace(old, new))
 PY
 
+cp "$W/t/$FILE" "$W/mutated.keep"  # ...and the mutated one, so the
+                                   # baseline run can be put back
 after=$(run_probe "$W/t")
 if [ -n "$PROBE" ]; then
     if [ "$before" = "FAILED" ] || [ "$after" = "FAILED" ]; then
@@ -166,7 +168,15 @@ else
     else
         ( cd "$W/t" && rm -f __m.wasm && ./bin/goeteiac "test/$s.ss" __m.wasm >/dev/null 2>&1 ) || true
         [ -f "$W/t/__m.wasm" ] || { echo "⛔ the mutant does not compile — no reading$RL_NOTE"; exit 0; }
-        ( cd "$W/t" && timeout 400 ${NODE-node} rt/run.mjs __m.wasm > "$W/one.log" 2>&1 ) || true
+        # stdout ONLY, and stderr kept apart -- run-tests.sh compares
+        # `got=$(run_one ...)`, which captures stdout alone.  Folding
+        # stderr in made this tool disagree with the gate about any
+        # suite that writes a diagnostic there: test/sexpr-limits.ss
+        # prints two "NOT EXERCISED HERE" notes and then #t, and every
+        # reading of it here was a false RED until this line changed.
+        # An instrument that judges a mutation must be the SAME
+        # instrument as the gate, not one that resembles it.
+        ( cd "$W/t" && timeout 400 ${NODE-node} rt/run.mjs __m.wasm > "$W/one.log" 2> "$W/one.err" ) || true
         # The oracle is the file's own `;; expect:` line, the same one
         # run-tests.sh holds it to.  Scanning the output for the word
         # FAIL is NOT the oracle: plenty of .ss suites answer with a
@@ -175,6 +185,21 @@ else
         # thing a mutation tool must never be.
         want=$(head -1 "$W/t/test/$s.ss" | sed 's/^;; expect: //')
         got=$(cat "$W/one.log")
+        # BASELINE FIRST, always.  A suite that does not answer its own
+        # `;; expect:` line before the mutation cannot say anything
+        # about it afterwards, and reading its red as the mutation's is
+        # how this tool spent a batch reporting false REDs for
+        # test/sexpr-limits.ss.  This is the no-op control, run every
+        # time rather than remembered.
+        cp "$W/mutated.keep" "$W/t/$FILE" 2>/dev/null || true
+        cp "$W/pre.keep" "$W/t/$FILE"
+        ( cd "$W/t" && rm -f __b.wasm && ./bin/goeteiac "test/$s.ss" __b.wasm >/dev/null 2>&1 ) || true
+        base=""
+        [ -f "$W/t/__b.wasm" ] && base=$( cd "$W/t" && timeout 400 ${NODE-node} rt/run.mjs __b.wasm 2>/dev/null )
+        if [ "$base" != "$want" ]; then
+            echo "⛔ BASELINE NOT GREEN — test/$s.ss answers '$(echo "$base" | head -c 40)' before any mutation, so nothing here is a reading$RL_NOTE"
+            exit 0
+        fi
         if [ "$got" = "$want" ]; then n=0; else n=1; fi
         s="$s.ss"
     fi
