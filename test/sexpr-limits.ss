@@ -15,7 +15,7 @@
 ;; grew the same check, on the way out -- and nothing else is.  A long
 ;; string, a long list and a big bytevector are not tokens and pass
 ;; untouched in both directions.
-(import (rnrs) (web js) (web sexpr))
+(import (rnrs) (web js) (web sexpr) (notrun))
 
 ;; Named skips go to STDERR, not stdout.  run-tests.sh compares the
 ;; WHOLE of stdout against the ";; expect:" line, so anything a passing
@@ -128,7 +128,8 @@
 ;; BigInt makes the conversion cheap there -- for an integer and for a
 ;; ratio measured whole.  Named out loud, because a boundary nobody
 ;; names is a boundary nobody is holding anyone to.
-(note "  NOT EXERCISED HERE (this runtime cannot print a 65537-digit bignum): the writer's numeral cap -- see test/sexpr-mjs.mjs")
+(not-exercised! "this runtime cannot print a 65537-digit bignum"
+                "the writer's numeral cap -- see test/sexpr-mjs.mjs")
 
 ;; A ratio is measured WHOLE -- "num/den" is one token to the reader --
 ;; so two halves that each fit can still be refused together.  That
@@ -185,7 +186,8 @@
 ;; structure in this file -- so a moved or deleted spine guard would
 ;; not be caught here.  test/sexpr-mjs.mjs holds both sides of that
 ;; boundary and the dotted branch; named rather than left implied.
-(note "  NOT EXERCISED HERE (needs a million-element list): the spine cap's boundary -- see test/sexpr-mjs.mjs")
+(not-exercised! "needs a million-element list"
+                "the spine cap's boundary -- see test/sexpr-mjs.mjs")
 
 ;; ---- the VALUE behind the bytes, WITHOUT the fixture ----------------
 ;; The golden suites parse an authority wire with our reader and write

@@ -18,7 +18,7 @@
 ;; runtime's stack.  Splitting is not the whole story: five read
 ;; entries are still passed over here as too large, each printed by
 ;; name with the count pinned, and test/sexpr-mjs.mjs covers them.
-(import (rnrs) (web js) (web fs) (web sexpr))
+(import (rnrs) (web js) (web fs) (web sexpr) (notrun))
 
 ;; Named skips go to STDERR, not stdout.  run-tests.sh compares the
 ;; WHOLE of stdout against the ";; expect:" line, so anything a passing
@@ -154,8 +154,7 @@
 (define (note-oversized name)
   (set! oversized (+ oversized 1))
   (set! oversized-names (cons name oversized-names))
-  (note (string-append
-         "  NOT EXERCISED HERE (too large for this runtime): " name)))
+  (not-exercised! "too large for this runtime" name))
 
 (define loaded
   (and fixture-present?

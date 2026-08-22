@@ -16,7 +16,8 @@
 ;; below.  If they are not there this test says which one is missing
 ;; and fails: a decoder verified only against files this same code
 ;; wrote is not verified.
-(import (rnrs) (web js) (web fs) (gfx gl) (gfx fx) (gfx gltf) (gfx image))
+(import (rnrs) (web js) (web fs) (gfx gl) (gfx fx) (gfx gltf) (gfx image)
+        (notrun))
 
 (define GLB-PATH "/Users/guenchi/Workshop/10/mocap-real/base.glb")
 (define TGA-D "/Users/guenchi/Workshop/model/PC_MA_F_D.tga")
@@ -223,16 +224,15 @@
                          (list GLB-PATH TGA-D TGA-M TGA-N))))
     (if (null? missing)
         #t
+        ;; stderr, through the one announcer.  This used to `display`
+        ;; on stdout, which run-tests.sh compares against `;; expect:
+        ;; #t` -- so the opt-in gate did not skip the suite, it failed
+        ;; it, on every machine that lacks these absolute paths.
         (begin
-          (display "  SKIPPED (opt-in gate): real-asset fixtures absent")
-          (newline)
-          (for-each (lambda (p)
-                      (display "    needs: ") (display p) (newline))
-                    missing)
-          (display "  provide the converted rig and its source TGAs at")
-          (newline)
-          (display "  those paths to enable this suite")
-          (newline)
+          (apply not-exercised!
+                 "opt-in gate" "real-asset fixtures absent"
+                 (append (map (lambda (p) (string-append "needs: " p)) missing)
+                         (list "provide the converted rig and its source TGAs at those paths to enable this suite")))
           #f))))
 
 (define ran
