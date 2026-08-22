@@ -204,7 +204,12 @@ else
         s="$s.ss"
     fi
     if [ "$n" -gt 0 ]; then
-        detail=$(grep -iE '✗|FAIL|AssertionError' "$W/one.log" | head -1 | cut -c1-90)
+        # Anchored, and NOT case-insensitive: `grep -iE FAIL` also
+        # matches "failing" and "failure", and it picked a PASSING
+        # line ("✔ the transport failing is a rejection") as the
+        # explanation of a red.  A pattern loose enough to match prose
+        # will eventually match the wrong prose.
+        detail=$(grep -E '^✖|^✗|^not ok|^FAIL|AssertionError' "$W/one.log" | head -1 | cut -c1-90)
         [ -n "$detail" ] || detail="want '$(head -1 "$W/t/test/${s%.mjs}" 2>/dev/null | sed 's/^;; expect: //')', got '$(head -c 60 "$W/one.log")'"
         echo "✅ RED (test/$s only — 1 suite, NOT the gate) <- $detail$RL_NOTE"
     else
