@@ -222,6 +222,26 @@ it is a per-function limit, not a per-module one.
 
 ## Capacity limits in the graphics stack
 
+- **Index width is per-geometry, and follows the vertex count.** A u16
+  index names vertices 0..65535, so a mesh of 65536 vertices still fits
+  and one of 65537 does not. `(gfx scene)` picks the width when it
+  builds a geometry and again when it welds a group, from the total that
+  weld will contain; welded groups may mix u16 and u32 sources, each
+  read at the width it was written and all written out at the group's.
+  A u32 index buffer is **twice the memory** of a u16 one for the same
+  triangle count, which is why the choice is per-geometry rather than a
+  setting. The u32 path is WebGL 2 (`UNSIGNED_INT` indices), the same
+  baseline the 256-joint skin path already needs.
+
+  **Since 2026-08-21.** Before that the scene graph was u16 throughout:
+  a mesh past 65536 vertices was accepted in silence and drawn with
+  `UNSIGNED_SHORT`, so every index above the boundary named some other
+  vertex — a wrong picture, with nothing said. The mesh layer
+  (`mesh-index-u32?`, `mesh-index-bytes`) and the command layer
+  (`cmd-index-data32!`, `cmd-draw-elements32!`) had both carried u32
+  all along; only the wiring between them was missing. Welding a group
+  past the boundary was skipped rather than truncated, so the parts drew
+  separately and correctly; they weld now.
 - **256 joints per skin, and 32 on the ESSL 1.00 path.** There are
   two palette carriers, and which one applies is a property of the
   *program*, not of the asset.  `gltf-skin-shader` declares

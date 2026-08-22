@@ -62,6 +62,9 @@ has nothing to wire and nothing to count. Build elements — an
 | glTF | add `(gfx gltf)`; writing GLB `(gfx glb)` |
 | networking | `(web rpc)` (s-expr wire), `(web json)` `(web fetch)` `(web ws)` `(web sse)` |
 
+JSON arrays are **vectors**, objects alists: `list?` lies both ways; ask `json-array?`.
+
+
 Check `lib/gfx/` before hand-rolling: `post` bloom/SSAO, `ibl`,
 `collide` raycasts, `scene`, `sprite` 2D+text, `sdf`, `gpu`/`sgpu`
 WebGPU, `stats` a HUD.

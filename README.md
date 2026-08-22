@@ -155,7 +155,11 @@ The UI, text and network stack over the JS bridge, in `lib/web/`:
   `--experimental-wasm-jspi`); `(web rpc)`'s `rpc` builds on it
 - `(web json)` — the same safe JSON codec as the Igropyr server side
   (ported from its `json.sc`): recursive-descent parser, `\uXXXX` and
-  surrogate pairs to UTF-8, exact bignums, `json-ref` path access
+  surrogate pairs to UTF-8, exact bignums, `json-ref` path access.
+  **An array is a vector and an object is an alist**, so `list?` is
+  false for every array and true for every object — backwards from the
+  guess, and silent either way. `json-array?` and `json-array->list`
+  (shallow; a non-array raises) are there to be the names that say so
 - `(web ws)` / `(web sse)` — pushed s-expressions: every WebSocket
   message / SSE event is one datum, matching Igropyr's
   `ws-send-sexpr!` / `sse-send-sexpr!` on the server; multi-line
