@@ -22,28 +22,57 @@ JSPI=""
 if ${NODE-node} --experimental-wasm-jspi -e 1 >/dev/null 2>&1; then
     JSPI="--experimental-wasm-jspi"
 fi
+# A HANG is the one failure this harness could not report.  A test
+# that never returns produces no output and no exit status, so the run
+# sits there and any notification about it reads as "still going" --
+# which is what a slow run looks like too.  Three hangs happened while
+# this batch was written (a prelude predicate spinning on a circular
+# list, the JSON writer following one, and a mutation run), and none
+# of them would have failed a gate: they would have stalled it.
+#
+# So every compile and every run gets a wall-clock bound, and going
+# past it prints a line naming the suite.  Where timeout(1) is absent
+# the run still works -- and SAYS so, loudly, because a guard that is
+# quietly not there is the shape of defect this was added for.
+TLIMIT=${GOETEIA_TEST_TIMEOUT-180}
+if command -v timeout >/dev/null 2>&1; then CAP="timeout $TLIMIT"
+elif command -v gtimeout >/dev/null 2>&1; then CAP="gtimeout $TLIMIT"
+else
+    CAP=""
+    echo "WARNING: no timeout(1) here -- a hanging test will STALL this run,"
+    echo "         not fail it.  Install coreutils to get the bound back."
+fi
+# 124 is timeout(1)'s own code for "the command outlived the bound".
+timed_out() { [ -n "$CAP" ] && [ "$1" -eq 124 ]; }
+
 run_one() { # wasmfile testfile
     input="${2%.ss}.input"
     if [ -f "$input" ]; then
-        ${NODE-node} $JSPI rt/run.mjs "$1" "$input"
+        $CAP ${NODE-node} $JSPI rt/run.mjs "$1" "$input"
     else
-        ${NODE-node} $JSPI rt/run.mjs "$1"
+        $CAP ${NODE-node} $JSPI rt/run.mjs "$1"
     fi
 }
 run_js() { # jsfile testfile
     input="${2%.ss}.input"
     if [ -f "$input" ]; then
-        ${NODE-node} rt/runjs.mjs "$1" "$input"
+        $CAP ${NODE-node} rt/runjs.mjs "$1" "$input"
     else
-        ${NODE-node} rt/runjs.mjs "$1"
+        $CAP ${NODE-node} rt/runjs.mjs "$1"
     fi
 }
 for t in test/*.ss; do
     want=$(head -1 "$t" | sed 's/^;; expect: //')
-    if ! ./bin/goeteiac "$t" "$T/test.wasm"; then
+    $CAP ./bin/goeteiac "$t" "$T/test.wasm"; ec=$?
+    if timed_out $ec; then
+        echo "TIMEOUT $t (stage0 compile) after ${TLIMIT}s"; fail=1; continue
+    elif [ $ec -ne 0 ]; then
         echo "FAIL $t (stage0 compile error)"; fail=1; continue
     fi
-    got=$(run_one "$T/test.wasm" "$t")
+    got=$(run_one "$T/test.wasm" "$t"); ec=$?
+    if timed_out $ec; then
+        echo "TIMEOUT $t (stage0 run) after ${TLIMIT}s"; fail=1; continue
+    fi
     if [ "$got" = "$want" ]; then
         echo "ok   $t"
     else
@@ -53,7 +82,10 @@ for t in test/*.ss; do
         if ! ${NODE-node} rt/compile.mjs goeteia.wasm "$t" "$T/test1.wasm" 2>/dev/null; then
             echo "FAIL $t (stage1 compile error)"; fail=1; continue
         fi
-        got=$(run_one "$T/test1.wasm" "$t")
+        got=$(run_one "$T/test1.wasm" "$t"); ec=$?
+        if timed_out $ec; then
+            echo "TIMEOUT $t (stage1 run) after ${TLIMIT}s"; fail=1; continue
+        fi
         if [ "$got" = "$want" ]; then
             echo "ok   $t (stage1)"
         else
@@ -68,7 +100,10 @@ for t in test/*.ss; do
     if ! ./bin/goeteiac --js "$t" "$T/test.js"; then
         echo "FAIL $t (js compile error)"; fail=1; continue
     fi
-    got=$(run_js "$T/test.js" "$t")
+    got=$(run_js "$T/test.js" "$t"); ec=$?
+    if timed_out $ec; then
+        echo "TIMEOUT $t (js run) after ${TLIMIT}s"; fail=1; continue
+    fi
     if [ "$got" = "$want" ]; then
         echo "ok   $t (js)"
     else

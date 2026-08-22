@@ -80,6 +80,37 @@
   ;; something the caller can guard, on input that came from outside.
   (define $max-depth 64)
 
+  ;; A LOCAL RESOURCE GUARD, and deliberately not $max-depth.  The two
+  ;; numbers answer different questions and must not be aligned:
+  ;;
+  ;;   $max-depth (64) is a WIRE CONTRACT.  It is the same 64 that
+  ;;   (igropyr json) refuses at, word for word, and changing it means
+  ;;   changing both libraries in one batch.
+  ;;
+  ;;   this one only keeps a recursion off the end of the stack.  It
+  ;;   is not a contract with anybody, and the number that belongs
+  ;;   here is a property of the RUNTIME, so it need not match
+  ;;   igropyr's guard either -- Chez has a deep native stack, we run
+  ;;   on whatever the host gives us.
+  ;;
+  ;; Reusing 64 here was a defect, not a tidiness: the pipeline is
+  ;; read -> wrap -> write, so what the writer sees is always the
+  ;; reader's ceiling PLUS however many levels the application added.
+  ;; Parse a legal 64-deep document, put it under {"result": ...},
+  ;; send it back, and the writer refused at 65 -- on input nothing
+  ;; was wrong with, giving anyone outside a reliable way to make us
+  ;; raise.
+  ;;
+  ;; 1024, measured rather than chosen: with this guard disabled, the
+  ;; writer completed at 3072 and exhausted the stack at 3584 (node,
+  ;; this host, all three container shapes agreeing within a factor).
+  ;; That leaves 16x over the reader's ceiling -- room for any amount
+  ;; of wrapping -- and about 3x under the point where it actually
+  ;; breaks.  The 3x is the part that matters, and it is not slack: a
+  ;; BROWSER stack is typically smaller than node's, so the measured
+  ;; figure is an upper bound on other hosts, not a guarantee.
+  (define $write-guard-depth 1024)
+
   ;; ---- parser -----------------------------------------------------------
 
   ;; One definition each, above both users: the reader refuses a
@@ -547,13 +578,22 @@
   ;;
   ;;   a value that REFERS TO ITSELF has no depth to exceed -- the
   ;;   writer simply followed it until the stack was gone, which is
-  ;;   not a JSON error and not something the caller can guard;
-  ;;   a document nested past the cap is one that BOTH readers -- this
-  ;;   one and (igropyr json) -- will refuse to read back, so emitting
-  ;;   it was only a way to produce a file nobody can open.
+  ;;   not a JSON error and not something the caller can guard.
+  ;;
+  ;; It does NOT stop a circular LIST: that one has a finite depth and
+  ;; an endless SPINE, never reaches this counter, and is answered by
+  ;; `list?` in the prelude.  One word covered both for two rounds.
   ;;
   ;; A counter and not a visited set: one integer on a path that runs
   ;; per element, against a hash lookup that would run there too.
+  ;;
+  ;; Not a reason for this guard, but noticed while arguing about it,
+  ;; and left here because it is real: a document deeper than 64 is
+  ;; one BOTH readers refuse, so we can READ things we cannot safely
+  ;; echo back.  That gap is a wire question to settle with consumers,
+  ;; and this guard must not be mistaken for a fix to it -- turning a
+  ;; response nobody can parse into an exception on our side is not an
+  ;; improvement.
   ;;
   ;; This is a deliberate ONE-SIDED change: (igropyr json)'s writer
   ;; still emits 65 levels.  Refusing to EMIT is unilateral -- see the
@@ -564,8 +604,8 @@
   (define (json->string x) (json->string* x 0))
 
   (define (json->string* x depth)
-    (when (> depth 99999999)
-      (error 'json->string "nesting too deep" $max-depth))
+    (when (> depth $write-guard-depth)
+      (error 'json->string "nesting too deep" $write-guard-depth))
     (cond
      ((eq? x #t) "true")
      ((eq? x #f) "false")

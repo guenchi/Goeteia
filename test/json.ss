@@ -443,18 +443,25 @@
  ;; own unbounded walk is the one under test here
  (write-saying? "not a JSON value"
                 (let ((l (list (cons "a" 1)))) (set-cdr! l l) l))
- (write-ok? (nestv 64))             ; the reader's boundary, exactly
- (write-fails? (nestv 65))
- (write-ok? (nestv-empty 65))       ; and the same free level for []
- (write-fails? (nestv-empty 66))
+ ;; The writer's number is NOT the reader's, and this is the case
+ ;; that says why: parse a legal 64-deep document, put it under one
+ ;; wrapper, write it back.  While the writer shared $max-depth this
+ ;; refused at 65 -- on input nothing was wrong with.  read -> wrap ->
+ ;; write is the ordinary shape of a service, so a guard set at the
+ ;; reader's ceiling is a guard that fires on correct programs.
+ (write-ok? (list (cons "result" (string->json (deep1 64)))))
+ (write-ok? (nestv 1024))           ; $write-guard-depth, exactly
+ (write-fails? (nestv 1025))
+ (write-ok? (nestv-empty 1025))     ; the free level for [] again
+ (write-fails? (nestv-empty 1026))
  ;; Three container shapes reach the writer, and each carries the
  ;; depth on its own line of code: a vector, a plain list, an alist.
  ;; Counting in one of them and not the others reads exactly like
  ;; counting -- from a vector-only table.
- (write-ok? (nestl 64))             ; plain list -> array
- (write-fails? (nestl 65))
- (write-ok? (nesto 64))             ; alist -> object
- (write-fails? (nesto 65))
+ (write-ok? (nestl 1024))           ; plain list -> array
+ (write-fails? (nestl 1025))
+ (write-ok? (nesto 1024))           ; alist -> object
+ (write-fails? (nesto 1025))
  ;; the should-GREEN half: ordinary documents are untouched
  (string=? "[[[1]]]" (json->string (nestv 3)))
 
