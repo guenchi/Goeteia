@@ -563,9 +563,21 @@
   ;; renormalized) and weld into ONE geometry drawn by ONE node with
   ;; the identity transform -- different shapes, one draw.  The
   ;; welded bounding sphere is the conservative hull of the parts
+  ;; "Static" has to mean static in EVERY field the weld bakes in, and
+  ;; the weld bakes the colour in too (it copies f0's rgba into the
+  ;; replacement node and throws the originals away).  Reading only the
+  ;; transform generation let a mesh with a signal-driven colour weld,
+  ;; freeze at whatever colour it had that frame, and never move again
+  ;; -- the effect kept updating a node nothing drew.
+  ;;
+  ;; The colour generation exists because an instance group needed it;
+  ;; this is its second consumer, and it was added to only the first.
+  ;; The two ask different questions -- "did anything in the buffer
+  ;; change" and "can this be baked" -- and the same slot answers both.
   (define ($sgl-static? nd)
     (and (not ($sgl-nd-lod nd))
          (= 0 (vector-ref ($sgl-nd-f nd) 13))
+         (= 0 ($sgl-node-cgen nd))
          (let chain ((gs ($sgl-nd-chain nd)))
            (or (null? gs)
                (and (= 0 (vector-ref (car gs) 7))
@@ -731,12 +743,19 @@
                                 (cons (v3 0.0 0.0 0.0) 1.0)
                                 out-u32?)))
               ($make-sgl-node geo
+                              ;; 15 slots like every other node's: 13 is
+                              ;; the transform generation, 14 the colour
+                              ;; one.  Both zero -- a welded node is
+                              ;; static by construction, and only static
+                              ;; nodes were welded -- but the vector has
+                              ;; to be the same SHAPE, or an accessor
+                              ;; that reads slot 14 finds nothing here.
                               (vector 0.0 0.0 0.0 0.0 0.0 0.0 1.0
                                       (vector-ref f0 7)
                                       (vector-ref f0 8)
                                       (vector-ref f0 9)
                                       (vector-ref f0 10)
-                                      0.0 0.5 0)
+                                      0.0 0.5 0 0)
                               'lit #f
                               (v3 bx by bz) br
                               '() #f

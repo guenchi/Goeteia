@@ -566,6 +566,36 @@
                        (mesh (@ (geometry (sphere 1.0 8 4)) (position 3.0 0.0 0.0)))))
                 (lambda () (signal-set! ca 0.25))) 0)))
 
+;; ---- 7d-2. a reactive colour survives WELDING too ------------------
+;; The colour generation was added to the instance group's cache key and
+;; nowhere else.  Welding asks a different question -- "is this node
+;; static?" -- and answered it from the TRANSFORM generation alone, so a
+;; mesh whose colour is signal-driven counted as static, got baked into
+;; a welded geometry with its colour of the moment, and the node the
+;; effect keeps updating was thrown away.  The colour never changed
+;; again.
+;;
+;; The cases above cannot reach it: they use two IDENTICAL sphere
+;; specs, so instancing takes the nodes before the weld ever sees them.
+;; This one uses two DIFFERENT shapes, which is exactly what welding is
+;; for -- one rule, two consumers, and the fix had gone into one.
+(define wc-log (log-length))
+(define wc-red (signal 0.8))
+(define wc-scene
+  (sgl (camera (@ (fov 0.9) (position 0.0 0.0 6.0) (look-at 0.0 0.0 0.0)))
+       (light (@ (direction 0.0 1.0 0.0) (ambient 0.25)))
+       (mesh (@ (geometry (sphere 1.0 8 4)) (position -1.5 0.0 0.0)
+                (color-r ,(signal-ref wc-red))))
+       (mesh (@ (geometry (box 1.0 1.0 1.0)) (position 1.5 0.0 0.0)))))
+(begin (cmd-begin!) (sgl-draw! wc-scene) (cmd-flush!))
+(define wc-after-1 (log-length))
+(signal-set! wc-red 0.2)
+(begin (cmd-begin!) (sgl-draw! wc-scene) (cmd-flush!))
+(check "a signal-driven colour still moves when the mesh could be welded"
+       (> (log-count-since wc-after-1 "uniform4f:U:u_color:0.2") 0))
+(check "...and the first frame really did send the old value"
+       (> (log-count-since wc-log "uniform4f:U:u_color:0.8") 0))
+
 ;; ---- 7e. sharing a geometry must not make a mesh opaque ------------
 ;; Instancing groups by geometry identity alone, and the translucent
 ;; partition happens later -- so two translucent meshes that happen to
