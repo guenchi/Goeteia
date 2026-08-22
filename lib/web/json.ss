@@ -470,6 +470,32 @@
         (if (or (fl-nan? f) (fl-inf? f)) "null" (number->string f))))
      (else (error 'json->string "JSON numbers must be real" v))))
 
+  ;; Is this list an OBJECT rather than an array of things?
+  ;;
+  ;; The test used to be "a list whose car is a pair", which reads the
+  ;; whole shape off ONE element -- and a list of objects has a pair
+  ;; for its car too, since an object is itself a list of pairs.  So
+  ;; `(json-array->list (string->json "[{\"a\":1}]"))` came back a list
+  ;; whose first element is an alist, was taken for an object whose
+  ;; first KEY is the pair ("a" . 1), and json-escape got a pair where
+  ;; a string belongs: an illegal cast, which is a TRAP -- the caller
+  ;; cannot guard it, the program stops.  The vector spelling of the
+  ;; same data was always fine, so the route was chosen by whichever
+  ;; shape the caller happened to hold.
+  ;;
+  ;; Every element now has to look like a member: a pair whose car is a
+  ;; string or a symbol.  That is what tells `(("a" . 1))` -- an object
+  ;; -- from `((("a" . 1)))` -- an array holding one object -- and it
+  ;; reads the whole list rather than guessing from its head.
+  (define (json-object-shape? x)
+    (and (pair? x)
+         (let loop ((l x))
+           (or (null? l)
+               (and (pair? l)
+                    (pair? (car l))
+                    (let ((k (caar l))) (or (string? k) (symbol? k)))
+                    (loop (cdr l)))))))
+
   (define (json->string x)
     (cond
      ((eq? x #t) "true")
@@ -490,7 +516,7 @@
                        (string-append acc "," (json->string (vector-ref x i)))))))
        "]"))
      ((null? x) "{}")
-     ((and (list? x) (pair? (car x)))              ; alist -> object
+     ((json-object-shape? x)                       ; alist -> object
       (string-append
        "{"
        (fold-right
@@ -514,7 +540,17 @@
               (string-append (json->string v) "," acc)))
         "" x)
        "]"))
-     (else "null")))
+     ;; Anything else is not a JSON value, and saying so beats
+     ;; answering `null`.  It used to answer null -- for a char, a
+     ;; procedure, a bytevector, an improper pair, the unspecified
+     ;; value -- which is the same shape as the infinity that used to
+     ;; be spelled null: a legal value of the WRONG TYPE, indis-
+     ;; tinguishable downstream from a null the caller meant.
+     ;;
+     ;; The symbol `null` is the spelling that means null and has its
+     ;; own clause above; this one is only reached by things that have
+     ;; no JSON reading at all.
+     (else (error 'json->string "not a JSON value" x))))
 
   ;; ---- path access -------------------------------------------------------
 

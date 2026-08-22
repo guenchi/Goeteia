@@ -159,6 +159,58 @@
  ;; ...and it does answer for the thing it is for
  (equal? '(1) (json-array->list (vector 1)))
 
+ ;; ---- a value the writer does not know is not `null` -------------
+ ;; The last clause used to answer "null" for anything unrecognised: a
+ ;; char, a procedure, a bytevector, an improper pair, the unspecified
+ ;; value.  That is the same defect this batch already fixed for
+ ;; infinities -- the writer answering with a legal JSON value of the
+ ;; WRONG TYPE instead of saying it cannot spell this one -- and it is
+ ;; worse here, because `null` is a value the caller might legitimately
+ ;; have meant, so nothing downstream can tell the difference.
+ ;;
+ ;; The symbol `null` still writes null; that is the documented
+ ;; spelling and it goes through its own clause.
+ (let ((refused? (lambda (x) (guard (e (#t #t)) (json->string x) #f))))
+   (and (refused? #\a)
+        (refused? (cons 1 2))              ; a pair that is not an object
+        (refused? car)
+        (refused? (make-bytevector 2 0))
+        (refused? (if #f #f))              ; the unspecified value
+        (refused? (list 1 #\a))            ; and nested, not just bare
+        (refused? (vector #\a))
+        (refused? (list (cons "k" #\a)))
+        ;; ...while the spelling that MEANS null still works
+        (string=? "null" (json->string 'null))
+        (string=? "[null,1]" (json->string (vector 'null 1)))))
+
+ ;; ---- what a plain list is, when its elements are objects --------
+ ;; The writer decides "object or array" from the FIRST element: a list
+ ;; whose car is a pair was taken for an alist.  A list OF objects has
+ ;; a pair for its car too -- each object is itself a list of pairs --
+ ;; so `[{"a":1},{"b":2}]`, taken apart with json-array->list and
+ ;; handed back, was read as an object whose first key is the pair
+ ;; ("a" . 1).  json-escape then got a pair where a string belongs and
+ ;; the runtime TRAPPED: not a raise a caller could guard, the whole
+ ;; program stops.
+ ;;
+ ;; The vector spelling of the same data was always fine, which is why
+ ;; nothing caught it: the route is chosen by the shape the caller
+ ;; happens to hold, and json-array->list hands out the one that broke.
+ (let ((objs (json-array->list (string->json "[{\"a\":1},{\"b\":2}]"))))
+   (and (equal? objs '((("a" . 1)) (("b" . 2))))
+        (string=? "[{\"a\":1},{\"b\":2}]" (json->string objs))
+        ;; and the round trip closes
+        (equal? (string->json (json->string objs)) (list->vector objs))))
+ ;; one object in a list is still an array of one, not that object
+ (string=? "[{\"a\":1}]" (json->string (list (list (cons "a" 1)))))
+ ;; ...while the object itself is still an object
+ (string=? "{\"a\":1}" (json->string (list (cons "a" 1))))
+ ;; symbol keys too, on both sides of the same fork
+ (string=? "{\"a\":1}" (json->string (list (cons 'a 1))))
+ (string=? "[{\"a\":1}]" (json->string (list (list (cons 'a 1)))))
+ ;; a list of arrays, which has a non-pair car and was never in doubt
+ (string=? "[[1],[2]]" (json->string (list (vector 1) (vector 2))))
+
  ;; ---- the writer will not emit bytes that are not UTF-8 ----------
  ;; RFC 8259 section 8.1: JSON text shall be UTF-8.  A Goeteia string
  ;; is a byte string, so a caller can hold one that never was, and the
