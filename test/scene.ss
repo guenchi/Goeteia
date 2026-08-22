@@ -220,15 +220,62 @@
 ;; The count of children has to be one more than the count of
 ;; distances, and that is a property of the scene as written, so it
 ;; is checked where the scene is built.
-(define lod-arity-ok
-  (guard (e (#t #t))
-    (sgl (camera (@ (fov 0.9) (position 0.0 0.0 0.0) (look-at 0.0 0.0 -1.0)
-                    (near 0.1) (far 200.0)))
-         (light (@ (direction 0.0 1.0 0.0) (ambient 1.0)))
-         (lod (@ (switch 10.0 20.0))
-           (mesh (@ (geometry (sphere 1.0 8 4)) (position 0.0 0.0 -40.0)))
-           (mesh (@ (geometry (box 1.0 1.0 1.0)) (position 0.0 0.0 -40.0)))))
+(define (has-sub? hay ndl)
+  (let ((h (string-length hay)) (k (string-length ndl)))
+    (let loop ((i 0))
+      (and (<= (+ i k) h)
+           (or (string=? ndl (substring hay i (+ i k))) (loop (+ i 1)))))))
+;; WHICH refusal, not merely that one happened.  Several of these
+;; inputs used to reach a different guard, or no guard at all, and a
+;; test that accepts any condition cannot tell those apart -- it stays
+;; green while the message sends its reader to the wrong place.
+(define (refused-saying? frag thunk)
+  (guard (e (#t (has-sub? (condition-message e) frag)))
+    (thunk)
     #f))
+(define lod-arity-ok
+  (refused-saying? "one more mesh"
+    (lambda ()
+      (sgl (camera (@ (fov 0.9) (position 0.0 0.0 0.0) (look-at 0.0 0.0 -1.0)
+                      (near 0.1) (far 200.0)))
+           (light (@ (direction 0.0 1.0 0.0) (ambient 1.0)))
+           (lod (@ (switch 10.0 20.0))
+             (mesh (@ (geometry (sphere 1.0 8 4)) (position 0.0 0.0 -40.0)))
+             (mesh (@ (geometry (box 1.0 1.0 1.0)) (position 0.0 0.0 -40.0))))))))
+;; The count above calls every child a mesh, so it must not be the one
+;; that answers a child which is not a mesh: it would report "1 switch,
+;; 1 mesh" about a (group ...) and send its author to fix the count.
+(define lod-kind-ok
+  (refused-saying? "lod children are meshes"
+    (lambda ()
+      (sgl (lod (@ (switch 10.0))
+             (group (@) (mesh (@ (geometry (box 1.0 1.0 1.0))))))))))
+;; A geometry that was GIVEN and is not one must not be reported as
+;; missing, and must not reach the `car` underneath the shape dispatch
+;; -- that stops the runtime instead of raising.
+(define geo-value-ok
+  (and (refused-saying? "needs a shape" (lambda () (sgl (mesh (@ (geometry #f))))))
+       (refused-saying? "needs a shape" (lambda () (sgl (mesh (@ (geometry ()))))))
+       (refused-saying? "mesh needs a geometry"
+                        (lambda () (sgl (mesh (@ (position 1.0 2.0 3.0))))))))
+;; How many values, beside how they read: too few used to fail on a
+;; `caddr` (an illegal cast, unguardable), too many were accepted and
+;; the extras dropped without a word.
+(define arity-ok
+  (and (refused-saying? "takes 3 numbers"
+                        (lambda () (sgl (mesh (@ (geometry (box 1.0 1.0 1.0))
+                                                 (position 1.0 2.0))))))
+       (refused-saying? "takes 3 numbers"
+                        (lambda () (sgl (mesh (@ (geometry (box 1.0 1.0 1.0))
+                                                 (position 1.0 2.0 3.0 999.0))))))
+       (refused-saying? "takes 3 or 4 numbers"
+                        (lambda () (sgl (mesh (@ (geometry (box 1.0 1.0 1.0))
+                                                 (color 1.0 0.0))))))
+       ;; and the should-GREEN half: (color r g b a) is four values on
+       ;; purpose, so a triple check that reached it would be too wide
+       (guard (e (#t #f))
+         (sgl (mesh (@ (geometry (box 1.0 1.0 1.0)) (color 1.0 0.0 0.0 0.5))))
+         #t)))
 ;; the other direction: the right count must still build AND draw,
 ;; or the refusal above could be satisfied by refusing everything
 (define lod-arity-green-ok
@@ -391,4 +438,5 @@
          (< far-at near-at))))                 ; farther drawn before nearer
 
 (and frame1-ok frame2-ok mat-ok cull-ok inst-skip-ok key-ok group1-ok group2-ok
-     lod-near-ok lod-far-ok lod-arity-ok lod-arity-green-ok chunk-ok dirty-ok order-ok weld-ok tr-ok)
+     lod-near-ok lod-far-ok lod-arity-ok lod-arity-green-ok
+     lod-kind-ok geo-value-ok arity-ok chunk-ok dirty-ok order-ok weld-ok tr-ok)

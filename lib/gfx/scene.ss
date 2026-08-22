@@ -320,7 +320,26 @@
     (unless (real? v)
       (error 'sgl (string-append what " needs numbers; " instead) v)))
 
+  ;; How MANY, refused beside how they read.  The number check above
+  ;; walks whatever it is given, so a spelling with too few values
+  ;; passes it and then fails on a `caddr` -- an illegal cast, which
+  ;; the caller cannot guard; one with too many passes it as well, and
+  ;; the extras are dropped without a word.  Neither is what the
+  ;; author wrote, and both are worse than being told the count.
+  (define ($sgl-arity! vals lo hi what)
+    (let ((n (length vals)))
+      (unless (and (<= lo n) (<= n hi))
+        (error 'sgl
+               (string-append
+                what " takes "
+                (if (= lo hi)
+                    (string-append (number->string lo) " numbers")
+                    (string-append (number->string lo) " or "
+                                   (number->string hi) " numbers")))
+               n))))
+
   (define ($sgl-set3! vec idx vals what instead)  ; static triples
+    ($sgl-arity! vals 3 3 what)
     (for-each (lambda (v) ($sgl-number! v what instead)) vals)
     (vector-set! vec idx ($sgl-fl (car vals)))
     (vector-set! vec (+ idx 1) ($sgl-fl (cadr vals)))
@@ -351,6 +370,12 @@
      attrs))
 
   (define ($sgl-geometry spec ds)
+    ;; `(car spec)` below decides which shape this is, so a spec that
+    ;; is not a pair has to be refused BEFORE it, or the dispatch
+    ;; stops the runtime on an illegal cast where a named error was
+    ;; the whole point of the clause underneath it.
+    (unless (or ($sgl-d? spec) (pair? spec))
+      (error 'sgl "a (geometry ...) needs a shape or an injected mesh" spec))
     (if ($sgl-d? spec)
         ((list-ref ds (cdr spec)))      ; injected mesh, built once
         (case (car spec)
@@ -371,7 +396,7 @@
         (error 'sgl "one material per mesh" (list cur want))))
 
   (define ($sgl-mesh attrs ds chain cache lod)
-    (let ((gspec #f) (mat 'lit) (tex #f)
+    (let ((gspec #f) (given #f) (mat 'lit) (tex #f)
           ;; slot 13: the transform generation matrix caches watch.
           ;; slot 14: the COLOUR generation, counted separately -- a
           ;; colour does not move the model matrix, so bumping 13 for it
@@ -390,7 +415,12 @@
       (for-each
        (lambda (a)
          (case (car a)
-           ((geometry) (set! gspec (cadr a)))
+           ;; `given` and not `gspec`: a mesh written with
+           ;; (geometry #f) DID say geometry, and telling its author
+           ;; the attribute is missing sends them to look for the
+           ;; thing they are holding.  The value is judged separately,
+           ;; by $sgl-geometry.
+           ((geometry) (set! given #t) (set! gspec (cadr a)))
            ((texture) (set! mat ($sgl-mat! mat 'tex))
                       (set! tex ($sgl-once (cadr a) ds)))
            ((metallic) (set! mat ($sgl-mat! mat 'pbr))
@@ -401,7 +431,14 @@
                                    "use position-x / position-y / position-z"))
            ((rotation) ($sgl-set3! f 3 (cdr a) "(rotation x y z)"
                                    "use rotation-x / rotation-y / rotation-z"))
-           ((color) ($sgl-set3! f 7 (cdr a) "(color r g b)"
+           ;; (color ...) is not a triple, it is a triple with an
+           ;; optional fourth, so the count is bounded here and only
+           ;; the three that ARE a triple go to $sgl-set3! -- which
+           ;; refuses anything that is not exactly three, and should
+           ;; keep doing so for every other caller.
+           ((color) ($sgl-arity! (cdr a) 3 4 "(color r g b [a])")
+                    ($sgl-set3! f 7 (list (cadr a) (caddr a) (cadddr a))
+                                "(color r g b)"
                                 "use color-r / color-g / color-b")
                     (unless (null? (cdddr (cdr a)))
                       ;; the fourth component has its own path, and had
@@ -430,7 +467,7 @@
                       (when ($sgl-d? (cadr a)) (vector-set! f 15 1.0)))
            (else (error 'sgl "unknown mesh attribute" (car a)))))
        attrs)
-      (unless gspec (error 'sgl "mesh needs a geometry"))
+      (unless given (error 'sgl "mesh needs a geometry"))
       (let* ((geo ($sgl-geo! gspec (eq? mat 'tex) ds cache))
              (bounds (vector-ref geo 8)))
         ($make-sgl-node geo f mat tex
@@ -570,6 +607,20 @@
                   ;; the same reason.  Both are properties of the
                   ;; scene as written, so they are refused here,
                   ;; where the author is still holding the form.
+                  ;; KINDS before COUNT, and the order is the whole
+                  ;; point: the count below calls every child a mesh,
+                  ;; so asking it first about `(lod (@ (switch d))
+                  ;; (group ...))` answers "1 switch, 1 mesh" -- a
+                  ;; sentence in which the only wrong word is the one
+                  ;; the author needs.  Satisfying that count with a
+                  ;; second group then walks into the kind refusal
+                  ;; anyway, so the first message costs a round trip
+                  ;; and points the wrong way.
+                  (for-each
+                   (lambda (k)
+                     (unless (eq? (car k) 'mesh)
+                       (error 'sgl "lod children are meshes" (car k))))
+                   kids)
                   (let ((nk (length kids)) (nsw (length sw)))
                     (unless (= nk (+ nsw 1))
                       (error 'sgl
