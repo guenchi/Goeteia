@@ -132,6 +132,21 @@ done
 #                does not hide the others.  Said out loud rather than
 #                left blank, because a blank reads as "not classified"
 #                and this is a positive fact about the runner.
+#
+# GATE MODE REACHES ONLY TWO OF THESE, and that is correct rather than
+# a hole: it hands over the whole gate log, so
+#
+#   `answered #f` can never match -- the last line of a gate log is the
+#   runner's own summary line, not any suite's answer;
+#   `DIED` can never match -- there is no single suite's stderr to pass,
+#   so the second argument is empty.
+#
+# Measured on a green gate log: none of the RAISED keywords appears, so
+# the remaining branch does not fire spuriously either.  Leaving gate
+# mode with no label is deliberate -- NO LABEL IS BETTER THAN A WRONG
+# ONE -- and the repair anyone reaches for first (letting the log's
+# last line stand in for a suite's answer) would make the label lie in
+# exactly the runs where it matters.
 classify() {  # stdout stderr [mjs]
     _out="$1"; _err="$2"; _mode="$3"
     if [ "$_mode" = mjs ]; then

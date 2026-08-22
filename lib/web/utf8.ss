@@ -72,12 +72,32 @@
                                   (- (b2 2) 128))))
                        (and (>= cp 2048) (not (and (>= cp 55296) (< cp 57344)))))
                      (loop (+ i 3))))
+               ;; 245 and the codepoint ceiling below SHADOW EACH OTHER.
+               ;; For a lead byte of 245..247 the codepoint works out
+               ;; above 1114111, so the ceiling refuses those sequences
+               ;; even with this bound gone -- and the bound refuses
+               ;; them even with the ceiling raised.
+               ;;
+               ;; What that means if you are here to change it: RELAX
+               ;; THIS BOUND ALONE AND NO TEST WILL GO RED.  Measured,
+               ;; both directions, one at a time and then together --
+               ;; only the pair mutated at once turns
+               ;; "0xF5..0xFF are never lead bytes" (test/sexpr-limits.ss)
+               ;; red.  A green suite is not evidence that this line is
+               ;; unused; it is evidence that the other one is still
+               ;; there.
                ((< b 245)
                 (and (cont 1) (cont 2) (cont 3)
                      (let ((cp (+ (* (- b 240) 262144)
                                   (* (- (b2 1) 128) 4096)
                                   (* (- (b2 2) 128) 64)
                                   (- (b2 3) 128))))
+                       ;; the ceiling half of the pair described at
+                       ;; the `(< b 245)` line above: RELAX 1114111
+                       ;; ALONE AND NO TEST WILL GO RED either, because
+                       ;; that bound still refuses every lead byte that
+                       ;; could reach past it.  Both have to move
+                       ;; before anything notices.
                        (and (>= cp 65536) (<= cp 1114111)))
                      (loop (+ i 4))))
                (else #f)))))))
