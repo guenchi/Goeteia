@@ -484,6 +484,33 @@
             (= 1 (log-count-since pbr-log "uniform1f:U:u_roughness"))
             (= 0 (log-count-since pbr-log "uniform4f:U:u_color"))))
 
+;; ---- 7c. a mirrored mesh is still inside the frustum ---------------
+;; A radius has no sign and a scale does.  The culling bound used to be
+;; the node's bound times its scale PRODUCT, so `(scale -10.0)` gave a
+;; radius of -17.3, and the frustum test -- which asks whether the
+;; centre is within r of each plane -- then demanded the centre be 17.3
+;; INSIDE every plane.  A mirrored mesh vanished.  Mirroring by a
+;; negative scale is an ordinary thing to do, and nothing anywhere drew
+;; a node with one.
+;;
+;; The three magnitudes matter: at -1.0 the mesh still draws (the
+;; camera is far enough that even a demand of 1.7 is met), which is why
+;; a small negative scale is not a test.  The case has to be one where
+;; the wrong sign changes the answer.
+(define (draws-of sc)
+  (let ((b (draw-count)))
+    (cmd-begin!) (sgl-draw! sc) (cmd-flush!)
+    (- (draw-count) b)))
+(define (scaled-box k)
+  (sgl (camera (@ (fov 0.9) (position 0.0 0.0 6.0) (look-at 0.0 0.0 0.0)))
+       (light (@ (direction 0.0 1.0 0.0) (ambient 0.25)))
+       (mesh (@ (geometry (box 2 2 2)) (color 1.0 0.0 0.0) (scale ,k)))))
+(check "a mesh scaled +10 draws" (= 1 (draws-of (scaled-box 10.0))))
+(check "and so does the same mesh scaled -10"
+       (= 1 (draws-of (scaled-box -10.0))))
+(check "...and -1.0, which would pass even with the sign bug"
+       (= 1 (draws-of (scaled-box -1.0))))
+
 ;; ---- 8. the instanced path, at u32 --------------------------------
 ;; Instancing groups nodes by geo IDENTITY, and an injected mesh gets a
 ;; fresh geo every time -- so every node above was ineligible and the

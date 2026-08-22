@@ -133,6 +133,23 @@
   ;; geometry, shared: nodes with the SAME literal spec point at one
   ;; of these -- one upload, and the key instancing groups by.
   ;; #(vbuf ibuf vbase ibase vbytes ibytes icount uploaded? bounds u32?)
+  ;; How much a node's transform chain scales its bounding RADIUS.
+  ;; A radius has no sign, and a scale does: mirroring a mesh with a
+  ;; negative scale is ordinary, and multiplying the bound by it gave a
+  ;; NEGATIVE radius.  The frustum test then asks for the centre to be
+  ;; at least |r| INSIDE every plane instead of within r of it, so a
+  ;; mirrored mesh vanishes -- `(scale -10.0)` on a box at the origin,
+  ;; seen from six units away, is culled at the near plane while
+  ;; `(scale 10.0)` draws.
+  ;;
+  ;; Three call sites computed this product separately (the single
+  ;; node, the weld group, the instance group).  One place now, because
+  ;; three places is three places for the sign to come back.
+  (define ($sgl-cull-scale f chain)
+    (let ((k (fold-left (lambda (acc gf) (fl* acc (vector-ref gf 6)))
+                        (vector-ref f 6) chain)))
+      (if (fl<? k 0.0) (fl- 0.0 k) k)))
+
   (define ($sgl-geo-vbuf g) (vector-ref g 0))
   (define ($sgl-geo-ibuf g) (vector-ref g 1))
   (define ($sgl-geo-icount g) (vector-ref g 6))
@@ -659,11 +676,8 @@
                         (lambda (r nd)
                           (let* ((m ($sgl-node-model nd))
                                  (bc ($sgl-nd-bc nd))
-                                 (s (fold-left
-                                     (lambda (a gf)
-                                       (fl* a (vector-ref gf 6)))
-                                     (vector-ref ($sgl-nd-f nd) 6)
-                                     ($sgl-nd-chain nd)))
+                                 (s ($sgl-cull-scale ($sgl-nd-f nd)
+                                                     ($sgl-nd-chain nd)))
                                  (px (fl+ (fl+ (fl* (vector-ref m 0)
                                                     (v3-x bc))
                                                (fl* (vector-ref m 4)
@@ -815,9 +829,7 @@
                                  (m4-mul acc ($sgl-trs gf)))
                                (m4-identity) ($sgl-nd-chain nd))
                     ($sgl-trs f)))
-        ($sgl-nd-cscale!
-         nd (fold-left (lambda (acc gf) (fl* acc (vector-ref gf 6)))
-                       (vector-ref f 6) ($sgl-nd-chain nd)))
+        ($sgl-nd-cscale! nd ($sgl-cull-scale f ($sgl-nd-chain nd)))
         ($sgl-nd-cgen! nd gen))))
 
   (define ($sgl-draw-node*! prog vp planes nd)
@@ -1026,11 +1038,7 @@
                                            (%mem-f32-ref (+ ctr 8)))
                             (%mem-f32-set!
                              (+ cb 76)
-                             (fl* (fold-left
-                                   (lambda (acc gf)
-                                     (fl* acc (vector-ref gf 6)))
-                                   (vector-ref f 6)
-                                   ($sgl-nd-chain nd))
+                             (fl* ($sgl-cull-scale f ($sgl-nd-chain nd))
                                   ($sgl-nd-br nd)))
                             ($sgl-nd-cgen! nd gen))
                           ;; the cull's SoA reads straight off caches
