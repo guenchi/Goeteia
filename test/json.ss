@@ -9,6 +9,12 @@
     (string->json s)
     #f))
 (define (near? v x) (and (< (- x 0.000001) v) (< v (+ x 0.000001))))
+(define (parse-ok? s) (guard (e (#t #f)) (string->json s) #t))
+(define (rep n t)
+  (let loop ((i 0) (acc "")) (if (= i n) acc (loop (+ i 1) (string-append acc t)))))
+(define (deep n) (string-append (rep n "[") (rep n "]")))
+(define (deep1 n) (string-append (rep n "[") "1" (rep n "]")))
+(define (deep-obj n) (string-append (rep n "{\"k\":") "1" (rep n "}")))
 
 (and
  ;; scalars
@@ -362,6 +368,32 @@
  ;; and the two characters that must be escaped from outside the range
  (string=? "\"\\\"\"" (json->string "\""))
  (string=? "\"\\\\\"" (json->string "\\"))
+
+ ;; ---- nesting depth ----------------------------------------------
+ ;; RFC 8259 section 9 lets a parser set a maximum depth of nesting,
+ ;; and (igropyr json) sets it at 64 with "nesting too deep".  This
+ ;; reader was ported from that one and the limit did not come across,
+ ;; so the two disagreed twice over: it ACCEPTED texts igropyr refuses,
+ ;; and past a few thousand it stopped the runtime on a stack the
+ ;; caller cannot guard -- on input that arrives from outside.  The
+ ;; limit is back, and it is the same number, because a pair of
+ ;; readers that answer differently about one text is the thing this
+ ;; port exists not to be.
+ ;; The boundary is not one number, and the shape of the innermost
+ ;; container decides which: an EMPTY array is answered by the `]`
+ ;; test at the top of parse-array, which returns before it ever
+ ;; recurses, so it costs nothing and sits one level past the others.
+ ;; That asymmetry is igropyr's too -- the two parsers are the same
+ ;; shape -- so it is written down here rather than smoothed out.
+ ;; Smoothing it out on one side is how the pair splits.
+ (parse-ok? (deep1 64))             ; innermost holds a value: 64 in
+ (parse-fails? (deep1 65))          ;                           65 out
+ (parse-ok? (deep-obj 64))          ; objects: the same boundary
+ (parse-fails? (deep-obj 65))
+ (parse-ok? (deep 65))              ; innermost is []: one deeper, free
+ (parse-fails? (deep 66))
+ (parse-fails? (deep1 200))
+ (parse-fails? (deep1 5000))        ; and nowhere near a stack
 
  ;; ---- numbers past the flonum range ------------------------------
  ;; These used to be ACCEPTED, and the value they produced was an

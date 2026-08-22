@@ -72,6 +72,13 @@
   ;; file-controlled exponent must never drive an unbounded bignum pow10.
   (define $max-number-digits 4096)
   (define $max-exponent 400)
+  ;; The same 64 (igropyr json) uses, and the same refusal, because a
+  ;; text one of the two readers accepts and the other refuses is the
+  ;; thing this port exists not to produce.  RFC 8259 section 9 grants
+  ;; the limit explicitly.  Without it a nested text does not fail --
+  ;; it exhausts the stack, which is not a JSON error and not
+  ;; something the caller can guard, on input that came from outside.
+  (define $max-depth 64)
 
   ;; ---- parser -----------------------------------------------------------
 
@@ -93,13 +100,14 @@
         (if (and (< i n) (char=? (string-ref s i) ch))
             (+ i 1)
             (jfail (string-append "expected " (string ch)) i)))
-      (define (parse-value i)
+      (define (parse-value i depth)
+        (when (> depth $max-depth) (jfail "nesting too deep" i))
         (let ((i (skip-ws i)))
           (when (>= i n) (jfail "unexpected end of input" i))
           (let ((ch (string-ref s i)))
             (cond
-             ((char=? ch #\{) (parse-object (+ i 1)))
-             ((char=? ch #\[) (parse-array (+ i 1)))
+             ((char=? ch #\{) (parse-object (+ i 1) (+ depth 1)))
+             ((char=? ch #\[) (parse-array (+ i 1) (+ depth 1)))
              ((char=? ch #\") (parse-string (+ i 1)))
              ((char=? ch #\t) (parse-literal i "true" #t))
              ((char=? ch #\f) (parse-literal i "false" #f))
@@ -111,7 +119,7 @@
           (if (and (<= end n) (string=? (substring s i end) word))
               (values value end)
               (jfail "bad literal" i))))
-      (define (parse-object i)
+      (define (parse-object i depth)
         (let ((i (skip-ws i)))
           (if (and (< i n) (char=? (string-ref s i) #\}))
               (values '() (+ i 1))
@@ -121,7 +129,7 @@
                     (jfail "expected object key" i))
                   (let-values (((key i) (parse-string (+ i 1))))
                     (let ((i (expect #\: (skip-ws i))))
-                      (let-values (((val i) (parse-value i)))
+                      (let-values (((val i) (parse-value i depth)))
                         (let ((i (skip-ws i)))
                           (cond
                            ((and (< i n) (char=? (string-ref s i) #\,))
@@ -130,12 +138,12 @@
                             (values (reverse (cons (cons key val) acc))
                                     (+ i 1)))
                            (else (jfail "expected , or } in object" i))))))))))))
-      (define (parse-array i)
+      (define (parse-array i depth)
         (let ((i (skip-ws i)))
           (if (and (< i n) (char=? (string-ref s i) #\]))
               (values (vector) (+ i 1))
               (let loop ((i i) (acc '()))
-                (let-values (((val i) (parse-value i)))
+                (let-values (((val i) (parse-value i depth)))
                   (let ((i (skip-ws i)))
                     (cond
                      ((and (< i n) (char=? (string-ref s i) #\,))
@@ -432,7 +440,7 @@
                                  (if neg (- ip) ip))))
                       (values v j))))))))
       ;; top level: one value, then only whitespace
-      (let-values (((v end) (parse-value 0)))
+      (let-values (((v end) (parse-value 0 0)))
         (unless (= (skip-ws end) n) (jfail "trailing characters" end))
         v)))
 
