@@ -256,7 +256,14 @@
    "o.v_n = nw.xyz; return o; } "
    "@fragment fn fs(vin : VOut) -> @location(0) vec4f { "
    "var goe_out : vec4f; "
-   "var l : vec3f = normalize(vec3f(0.50, 0.80, 0.40)); "
+   ;; 0.5 rather than 0.50: this path used to render (fl ...) with a
+   ;; copy of its own that padded to two digits and never stripped the
+   ;; trailing zero.  The copy is gone -- one renderer now serves both
+   ;; backends -- so the text matches what GLSL emits.  The values did
+   ;; not change here; what did change, and what that copy got wrong,
+   ;; was (fl 0 2037 5): the width argument was ignored on this path
+   ;; and honoured on the other, ten times apart.
+   "var l : vec3f = normalize(vec3f(0.5, 0.8, 0.4)); "
    "var d : f32 = max(dot(normalize(vin.v_n), l), 0.0); "
    "var base : vec3f = vec3f(0.95, 0.45, 0.35); "
    "goe_out = vec4f((base * (0.25 + (0.75 * d))), 1.0); "

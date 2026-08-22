@@ -17,8 +17,24 @@
     "void main() { x = 0.5; } ")
  (t (glsl->string '((define (main) void (set! x (fl 1 25)))))
     "void main() { x = 1.25; } ")
+ ;; A single-digit fraction is that digit, not that digit in the
+ ;; hundredths place.  The default width used to be 2, so this line
+ ;; read 0.05 -- the one shape where the rule contradicted the way the
+ ;; form reads, and three documents carried a warning about it.
+ ;;
+ ;; BOTH spellings are here on purpose.  With only the first, a change
+ ;; that dropped padding altogether would look correct; with only the
+ ;; second, one that ignored the width argument would.  "Changed it"
+ ;; and "changed too much of it" are different mistakes and need
+ ;; different rows.
  (t (glsl->string '((define (main) void (set! x (fl 0 5)))))
+    "void main() { x = 0.5; } ")
+ (t (glsl->string '((define (main) void (set! x (fl 0 5 2)))))
     "void main() { x = 0.05; } ")
+ ;; a zero fraction: strip-trailing-zeros must leave the digit alone
+ ;; rather than emit the illegal "0." -- measured, both rules
+ (t (glsl->string '((define (main) void (set! x (fl 0 0)))))
+    "void main() { x = 0.0; } ")
  ;; a width third argument keeps leading zeros Scheme would drop:
  ;; 2037 padded to 5 is the fraction 02037
  (t (glsl->string '((define (main) void (set! x (fl 0 2037 5)))))

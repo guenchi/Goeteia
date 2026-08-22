@@ -155,14 +155,34 @@ if [ "$TARGET" = gate ]; then
         echo "✅ RED (ok=$N/$M) <- ${named:-unnamed failure}$RL_NOTE"
     fi
 else
-    s=${TARGET%.ss}
-    ( cd "$W/t" && rm -f __m.wasm && ./bin/goeteiac "test/$s.ss" __m.wasm >/dev/null 2>&1 ) || true
-    [ -f "$W/t/__m.wasm" ] || { echo "⛔ the mutant does not compile — no reading$RL_NOTE"; exit 0; }
-    ( cd "$W/t" && timeout 400 ${NODE-node} rt/run.mjs __m.wasm > "$W/one.log" 2>&1 ) || true
-    n=$(grep -ciE '✗|FAIL' "$W/one.log" || true)
-    if [ "$n" -gt 0 ]; then
-        echo "✅ RED (test/$s.ss only — 1 suite, NOT the gate) <- $(grep -iE '✗|FAIL' "$W/one.log" | head -1)$RL_NOTE"
+    s=${TARGET%.ss}; s=${s%.mjs}
+    if [ -f "$W/t/test/$s.mjs" ]; then
+        # a .mjs suite reports through node:test, so the failing
+        # assertion's own message is what comes back
+        # The oracle here is node --test's exit status, not a word in
+        # its output -- same reason as the .ss branch below.
+        if ( cd "$W/t" && timeout 600 ${NODE-node} --test "test/$s.mjs" > "$W/one.log" 2>&1 ); then n=0; else n=1; fi
+        s="$s.mjs"
     else
-        echo "🟢 GREEN (test/$s.ss only — 1 suite, NOT the gate; the gate may still notice)$RL_NOTE"
+        ( cd "$W/t" && rm -f __m.wasm && ./bin/goeteiac "test/$s.ss" __m.wasm >/dev/null 2>&1 ) || true
+        [ -f "$W/t/__m.wasm" ] || { echo "⛔ the mutant does not compile — no reading$RL_NOTE"; exit 0; }
+        ( cd "$W/t" && timeout 400 ${NODE-node} rt/run.mjs __m.wasm > "$W/one.log" 2>&1 ) || true
+        # The oracle is the file's own `;; expect:` line, the same one
+        # run-tests.sh holds it to.  Scanning the output for the word
+        # FAIL is NOT the oracle: plenty of .ss suites answer with a
+        # bare #f and say nothing else, and this tool reported those as
+        # GREEN -- a verdict weaker than the gate's, which is the one
+        # thing a mutation tool must never be.
+        want=$(head -1 "$W/t/test/$s.ss" | sed 's/^;; expect: //')
+        got=$(cat "$W/one.log")
+        if [ "$got" = "$want" ]; then n=0; else n=1; fi
+        s="$s.ss"
+    fi
+    if [ "$n" -gt 0 ]; then
+        detail=$(grep -iE '✗|FAIL|AssertionError' "$W/one.log" | head -1 | cut -c1-90)
+        [ -n "$detail" ] || detail="want '$(head -1 "$W/t/test/${s%.mjs}" 2>/dev/null | sed 's/^;; expect: //')', got '$(head -c 60 "$W/one.log")'"
+        echo "✅ RED (test/$s only — 1 suite, NOT the gate) <- $detail$RL_NOTE"
+    else
+        echo "🟢 GREEN (test/$s only — 1 suite, NOT the gate; the gate may still notice)$RL_NOTE"
     fi
 fi

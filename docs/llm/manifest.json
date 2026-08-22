@@ -25,7 +25,7 @@
   "files": [
     {
       "path": "core.md",
-      "bytes": 9191,
+      "bytes": 9177,
       "budget": 9216,
       "layer": 0,
       "role": "always inject: the browser-half page shape and its two hosts, the (web dom) vocabulary, import sets, the DO/DONT table"
@@ -136,12 +136,12 @@
     },
     {
       "path": "t4-shader.md",
-      "bytes": 4851,
+      "bytes": 4956,
       "budget": 6144,
       "layer": 4,
       "name": "shader",
       "example": "examples/t4.ss",
-      "example_bytes": 3547,
+      "example_bytes": 3574,
       "for": [
         "a shadertoy-style effect",
         "a procedural background",
@@ -226,7 +226,7 @@
         "core.md",
         "t1-static.md"
       ],
-      "bytes": 13013
+      "bytes": 12999
     },
     {
       "task": "page with state, controls or forms",
@@ -235,7 +235,7 @@
         "t1-static.md",
         "t2-interactive.md"
       ],
-      "bytes": 16721
+      "bytes": 16707
     },
     {
       "task": "3D scene or model viewer",
@@ -244,7 +244,7 @@
         "t1-static.md",
         "t3-mesh3d.md"
       ],
-      "bytes": 17671
+      "bytes": 17657
     },
     {
       "task": "shader effect / procedural visuals",
@@ -252,7 +252,7 @@
         "core.md",
         "t4-shader.md"
       ],
-      "bytes": 14042
+      "bytes": 14133
     },
     {
       "task": "a rig, an orrery, or several controllable degrees of freedom",
@@ -262,7 +262,7 @@
         "t3-mesh3d.md",
         "t5-animated.md"
       ],
-      "bytes": 22403
+      "bytes": 22389
     },
     {
       "task": "unknown, or a page mixing several of the above",
@@ -274,7 +274,7 @@
         "t4-shader.md",
         "t5-animated.md"
       ],
-      "bytes": 31076
+      "bytes": 31167
     }
   ],
   "verification": {

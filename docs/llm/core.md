@@ -144,10 +144,10 @@ digits after the point, **padded to a minimum of two**: `(em 1 20)` =
 
 **Shaders** — `docs/limits.md` §2, `docs/graphics.md` §2.
 
-- `(fl W F)` shares that rule and the same trap: `(fl 0 50)` = `0.5`,
-  `(fl 0 5)` = **`0.05`**, `(fl 2)` = `2.0`, `(fl 0 625)` = `0.625`.
-  A third argument states a width: `(fl 0 2037 5)` = `0.02037`. A
-  string passes through verbatim.
+- `(fl W F)`'s fraction is the digits as written: `(fl 0 5)` = `0.5`,
+  `(fl 2)` = `2.0`, `(fl 0 625)` = `0.625`. A third argument is a
+  minimum width, left-padded: `(fl 0 5 2)` = `0.05`. A string passes
+  through verbatim.
 - A function is `(define (name (T arg) ...) RET stmt ...)`; statements
   are `local` / `set!` / `return` / `discard` / `if` / `if-else` /
   `for`. Arithmetic is **binary**: nest, don't vary.

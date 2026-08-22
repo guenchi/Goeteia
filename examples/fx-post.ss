@@ -21,7 +21,7 @@
      (define (main) void
        (local vec2 uv (/ gl_FragCoord.xy u_resolution))
        (local vec2 warped
-              (vec2 (+ uv.x (* (fl 0 4) (/ (sin (+ (* uv.y (fl 40))
+              (vec2 (+ uv.x (* (fl 0 4 2) (/ (sin (+ (* uv.y (fl 40))
                                                    (* u_time (fl 3))))
                                            (fl 100))))
                     uv.y))

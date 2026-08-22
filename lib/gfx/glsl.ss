@@ -31,9 +31,12 @@
 ;;   (discard)
 ;; Expressions:
 ;;   symbols pass through verbatim (p, gl_Position, v.xy);
-;;   exact integers as themselves; (fl W [F]) is a float literal with
-;;   the fraction in hundredths ((fl 2)="2.0", (fl 0 50)="0.5") -- no
-;;   Scheme flonums, so no printer noise;
+;;   exact integers as themselves; (fl W F [width]) is a float literal
+;;   -- (fl 2)="2.0", (fl 0 5)="0.5", (fl 1 2345)="1.2345".  `width` is
+;;   a MINIMUM, left-padded with zeros, and defaults to F's own digit
+;;   count; give it when you want a leading zero Scheme would drop:
+;;   (fl 0 5 2)="0.05", (fl 0 2037 5)="0.02037".  No Scheme flonums, so
+;;   no printer noise;
 ;;   (+ - * /) are infix, (- x) negates; (< > <= >= ==) compare;
 ;;   anything else (vec4 sin dot mix ...) is a call.
 ;;
@@ -46,7 +49,8 @@
 (library (gfx glsl)
   (export glsl->string glsl-attributes glsl-uniforms glsl-varyings
           glsl-uniform-blocks glsl-check
-          glsl300-vs->string glsl300-fs->string)
+          glsl300-vs->string glsl300-fs->string
+          fl-literal->string)          ; (gfx wgsl) renders (fl ...) with it
   (import (rnrs))
 
   (define (join parts sep)
@@ -60,15 +64,43 @@
       (if (and (> i 1) (char=? (string-ref s (- i 1)) #\0))
           (loop (- i 1))
           (substring s 0 i))))
-  ;; a fraction's digits, leading-zero-padded to `width' (default 2)
-  ;; then trailing-zeros stripped.  Scheme drops a literal's leading
-  ;; zeros, so a third (fl) argument states the intended width: 2037
-  ;; with width 5 is the fraction 02037, i.e. .02037
+  ;; a fraction's digits, leading-zero-padded to `width' then
+  ;; trailing-zeros stripped.  Scheme drops a literal's leading zeros,
+  ;; so a third (fl) argument states the intended width: 2037 with
+  ;; width 5 is the fraction 02037, i.e. .02037
   (define (frac->glsl f width)
     (let loop ((s (number->string f)))
       (if (< (string-length s) width)
           (loop (string-append "0" s))
           (strip-trailing-zeros s))))
+
+  ;; ONE renderer for (fl W F [width]), and both backends call it.
+  ;; There used to be a second copy in (gfx wgsl), which ignored the
+  ;; width argument entirely: `(fl 0 2037 5)` rendered 0.02037 through
+  ;; GLSL and 0.2037 through WGSL -- the same shader source, a factor
+  ;; of ten apart, on two devices.  Two implementations of one notation
+  ;; is the thing that made that possible, so there is now one.
+  ;;
+  ;; The width is a MINIMUM, padded on the left with zeros, and it
+  ;; defaults to however many digits F itself has.  So (fl 0 5) is 0.5
+  ;; and (fl 0 05) cannot be written -- Scheme has already dropped that
+  ;; leading zero before this code sees it -- which is what the third
+  ;; argument is for: (fl 0 5 2) is 0.05.
+  ;;
+  ;; It used to default to 2, and that rule was wrong in exactly one
+  ;; shape: a single-digit fraction.  (fl 0 5) meaning 0.05 reads
+  ;; backwards to everyone who has not memorised the rule, and the
+  ;; evidence that it read backwards is that three documents carried a
+  ;; warning about it.  A notation that needs to be warned about in
+  ;; three places is arguing with itself.
+  (define (fl-literal->string e)
+    (string-append
+     (number->string (cadr e)) "."
+     (if (null? (cddr e)) "0"
+         (frac->glsl (caddr e)
+                     (if (pair? (cdddr e))
+                         (cadddr e)
+                         (string-length (number->string (caddr e))))))))
 
   (define (expr->glsl e)
     (cond
@@ -78,15 +110,8 @@
      ((pair? e)
       (let ((h (car e)))
         (cond
-         ;; float literal: (fl 2) -> 2.0, (fl 0 50) -> 0.5,
-         ;; (fl 1 25) -> 1.25; a width (fl 0 2037 5) -> 0.02037 keeps
-         ;; leading zeros Scheme would drop
-         ((eq? h 'fl)
-          (string-append (number->string (cadr e)) "."
-                         (if (null? (cddr e)) "0"
-                             (frac->glsl (caddr e)
-                                         (if (pair? (cdddr e))
-                                             (cadddr e) 2)))))
+         ;; float literal -- see fl-literal->string
+         ((eq? h 'fl) (fl-literal->string e))
          ;; unary minus
          ((and (eq? h '-) (null? (cddr e)))
           (string-append "(-" (expr->glsl (cadr e)) ")"))

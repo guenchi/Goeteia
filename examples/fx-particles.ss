@@ -22,7 +22,7 @@
      (varying vec2 v_c)
      (varying float v_life)
      (define (main) void
-       (local float size (+ (fl 0 4) (* (fl 0 12) (- (fl 1) i_life))))
+       (local float size (+ (fl 0 4 2) (* (fl 0 12) (- (fl 1) i_life))))
        (local vec3 wp (+ i_pos
                          (* (+ (* u_right a_corner.x)
                                (* u_up a_corner.y))
@@ -37,7 +37,7 @@
        (local float d (max (- (fl 1) (length v_c)) (fl 0)))
        ;; white-hot at birth, ember-orange at death
        (local vec3 hot (vec3 (fl 1) (fl 0 95) (fl 0 80)))
-       (local vec3 cool (vec3 (fl 0 90) (fl 0 30) (fl 0 5)))
+       (local vec3 cool (vec3 (fl 0 90) (fl 0 30) (fl 0 5 2)))
        (set! gl_FragColor
              (vec4 (* (mix cool hot v_life) (* d (* d v_life)))
                    (fl 1)))))))

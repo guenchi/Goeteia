@@ -45,7 +45,12 @@
      "@fragment fn fs(vin : VOut) -> @location(0) vec4f { "
      "var goe_out : vec4f; "
      "var d : f32 = max(dot(normalize(vin.v_n), "
-     "vec3f(0.50, 0.80, 0.40)), 0.0); "
+     ;; 0.5 not 0.50: (fl ...) is rendered by one function now, shared
+     ;; with the GLSL path, and it strips a trailing zero.  This file
+     ;; and test/wgsl-reserved.ss both pinned the old spelling, and
+     ;; only the gate found the second one -- running the two suites I
+     ;; happened to think of was not the same as running the set.
+     "vec3f(0.5, 0.8, 0.4)), 0.0); "
      "goe_out = vec4f(d, d, d, 1.0); return goe_out; } "))
  ;; the layout: stride and formats off the attribute declarations
  (equal? (wgsl-layout vs) '(24 . "float32x3,float32x3"))

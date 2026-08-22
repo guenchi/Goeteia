@@ -8,10 +8,11 @@
 (fx-init! (get-element-by-id "c"))
 
 ;; (fl W F) is a float literal whose F is the digits after the point,
-;; padded to a minimum of TWO: (fl 2) -> "2.0", (fl 0 50) -> "0.5",
-;; and (fl 0 5) -> "0.05", NOT 0.5.  More digits give more precision
-;; -- (fl 0 625) -> "0.625" -- and a third argument states an
-;; intended width: (fl 0 2037 5) -> "0.02037".  A string passes
+;; exactly as written: (fl 2) -> "2.0", (fl 0 5) -> "0.5", and
+;; (fl 0 625) -> "0.625".  Scheme drops a leading zero before this
+;; code sees it, so a third argument gives a minimum width and the
+;; padding it implies: (fl 0 5 2) -> "0.05", (fl 0 2037 5) ->
+;; "0.02037".  A string passes
 ;; through verbatim: "0.4545".  There are no Scheme flonums in shader
 ;; forms, and no exponent syntax.
 ;;

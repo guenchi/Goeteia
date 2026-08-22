@@ -87,12 +87,12 @@
      (else x)))
 
   ;; ---- expressions: the glsl grammar, WGSL spellings ----
-  (define ($wgsl-fl whole frac)         ; (fl 2) / (fl 0 50) literals
-    (string-append (number->string whole) "."
-                   (if (= frac 0)
-                       "0"
-                       (let ((s (number->string frac)))
-                         (if (< frac 10) (string-append "0" s) s)))))
+  ;; (fl ...) is rendered by (gfx glsl)'s fl-literal->string, not by a
+  ;; copy here.  The copy that used to live at this spot ignored the
+  ;; width argument, so `(fl 0 2037 5)` came out 0.02037 on the GLSL
+  ;; path and 0.2037 on this one -- one shader source, a factor of ten
+  ;; apart, and nothing to say so.  A notation with two renderers has
+  ;; no single answer to what it means.
 
   (define ($wgsl-expr e)
     (cond
@@ -102,8 +102,7 @@
      ((pair? e)
       (let ((op (car e)))
         (cond
-         ((eq? op 'fl)
-          ($wgsl-fl (cadr e) (if (null? (cddr e)) 0 (caddr e))))
+         ((eq? op 'fl) (fl-literal->string e))
          ((and (eq? op '-) (null? (cddr e)))
           (string-append "(-" ($wgsl-expr (cadr e)) ")"))
          ((memq op '(+ - * /))
