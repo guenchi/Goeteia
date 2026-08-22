@@ -42,6 +42,37 @@
 #          mutated tree.  Without it the tool cannot tell a mutation
 #          that changed behaviour from one that only changed bytes.
 #
+#          The check is one-sided, and the direction matters.  A GREEN
+#          reading is worthless if the mutation was inert -- nothing
+#          could have noticed, because nothing happened -- so the probe
+#          protects greens.  A RED reading needs no such protection: a
+#          mutation that changed no behaviour cannot make any test
+#          answer differently, so red is immune to this class by
+#          construction.
+#
+#          What the probe CANNOT say is "inert".  It says "inert for
+#          this input", and there are two quite different reasons for
+#          that, which look identical from here:
+#
+#            the mutation reaches nothing -- a dead branch, or a
+#            condition already implied by its neighbours; or
+#            the claim is held REDUNDANTLY, and the gate you removed
+#            was not the one holding it.
+#
+#          Measured example of the second: "0xF5..0xFF are never lead
+#          bytes" survives removing the `b < 245` bound (the codepoint
+#          ceiling rejects those sequences anyway) AND survives raising
+#          the codepoint ceiling (the byte bound rejects them anyway).
+#          Only relaxing both turns it red.  So an INERT reading is not
+#          evidence that a name is empty -- it is a question: is there a
+#          second gate?  Answer it by mutating the conjunction, not by
+#          concluding.
+#
+#          Either way the report reads like "no reading", so choosing an
+#          input the mutation should reach is the operator's judgement,
+#          and a wrong choice suppresses a real reading rather than
+#          producing a false one.
+#
 # GOETEIA_RASTERLIB: run-tests.sh finds the Python reference by walking
 # up to ../10/, which a worktree under /tmp cannot do.  Set this to the
 # path of rasterlib.py to keep the gate's full width; when it is not
@@ -98,7 +129,7 @@ if [ -n "$PROBE" ]; then
         echo "⛔ PROBE FAILED to build or run — no reading$RL_NOTE"; exit 0
     fi
     if [ "$before" = "$after" ]; then
-        echo "⛔ INERT — the file changed but the probe still answers '$after'; this mutation tests nothing$RL_NOTE"
+        echo "⛔ INERT FOR THIS PROBE — the file changed and the probe still answers '$after'. Not evidence the claim is unpinned: the gate you removed may not be the one holding it. Mutate the conjunction before concluding$RL_NOTE"
         exit 0
     fi
 fi
