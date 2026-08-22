@@ -211,6 +211,40 @@
   (and (= (- (count-log hi-tag) hi-before) 1)   ; still just the near one
        (= (- (count-log lo-tag) lo-before) 1)))
 
+;; ---- a lod with more switches than it has levels for -------------
+;; (switch d1 d2) means three levels; the selector returns "how many
+;; thresholds the eye has passed", so past d2 it asks for level 2.
+;; With only two children there is no level 2, and every child's
+;; membership test fails -- the object does not fall back to the
+;; coarsest level, it stops drawing entirely and nothing says so.
+;; The count of children has to be one more than the count of
+;; distances, and that is a property of the scene as written, so it
+;; is checked where the scene is built.
+(define lod-arity-ok
+  (guard (e (#t #t))
+    (sgl (camera (@ (fov 0.9) (position 0.0 0.0 0.0) (look-at 0.0 0.0 -1.0)
+                    (near 0.1) (far 200.0)))
+         (light (@ (direction 0.0 1.0 0.0) (ambient 1.0)))
+         (lod (@ (switch 10.0 20.0))
+           (mesh (@ (geometry (sphere 1.0 8 4)) (position 0.0 0.0 -40.0)))
+           (mesh (@ (geometry (box 1.0 1.0 1.0)) (position 0.0 0.0 -40.0)))))
+    #f))
+;; the other direction: the right count must still build AND draw,
+;; or the refusal above could be satisfied by refusing everything
+(define lod-arity-green-ok
+  (let ((before (count-log "drawElements")))
+    (cmd-begin!)
+    (sgl-draw!
+     (sgl (camera (@ (fov 0.9) (position 0.0 0.0 0.0) (look-at 0.0 0.0 -1.0)
+                     (near 0.1) (far 200.0)))
+          (light (@ (direction 0.0 1.0 0.0) (ambient 1.0)))
+          (lod (@ (switch 10.0 20.0))
+            (mesh (@ (geometry (sphere 1.0 8 4)) (position 0.0 0.0 -40.0)))
+            (mesh (@ (geometry (box 1.0 1.0 1.0)) (position 0.0 0.0 -40.0)))
+            (mesh (@ (geometry (box 2.0 2.0 2.0)) (position 0.0 0.0 -40.0))))))
+    (cmd-flush!)
+    (= 1 (- (count-log "drawElements") before))))
+
 ;; ---- the batched cull across chunks: seven instances, the 2nd,
 ;; 5th and 6th out past the far plane -- culled lanes pack down
 ;; within their chunk of four and across the chunk boundary, so one
@@ -357,4 +391,4 @@
          (< far-at near-at))))                 ; farther drawn before nearer
 
 (and frame1-ok frame2-ok mat-ok cull-ok inst-skip-ok key-ok group1-ok group2-ok
-     lod-near-ok lod-far-ok chunk-ok dirty-ok order-ok weld-ok tr-ok)
+     lod-near-ok lod-far-ok lod-arity-ok lod-arity-green-ok chunk-ok dirty-ok order-ok weld-ok tr-ok)

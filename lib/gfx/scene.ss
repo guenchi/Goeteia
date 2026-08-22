@@ -558,6 +558,25 @@
                                     (cdr (car as)))
                                    (map $sgl-fl (cdr (car as))))
                                   (else (find (cdr as)))))))
+                  ;; (switch d1 ... dn) names n thresholds, so it
+                  ;; describes n+1 levels, and the selector returns
+                  ;; "how many thresholds the eye has passed" -- a
+                  ;; number in 0..n.  A child draws when its index
+                  ;; equals that number, so with fewer children than
+                  ;; n+1 the far levels select nothing: the object
+                  ;; does not degrade to the coarsest mesh, it
+                  ;; disappears, silently, only past a distance.
+                  ;; Extra children beyond n+1 are unreachable for
+                  ;; the same reason.  Both are properties of the
+                  ;; scene as written, so they are refused here,
+                  ;; where the author is still holding the form.
+                  (let ((nk (length kids)) (nsw (length sw)))
+                    (unless (= nk (+ nsw 1))
+                      (error 'sgl
+                             (string-append
+                              "lod needs one more mesh than it has switch "
+                              "distances; (switch d1 ... dn) names n+1 levels")
+                             (list 'switches nsw 'meshes nk))))
                   (let level ((ks kids) (i 0) (first #f))
                     (if (pair? ks)
                         (let* ((k (car ks))
@@ -867,6 +886,18 @@
                           (append (reverse members) acc))))
                   '() groups)
                  out)
+                ;; The key is RGB *and* alpha, and the alpha half is
+                ;; load-bearing beyond "same color": members with a
+                ;; translucent alpha weld too, and the welded node then
+                ;; takes ONE place in the blended pass's depth sort
+                ;; where its members held several.  That costs nothing
+                ;; only because they share an alpha -- blending
+                ;; a*C + (1-a)*dst with one C and one a gives the same
+                ;; pixel in either order, and the blended pass writes
+                ;; no depth.  Widen this key to RGB alone, or to
+                ;; "close enough" colors, and welded translucent
+                ;; surfaces start compositing in vertex order instead
+                ;; of depth order, with nothing to report it.
                 (let* ((f ($sgl-nd-f (car ns)))
                        (key (list (vector-ref f 7) (vector-ref f 8)
                                   (vector-ref f 9) (vector-ref f 10)))
