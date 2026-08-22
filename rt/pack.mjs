@@ -516,8 +516,17 @@ export async function selfCheck(sourceFile, opts = {}) {
 // CLI
 // ---------------------------------------------------------------- //
 
+// The options this command has, in one place.  runPack reads this to
+// decide what it accepts and to tell a caller what it could have
+// written -- so the help text and the accepted set cannot drift apart,
+// which is the usual way "--wdith" ends up silently ignored.
+export const PACK_FLAGS = ['script', 'selfcheck'];
+export const PACK_VALUED = ['title', 'width', 'height'];
+
 export const PACK_USAGE = `Usage: goeteia pack <file.ss> <out.html> [options]
   --title <T>    the page title (default: the source's base name)
+  --width <N>    canvas width in pixels (default 800)
+  --height <N>   canvas height in pixels (default 600)
   --script       compile with -O0 (faster, for quick feedback)
   --selfcheck    after packing, take the module back out of the page and
                  prove it behaves identically; out.html may be omitted
@@ -538,9 +547,10 @@ export async function runPack(argv) {
     const pos = [];
     for (let i = 0; i < argv.length; i++) {
         const a = argv[i];
-        if (a === '--selfcheck' || a === '--script') args[a.slice(2)] = true;
-        else if (a === '--help' || a === '-h') { console.log(PACK_USAGE); return 0; }
-        else if (a.startsWith('--')) {
+        if (a === '--help' || a === '-h') { console.log(PACK_USAGE); return 0; }
+        else if (a.startsWith('--') && PACK_FLAGS.includes(a.slice(2)))
+            args[a.slice(2)] = true;
+        else if (a.startsWith('--') && PACK_VALUED.includes(a.slice(2))) {
             const v = argv[++i];
             if (v === undefined) {
                 console.error(`goeteia pack: ${a} needs a value\n${PACK_USAGE}`);
@@ -548,11 +558,56 @@ export async function runPack(argv) {
             }
             args[a.slice(2)] = v;
         }
+        // An option we do not know used to be accepted and then
+        // dropped: `--wdith 320` packed happily at 800 wide and said
+        // nothing.  Refusing is only half of it -- the message has to
+        // name the word that was refused and list what could have been
+        // written instead, because the person reading it has just made
+        // a typo and the answer is one line away.
+        else if (a.startsWith('--')) {
+            console.error(
+                `goeteia pack: unknown option ${a}\n`
+                + `  known options: `
+                + [...PACK_FLAGS, ...PACK_VALUED].map(f => '--' + f).join(' ')
+                + ' --help\n' + PACK_USAGE);
+            return 2;
+        }
         else pos.push(a);
     }
     if (!pos[0] || (!pos[1] && !args.selfcheck)) { console.error(PACK_USAGE); return 2; }
-    const opts = { script: !!args.script, title: args.title };
+    // The dimensions reach renderPage, which checks them.  They used to
+    // be parsed here and then left out of this object, so the value a
+    // caller typed never arrived and neither did the refusal for a bad
+    // one -- a check in the library that the entry point walks past is
+    // worse than no check, because it reads as protection.
+    const size = (name) => {
+        if (args[name] === undefined) return undefined;
+        const v = Number(args[name]);
+        if (!Number.isInteger(v)) {
+            console.error(`goeteia pack: --${name} takes a whole number, `
+                          + `not ${JSON.stringify(args[name])}`);
+            return 'bad';
+        }
+        return v;
+    };
+    const width = size('width'), height = size('height');
+    if (width === 'bad' || height === 'bad') return 2;
+    const opts = { script: !!args.script, title: args.title, width, height };
 
+    // renderPage refuses a size that is not a size, and it does so by
+    // throwing.  Caught here so the caller reads a sentence instead of
+    // a stack trace -- the RULE stays in one place (renderPage owns
+    // what a size is; repeating the bounds here would be a second
+    // copy of it to drift), and this only decides how to say it.
+    try {
+        return await runPacking(pos, args, opts);
+    } catch (e) {
+        console.error(`goeteia pack: ${e.message}`);
+        return 2;
+    }
+}
+
+async function runPacking(pos, args, opts) {
     if (args.selfcheck) {
         const r = await selfCheck(pos[0], { ...opts, outFile: pos[1] || null });
         for (const c of r.checks) console.log(`  ${c.ok ? 'ok  ' : 'FAIL'} ${c.detail}`);

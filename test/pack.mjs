@@ -26,7 +26,10 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { extractWasm, externalRefs, judgePage, packageFile, renderPage, selfCheck } from '../rt/pack.mjs';
+import { extractWasm, externalRefs, judgePage, packageFile, PACK_FLAGS, PACK_VALUED,
+         renderPage, runPack, selfCheck } from '../rt/pack.mjs';
+import { scenario } from '../rt/verify.mjs';
+import { PACK_USAGE as PACK_USAGE_TEXT } from '../rt/pack.mjs';
 
 const PAGES = path.resolve(
     path.dirname(fileURLToPath(import.meta.url)), 'pages');
@@ -190,13 +193,16 @@ test('a packaged page has the approved shape, byte for byte', () => {
         'the page shape changed; if that was intended, update '
         + 'test/pages/golden-shell.html in this same commit');
 
-    // ...and the slot really is where the payload goes, so that the
-    // comparison above is over the whole page and not over a page with
-    // an arbitrary hole in it
-    const real = renderPage(Buffer.from([1, 2, 3]), { title: 'golden', width: 800, height: 600 });
-    assert.notEqual(real, golden, 'the golden must not match a page with a payload in it');
-    assert.equal(blankPayload(real), golden, 'blanking only the payload restores the shape');
-    assert.equal(golden.split(PAYLOAD_SLOT).length - 1, 1, 'exactly one slot');
+    // Three assertions used to sit here claiming to prove "the slot
+    // really is where the payload goes". They did not: delete `${b64}`
+    // from the payload element and all three stay green -- blankPayload
+    // puts the placeholder into the now-empty element, an unblanked
+    // page still differs from a placeholder-bearing golden, and the
+    // golden still holds one slot. Removed rather than repaired: what
+    // they were reaching for is already held by the `payload` check in
+    // selfCheck, which compares the extracted bytes against the
+    // compiled module, and three green lines that prove nothing are
+    // worse than none -- they read as coverage.
 });
 
 const titleOf = html => html.match(/<title>([\s\S]*?)<\/title>/)[1];
@@ -237,23 +243,35 @@ test('a title is escaped on the way into the page', () => {
 // Materials that pass every check, so each case below can spoil
 // exactly one of them and see exactly one id go false. The judge is a
 // pure function of these; selfCheck gathers them from the world.
-const goodMaterials = () => {
-    const wasm = Buffer.from([0, 97, 115, 109]);
-    const html = renderPage(wasm, { title: 'x', width: 800, height: 600 });
-    return {
-        shipped: html, rendered: html, wasm, back: Buffer.from(wasm),
-        // shaped as verify.mjs's signature() reads a trace (frames,
-        // warm, postDom), not as a stand-in of our own invention: a
-        // made-up shape would test the judge against a trace the real
-        // gatherer never produces
-        direct: { ok: true, frames: ['f1'], warm: 0, postDom: '<div/>' },
-        embedded: { ok: true, frames: ['f1'], warm: 0, postDom: '<div/>' },
-        onDisk: true, syntax: { ok: true, stderr: '' },
-    };
+//
+// THE TRACES COME FROM A REAL RUN. An earlier version built them by
+// hand, shaped after what `signature()` reads -- frames, warm,
+// postDom -- and that is the judge's appetite, not the world's shape:
+// a real `scenario()` returns arrays of GL-event arrays and three warm
+// frames, and nothing shaped like `frames: ['f1']` can come out of the
+// gatherer. Cases built on it would have been proving things about a
+// world that does not exist. This runs the page once and reuses what
+// came back, so every case below starts from materials the gatherer
+// really could produce.
+let REAL = null;
+const realMaterials = async () => {
+    if (!REAL) {
+        const p = await packageFile(page('static.ss'), null, {});
+        assert.equal(p.ok, true, 'the fixture page must compile');
+        const html = p.html;
+        const trace = await scenario(p.wasm);
+        assert.equal(trace.ok, true, 'and it must run');
+        REAL = { shipped: html, rendered: html, wasm: p.wasm,
+                 back: extractWasm(html), direct: trace, embedded: trace,
+                 onDisk: true, syntax: { ok: true, stderr: '' } };
+    }
+    return { ...REAL };
 };
 const verdict = (m, id) => judgePage(m).find(c => c.id === id);
 
-test('each self-check mechanism fails on the thing it is about', () => {
+test('each self-check mechanism fails on the thing it is about', async () => {
+    const base = await realMaterials();
+    const goodMaterials = () => ({ ...base });
     // WHY THIS EXISTS. The ordered id list one test up proves only that
     // no mechanism was DELETED. Four of them had nothing proving they
     // still measured anything: replace `shipped === rendered` with
@@ -276,7 +294,12 @@ test('each self-check mechanism fails on the thing it is about', () => {
     assert.equal(verdict(goodMaterials(), 'same-trace').ok, true);
     assert.equal(
         verdict({ ...goodMaterials(),
-                  embedded: { ok: true, frames: ['f2'], warm: 0, postDom: '<div/>' } },
+                  // a real trace with one more frame than the other:
+                  // still a trace the gatherer could produce, just not
+                  // the same one
+                  embedded: { ...base.embedded,
+                              frames: [...base.embedded.frames,
+                                       base.embedded.frames[0]] } },
                 'same-trace').ok,
         false, 'two different frame streams must fail same-trace');
 
@@ -311,6 +334,38 @@ test('each self-check mechanism fails on the thing it is about', () => {
     // with no file on disk there is no on-disk verdict at all -- the
     // member is absent, not passing
     assert.equal(verdict({ ...goodMaterials(), onDisk: false }, 'on-disk'), undefined);
+});
+
+test('the command line carries the options it advertises', async () => {
+    // `--width 320` used to be parsed and then dropped on the floor:
+    // the page came out 800 wide and nothing said otherwise. A check
+    // that lives in the library while the entry point walks past it is
+    // worse than no check -- it reads as protection.
+    const out = path.join(tmp, 'cli.html');
+    assert.equal(await runPack([page('static.ss'), out, '--width', '320',
+                                '--height', '240']), 0);
+    assert.match(fs.readFileSync(out, 'utf8'), /width="320" height="240"/);
+
+    // a bad size is refused as a sentence, not a stack trace, and the
+    // rule stays in renderPage -- these only check that it is reported
+    for (const [args, why] of [
+        [['--width', '0'], 'zero'],
+        [['--width', '40000'], 'past the bound'],
+        [['--height', '-1'], 'negative'],
+        [['--width', 'abc'], 'not a number at all'],
+        [['--width', '1.5'], 'not a whole number'],
+    ])
+        assert.equal(await runPack([page('static.ss'), out, ...args]), 2, why);
+
+    // an option nobody has must not be swallowed, and the message has
+    // to name it -- the reader has just made a typo
+    assert.equal(await runPack([page('static.ss'), out, '--wdith', '320']), 2);
+
+    // the advertised set and the accepted set are one list, so the
+    // help text cannot drift away from what is taken
+    for (const f of [...PACK_FLAGS, ...PACK_VALUED])
+        assert.match(PACK_USAGE_TEXT, new RegExp(`--${f}\\b`),
+            `--${f} is accepted but not documented`);
 });
 
 test('the canvas dimensions are checked, not escaped', () => {
