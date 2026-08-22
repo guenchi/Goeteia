@@ -511,6 +511,95 @@
 (check "...and -1.0, which would pass even with the sign bug"
        (= 1 (draws-of (scaled-box -1.0))))
 
+;; ---- 7d. what an instance group's cache key has to cover ----------
+;; The group redraws from cache when "nothing moved", and what it means
+;; by that is the sum of the nodes' TRANSFORM generations.  The buffer
+;; it is reusing holds more than transforms: it holds the per-instance
+;; RGBA too.  A colour hole deliberately does not bump the transform
+;; generation -- colour does not move the model matrix and bumping it
+;; would rebuild one for nothing -- so a signal-driven colour changed,
+;; the key did not, and the group redrew last frame's colours forever.
+;;
+;; Of the eleven per-instance dynamic fields (seven transform, four
+;; colour) the cases above drive the seven; these drive the four.
+(define (colour-hole-frames make-scene change!)
+  (let ((sc (make-scene)))
+    (cmd-begin!) (sgl-draw! sc) (cmd-flush!)
+    (let ((before (log-length)))
+      (change!)
+      (cmd-begin!) (sgl-draw! sc) (cmd-flush!)
+      (buffer-uploads-since before))))
+
+(define cr (signal 1.0))
+(define cg (signal 1.0))
+(define cb (signal 1.0))
+(define ca (signal 1.0))
+(check "a changed instance colour repacks the group (r)"
+       (> (colour-hole-frames
+           (lambda ()
+             (sgl (camera (@ (fov 0.9) (position 0.0 0.0 6.0) (look-at 0.0 0.0 0.0)))
+                  (light (@ (direction 0.0 1.0 0.0) (ambient 0.25)))
+                  (mesh (@ (geometry (sphere 1.0 8 4)) (color-r ,(signal-ref cr))))
+                  (mesh (@ (geometry (sphere 1.0 8 4)) (position 3.0 0.0 0.0)))))
+           (lambda () (signal-set! cr 0.25)))
+          0))
+(check "...and g, b, a, which are separate holes"
+       (and (> (colour-hole-frames
+                (lambda ()
+                  (sgl (camera (@ (fov 0.9) (position 0.0 0.0 6.0) (look-at 0.0 0.0 0.0)))
+                       (light (@ (direction 0.0 1.0 0.0) (ambient 0.25)))
+                       (mesh (@ (geometry (sphere 1.0 8 4)) (color-g ,(signal-ref cg))))
+                       (mesh (@ (geometry (sphere 1.0 8 4)) (position 3.0 0.0 0.0)))))
+                (lambda () (signal-set! cg 0.25))) 0)
+            (> (colour-hole-frames
+                (lambda ()
+                  (sgl (camera (@ (fov 0.9) (position 0.0 0.0 6.0) (look-at 0.0 0.0 0.0)))
+                       (light (@ (direction 0.0 1.0 0.0) (ambient 0.25)))
+                       (mesh (@ (geometry (sphere 1.0 8 4)) (color-b ,(signal-ref cb))))
+                       (mesh (@ (geometry (sphere 1.0 8 4)) (position 3.0 0.0 0.0)))))
+                (lambda () (signal-set! cb 0.25))) 0)
+            (> (colour-hole-frames
+                (lambda ()
+                  (sgl (camera (@ (fov 0.9) (position 0.0 0.0 6.0) (look-at 0.0 0.0 0.0)))
+                       (light (@ (direction 0.0 1.0 0.0) (ambient 0.25)))
+                       (mesh (@ (geometry (sphere 1.0 8 4)) (color-a ,(signal-ref ca))))
+                       (mesh (@ (geometry (sphere 1.0 8 4)) (position 3.0 0.0 0.0)))))
+                (lambda () (signal-set! ca 0.25))) 0)))
+
+;; ---- 7e. sharing a geometry must not make a mesh opaque ------------
+;; Instancing groups by geometry identity alone, and the translucent
+;; partition happens later -- so two translucent meshes that happen to
+;; share a literal spec took the instanced pass, which never turns
+;; blending on.  The user-visible rule was "adding a second identical
+;; mesh makes the first one opaque", which nobody could guess.
+(define (blend-of make-scene)
+  (let ((before (log-length)))
+    (cmd-begin!) (sgl-draw! (make-scene)) (cmd-flush!)
+    (log-count-since before "gEnable:BL")))
+(check "one translucent mesh blends"
+       (= 1 (blend-of (lambda ()
+              (sgl (camera (@ (fov 0.9) (position 0.0 0.0 6.0) (look-at 0.0 0.0 0.0)))
+                   (light (@ (direction 0.0 1.0 0.0) (ambient 0.25)))
+                   (mesh (@ (geometry (sphere 1.0 8 4)) (color 1.0 0.0 0.0 0.5))))))))
+(check "and two of them sharing one geometry still blend"
+       (= 1 (blend-of (lambda ()
+              (sgl (camera (@ (fov 0.9) (position 0.0 0.0 6.0) (look-at 0.0 0.0 0.0)))
+                   (light (@ (direction 0.0 1.0 0.0) (ambient 0.25)))
+                   (mesh (@ (geometry (sphere 1.0 8 4)) (color 1.0 0.0 0.0 0.5)))
+                   (mesh (@ (geometry (sphere 1.0 8 4)) (position 3.0 0.0 0.0)
+                            (color 1.0 0.0 0.0 0.5))))))))
+(check "an opaque pair sharing one geometry is still instanced"
+       (let ((d (draw-count)))
+         (cmd-begin!)
+         (sgl-draw! (sgl (camera (@ (fov 0.9) (position 0.0 0.0 6.0)
+                                    (look-at 0.0 0.0 0.0)))
+                         (light (@ (direction 0.0 1.0 0.0) (ambient 0.25)))
+                         (mesh (@ (geometry (sphere 1.0 8 4)) (color 1.0 0.0 0.0)))
+                         (mesh (@ (geometry (sphere 1.0 8 4)) (position 3.0 0.0 0.0)
+                                  (color 1.0 0.0 0.0)))))
+         (cmd-flush!)
+         (= 2 (draw-inst d))))
+
 ;; ---- 8. the instanced path, at u32 --------------------------------
 ;; Instancing groups nodes by geo IDENTITY, and an injected mesh gets a
 ;; fresh geo every time -- so every node above was ineligible and the
