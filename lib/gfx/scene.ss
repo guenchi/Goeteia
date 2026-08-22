@@ -220,6 +220,13 @@
   ;; the same node.  Colour is per node, so there is no chain to fold.
   (define ($sgl-node-cgen nd) (vector-ref ($sgl-nd-f nd) 14))
 
+  ;; A node's LOD generation: how many times the container it belongs to
+  ;; has changed level.  Zero for a node with no lod, and monotone, so it
+  ;; can be summed with the other two.
+  (define ($sgl-node-lgen nd)
+    (let ((l ($sgl-nd-lod nd)))
+      (if l (vector-ref (car l) 1) 0)))
+
   ;; ---- the Env block: frame globals, uploaded once ----
   ;; std140: mat4 at 0, vec3 u_light at 64 with u_ambient packed in
   ;; its fourth float (76), vec3 u_eye at 80 -- 96 bytes.  Shaders
@@ -533,7 +540,12 @@
                ((lod)
                 ;; children are detail levels of one thing: distance
                 ;; under (switch d1 d2 ...) picks which one draws
-                (let ((cell (vector 0))
+                ;; #(chosen-level generation).  The generation is
+                ;; what an instance group's cache key watches: WHICH
+                ;; members it packs can change while every transform
+                ;; and colour generation stands still, because the
+                ;; level that becomes active may itself be static.
+                (let ((cell (vector 0 0))
                       (sw (let find ((as attrs))
                             (cond ((null? as)
                                    (error 'sgl "lod needs (switch ...)"))
@@ -1124,7 +1136,8 @@
            ;; a sum of both stands still exactly when every one of them
            ;; does -- which is what "nothing moved" has to mean here.
            (gen (fold-left (lambda (a nd) (+ a ($sgl-node-gen nd)
-                                             ($sgl-node-cgen nd)))
+                                             ($sgl-node-cgen nd)
+                                             ($sgl-node-lgen nd)))
                            0 (vector-ref ig 1)))
            ;; issue the draw; upload the packed instances only when the
            ;; set was recomputed (up? = #t), else the buffer still holds
@@ -1233,6 +1246,12 @@
            (aspect (fl/ ($sgl-fl (fx-width)) ($sgl-fl (fx-height))))
            (eye (v3 (vector-ref cam 3) (vector-ref cam 4)
                     (vector-ref cam 5)))
+           ;; where the camera looks, unit length: the blended pass
+           ;; orders by depth along this, not by distance from eye
+           (fwd (v3-normalize
+                 (v3-sub (v3 (vector-ref cam 6) (vector-ref cam 7)
+                             (vector-ref cam 8))
+                         eye)))
            (vp (m4-mul
                 (m4-perspective (vector-ref cam 0) aspect
                                 (vector-ref cam 1) (vector-ref cam 2))
@@ -1271,11 +1290,19 @@
                   (dz (fl- (%mem-f32-ref (+ at 56)) (v3-z eye)))
                   (d (flsqrt (fl+ (fl* dx dx)
                                   (fl+ (fl* dy dy) (fl* dz dz))))))
-             (vector-set! (vector-ref lg 0) 0
-                          (let walk ((sw (vector-ref lg 1)) (i 0))
-                            (cond ((null? sw) i)
-                                  ((fl<? d (car sw)) i)
-                                  (else (walk (cdr sw) (+ i 1)))))))))
+             (let ((cell (vector-ref lg 0))
+                   (pick (let walk ((sw (vector-ref lg 1)) (i 0))
+                           (cond ((null? sw) i)
+                                 ((fl<? d (car sw)) i)
+                                 (else (walk (cdr sw) (+ i 1)))))))
+               ;; only a CHANGE bumps the generation, so a still scene
+               ;; keeps its cached instance sets -- the counter has to
+               ;; be monotone for the group key's sum to mean "nothing
+               ;; moved", and it only goes up when the level really
+               ;; switches.
+               (unless (= pick (vector-ref cell 0))
+                 (vector-set! cell 0 pick)
+                 (vector-set! cell 1 (+ 1 (vector-ref cell 1))))))))
        ($sgl-lgroups sc))
       ;; instanced groups first: one draw per shared geometry.
       ;; the light, ambient and vp all ride the Env block now
@@ -1290,12 +1317,12 @@
       ;; translucent ones (color alpha < 1) into tr for the blended
       ;; pass that follows
       (let ((tr (list '())))
-        ($sgl-group! ($sgl-prog sc) ($sgl-lits sc) vp planes eye
+        ($sgl-group! ($sgl-prog sc) ($sgl-lits sc) vp planes eye fwd
                      (lambda (p) #f) tr)
-        ($sgl-group! ($sgl-tprog sc) ($sgl-texs sc) vp planes eye
+        ($sgl-group! ($sgl-tprog sc) ($sgl-texs sc) vp planes eye fwd
                      (lambda (p)
                        (fx-uniform! p 'u_tex 0)) tr)
-        ($sgl-group! ($sgl-pprog sc) ($sgl-pbrs sc) vp planes eye
+        ($sgl-group! ($sgl-pprog sc) ($sgl-pbrs sc) vp planes eye fwd
                      (lambda (p)
                        (let ((probe ($sgl-probe sc)))
                          (cmd-bind-cubemap! 0 (vector-ref probe 0))
@@ -1359,11 +1386,12 @@
   ;; for the later back-to-front blended pass
   (define ($sgl-nd-alpha nd) (vector-ref ($sgl-nd-f nd) 10))
 
-  (define ($sgl-group! prog nodes vp planes eye setup! tr)
+  (define ($sgl-group! prog nodes vp planes eye fwd setup! tr)
     (when (pair? nodes)
       (cmd-use-program! (fx-program-slot prog))
       (setup! prog)
-      (let ((ex (v3-x eye)) (ey (v3-y eye)) (ez (v3-z eye)))
+      (let ((ex (v3-x eye)) (ey (v3-y eye)) (ez (v3-z eye))
+            (fx (v3-x fwd)) (fy (v3-y fwd)) (fz (v3-z fwd)))
         (for-each
          (lambda (k) ($sgl-draw-node*! prog vp planes (cdr k)))
          ($sgl-sort
@@ -1376,8 +1404,15 @@
                           (dx (fl- (vector-ref m 12) ex))
                           (dy (fl- (vector-ref m 13) ey))
                           (dz (fl- (vector-ref m 14) ez))
-                          (d2 (fl+ (fl* dx dx)
-                                   (fl+ (fl* dy dy) (fl* dz dz))))
+                          ;; DEPTH along the view direction, not the
+                          ;; distance from the eye.  Back-to-front means
+                          ;; farthest along where the camera looks; the
+                          ;; two agree only on the axis, and a node far
+                          ;; off to the side is radially distant while
+                          ;; being nearer in depth -- it was drawn
+                          ;; first, which is the wrong end.
+                          (d2 (fl+ (fl* dx fx)
+                                   (fl+ (fl* dy fy) (fl* dz fz))))
                           (tx ($sgl-nd-tex nd)))
                      (if (fl<? ($sgl-nd-alpha nd) 1.0)
                          ;; defer: (dist prog setup . nd)

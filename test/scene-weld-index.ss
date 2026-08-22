@@ -805,6 +805,120 @@
               (light (@ (direction 0.0 1.0 0.0) (ambient 0.25)))
               (mesh (@ (geometry ,(mesh-sphere 1.0 8 4))))))))
 
+;; ---- 7g. an instance group's key must cover LOD membership ---------
+;; Third time for this shape: the group redraws from cache when
+;; "nothing moved", and what it counts as moving is the camera plus its
+;; members' transform and colour generations.  WHICH members are drawn
+;; is a fourth thing -- a level of a lod is packed only while it is the
+;; active one -- and it can change while all three of those stand still,
+;; because the level that becomes active may itself be static.
+;;
+;; The scene below has a lod whose far level is a box, and a plain box
+;; elsewhere: the two share a geometry, so they form an instance group.
+;; While the near level is active the group holds one instance.  Moving
+;; the lod's probe past the switch makes the far box active -- and its
+;; position is a literal, so no generation moved, so the group replayed
+;; its one-instance count and THE OBJECT DISAPPEARED.
+(define lod-z (signal 0.0))
+(define lod-scene
+  (sgl (camera (@ (fov 0.9) (position 0.0 0.0 6.0) (look-at 0.0 0.0 0.0)
+                  (far 100.0)))
+       (light (@ (direction 0.0 1.0 0.0) (ambient 0.25)))
+       (lod (@ (switch 15.0))
+            (mesh (@ (geometry (sphere 1.0 10 5))
+                     (position-z ,(signal-ref lod-z))))
+            (mesh (@ (geometry (box 1 1 1)) (position 0.0 0.0 -40.0))))
+       (mesh (@ (geometry (box 1 1 1)) (position 3.0 0.0 0.0)))))
+(begin (cmd-begin!) (sgl-draw! lod-scene) (cmd-flush!))
+(define lod-near (draw-count))
+(check "with the near level active the box group holds one instance"
+       (= 1 (draw-inst (- lod-near 2))))
+(signal-set! lod-z -40.0)
+(begin (cmd-begin!) (sgl-draw! lod-scene) (cmd-flush!))
+(check "when the far level becomes active it joins the group"
+       (= 2 (draw-inst lod-near)))
+;; the should-GREEN half: a scene with no lod at all must still take the
+;; cached path -- "recompute every frame" also satisfies the check above
+(define nolod-a (log-length))
+(define nolod-scene
+  (sgl (camera (@ (fov 0.9) (position 0.0 0.0 6.0) (look-at 0.0 0.0 0.0)))
+       (light (@ (direction 0.0 1.0 0.0) (ambient 0.25)))
+       (mesh (@ (geometry (box 1 1 1))))
+       (mesh (@ (geometry (box 1 1 1)) (position 3.0 0.0 0.0)))))
+(begin (cmd-begin!) (sgl-draw! nolod-scene) (cmd-flush!))
+(define nolod-b (log-length))
+(begin (cmd-begin!) (sgl-draw! nolod-scene) (cmd-flush!))
+(check "an unchanged scene with no lod still redraws from cache"
+       (= 0 (buffer-uploads-since nolod-b)))
+;; ...and the should-green case that is actually inside the fix's reach:
+;; a scene WITH a lod that does not change level must still take the
+;; cached path.  The one above cannot see the difference -- it has no
+;; lod, so the cell is never touched either way -- and bumping the
+;; generation every frame instead of only on a change left it green.
+;; A should-green case has to use an input the change can touch.
+(define still-lod
+  (sgl (camera (@ (fov 0.9) (position 0.0 0.0 6.0) (look-at 0.0 0.0 0.0)
+                  (far 100.0)))
+       (light (@ (direction 0.0 1.0 0.0) (ambient 0.25)))
+       (lod (@ (switch 15.0))
+            (mesh (@ (geometry (sphere 1.0 10 5))))
+            (mesh (@ (geometry (box 1 1 1)) (position 0.0 0.0 -40.0))))
+       (mesh (@ (geometry (box 1 1 1)) (position 3.0 0.0 0.0)))))
+(begin (cmd-begin!) (sgl-draw! still-lod) (cmd-flush!))
+(define still-mark (log-length))
+(begin (cmd-begin!) (sgl-draw! still-lod) (cmd-flush!))
+(check "a lod that does not switch keeps its cached instance set"
+       (= 0 (buffer-uploads-since still-mark)))
+
+;; ---- 7h. the blended pass sorts by DEPTH, not by distance ----------
+;; Back-to-front means farthest along the view direction first.  The key
+;; was the squared distance from the eye, and those two agree only while
+;; everything sits on the camera's axis -- which is exactly what the one
+;; existing ordering case does, so the two answers were never allowed to
+;; differ.
+;;
+;; Here they differ on purpose: the red sphere is NEARER in depth
+;; (z = -5 against -6) and FARTHER in radial distance (4² + 5² = 41
+;; against 36), so a distance sort draws it first and a depth sort draws
+;; it second.  Only the second is back-to-front.  The two spheres carry
+;; different segment counts so the log can tell them apart.
+(define near-idx (mesh-index-count (mesh-sphere 1.0 8 4)))
+(define far-idx (mesh-index-count (mesh-sphere 1.0 10 5)))
+(define blend-a (draw-count))
+(begin
+  (cmd-begin!)
+  (sgl-draw!
+   (sgl (camera (@ (fov 0.9) (position 0.0 0.0 0.0) (look-at 0.0 0.0 -1.0)
+                   (far 100.0)))
+        (light (@ (direction 0.0 1.0 0.0) (ambient 1.0)))
+        (mesh (@ (geometry (sphere 1.0 8 4)) (position 4.0 0.0 -5.0)
+                 (color 1.0 0.0 0.0 0.5)))
+        (mesh (@ (geometry (sphere 1.0 10 5)) (position 0.0 0.0 -6.0)
+                 (color 0.0 0.0 1.0 0.5)))))
+  (cmd-flush!))
+(check "the deeper translucent node draws first, however far off-axis"
+       (and (= 2 (- (draw-count) blend-a))
+            (= far-idx (draw-n blend-a))
+            (= near-idx (draw-n (+ blend-a 1)))))
+;; the should-GREEN half, inside the same code: two translucent nodes ON
+;; the axis must still come out far-first.  A "sort the other way" fix
+;; passes the case above and fails this one.
+(define axis-a (draw-count))
+(begin
+  (cmd-begin!)
+  (sgl-draw!
+   (sgl (camera (@ (fov 0.9) (position 0.0 0.0 0.0) (look-at 0.0 0.0 -1.0)
+                   (far 100.0)))
+        (light (@ (direction 0.0 1.0 0.0) (ambient 1.0)))
+        (mesh (@ (geometry (sphere 1.0 8 4)) (position 0.0 0.0 -5.0)
+                 (color 1.0 0.0 0.0 0.5)))
+        (mesh (@ (geometry (sphere 1.0 10 5)) (position 0.0 0.0 -9.0)
+                 (color 0.0 0.0 1.0 0.5)))))
+  (cmd-flush!))
+(check "...and on-axis ordering is unchanged"
+       (and (= far-idx (draw-n axis-a))
+            (= near-idx (draw-n (+ axis-a 1)))))
+
 ;; ---- 8. the instanced path, at u32 --------------------------------
 ;; Instancing groups nodes by geo IDENTITY, and an injected mesh gets a
 ;; fresh geo every time -- so every node above was ineligible and the
