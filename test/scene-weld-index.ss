@@ -558,13 +558,77 @@
                        (mesh (@ (geometry (sphere 1.0 8 4)) (color-b ,(signal-ref cb))))
                        (mesh (@ (geometry (sphere 1.0 8 4)) (position 3.0 0.0 0.0)))))
                 (lambda () (signal-set! cb 0.25))) 0)
-            (> (colour-hole-frames
-                (lambda ()
-                  (sgl (camera (@ (fov 0.9) (position 0.0 0.0 6.0) (look-at 0.0 0.0 0.0)))
-                       (light (@ (direction 0.0 1.0 0.0) (ambient 0.25)))
-                       (mesh (@ (geometry (sphere 1.0 8 4)) (color-a ,(signal-ref ca))))
-                       (mesh (@ (geometry (sphere 1.0 8 4)) (position 3.0 0.0 0.0)))))
-                (lambda () (signal-set! ca 0.25))) 0)))
+            ;; ...and NOT alpha.  It used to be asserted here, with the
+            ;; same "the instance buffer was repacked" question as the
+            ;; other three, and that question is wrong for it: a node
+            ;; whose alpha can move is kept OUT of the instance group
+            ;; entirely, because the group's pass is fixed when the
+            ;; scene is built and that pass never blends.  So there is
+            ;; no instance buffer to repack, and asserting there is one
+            ;; would pin the defect rather than the fix.  Alpha's own
+            ;; property -- the pass changes with it -- is 7d-1b below.
+            #t))
+
+;; ---- 7d-1b. alpha is not just another colour channel ---------------
+;; The case above drives `color-a` through a signal and asserts that the
+;; instance buffer was repacked.  It was -- and that is not enough: the
+;; PASS a node draws in is decided when the scene is built, from the
+;; alpha it had then.  A node that starts opaque is put in the opaque
+;; instanced group and stays there; the new alpha rides along in the
+;; buffer while blending is never turned on and depth writes are never
+;; turned off.  So it fades in the numbers and not on the screen.
+;;
+;; Three of the four colour channels really are interchangeable.  The
+;; fourth chooses a render pass, and the case above treated it as the
+;; other three -- it asserted the thing all four share and stopped
+;; before the thing only alpha does.
+(define a-sig (signal 1.0))
+(define a-scene
+  (sgl (camera (@ (fov 0.9) (position 0.0 0.0 6.0) (look-at 0.0 0.0 0.0)))
+       (light (@ (direction 0.0 1.0 0.0) (ambient 0.25)))
+       (mesh (@ (geometry (sphere 1.0 8 4)) (color-a ,(signal-ref a-sig))))
+       (mesh (@ (geometry (sphere 1.0 8 4)) (position 3.0 0.0 0.0)))))
+(begin (cmd-begin!) (sgl-draw! a-scene) (cmd-flush!))
+(define a-mark (log-length))
+(signal-set! a-sig 0.25)
+(begin (cmd-begin!) (sgl-draw! a-scene) (cmd-flush!))
+(check "a node whose alpha drops starts blending"
+       (> (log-count-since a-mark "gEnable:BL") 0))
+(check "...and stops writing depth"
+       (> (log-count-since a-mark "depthMask:0") 0))
+;; the should-GREEN half: alpha that stays at 1.0 must not cost the
+;; opaque pass anything -- "move everything to the blended pass" also
+;; satisfies the two checks above
+(define b-sig (signal 1.0))
+(define b-scene
+  (sgl (camera (@ (fov 0.9) (position 0.0 0.0 6.0) (look-at 0.0 0.0 0.0)))
+       (light (@ (direction 0.0 1.0 0.0) (ambient 0.25)))
+       (mesh (@ (geometry (sphere 1.0 8 4)) (color-a ,(signal-ref b-sig))))
+       (mesh (@ (geometry (sphere 1.0 8 4)) (position 3.0 0.0 0.0)))))
+(begin (cmd-begin!) (sgl-draw! b-scene) (cmd-flush!))
+(define b-mark (log-length))
+(signal-set! b-sig 1.0)
+(begin (cmd-begin!) (sgl-draw! b-scene) (cmd-flush!))
+(check "an alpha that stays at 1.0 does not turn blending on"
+       (= 0 (log-count-since b-mark "gEnable:BL")))
+;; ...and the other should-green half, which the one above does NOT
+;; cover: a LITERAL opaque alpha must still be instanced.  The case
+;; above uses a signal, so it is excluded either way -- measured:
+;; making every `color-a` node non-groupable left it green.  The
+;; question "did the fix go too far" can only be asked by a node the
+;; fix is not supposed to touch.
+(define c-draw (draw-count))
+(begin
+  (cmd-begin!)
+  (sgl-draw! (sgl (camera (@ (fov 0.9) (position 0.0 0.0 6.0)
+                             (look-at 0.0 0.0 0.0)))
+                  (light (@ (direction 0.0 1.0 0.0) (ambient 0.25)))
+                  (mesh (@ (geometry (sphere 1.0 8 4)) (color-a 1.0)))
+                  (mesh (@ (geometry (sphere 1.0 8 4)) (position 3.0 0.0 0.0)
+                           (color-a 1.0)))))
+  (cmd-flush!))
+(check "a literal opaque alpha is still instanced"
+       (= 2 (draw-inst c-draw)))
 
 ;; ---- 7d-2. a reactive colour survives WELDING too ------------------
 ;; The colour generation was added to the instance group's cache key and

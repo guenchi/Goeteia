@@ -335,8 +335,12 @@
           ;; and its key watched only 13, so a signal-driven colour
           ;; changed while the key stood still and the group redrew last
           ;; frame's colours for ever.
+          ;; slot 15: 1.0 when the ALPHA is behind a signal.  Not a
+          ;; generation -- a flag, fixed when the scene is built,
+          ;; because the question it answers ("may this node become
+          ;; translucent?") is asked once, when passes are assigned.
           (f (vector 0.0 0.0 0.0 0.0 0.0 0.0 1.0
-                     0.8 0.8 0.8 1.0 0.0 0.5 0 0)))
+                     0.8 0.8 0.8 1.0 0.0 0.5 0 0 0.0)))
       (for-each
        (lambda (a)
          (case (car a)
@@ -362,7 +366,12 @@
            ((color-r) ($sgl-set1! f 7 (cadr a) ds 14))
            ((color-g) ($sgl-set1! f 8 (cadr a) ds 14))
            ((color-b) ($sgl-set1! f 9 (cadr a) ds 14))
-           ((color-a) ($sgl-set1! f 10 (cadr a) ds 14))
+           ((color-a) ($sgl-set1! f 10 (cadr a) ds 14)
+                      ;; alpha is not just a fourth channel: it picks a
+                      ;; render PASS, and the pass is chosen once, when
+                      ;; the scene is built.  Remember that this one can
+                      ;; move, so grouping can refuse to bake it in.
+                      (when ($sgl-d? (cadr a)) (vector-set! f 15 1.0)))
            (else (error 'sgl "unknown mesh attribute" (car a)))))
        attrs)
       (unless gspec (error 'sgl "mesh needs a geometry"))
@@ -755,7 +764,7 @@
                                       (vector-ref f0 8)
                                       (vector-ref f0 9)
                                       (vector-ref f0 10)
-                                      0.0 0.5 0 0)
+                                      0.0 0.5 0 0 0.0)
                               'lit #f
                               (v3 bx by bz) br
                               '() #f
@@ -816,8 +825,24 @@
   ;; order, and it has neither.  Opaque sharing is untouched -- the
   ;; check "an opaque pair sharing one geometry is still instanced"
   ;; exists so this cannot be quietly turned into "nothing instances".
+  ;; "Not safely opaque": either it is translucent now, or its alpha is
+  ;; behind a signal and may become translucent later.  The instanced
+  ;; pass draws with blending off and depth writes on, and which pass a
+  ;; node belongs to is decided ONCE, when the scene is built -- so a
+  ;; node that starts at alpha 1.0 with a signal on it would sit in the
+  ;; opaque group for ever, carrying its new alpha in the buffer while
+  ;; nothing ever turned blending on.  It faded in the numbers and not
+  ;; on the screen.
+  ;;
+  ;; Conservative on purpose: a signal that never leaves 1.0 costs that
+  ;; node its place in an instance group.  The alternative is deciding
+  ;; the pass per frame, which means the group's membership -- and the
+  ;; staging it owns -- would have to be rebuilt whenever an alpha
+  ;; crossed 1.0.  Paying a draw call for a mesh that says its alpha is
+  ;; going to move is the cheaper half.
   (define ($sgl-nd-translucent? nd)
-    (fl<? (vector-ref ($sgl-nd-f nd) 10) 1.0))
+    (or (fl<? (vector-ref ($sgl-nd-f nd) 10) 1.0)
+        (fl<? 0.0 (vector-ref ($sgl-nd-f nd) 15))))
 
   (define ($sgl-igroups! all)
     ;; ONE pass, two lists.  Written as two filters first, and that was
