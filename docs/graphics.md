@@ -278,22 +278,45 @@ What the scene does with those declarations:
   color); `(texture slot)` switches to the UV program with the color
   multiplied in; `(metallic m)` or `(roughness r)` switch to PBR against
   the scene's `probe`.
-- **Culling** every frame: a mesh whose bounding sphere (`mesh-bounds`,
-  scaled and placed by its fields) falls outside the camera frustum
-  contributes nothing, uniforms included. The cull runs four spheres at
-  a time — centers and radii SoA in staging, each frustum plane testing
-  all four in five SIMD instructions.
-- **Instancing**: meshes with the same literal geometry share one upload
-  and draw as ONE instanced call. Each visible instance's model matrix
-  composes in closed form (`m4s-trs!` / `m4s-mul!`, SIMD, no boxed
-  matrix) straight into the instance buffer with its color beside it;
-  culled instances simply don't join the buffer.
-- **Static welding**: same-color lit meshes of *different* geometry whose
-  transforms no signal drives (a zero transform generation proves it)
-  bake their model matrices into fresh vertex data at build and draw as
-  ONE mesh under one bounding sphere.
+- **Culling**: a mesh whose bounding sphere (`mesh-bounds`, scaled and
+  placed by its fields) falls outside the camera frustum uploads no
+  geometry, emits no per-mesh uniform, and issues no draw. What it does
+  not save is the per-group setup — selecting the program and setting
+  the material's own uniforms happens before any of that group's nodes
+  are tested, so a frame in which every node is culled still switches
+  programs and, for textured and PBR groups, still sets the sampler and
+  probe uniforms.
+  Two cull paths, and which one runs is not the author's choice:
+  instanced groups test four spheres at a time (centers and radii SoA
+  in staging, each frustum plane testing all four in five SIMD
+  instructions); everything else is tested one sphere at a time. An
+  instanced group whose camera, transforms, colors and LOD membership
+  all stood still since the last frame does not cull at all — it
+  redraws the set it packed before.
+- **Instancing**: two or more meshes with the same literal geometry
+  share one upload and draw as ONE instanced call — provided they are
+  all in the default lit material (a `(texture ...)`, `(metallic ...)`
+  or `(roughness ...)` mesh is never instanced), all opaque, and none
+  of their alphas is signal-driven. Otherwise they still share the
+  geometry upload, but draw one call each. Each visible instance's
+  model matrix composes in closed form (`m4s-trs!` / `m4s-mul!`, SIMD,
+  no boxed matrix) straight into the instance buffer with its color
+  beside it; culled instances simply don't join the buffer.
+- **Static welding**: same-color lit meshes of *different* geometry bake
+  their model matrices into fresh vertex data at build and draw as ONE
+  mesh under one bounding sphere. "Static" means nothing about the mesh
+  can change after the bake: no signal drives its transform, no signal
+  drives its color, and it is not a level of a `lod`. A signal-driven
+  color is enough on its own to keep a mesh out of the weld, because
+  welding discards the original nodes and the baked vertex data would
+  hold that color forever.
 - **LOD**: `(lod (@ (switch d1 d2 ...)) mesh1 mesh2 ...)` holds detail
   levels of one thing; the eye's distance picks which child draws.
+  `n` distances describe `n+1` levels, so a `lod` must hold exactly one
+  more mesh than it has switch distances, and says so at build time if
+  it does not — a short list would make the object vanish past the last
+  distance rather than fall back to its coarsest mesh, and a long one
+  would leave meshes that nothing can select.
 - **Signal-driven transforms**: matrices cache against a transform
   generation the signals bump. A fully static mesh composes its model
   matrix, world center, and radius exactly once; a frame recomputes only
