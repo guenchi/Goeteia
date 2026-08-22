@@ -150,7 +150,18 @@ if [ "$TARGET" = gate ]; then
     cp "$W/mutated.keep" "$W/t/$FILE"
     ( cd "$W/t" && ./run-tests.sh > "$W/mut.log" 2>&1 ) && ec=0 || ec=$?
     N=$(grep -cE '^ok ' "$W/mut.log" || true)
-    named=$(grep -E '^FAIL|^TIMEOUT' "$W/mut.log" | grep -v nodraw | head -1)
+    # ALL of them, for the reason written twelve lines below about the
+    # single-suite path -- and this line is the one that matters more.
+    # A single-suite reading already carries "1 suite, NOT the gate";
+    # THIS one is the verdict that gets quoted when someone asks
+    # whether a claim is pinned, and naming the wrong assertion answers
+    # a different question convincingly.
+    #
+    # It stayed broken for a whole round after the reason for fixing it
+    # was written down, twelve lines away, on the other path.
+    named=$(grep -E '^FAIL|^TIMEOUT' "$W/mut.log" | grep -v nodraw \
+            | sed 's/ ([0-9.]*ms)$//' | sort -u | head -4 \
+            | tr '\n' '|' | cut -c1-240)
     if [ "$ec" -eq 0 ]; then
         echo "🟢 GREEN — the whole gate notices nothing (ok=$N/$M)$RL_NOTE"
     else
