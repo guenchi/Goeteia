@@ -41,7 +41,15 @@ test('a DOM page packages into one file that carries the same program', async ()
     const out = path.join(tmp, 'static.html');
     const r = await selfCheck(page('static.ss'), { outFile: out });
     assert.equal(r.ok, true, failed(r));
-    assert.ok(r.checks.length >= 6, 'the self-check should have made every claim');
+    // BY NAME, not by count. `>= 6` was satisfied by eight checks, so
+    // any one of five mechanisms could be deleted outright and this
+    // stayed green -- including the one that compares the file on disk
+    // with the page that was rendered. A count cannot say which member
+    // of a family is missing; only the names can.
+    assert.deepEqual(r.checks.map(c => c.id),
+        ['payload', 'compiled-runs', 'embedded-runs', 'same-trace',
+         'on-disk', 'no-literal-fetch', 'module-parses'],
+        'every self-check mechanism, in order, and nothing quietly gone');
     assert.ok(fs.existsSync(out), 'the artifact must be on disk');
 
     const html = fs.readFileSync(out, 'utf8');
@@ -68,6 +76,11 @@ test('a DOM page packages into one file that carries the same program', async ()
 test('a drawing page packages, and the embedded bytes draw the same frames', async () => {
     const r = await selfCheck(page('gradient.ss'), {});
     assert.equal(r.ok, true, failed(r));
+    // the same family, minus the one that needs a file on disk
+    assert.deepEqual(r.checks.map(c => c.id),
+        ['payload', 'compiled-runs', 'embedded-runs', 'same-trace',
+         'no-literal-fetch', 'module-parses'],
+        'with no outFile, on-disk is the only member that drops out');
     assert.ok(r.stats.draws > 0, 'the self-check ran the page, it did not just parse it');
     assert.ok(r.stats.html_bytes > r.stats.wasm_bytes,
         'base64 plus the loader cannot be smaller than the module');
@@ -121,6 +134,105 @@ const pageWith = (payload) =>
     renderPage(Buffer.from([0, 1, 2]))
         .replace(/(<script type="goeteia\/wasm" id="goeteia-module">)[^<]*/,
                  `$1${payload}`);
+
+// The SHAPE of a packaged page, pinned against a stored copy.
+//
+// This replaces asking a scanner whether the page names any external
+// URL. That scanner had to agree with a browser about arbitrary HTML,
+// and four rounds of review found four more documents where it did
+// not -- while its only real input was ever a page this file's own
+// renderPage produced from a fixed template. The property that
+// matters is a property of the TEMPLATE, and a template is a fixed
+// string: comparing it is stronger than parsing it, and catches
+// everything a scanner cannot -- a CSS url(), a <meta refresh>, a
+// changed loader, a dropped CSP, an added attribute.
+//
+// The other side of the comparison is a stored file, NOT a second
+// call to renderPage. Rendering twice and comparing proves only that
+// renderPage is deterministic: both sides would carry the same new
+// <img src="..."> and agree. `test/pages/golden-shell.html` is the
+// approved shape, and approving is what a human does when the diff
+// lands.
+//
+// Parameters are pinned too, because the shell is not parameter-free:
+// title and the canvas dimensions appear in it, so the golden is
+// generated at title "golden", 800x600, and this test uses exactly
+// those. Anything else drifts by a few bytes and the failure would
+// look like a template change.
+//
+// WHY ONE PARAMETER SET IS ENOUGH, and where the other half is. The
+// template is fixed at build time, so one rendering pins its shape --
+// there is no second template for other titles. What one rendering
+// does NOT pin is what happens to the parameters on their way in, and
+// that is a different property with its own tests: see "a title is
+// escaped on the way into the page" below. Shape here, escaping
+// there; neither covers the other.
+//
+// (This note lives in the test and not in the fixture because the
+// fixture is compared byte for byte -- a comment inside it would have
+// to appear in the template too, or it would be the difference.)
+//
+// UPDATING IT: change the golden in the SAME COMMIT as the template
+// change, never in a commit of its own. A lone "update golden" says
+// nothing about what moved; the two together carry their own cause,
+// and the reviewer sees the template diff and its consequence side by
+// side rather than a red followed later by a patch.
+const PAYLOAD_SLOT = '{{PAYLOAD}}';
+const blankPayload = html => html.replace(
+    /(<script type="goeteia\/wasm" id="goeteia-module">)[^<]*/,
+    `$1${PAYLOAD_SLOT}`);
+
+test('a packaged page has the approved shape, byte for byte', () => {
+    const golden = fs.readFileSync(page('golden-shell.html'), 'utf8');
+    const rendered = blankPayload(
+        renderPage(Buffer.from([0]), { title: 'golden', width: 800, height: 600 }));
+    assert.equal(rendered, golden,
+        'the page shape changed; if that was intended, update '
+        + 'test/pages/golden-shell.html in this same commit');
+
+    // ...and the slot really is where the payload goes, so that the
+    // comparison above is over the whole page and not over a page with
+    // an arbitrary hole in it
+    const real = renderPage(Buffer.from([1, 2, 3]), { title: 'golden', width: 800, height: 600 });
+    assert.notEqual(real, golden, 'the golden must not match a page with a payload in it');
+    assert.equal(blankPayload(real), golden, 'blanking only the payload restores the shape');
+    assert.equal(golden.split(PAYLOAD_SLOT).length - 1, 1, 'exactly one slot');
+});
+
+const titleOf = html => html.match(/<title>([\s\S]*?)<\/title>/)[1];
+const withTitle = title =>
+    renderPage(Buffer.from([0]), { title, width: 800, height: 600 });
+
+test('a title is escaped on the way into the page', () => {
+    // Three replacements, three cases: deleting any one of them turns
+    // exactly its own line red. Before this, `grep -c "esc(" ` over
+    // this file answered 0 -- the escaping was correct and nothing
+    // said so, which is the same thing as not having it the day
+    // someone edits it.
+    assert.equal(titleOf(withTitle('<')), '&lt;', 'less-than');
+    assert.equal(titleOf(withTitle('>')), '&gt;', 'greater-than');
+    assert.equal(titleOf(withTitle('&')), '&amp;', 'ampersand');
+
+    // ORDER. The ampersand has to go first: replace `<` first and its
+    // output `&lt;` is then caught by the ampersand rule and comes out
+    // `&amp;lt;`. A test that feeds one character at a time cannot see
+    // this -- each single character still looks right -- so the case
+    // has to be one whose OUTPUT contains an ampersand.
+    assert.equal(titleOf(withTitle('&lt;')), '&amp;lt;',
+        'an ampersand already in the input escapes once, not twice');
+    assert.equal(titleOf(withTitle('a&b')), 'a&amp;b');
+
+    // ...and the shape all of that exists to stop: a title that tries
+    // to close the element and open its own. Asserting the escaped
+    // text is not enough on its own -- this asks the question the
+    // escaping is FOR, which is whether the document gained a tag.
+    const injected = withTitle('</title><img src=https://evil.example/x.png>');
+    assert.doesNotMatch(injected, /<img/,
+        'a title must not be able to add an element to the document');
+    assert.doesNotMatch(injected, /evil\.example[^&]*"/);
+    assert.equal(titleOf(injected),
+        '&lt;/title&gt;&lt;img src=https://evil.example/x.png&gt;');
+});
 
 test('an external reference is found however the attribute is spelled', () => {
     // One rule, and HTML gives it four members: double quotes, single
@@ -278,6 +390,42 @@ test('an external reference is found however the attribute is spelled', () => {
         ['<img SRCSET="a.png 1x">', ['a.png'], 'and any casing of it'],
     ])
         assert.deepEqual(externalRefs(html), want, `${why}: ${html}`);
+});
+
+test('KNOWN DISAGREEMENTS: what this scanner gets wrong, on purpose', () => {
+    // ⚠ EVERY ROW BELOW IS WRONG. They are pinned so the record of how
+    // HTML actually parses stays complete, and so that a future reader
+    // who finds one of them does not think it is new. Nothing here is
+    // approved behaviour -- read this section as "known bugs, with the
+    // reason they are not fixed", never as an example to copy.
+    //
+    // They are in a section of their own rather than mixed into the
+    // table above with a wording that says "wrong", because a reader
+    // skimming one long table takes every row as a statement of
+    // correct behaviour; a heading is harder to skim past than an
+    // adjective.
+    //
+    // WHY NOT FIXED: this function is no longer a gate. Nothing ships
+    // or fails on what it returns -- selfCheck compares the page
+    // against an approved shape instead. Fixing these means bringing
+    // back the thing that was removed: parsing arbitrary HTML, here
+    // down to the tokenizer's comment states and to knowing which part
+    // of a tag a match landed in. That was four rounds of one more
+    // document each, and the price was paid to stop.
+    for (const [html, ours, browser, why] of [
+        ['<!-- --!><img src="x.png">', [], ['x.png'],
+         'the tokenizer closes a comment at --!> from the comment-end-bang '
+         + 'state; this only looks for -->, so it eats the rest'],
+        ['<div title="src=side.png"></div>', ['side.png'], [],
+         'the attribute pattern does not know where in a tag it matched, '
+         + 'so a value that reads like an attribute is taken for one'],
+    ]) {
+        assert.deepEqual(externalRefs(html), ours,
+            `this row records CURRENT behaviour; a browser says `
+            + `${JSON.stringify(browser)} -- ${why}`);
+        assert.notDeepEqual(ours, browser,
+            'if these ever agree, the row is stale: delete it');
+    }
 });
 
 test('the payload has to be canonical base64, not merely decodable', () => {

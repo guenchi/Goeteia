@@ -71,6 +71,15 @@ export const PAYLOAD_ID = 'goeteia-module';
 const RE_PAYLOAD =
     /<script type="goeteia\/wasm" id="goeteia-module">([\s\S]*?)<\/script>/;
 
+// NOT USED BY selfCheck ANY MORE -- see the note where it used to be
+// called.  It is kept, and kept tested, for two reasons: the dozen
+// documents in test/pack.mjs are a record of how HTML actually parses
+// (end tags carry attributes, `<!-->` closes, `<script-x>` is not a
+// script, RCDATA holds no markup), learned one review round at a time
+// and worth more than the function; and it remains a usable answer to
+// "which URL?" for a human looking at a page. What it is NOT is a
+// gate: nothing ships or fails on what it returns.
+//
 // The URLs a page names in its MARKUP, in the attributes listed below,
 // so a caller can assert there are none.  The attribute may be quoted
 // three ways and spelled in any case -- an earlier version matched only
@@ -339,8 +348,15 @@ export async function selfCheck(sourceFile, opts = {}) {
     const p = await packageFile(sourceFile, opts.outFile || null, opts);
     if (!p.ok) return { ok: false, stage: 'compile', errors: p.errors, checks: [] };
 
+    // Every check carries an ID.  A caller that counts them cannot tell
+    // which one it counted: test/pack.mjs asked for `checks.length >= 6`
+    // while eight were produced, so any ONE of five mechanisms could be
+    // deleted outright and the suite stayed green -- the disk-equality
+    // check among them.  A count is not an identity, and a set of
+    // mechanisms is a family whose members have to be named to be
+    // pinned.
     const checks = [];
-    const add = (ok, detail) => checks.push({ ok, detail });
+    const add = (id, ok, detail) => checks.push({ id, ok, detail });
 
     // The page every check below reads is the one that SHIPS.  It used
     // to be p.html -- the string still in memory -- which verified an
@@ -359,18 +375,18 @@ export async function selfCheck(sourceFile, opts = {}) {
     try { back = extractWasm(shipped); }
     catch (e) { return { ok: false, stage: 'extract', checks: [{ ok: false, detail: e.message }] }; }
 
-    add(Buffer.compare(back, Buffer.from(p.wasm)) === 0,
+    add('payload', Buffer.compare(back, Buffer.from(p.wasm)) === 0,
         `the wasm extracted from the HTML is byte for byte the compiled module `
         + `(${back.length} bytes in the page, ${p.wasm.length} compiled)`);
 
     const direct = await scenario(p.wasm);
     const embedded = await scenario(back);
-    add(direct.ok, `the compiled module runs: ${direct.ok ? 'yes'
+    add('compiled-runs', direct.ok, `the compiled module runs: ${direct.ok ? 'yes'
         : 'threw ' + (direct.error && direct.error.message)}`);
-    add(embedded.ok, `the bytes taken back out of the HTML run: ${embedded.ok ? 'yes'
+    add('embedded-runs', embedded.ok, `the bytes taken back out of the HTML run: ${embedded.ok ? 'yes'
         : 'threw ' + (embedded.error && embedded.error.message)}`);
     if (direct.ok && embedded.ok)
-        add(signature(direct) === signature(embedded),
+        add('same-trace', signature(direct) === signature(embedded),
             'both produce the same frame command stream and readable state');
 
     // Two DIFFERENT mechanisms, not one repeated.  This first one is
@@ -383,24 +399,38 @@ export async function selfCheck(sourceFile, opts = {}) {
     // place; that is what the property checks are for.  Neither
     // subsumes the other.
     if (p.outFile)
-        add(shipped === p.html,
+        add('on-disk', shipped === p.html,
             shipped === p.html
                 ? 'the file on disk is the page that was rendered'
                 : `the file on disk is not the page that was rendered `
                   + `(${Buffer.byteLength(shipped)} bytes written, `
                   + `${Buffer.byteLength(p.html)} rendered)`);
 
-    // Not "the page makes no network requests" -- see the header.  This
-    // is the markup half of that: no URL in the attributes externalRefs
-    // scans (src, href, srcset, poster).  CSS url(), a computed fetch
-    // and <meta refresh> are outside it and outside the two checks that
-    // follow, which is why the claim is stated as the checks.
-    const external = externalRefs(shipped);
-    add(external.length === 0,
-        external.length === 0
-            ? 'no external reference in the markup attributes scanned '
-              + '(src, href, srcset, poster)'
-                              : `the page still references: ${external.join(', ')}`);
+    // THE MARKUP SCAN USED TO RUN HERE, and does not any more.  It
+    // asked whether the shipped page named any external URL, by
+    // scanning it -- which meant agreeing with a browser about
+    // arbitrary HTML.  It never saw arbitrary HTML: the only page it
+    // was ever given is the one renderPage produced two lines up, from
+    // a fixed template.  Four rounds of review found four more
+    // documents it read differently from a browser (a `>` in a quoted
+    // attribute, script tags inside comments, a comment opener inside
+    // script text, an end tag with attributes, `<!-->`, `<script-x>`),
+    // and none of them is a page renderPage can emit.  That is a shape
+    // mismatch, not a coverage gap: coverage gaps close as you fix
+    // them, and this one produced a new document every round.
+    //
+    // The property is a property of the TEMPLATE, and the template is a
+    // fixed string, so it is pinned by comparing it -- see "a packaged
+    // page has the approved shape" in test/pack.mjs, which holds the
+    // rendered shell against a stored copy.  That is strictly stronger:
+    // it catches a CSS url(), a <meta refresh>, a changed loader, a
+    // dropped CSP, an added attribute -- everything a scanner for four
+    // attributes cannot see -- and it needs no HTML parsing at all.
+    //
+    // It is a BUILD-TIME property, which is why it is not checked here:
+    // the template cannot change between packaging two pages.  What
+    // this function still owns is the per-run half -- that the bytes on
+    // disk are the bytes rendered, and that the payload is intact.
     // Says exactly what it measures, which is less than "issues no
     // request": `const u = 'side.wasm'; fetch(u)` is invisible to any
     // regex, and the module is never executed here -- the mock world
@@ -408,7 +438,7 @@ export async function selfCheck(sourceFile, opts = {}) {
     // computed fetch inserted after rendering is caught by the equality
     // above; one that renderPage itself emitted would not be caught at
     // all, and saying so is better than implying otherwise.
-    add(!/\bfetch\s*\(\s*['"`]https?:/.test(shipped),
+    add('no-literal-fetch', !/\bfetch\s*\(\s*['"`]https?:/.test(shipped),
         'no literal http(s) URL is passed to fetch');
 
     // The mock world runs the module through the SAME bridge but not
@@ -416,14 +446,14 @@ export async function selfCheck(sourceFile, opts = {}) {
     // does not even parse would still pass every check above.  Parse
     // it for real.
     const mod = shipped.match(/<script type="module">([\s\S]*?)<\/script>/);
-    if (!mod) add(false, 'the page carries no module script');
+    if (!mod) add('module-parses', false, 'the page carries no module script');
     else {
         const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'goeteia-pack-'));
         const tmp = path.join(dir, 'page.mjs');
         fs.writeFileSync(tmp, mod[1]);
         const r = spawnSync(process.execPath, ['--check', tmp], { encoding: 'utf8' });
         fs.rmSync(dir, { recursive: true, force: true });
-        add(r.status === 0,
+        add('module-parses', r.status === 0,
             r.status === 0 ? "the page's inlined module script is valid JavaScript"
                 : `the page's inlined module script does not parse: `
                   + `${(r.stderr || '').split('\n').slice(0, 3).join(' ')}`);
