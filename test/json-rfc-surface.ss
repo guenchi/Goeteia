@@ -116,10 +116,48 @@
                                               ; of deviation C: we must not
                                               ; be refusing DEL along with
                                               ; the real control characters
-(row "U/x80"        (qc 128)     'ACCEPT U7)
-(row "U/xD7FF"      (qc 55295)   'ACCEPT U7)  ; last before the surrogates
-(row "U/xE000"      (qc 57344)   'ACCEPT U7)  ; first after them
-(row "U/x10FFFF"    (qc 1114111) 'ACCEPT U7)  ; third range, upper end
+;; ⚠ FROM HERE ON THE INPUT IS BUILT BYTE BY BYTE, and the four rows
+;; below used to be built with `(qc code-point)` like the ones above.
+;; That works up to 127 and is a LIE past it: a Goeteia string is a
+;; UTF-8 BYTE string, so `(integer->char 55295)` in one is the single
+;; byte 55295 mod 256 = 0xFF.  Measured, before this was fixed:
+;;
+;;   row               claimed to send   actually sent
+;;   U/xD7FF           U+D7FF            one byte 0xFF   (not UTF-8 at all)
+;;   U/xE000           U+E000            one byte 0x00   (a NUL -- which is
+;;                                       deviation C, not this production)
+;;   U/x10FFFF         U+10FFFF          one byte 0xFF
+;;
+;; All three passed, and their anchors were correct: the clause they
+;; cite really does say what they say it says.  An anchor establishes
+;; what a row MEANS to test; it cannot establish that the input
+;; realizes it.  Those are two different questions and this table had
+;; only been asking the first.
+(define (u8 . bs) (apply string (map integer->char bs)))
+(define (qbytes . bs) (string-append "\"" (apply u8 bs) "\""))
+(row "U/x80"     (qbytes #xC2 #x80)          'ACCEPT U7)  ; U+0080
+(row "U/xD7FF"   (qbytes #xED #x9F #xBF)     'ACCEPT U7)  ; last before surrogates
+(row "U/xE000"   (qbytes #xEE #x80 #x80)     'ACCEPT U7)  ; first after them
+(row "U/x10FFFF" (qbytes #xF4 #x8F #xBF #xBF) 'ACCEPT U7) ; third range, upper end
+
+;; ---- bytes that are not UTF-8 at all ------------------------------
+;; RFC 8259 section 8.1 requires JSON text exchanged between systems to
+;; be UTF-8, so a text carrying a lone continuation byte is not JSON
+;; text.  This reader takes it and hands back the byte unchanged, and
+;; the writer emits it again -- measured, not inferred.
+;;
+;; Whether that is a DEVIATION is a narrower question than it looks.
+;; Section 9 says a parser MUST accept every text that conforms to the
+;; grammar and MAY accept non-JSON forms or extensions; taking a
+;; malformed one is the second sentence, not a breach of the first.
+;; So these rows are not filed with A, C and D: they record an
+;; extension, and the writer's half of it is the part worth watching --
+;; a byte string that was never UTF-8 goes back out as "JSON text".
+(define X81 "section 8.1, JSON text SHALL be encoded in UTF-8; section 9, a parser MAY accept non-JSON forms")
+(row "X/lone-cont"  (qbytes #x80)      'ACCEPT X81)
+(row "X/lone-ff"    (qbytes #xFF)      'ACCEPT X81)
+(row "X/truncated"  (qbytes #xE4 #xB8) 'ACCEPT X81)   ; two of a three-byte run
+(row "X/overlong"   (qbytes #xC0 #x80) 'ACCEPT X81)   ; overlong NUL
 
 ;; ---- section 7, the escape set: all eight, plus \u -----------------
 (define E7 "section 7, char = unescaped / escape ( %x22 / %x5C / %x2F / %x62 / %x66 / %x6E / %x72 / %x74 / %x75 4HEXDIG ); escape = %x5C")
