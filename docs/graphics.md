@@ -214,9 +214,19 @@ anywhere. Each renderer is held to its own specification.
 
 `sgl` is to the GL stack what `sx` is to the DOM. The template splits at
 expansion time: geometry from `(gfx mesh)` builds and uploads once, and
-each unquoted attribute becomes a hole whose effect copies its signal's
-value into the node — so a frame is pure arithmetic over current fields,
-and only changed values move.
+a signal-bearing attribute becomes a hole whose effect copies its
+signal's value into the node — so a frame is pure arithmetic over
+current fields, and only changed values move.
+
+Which attributes take a signal: the per-component ones, read fresh every
+frame — `position-x/-y/-z`, `rotation-x/-y/-z`, `scale`,
+`color-r/-g/-b/-a`, `fov`, `near`, `far`, `ambient`, `metallic`,
+`roughness`. The three- and four-argument shorthands — `(position x y z)`,
+`(rotation x y z)`, `(color r g b [a])` — do **not**, nor do a `lod`'s
+`(switch d1 d2 ...)` distances: they take numbers, and say so if given
+anything else. A `probe`'s `sky`/`lut`/`mips` and a mesh's `texture` do
+take an unquote, but it is evaluated **once**, when the scene is built —
+as is `(geometry ,m)`, which injects that mesh rather than following it.
 
 ```scheme
 (define spin (signal 0.0))

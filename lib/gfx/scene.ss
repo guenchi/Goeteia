@@ -16,9 +16,19 @@
 ;;
 ;; The template splits at expansion time, like sx: geometry
 ;; is built and uploaded once ((gfx mesh) generates it, the first
-;; draw ships it), and each unquoted attribute becomes a hole whose
+;; draw ships it), and a signal-bearing attribute becomes a hole whose
 ;; effect copies the signal's value into the node -- so a frame is
 ;; pure arithmetic over current fields, and only changed values move.
+;;
+;; WHICH ATTRIBUTES TAKE A SIGNAL.  The per-component ones do, and are
+;; read fresh every frame: position-x/-y/-z, rotation-x/-y/-z, scale,
+;; color-r/-g/-b/-a, fov, near, far, ambient, metallic, roughness.  The
+;; three- and four-argument shorthands -- (position x y z),
+;; (rotation x y z), (color r g b [a]) -- do NOT, nor do a lod's
+;; (switch d1 d2 ...) distances; they take numbers and say so if given
+;; anything else.  A probe's sky/lut/mips and a mesh's texture DO take
+;; an unquote, but it is evaluated ONCE, when the scene is built.  And
+;; (geometry ,m) is that same once: the mesh is injected, not followed.
 ;;
 ;; Tags: (camera (@ (fov f) (near n) (far f) (position x y z)
 ;;                  (look-at x y z)))
@@ -38,8 +48,8 @@
 ;;       unquote yielding a (gfx mesh) mesh, injected once.
 ;; Mesh attributes: (position x y z) (rotation x y z) (color r g b [a])
 ;;       and the single-valued position-x/-y/-z rotation-* scale
-;;       color-r/-g/-b/-a; holes go in single-valued attributes
-;;       (and ambient, fov, near, far, metallic, roughness).
+;;       color-r/-g/-b/-a.  Which of them take a signal is written
+;;       out above -- the shorthands do not.
 ;; Materials, per mesh: the default renders mesh-lit-vs/-fs (one
 ;;       directional light, ambient floor, solid color);
 ;;       (texture slot) switches to mesh-tex-vs/-fs (geometry gains
@@ -278,7 +288,33 @@
                                    (+ 1 (vector-ref vec gen)))))))
         (vector-set! vec idx ($sgl-fl v))))
 
-  (define ($sgl-set3! vec idx vals)     ; static triples
+  ;; A slot that cannot follow a signal says so, once, in one place.
+  ;;
+  ;; Without this the three-argument spellings reached $sgl-fl with a
+  ;; hole marker -- a pair -- and the runtime stopped on an illegal
+  ;; cast: no name, no message, nothing a caller could guard.  And the
+  ;; manual was telling people to write exactly that: "each unquoted
+  ;; attribute becomes a hole" is true of the per-component spellings
+  ;; and of nothing else.  A refusal that names the alternative costs
+  ;; the same as one that does not, and this is the only place that
+  ;; knows both what was refused and what to write instead.
+  ;; What arrives in a multi-valued attribute is NOT a hole marker.  The
+  ;; expander only makes one for an attribute with a single value
+  ;; (`(rotation-y ,sig)`), so in `(rotation 0.0 ,sig 0.0)` the unquote
+  ;; is simply evaluated and whatever it produced -- a signal object --
+  ;; is handed straight to $sgl-fl, which stopped the runtime on an
+  ;; illegal cast: no name, no message, unguardable.  And the manual was
+  ;; telling people to write exactly that.
+  ;;
+  ;; So the question is not "is this a signal" but "is this a number",
+  ;; which is both what the slot needs and what catches every other way
+  ;; of getting it wrong.
+  (define ($sgl-number! v what instead)
+    (unless (real? v)
+      (error 'sgl (string-append what " needs numbers; " instead) v)))
+
+  (define ($sgl-set3! vec idx vals what instead)  ; static triples
+    (for-each (lambda (v) ($sgl-number! v what instead)) vals)
     (vector-set! vec idx ($sgl-fl (car vals)))
     (vector-set! vec (+ idx 1) ($sgl-fl (cadr vals)))
     (vector-set! vec (+ idx 2) ($sgl-fl (caddr vals))))
@@ -290,8 +326,10 @@
          ((fov) ($sgl-set1! cam 0 (cadr a) ds #f))
          ((near) ($sgl-set1! cam 1 (cadr a) ds #f))
          ((far) ($sgl-set1! cam 2 (cadr a) ds #f))
-         ((position) ($sgl-set3! cam 3 (cdr a)))
-         ((look-at) ($sgl-set3! cam 6 (cdr a)))
+         ((position) ($sgl-set3! cam 3 (cdr a) "a camera's (position x y z)"
+                                 "move the camera by rebuilding the scene"))
+         ((look-at) ($sgl-set3! cam 6 (cdr a) "(look-at x y z)"
+                                "aim the camera by rebuilding the scene"))
          (else (error 'sgl "unknown camera attribute" (car a)))))
      attrs))
 
@@ -299,7 +337,8 @@
     (for-each
      (lambda (a)
        (case (car a)
-         ((direction) ($sgl-set3! light 0 (cdr a)))
+         ((direction) ($sgl-set3! light 0 (cdr a) "a light's (direction x y z)"
+                                    "turn the light by rebuilding the scene"))
          ((ambient) ($sgl-set1! light 3 (cadr a) ds #f))
          (else (error 'sgl "unknown light attribute" (car a)))))
      attrs))
@@ -351,10 +390,20 @@
                        ($sgl-set1! f 11 (cadr a) ds #f))
            ((roughness) (set! mat ($sgl-mat! mat 'pbr))
                         ($sgl-set1! f 12 (cadr a) ds #f))
-           ((position) ($sgl-set3! f 0 (cdr a)))
-           ((rotation) ($sgl-set3! f 3 (cdr a)))
-           ((color) ($sgl-set3! f 7 (cdr a))
+           ((position) ($sgl-set3! f 0 (cdr a) "(position x y z)"
+                                   "use position-x / position-y / position-z"))
+           ((rotation) ($sgl-set3! f 3 (cdr a) "(rotation x y z)"
+                                   "use rotation-x / rotation-y / rotation-z"))
+           ((color) ($sgl-set3! f 7 (cdr a) "(color r g b)"
+                                "use color-r / color-g / color-b")
                     (unless (null? (cdddr (cdr a)))
+                      ;; the fourth component has its own path, and had
+                      ;; its own hole: color-a takes a signal, the
+                      ;; four-argument shorthand does not, and the fix
+                      ;; for the one went in without the other.
+                      ($sgl-number! (car (cdddr (cdr a)))
+                                     "the alpha of (color r g b a)"
+                                     "use color-a")
                       (vector-set! f 10 ($sgl-fl (car (cdddr (cdr a)))))))
            ((position-x) ($sgl-set1! f 0 (cadr a) ds 13))
            ((position-y) ($sgl-set1! f 1 (cadr a) ds 13))
@@ -427,8 +476,10 @@
       (for-each
        (lambda (a)
          (case (car a)
-           ((position) ($sgl-set3! f 0 (cdr a)))
-           ((rotation) ($sgl-set3! f 3 (cdr a)))
+           ((position) ($sgl-set3! f 0 (cdr a) "a group's (position x y z)"
+                                   "use position-x / position-y / position-z"))
+           ((rotation) ($sgl-set3! f 3 (cdr a) "a group's (rotation x y z)"
+                                   "use rotation-x / rotation-y / rotation-z"))
            ((position-x) ($sgl-set1! f 0 (cadr a) ds 7))
            ((position-y) ($sgl-set1! f 1 (cadr a) ds 7))
            ((position-z) ($sgl-set1! f 2 (cadr a) ds 7))
@@ -487,6 +538,12 @@
                             (cond ((null? as)
                                    (error 'sgl "lod needs (switch ...)"))
                                   ((eq? (car (car as)) 'switch)
+                                   (for-each
+                                    (lambda (d)
+                                      ($sgl-number!
+                                       d "(switch d1 d2 ...)"
+                                       "the distances are read once when the scene is built"))
+                                    (cdr (car as)))
                                    (map $sgl-fl (cdr (car as))))
                                   (else (find (cdr as)))))))
                   (let level ((ks kids) (i 0) (first #f))

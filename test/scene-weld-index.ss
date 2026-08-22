@@ -752,6 +752,59 @@
          (cmd-flush!)
          (= 2 (draw-inst d))))
 
+;; ---- 7f. which attributes take a signal, and which say so ----------
+;; The manual said "each unquoted attribute becomes a hole".  It is true
+;; of the per-component spellings and of nothing else: the expander only
+;; builds a hole for an attribute with ONE value, so in
+;; `(position 1.0 ,sig 0.0)` the unquote is simply evaluated and the
+;; signal object goes straight to $sgl-fl -- an illegal cast, which is
+;; not an error a caller can guard but a stop.  Users were being told to
+;; write it.
+;;
+;; One case per MECHANISM, not per attribute: the eight three-argument
+;; spellings share one helper, so one of them covers the class.  `color`
+;; gets its own pair -- its fourth component has a second path of its
+;; own, and that is exactly the path the last fix went in without.
+(define (refuses? thunk) (guard (e (#t #t)) (thunk) #f))
+(define (builds? thunk) (guard (e (#t #f)) (thunk) #t))
+(check "a three-argument spelling refuses a signal, by name"
+       (refuses? (lambda ()
+         (sgl (camera (@ (fov 0.9) (position 0.0 0.0 6.0) (look-at 0.0 0.0 0.0)))
+              (light (@ (direction 0.0 1.0 0.0) (ambient 0.25)))
+              (mesh (@ (geometry (sphere 1.0 8 4))
+                       (position 1.0 ,(signal-ref cr) 0.0)))))))
+(check "...and the four-argument colour's alpha does too"
+       (refuses? (lambda ()
+         (sgl (camera (@ (fov 0.9) (position 0.0 0.0 6.0) (look-at 0.0 0.0 0.0)))
+              (light (@ (direction 0.0 1.0 0.0) (ambient 0.25)))
+              (mesh (@ (geometry (sphere 1.0 8 4))
+                       (color 1.0 0.0 0.0 ,(signal-ref cr))))))))
+(check "...and a lod switch distance"
+       (refuses? (lambda ()
+         (sgl (camera (@ (fov 0.9) (position 0.0 0.0 6.0) (look-at 0.0 0.0 0.0)))
+              (light (@ (direction 0.0 1.0 0.0) (ambient 0.25)))
+              (lod (@ (switch ,(signal-ref cr)))
+                   (mesh (@ (geometry (sphere 1.0 8 4))))
+                   (mesh (@ (geometry (box 1 1 1)))))))))
+;; the should-GREEN half, with the inputs the refusal must not touch:
+;; literals everywhere, and the documented `,mesh` injection -- which
+;; IS a hole and must keep working.  (Refusing it was the first version
+;; of this fix, and test/scene.ss alone did not notice: the file that
+;; uses `,mesh` is this one.)
+(check "literal numbers still build"
+       (builds? (lambda ()
+         (sgl (camera (@ (fov 0.9) (position 0.0 0.0 6.0) (look-at 0.0 0.0 0.0)))
+              (light (@ (direction 0.0 1.0 0.0) (ambient 0.25)))
+              (lod (@ (switch 5.0))
+                   (mesh (@ (geometry (sphere 1.0 8 4)) (position 1.0 2.0 0.0)
+                            (color 1.0 0.0 0.0 0.5)))
+                   (mesh (@ (geometry (box 1 1 1)))))))))
+(check "and (geometry ,mesh), which is a hole and is documented"
+       (builds? (lambda ()
+         (sgl (camera (@ (fov 0.9) (position 0.0 0.0 6.0) (look-at 0.0 0.0 0.0)))
+              (light (@ (direction 0.0 1.0 0.0) (ambient 0.25)))
+              (mesh (@ (geometry ,(mesh-sphere 1.0 8 4))))))))
+
 ;; ---- 8. the instanced path, at u32 --------------------------------
 ;; Instancing groups nodes by geo IDENTITY, and an injected mesh gets a
 ;; fresh geo every time -- so every node above was ineligible and the
