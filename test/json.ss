@@ -41,8 +41,30 @@
  (equal? (string->json "\"\\b\\f\\r\"")
          (string (integer->char 8) (integer->char 12) #\return))
  (equal? (string->json "\"\\u0041\"") "A")
- (= (string-length (string->json "\"\\u00e9\"")) 2)      ; é = 2 bytes
- (= (string-length (string->json "\"\\ud83d\\ude00\"")) 4) ; emoji = 4 bytes
+ ;; THE BYTES, not the count.  Length alone says only that something
+ ;; two bytes long came out: replacing the continuation byte with a
+ ;; constant #x80 keeps é two bytes long and turns it into À, and every
+ ;; length assertion stayed green.  A length is the weakest thing that
+ ;; can be said about an encoding -- the encoding IS the bytes.
+ (let ((bytes (lambda (s)
+                (let loop ((i 0) (acc '()))
+                  (if (= i (string-length s))
+                      (reverse acc)
+                      (loop (+ i 1)
+                            (cons (char->integer (string-ref s i)) acc)))))))
+   (and (equal? '(#xC3 #xA9) (bytes (string->json "\"\\u00e9\"")))      ; U+00E9
+        (equal? '(#xC2 #x80) (bytes (string->json "\"\\u0080\"")))      ; 2-byte low end
+        (equal? '(#xDF #xBF) (bytes (string->json "\"\\u07ff\"")))      ; 2-byte high end
+        (equal? '(#xE0 #xA0 #x80) (bytes (string->json "\"\\u0800\"")))  ; 3-byte low end
+        (equal? '(#xE4 #xB8 #xAD) (bytes (string->json "\"\\u4e2d\"")))
+        (equal? '(#xEF #xBF #xBF) (bytes (string->json "\"\\uffff\"")))  ; 3-byte high end
+        (equal? '(#xF0 #x90 #x80 #x80)                                  ; 4-byte low end
+                (bytes (string->json "\"\\ud800\\udc00\"")))
+        (equal? '(#xF0 #x9F #x98 #x80) (bytes (string->json "\"\\ud83d\\ude00\"")))
+        (equal? '(#xF4 #x8F #xBF #xBF)                                  ; 4-byte high end
+                (bytes (string->json "\"\\udbff\\udfff\"")))
+        (equal? '(#x41) (bytes (string->json "\"\\u0041\"")))          ; 1-byte
+        (equal? '(#x7F) (bytes (string->json "\"\\u007f\"")))))       ; 1-byte high end
  ;; writer: round trips through the text
  (equal? (string->json (json->string '(("x" . 1) ("y" . #("a" #t null)))))
          '(("x" . 1) ("y" . #("a" #t null))))

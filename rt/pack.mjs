@@ -10,9 +10,11 @@
 // This used to open by saying the page makes ZERO network requests.
 // That is the intent, and it was not asserted by anything: what the
 // self-check actually holds a page to is three narrower things -- no
-// external reference in the markup attributes externalRefs scans, no
-// literal http(s) URL passed to fetch, and byte equality between what
-// was verified and what was written.  A request assembled at run time
+// byte equality between what was verified and what was written, no
+// literal http(s) URL passed to fetch, and -- in the tests rather than
+// here, since it is a build-time property -- the page shell matching an
+// approved copy byte for byte.  The markup scan that used to be one of
+// these is gone; see the note where it was called.  A request assembled at run time
 // (`const u = 'side.wasm'; fetch(u)`) passes all three.
 //
 // DELIBERATELY NOT CLOSED HERE: proving the stronger claim needs a
@@ -284,7 +286,40 @@ export function extractWasm(html) {
     return Buffer.from(b64, 'base64');
 }
 
+// EVERY INTERPOLATION INTO THE PAGE, all seven of them. Adding an
+// eighth means adding a row here; a list that is not maintained is
+// worse than no list, because the next person reads its silence as
+// "nothing else goes in".
+//
+//   ${esc(title)}                  caller's text  -> HTML-escaped
+//   ${width}                       caller's value -> checked below
+//   ${height}                      caller's value -> checked below
+//   ${PAYLOAD_ID}                  our constant
+//   ${b64}                         our own base64 of our own bytes
+//   ${JSON.stringify(PAYLOAD_ID)}  our constant, JS-quoted
+//   ${inlineRuntime()}             OUR SOURCE FILES, read from disk --
+//                                  the only row whose content comes
+//                                  from the filesystem, so the page
+//                                  changes when rt/jsbridge.mjs or
+//                                  rt/web.mjs changes
+//
+// Three of the seven carry caller input, and they are handled two
+// different ways on purpose. `title` is arbitrary text and gets
+// escaped. The dimensions are NOT text: they are checked instead,
+// because "is this a safe way to render the value" is the wrong
+// question about a canvas size -- `800"` escaped to `800&quot;` is
+// still not a size. Asking what a value IS refuses it; asking how to
+// render it lets it through in legal bytes.
+//
+// Unchecked, they were interpolated raw into an attribute, and
+// `{width: '800"><img src=https://elsewhere/x.png><i x="'}` put a real
+// element into the document while every self-check passed.
 export function renderPage(wasm, { title = 'Goeteia', width = 800, height = 600 } = {}) {
+    for (const [name, v] of [['width', width], ['height', height]])
+        if (!Number.isInteger(v) || v <= 0 || v > 32767)
+            throw new Error(
+                `renderPage: ${name} must be a positive integer up to 32767, `
+                + `not ${JSON.stringify(v)}`);
     const b64 = Buffer.from(wasm).toString('base64');
     return `<!DOCTYPE html>
 <html lang="en">
@@ -344,49 +379,42 @@ export async function packageFile(sourceFile, outFile, opts = {}) {
 // the trace signature -- same frames, same readable state -- not on
 // "it did not throw": a page that silently draws nothing would pass
 // that.  A truncated or re-encoded payload fails here.
-export async function selfCheck(sourceFile, opts = {}) {
-    const p = await packageFile(sourceFile, opts.outFile || null, opts);
-    if (!p.ok) return { ok: false, stage: 'compile', errors: p.errors, checks: [] };
+const RE_MODULE = /<script type="module">([\s\S]*?)<\/script>/;
 
-    // Every check carries an ID.  A caller that counts them cannot tell
-    // which one it counted: test/pack.mjs asked for `checks.length >= 6`
-    // while eight were produced, so any ONE of five mechanisms could be
-    // deleted outright and the suite stayed green -- the disk-equality
-    // check among them.  A count is not an identity, and a set of
-    // mechanisms is a family whose members have to be named to be
-    // pinned.
+// GATHERING and JUDGING are separate, and this is the seam.
+//
+// Everything above the seam touches the world: it compiles, writes a
+// file, reads it back, runs the module twice, shells out to `node
+// --check`. Nothing there can be handed a made-up value, which is
+// exactly right -- a self-check that could be told what it read would
+// not be checking anything.
+//
+// Everything below the seam is a pure function of what was gathered,
+// which means a test can hand it materials that violate each property
+// in turn. That matters because four of these mechanisms had no way to
+// be shown working: selfCheck writes the file and reads it back
+// itself, so nothing in the public API could make "the bytes on disk"
+// differ from "the bytes rendered" -- the check could be replaced by
+// `true` and every test stayed green. That is not "untestable", it is
+// "no injection point", and this is the injection point.
+//
+// Do not fold these back together. It is shorter as one function and
+// the seam is the only reason the checks below can be shown to fail.
+export function judgePage(m) {
     const checks = [];
     const add = (id, ok, detail) => checks.push({ id, ok, detail });
 
-    // The page every check below reads is the one that SHIPS.  It used
-    // to be p.html -- the string still in memory -- which verified an
-    // object nobody ever opens: corrupt the write (`writeFileSync(
-    // outFile, html.replace('AGFzbQ', 'BGFzbQ'))`) and every check
-    // passed while the file on disk carried a broken magic.  Reading it
-    // back for the PAYLOAD alone was not enough either: the external
-    // references, the loader's fetch, the module script's syntax and
-    // the byte count each had their own p.html, so a write that damaged
-    // the script around an intact payload still passed all four.  One
-    // name for the artifact, used everywhere -- with no outFile there is
-    // nothing on disk and the in-memory page is the artifact.
-    const shipped = p.outFile ? fs.readFileSync(p.outFile, 'utf8') : p.html;
-
-    let back;
-    try { back = extractWasm(shipped); }
-    catch (e) { return { ok: false, stage: 'extract', checks: [{ ok: false, detail: e.message }] }; }
-
-    add('payload', Buffer.compare(back, Buffer.from(p.wasm)) === 0,
+    add('payload', Buffer.compare(m.back, Buffer.from(m.wasm)) === 0,
         `the wasm extracted from the HTML is byte for byte the compiled module `
-        + `(${back.length} bytes in the page, ${p.wasm.length} compiled)`);
+        + `(${m.back.length} bytes in the page, ${m.wasm.length} compiled)`);
 
-    const direct = await scenario(p.wasm);
-    const embedded = await scenario(back);
-    add('compiled-runs', direct.ok, `the compiled module runs: ${direct.ok ? 'yes'
-        : 'threw ' + (direct.error && direct.error.message)}`);
-    add('embedded-runs', embedded.ok, `the bytes taken back out of the HTML run: ${embedded.ok ? 'yes'
-        : 'threw ' + (embedded.error && embedded.error.message)}`);
-    if (direct.ok && embedded.ok)
-        add('same-trace', signature(direct) === signature(embedded),
+    add('compiled-runs', m.direct.ok, `the compiled module runs: ${m.direct.ok ? 'yes'
+        : 'threw ' + (m.direct.error && m.direct.error.message)}`);
+    add('embedded-runs', m.embedded.ok,
+        `the bytes taken back out of the HTML run: ${m.embedded.ok ? 'yes'
+        : 'threw ' + (m.embedded.error && m.embedded.error.message)}`);
+    if (m.direct.ok && m.embedded.ok)
+        add('same-trace', signature(m.direct) === signature(m.embedded),
             'both produce the same frame command stream and readable state');
 
     // Two DIFFERENT mechanisms, not one repeated.  This first one is
@@ -396,68 +424,83 @@ export async function selfCheck(sourceFile, opts = {}) {
     // block, a truncation -- which is what the property checks below
     // cannot promise, since each only knows the one shape it looks for.
     // What it cannot see is renderPage emitting a bad page in the first
-    // place; that is what the property checks are for.  Neither
-    // subsumes the other.
-    if (p.outFile)
-        add('on-disk', shipped === p.html,
-            shipped === p.html
+    // place; that is what the golden shell in test/pack.mjs is for.
+    // Neither subsumes the other.
+    if (m.onDisk)
+        add('on-disk', m.shipped === m.rendered,
+            m.shipped === m.rendered
                 ? 'the file on disk is the page that was rendered'
                 : `the file on disk is not the page that was rendered `
-                  + `(${Buffer.byteLength(shipped)} bytes written, `
-                  + `${Buffer.byteLength(p.html)} rendered)`);
+                  + `(${Buffer.byteLength(m.shipped)} bytes written, `
+                  + `${Buffer.byteLength(m.rendered)} rendered)`);
 
-    // THE MARKUP SCAN USED TO RUN HERE, and does not any more.  It
-    // asked whether the shipped page named any external URL, by
-    // scanning it -- which meant agreeing with a browser about
-    // arbitrary HTML.  It never saw arbitrary HTML: the only page it
-    // was ever given is the one renderPage produced two lines up, from
-    // a fixed template.  Four rounds of review found four more
-    // documents it read differently from a browser (a `>` in a quoted
-    // attribute, script tags inside comments, a comment opener inside
-    // script text, an end tag with attributes, `<!-->`, `<script-x>`),
-    // and none of them is a page renderPage can emit.  That is a shape
-    // mismatch, not a coverage gap: coverage gaps close as you fix
-    // them, and this one produced a new document every round.
-    //
-    // The property is a property of the TEMPLATE, and the template is a
-    // fixed string, so it is pinned by comparing it -- see "a packaged
-    // page has the approved shape" in test/pack.mjs, which holds the
-    // rendered shell against a stored copy.  That is strictly stronger:
-    // it catches a CSS url(), a <meta refresh>, a changed loader, a
-    // dropped CSP, an added attribute -- everything a scanner for four
-    // attributes cannot see -- and it needs no HTML parsing at all.
-    //
-    // It is a BUILD-TIME property, which is why it is not checked here:
-    // the template cannot change between packaging two pages.  What
-    // this function still owns is the per-run half -- that the bytes on
-    // disk are the bytes rendered, and that the payload is intact.
     // Says exactly what it measures, which is less than "issues no
     // request": `const u = 'side.wasm'; fetch(u)` is invisible to any
     // regex, and the module is never executed here -- the mock world
     // runs the WASM through the bridge, not this page's script.  A
     // computed fetch inserted after rendering is caught by the equality
-    // above; one that renderPage itself emitted would not be caught at
-    // all, and saying so is better than implying otherwise.
-    add('no-literal-fetch', !/\bfetch\s*\(\s*['"`]https?:/.test(shipped),
+    // above; one that renderPage itself emitted is caught by the golden
+    // shell.  Saying so is better than implying otherwise.
+    add('no-literal-fetch', !/\bfetch\s*\(\s*['"`]https?:/.test(m.shipped),
         'no literal http(s) URL is passed to fetch');
 
     // The mock world runs the module through the SAME bridge but not
     // through this page's script text, so a page whose inlined loader
-    // does not even parse would still pass every check above.  Parse
-    // it for real.
-    const mod = shipped.match(/<script type="module">([\s\S]*?)<\/script>/);
-    if (!mod) add('module-parses', false, 'the page carries no module script');
-    else {
+    // does not even parse would still pass every check above.
+    if (!RE_MODULE.test(m.shipped))
+        add('module-parses', false, 'the page carries no module script');
+    else
+        add('module-parses', m.syntax.ok,
+            m.syntax.ok ? "the page's inlined module script is valid JavaScript"
+                : `the page's inlined module script does not parse: `
+                  + `${(m.syntax.stderr || '').split('\n').slice(0, 3).join(' ')}`);
+
+    return checks;
+}
+
+export async function selfCheck(sourceFile, opts = {}) {
+    const p = await packageFile(sourceFile, opts.outFile || null, opts);
+    if (!p.ok) return { ok: false, stage: 'compile', errors: p.errors, checks: [] };
+
+    // The page this reads is the one that SHIPS.  It used to be p.html
+    // -- the string still in memory -- which verified an object nobody
+    // ever opens: corrupt the write (`writeFileSync(outFile, html
+    // .replace('AGFzbQ', 'BGFzbQ'))`) and every check below passed
+    // while the file on disk carried a broken magic.  The two are the
+    // same bytes today; the point is that only one of them is the
+    // artifact.  With no outFile there is nothing on disk and the
+    // in-memory page is the artifact.
+    const shipped = p.outFile ? fs.readFileSync(p.outFile, 'utf8') : p.html;
+
+    let back;
+    try { back = extractWasm(shipped); }
+    catch (e) {
+        // The one check with no id: this path gives up before the set
+        // below exists, so it is not a member of it.
+        return { ok: false, stage: 'extract', checks: [{ ok: false, detail: e.message }] };
+    }
+
+    const direct = await scenario(p.wasm);
+    const embedded = await scenario(back);
+
+    // `node --check` on the page's own module script, gathered here
+    // because it runs a process; the verdict, not the running, is what
+    // the judge sees.
+    const mod = shipped.match(RE_MODULE);
+    let syntax = { ok: false, stderr: '' };
+    if (mod) {
         const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'goeteia-pack-'));
         const tmp = path.join(dir, 'page.mjs');
         fs.writeFileSync(tmp, mod[1]);
         const r = spawnSync(process.execPath, ['--check', tmp], { encoding: 'utf8' });
         fs.rmSync(dir, { recursive: true, force: true });
-        add('module-parses', r.status === 0,
-            r.status === 0 ? "the page's inlined module script is valid JavaScript"
-                : `the page's inlined module script does not parse: `
-                  + `${(r.stderr || '').split('\n').slice(0, 3).join(' ')}`);
+        syntax = { ok: r.status === 0, stderr: r.stderr || '' };
     }
+
+    const checks = judgePage({
+        shipped, rendered: p.html, wasm: p.wasm, back,
+        direct, embedded, onDisk: !!p.outFile, syntax,
+    });
 
     return {
         ok: checks.every(c => c.ok),

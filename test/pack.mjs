@@ -26,7 +26,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { extractWasm, externalRefs, packageFile, renderPage, selfCheck } from '../rt/pack.mjs';
+import { extractWasm, externalRefs, judgePage, packageFile, renderPage, selfCheck } from '../rt/pack.mjs';
 
 const PAGES = path.resolve(
     path.dirname(fileURLToPath(import.meta.url)), 'pages');
@@ -232,6 +232,109 @@ test('a title is escaped on the way into the page', () => {
     assert.doesNotMatch(injected, /evil\.example[^&]*"/);
     assert.equal(titleOf(injected),
         '&lt;/title&gt;&lt;img src=https://evil.example/x.png&gt;');
+});
+
+// Materials that pass every check, so each case below can spoil
+// exactly one of them and see exactly one id go false. The judge is a
+// pure function of these; selfCheck gathers them from the world.
+const goodMaterials = () => {
+    const wasm = Buffer.from([0, 97, 115, 109]);
+    const html = renderPage(wasm, { title: 'x', width: 800, height: 600 });
+    return {
+        shipped: html, rendered: html, wasm, back: Buffer.from(wasm),
+        // shaped as verify.mjs's signature() reads a trace (frames,
+        // warm, postDom), not as a stand-in of our own invention: a
+        // made-up shape would test the judge against a trace the real
+        // gatherer never produces
+        direct: { ok: true, frames: ['f1'], warm: 0, postDom: '<div/>' },
+        embedded: { ok: true, frames: ['f1'], warm: 0, postDom: '<div/>' },
+        onDisk: true, syntax: { ok: true, stderr: '' },
+    };
+};
+const verdict = (m, id) => judgePage(m).find(c => c.id === id);
+
+test('each self-check mechanism fails on the thing it is about', () => {
+    // WHY THIS EXISTS. The ordered id list one test up proves only that
+    // no mechanism was DELETED. Four of them had nothing proving they
+    // still measured anything: replace `shipped === rendered` with
+    // `true` and every id stayed present, in order, and every test
+    // passed. An id is a name, not a behaviour.
+    //
+    // These could not be written while gathering and judging were one
+    // function -- selfCheck writes the file and reads it back itself,
+    // so no caller could make the two differ. The seam is what makes
+    // them possible; that is what the seam is for.
+    assert.equal(verdict(goodMaterials(), 'on-disk').ok, true);
+    assert.equal(
+        verdict({ ...goodMaterials(), shipped: 'something else' }, 'on-disk').ok,
+        false, 'a file that differs from what was rendered must fail on-disk');
+    assert.match(
+        verdict({ ...goodMaterials(), shipped: 'x' }, 'on-disk').detail,
+        /not the page that was rendered/, 'and say so by name');
+
+    // same-trace: both ran, and disagreed
+    assert.equal(verdict(goodMaterials(), 'same-trace').ok, true);
+    assert.equal(
+        verdict({ ...goodMaterials(),
+                  embedded: { ok: true, frames: ['f2'], warm: 0, postDom: '<div/>' } },
+                'same-trace').ok,
+        false, 'two different frame streams must fail same-trace');
+
+    // no-literal-fetch: a URL handed to fetch in the page text
+    assert.equal(verdict(goodMaterials(), 'no-literal-fetch').ok, true);
+    const withFetch = { ...goodMaterials() };
+    withFetch.shipped = withFetch.shipped.replace(
+        '</body>', '<script>fetch("https://elsewhere/x")</script></body>');
+    assert.equal(verdict(withFetch, 'no-literal-fetch').ok, false,
+        'a literal http(s) URL passed to fetch must fail');
+
+    // module-parses: two different failures, and they are different
+    assert.equal(verdict(goodMaterials(), 'module-parses').ok, true);
+    assert.equal(
+        verdict({ ...goodMaterials(), syntax: { ok: false, stderr: 'oops' } },
+                'module-parses').ok,
+        false, 'a module script that does not parse must fail');
+    const noModule = { ...goodMaterials(), shipped: '<html></html>' };
+    assert.equal(verdict(noModule, 'module-parses').ok, false);
+    assert.match(verdict(noModule, 'module-parses').detail, /carries no module script/,
+        'a page with no module script fails differently from one that will not parse');
+
+    // and the three that already had witnesses, driven here too so the
+    // set is complete rather than "the four that were missing"
+    assert.equal(verdict({ ...goodMaterials(), back: Buffer.from([9]) }, 'payload').ok,
+        false);
+    assert.equal(verdict({ ...goodMaterials(), direct: { ok: false, error: new Error('x') } },
+                         'compiled-runs').ok, false);
+    assert.equal(verdict({ ...goodMaterials(), embedded: { ok: false, error: new Error('x') } },
+                         'embedded-runs').ok, false);
+
+    // with no file on disk there is no on-disk verdict at all -- the
+    // member is absent, not passing
+    assert.equal(verdict({ ...goodMaterials(), onDisk: false }, 'on-disk'), undefined);
+});
+
+test('the canvas dimensions are checked, not escaped', () => {
+    // A size is not text, so the question is not "how do we render this
+    // safely" but "is this a size". Escaping would let `800"` through
+    // as `800&quot;` -- legal bytes, meaningless value. Unchecked, they
+    // went into an attribute raw and a caller could close it.
+    for (const bad of ['800"><img src=https://elsewhere/x.png><i x="',
+                       '800', 800.5, -1, 0, 40000, null, NaN])
+        assert.throws(() => renderPage(Buffer.from([0]), { width: bad, height: 600 }),
+            /width must be a positive integer/, `accepted width ${JSON.stringify(bad)}`);
+    for (const bad of ['600', 600.5, -1, 0, 40000])
+        assert.throws(() => renderPage(Buffer.from([0]), { width: 800, height: bad }),
+            /height must be a positive integer/, `accepted height ${JSON.stringify(bad)}`);
+
+    // ...and the should-GREEN half: ordinary sizes go through, and they
+    // REACH the canvas. The golden pins the shell at 800x600 only, so
+    // without this a `${width}` replaced by a literal 800 would keep
+    // every other test green while every page came out 800 wide.
+    assert.match(renderPage(Buffer.from([0]), {}), /width="800" height="600"/);
+    assert.match(renderPage(Buffer.from([0]), { width: 320, height: 240 }),
+        /width="320" height="240"/);
+    assert.match(renderPage(Buffer.from([0]), { width: 1, height: 32767 }),
+        /width="1" height="32767"/);
 });
 
 test('an external reference is found however the attribute is spelled', () => {
