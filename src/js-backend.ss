@@ -12,11 +12,47 @@
 ;; skipped: the generic path is always emitted -- this target is a
 ;; compatibility fallback, not the fast path.
 ;;
-;; Known divergences from the wasm target, all confined to corners
-;; the test suite pins down as unobservable: argument evaluation
-;; order inside a few primitives follows JS left-to-right; a
-;; top-level function referenced as a value is one stable JS
-;; function, not a fresh closure per reference.  Non-self tail calls
+;; Known divergences from the wasm target.  This list used to end
+;; with "all confined to corners the test suite pins down as
+;; unobservable", and both halves of that were false: `(eq? f f)` on
+;; a top-level f answers #f here and #t on wasm, which is an ordinary
+;; expression rather than a corner, and no test asserted it -- the one
+;; place that cared, test/trig.ss, worked AROUND it with a textual
+;; check and said so.  A note that claims coverage stops the next
+;; person from looking, so it is worth more than the divergence it
+;; was describing.
+;;
+;;   argument evaluation order inside a few primitives follows JS
+;;   left-to-right;
+;;
+;;   a top-level function referenced as a value is one stable JS
+;;   function, not a fresh closure per reference.  `eq?` sees this,
+;;   and so does anything keyed by it -- an eq-hashtable finds a
+;;   top-level procedure again here and does not on wasm.  Both
+;;   answers are pinned, per target, in
+;;   test/js-backend-procedure-identity.mjs; a .ss fixture cannot
+;;   express them, because run-tests.sh holds every target to one
+;;   `;; expect:` line.
+;;
+;; The %-prefixed accessors (%ratio-num, %ratio-den, %cx-re, %cx-im
+;; and their kin) do NOT check the type of their argument, on either
+;; target -- callers are the prelude and are expected to have decided
+;; already.  Adding a check here would be a real cost on the hottest
+;; path, while on wasm the equivalent check is free: ref.cast is what
+;; reading the field compiles to anyway.  So the contract is "caller
+;; guarantees", and what differs is the FAILURE SHAPE:
+;;
+;;   wasm stops at the boundary -- an illegal cast, at the call.
+;;   here the field read yields `undefined`, which is not a Scheme
+;;   value and is not stopped: it goes into pairs (`pair?` answers
+;;   #t), compares with eq?, answers #f to number?, and travels until
+;;   something reads its tag -- at which point the error is a JS
+;;   TypeError naming a property, in a place unrelated to the call
+;;   that made it.
+;;
+;; Practical consequence, and the reason this paragraph is here: a
+;; crash on the JS target that cannot be located should be reproduced
+;; on the wasm target first.  It stops nearer the mistake.  Non-self tail calls
 ;; run in constant stack via the TC/TR trampoline (wasm:
 ;; return_call); js-await still cannot suspend, and the kernel shims
 ;; the JSPI probes to say so honestly.

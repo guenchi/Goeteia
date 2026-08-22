@@ -273,6 +273,11 @@ if ${NODE-node} --test test/docs.mjs >/dev/null 2>&1; then
 else
     echo "FAIL test/docs.mjs"; fail=1
 fi
+if ${NODE-node} test/js-backend-procedure-identity.mjs >/dev/null 2>&1; then
+    echo "ok   test/js-backend-procedure-identity.mjs"
+else
+    echo "FAIL test/js-backend-procedure-identity.mjs"; fail=1
+fi
 if ${NODE-node} test/trig-single-supply.mjs >/dev/null 2>&1; then
     echo "ok   test/trig-single-supply.mjs"
 else
