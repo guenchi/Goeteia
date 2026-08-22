@@ -23,6 +23,8 @@
     (let loop ((i 0))
       (and (<= (+ i k) h)
            (or (string=? ndl (substring hay i (+ i k))) (loop (+ i 1)))))))
+(define (refused-saying? frag thunk)
+  (guard (e (#t (has-sub? (condition-message e) frag))) (thunk) #f))
 (define (write-saying? frag v)
   (guard (e (#t (has-sub? (condition-message e) frag))) (json->string v) #f))
 (define (nestv n)        ; n vectors deep, innermost holds a number
@@ -96,11 +98,20 @@
  (string=? (json->string '(("a" . 1) ("b" . 2))) "{\"a\":1,\"b\":2}")
  (string=? (json->string '#(1 "two" #t)) "[1,\"two\",true]")
  (string=? (json->string '()) "{}")
- ;; the OTHER half of the list rule, which the header states and nothing
- ;; asserted: a non-empty plain list is an array.  Without this line the
- ;; whole `list?` branch could be switched off and every test stayed green.
- (string=? (json->string '(1 2)) "[1,2]")
- (string=? (json->string '("a" #t)) "[\"a\",true]")
+ ;; A plain list is NOT an array any more, and the refusal has to say
+ ;; what to write instead: we are removing a convenience someone may
+ ;; be using, and a fail-fast that stops a person without telling them
+ ;; the new spelling has only cost them time.
+ ;; the message has to carry the SPELLING, not just the diagnosis:
+ ;; this change removes a convenience someone may be using, and a
+ ;; refusal that stops a person without telling them the new way to
+ ;; write it has only cost them time.  The ruling named both forms,
+ ;; so both are asserted here.
+ (refused-saying? "#(a b) for [a,b]" (lambda () (json->string '(1 2))))
+ (refused-saying? "list->vector" (lambda () (json->string '(1 2))))
+ (refused-saying? "list->vector" (lambda () (json->string '("a" #t))))
+ (string=? (json->string (vector 1 2)) "[1,2]")
+ (string=? (json->string (vector "a" #t)) "[\"a\",true]")
  (string=? (json->string 'null) "null")
  (string=? (json->string "q\"q") "\"q\\\"q\"")
  ;; ratios serialize as their inexact value
@@ -218,33 +229,44 @@
         (string=? "null" (json->string 'null))
         (string=? "[null,1]" (json->string (vector 'null 1)))))
 
- ;; ---- what a plain list is, when its elements are objects --------
- ;; The writer decides "object or array" from the FIRST element: a list
- ;; whose car is a pair was taken for an alist.  A list OF objects has
- ;; a pair for its car too -- each object is itself a list of pairs --
- ;; so `[{"a":1},{"b":2}]`, taken apart with json-array->list and
- ;; handed back, was read as an object whose first key is the pair
- ;; ("a" . 1).  json-escape then got a pair where a string belongs and
- ;; the runtime TRAPPED: not a raise a caller could guard, the whole
- ;; program stops.
+ ;; ---- a list of objects, which is where the ambiguity showed ------
+ ;; This section used to record a trap: the writer decided "object or
+ ;; array" from the contents, a list OF objects has a pair for its car
+ ;; too, and `[{"a":1},{"b":2}]` taken apart by json-array->list and
+ ;; handed straight back was read as an OBJECT whose first key was the
+ ;; pair ("a" . 1).  json-escape got a pair where a string belongs and
+ ;; the runtime stopped.
  ;;
- ;; The vector spelling of the same data was always fine, which is why
- ;; nothing caught it: the route is chosen by the shape the caller
- ;; happens to hold, and json-array->list hands out the one that broke.
+ ;; The repair then was to read the whole list before deciding.  The
+ ;; repair now is that there is nothing to decide: a pair is an object
+ ;; and an array is a vector, so json-array->list's output is a list
+ ;; and has to be said so -- with the call that says it.
  (let ((objs (json-array->list (string->json "[{\"a\":1},{\"b\":2}]"))))
    (and (equal? objs '((("a" . 1)) (("b" . 2))))
-        (string=? "[{\"a\":1},{\"b\":2}]" (json->string objs))
-        ;; and the round trip closes
-        (equal? (string->json (json->string objs)) (list->vector objs))))
- ;; one object in a list is still an array of one, not that object
- (string=? "[{\"a\":1}]" (json->string (list (list (cons "a" 1)))))
- ;; ...while the object itself is still an object
+        (refused-saying? "list->vector" (lambda () (json->string objs)))
+        (string=? "[{\"a\":1},{\"b\":2}]" (json->string (list->vector objs)))
+        ;; and the round trip closes on the spelling that is an array
+        (equal? (string->json (json->string (list->vector objs)))
+                (list->vector objs))))
+ ;; The fork this section was written for NO LONGER EXISTS.  A pair is
+ ;; an object, full stop; an array is a vector.  Deciding the type of
+ ;; a pair-shaped value by reading its contents is what produced the
+ ;; trap these lines were added for, and the ambiguity, not the vote,
+ ;; was the defect.  What is left to assert is that the two shapes
+ ;; still mean what they say -- and that the old spelling is refused.
+ (string=? "[{\"a\":1}]" (json->string (vector (list (cons "a" 1)))))
  (string=? "{\"a\":1}" (json->string (list (cons "a" 1))))
- ;; symbol keys too, on both sides of the same fork
  (string=? "{\"a\":1}" (json->string (list (cons 'a 1))))
- (string=? "[{\"a\":1}]" (json->string (list (list (cons 'a 1)))))
- ;; a list of arrays, which has a non-pair car and was never in doubt
- (string=? "[[1],[2]]" (json->string (list (vector 1) (vector 2))))
+ (string=? "[{\"a\":1}]" (json->string (vector (list (cons 'a 1)))))
+ (string=? "[[1],[2]]" (json->string (vector (vector 1) (vector 2))))
+ ;; the old spelling of that last one, now named rather than guessed
+ (refused-saying? "list->vector"
+                  (lambda () (json->string (list (vector 1) (vector 2)))))
+ ;; an improper tail and a non-string key each get the same signpost
+ (refused-saying? "proper list of pairs"
+                  (lambda () (json->string (cons (cons "a" 1) 7))))
+ (refused-saying? "string or a symbol"
+                  (lambda () (json->string (list (cons 7 1)))))
 
  ;; ---- the writer will not emit bytes that are not UTF-8 ----------
  ;; RFC 8259 section 8.1: JSON text shall be UTF-8.  A Goeteia string
@@ -437,12 +459,56 @@
  ;;   final else with everything else that has no JSON reading.
  (write-saying? "nesting too deep"
                 (let ((v (vector #f))) (vector-set! v 0 v) v))
- (write-saying? "not a JSON value"
+ ;; A circular plain list stops at its first element, which is not a
+ ;; member -- so it is answered by the array signpost, before the
+ ;; cycle is ever reached.
+ (write-saying? "a JSON array is a vector"
                 (let ((l (list 1))) (set-cdr! l l) l))
- ;; cars that DO look like object members, so the shape predicate's
- ;; own unbounded walk is the one under test here
- (write-saying? "not a JSON value"
+ ;; ...and one whose cars ARE members reaches the walk, which is
+ ;; where the finiteness check had to be put back.  It used to live
+ ;; inside the predicate that chose object from array; that predicate
+ ;; was deleted because the choice was deleted, and it took the cycle
+ ;; guard with it -- the guard was load-bearing for a reason that had
+ ;; nothing to do with why the predicate existed.
+ (write-saying? "members cycle"
                 (let ((l (list (cons "a" 1)))) (set-cdr! l l) l))
+ ;; the should-GREEN half of that walk: a long proper alist must not
+ ;; be mistaken for a cycle by two cursors that meet at its end
+ (string=? "{\"a\":1,\"b\":2,\"c\":3,\"d\":4,\"e\":5}"
+           (json->string (list (cons "a" 1) (cons "b" 2) (cons "c" 3)
+                               (cons "d" 4) (cons "e" 5))))
+ ;; ---- the one shape that really was ambiguous --------------------
+ ;; BEFORE this change, (("a" "b")) had two legal readings -- a
+ ;; one-entry alist with key "a" and value ("b"), and a one-element
+ ;; array holding ("a" "b") -- and the writer chose the object.  Both
+ ;; readings were legal and neither held a non-JSON value, so no
+ ;; amount of walking the list could have decided it; the overlap of
+ ;; the two representations was the defect, not the choice.
+ ;;
+ ;; Written down here because the repair destroys its own evidence:
+ ;; with arrays spelled #(...) there is only one reading left, and
+ ;; nothing in the code can show there were ever two.
+ ;;
+ ;; What it does now: the object reading survives and then fails on
+ ;; its VALUE, because ("b") is not an array either.  So the answer
+ ;; is the signpost, not {"a":["b"]}.
+ (refused-saying? "list->vector" (lambda () (json->string (list (list "a" "b")))))
+ (string=? "{\"a\":[\"b\"]}" (json->string (list (cons "a" (vector "b")))))
+ (string=? "[[\"a\",\"b\"]]" (json->string (vector (vector "a" "b"))))
+ ;; The two shapes the ruling named, in the spelling that is literal
+ ;; Scheme.  The ruling wrote them as `(a #(b))` and `#((a b))`; both
+ ;; of those read as ordinary two-element LISTS and are refused, so
+ ;; the dot is not decoration here -- it is what makes the entry a
+ ;; pair.  Measured, both directions.
+ (string=? "{\"a\":[\"b\"]}" (json->string '((a . #("b")))))
+ (string=? "[{\"a\":\"b\"}]"  (json->string '#(((a . b)))))
+ (refused-saying? "list->vector" (lambda () (json->string '(a #(b)))))
+ (refused-saying? "list->vector" (lambda () (json->string '#((a b)))))
+ ;; a value that is a legal object nested in a legal object
+ (string=? "{\"a\":{\"b\":1}}" (json->string '(("a" ("b" . 1)))))
+ ;; and the dotted-tail spelling of a one-element list is refused for
+ ;; the same reason the undotted one is: it IS the same value
+ (refused-saying? "list->vector" (lambda () (json->string '(("a" . ("b"))))))
  ;; The writer's number is NOT the reader's, and this is the case
  ;; that says why: parse a legal 64-deep document, put it under one
  ;; wrapper, write it back.  While the writer shared $max-depth this
@@ -458,8 +524,10 @@
  ;; depth on its own line of code: a vector, a plain list, an alist.
  ;; Counting in one of them and not the others reads exactly like
  ;; counting -- from a vector-only table.
- (write-ok? (nestl 1024))           ; plain list -> array
- (write-fails? (nestl 1025))
+ ;; nested plain lists were the third shape here; they are not a
+ ;; container of the format any more, so the depth counter has two
+ ;; lines of code to carry it, not three
+ (refused-saying? "list->vector" (lambda () (json->string (nestl 3))))
  (write-ok? (nesto 1024))           ; alist -> object
  (write-fails? (nesto 1025))
  ;; the should-GREEN half: ordinary documents are untouched

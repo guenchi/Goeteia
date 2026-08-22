@@ -11,26 +11,60 @@
 ;;   string -> string, number -> number
 ;;   true/false -> #t/#f, null -> 'null
 ;;
+;; ONE SPELLING PER VALUE, and the type comes from the OUTERMOST
+;; CONSTRUCTOR -- you never look inside to find out what something is.
+;; `(` opens an object, `#(` opens an array:
+;;
+;;     ((a . #("b")))   -> {"a":["b"]}     a one-element array inside
+;;     #(((a . b)))     -> [{"a":"b"}]     a one-key object inside
+;;
+;; An array is a vector -- `#(1 2)` -- and nothing else; a pair is an
+;; object.  The writer used to take a plain
+;; list for an array too, and that is the question the next reader
+;; will ask: why not accept both, it is more convenient.
+;;
+;; Because the two representations OVERLAP.  Once a list can be an
+;; array and an alist is also a list, a pair-shaped value has two
+;; readings and its type has to be decided by looking at its CONTENTS.
+;; The first rule for doing that read only the head element, which put
+;; a list of objects -- exactly what json-array->list hands back -- on
+;; the object route, where json-escape got a pair and the runtime
+;; stopped.  Reading the whole list fixed that instance and left the
+;; overlap: `(("a" "b"))` was a legal one-entry alist AND a legal
+;; one-element array, and no amount of looking decides between them.
+;;
+;; This is not Postel's law, and calling it that was the mistake.
+;; Being liberal in what you accept means a WIDER DOMAIN -- more
+;; values you handle correctly.  It does not mean a second spelling
+;; for a value you already accept.  A second spelling buys nothing and
+;; costs the ability to read a type off the representation, which is
+;; the one thing that is constant-time and has no edge cases.
+;;
 ;; (string->json s)   parse; raises #(json-error msg pos) on bad input
-;; (json->string x)   serialize.  Vectors are arrays.  A LIST is an
-;;                    object when EVERY element is a pair whose car is
-;;                    a string or a symbol, and an array otherwise --
-;;                    the whole list is read, not just its head:
+;; (json->string x)   serialize.  An array is a VECTOR; a pair is an
+;;                    OBJECT.  The type is read off the shape, and
+;;                    nothing about the contents changes it:
 ;;
-;;                      (("a" . 1))       -> {"a":1}     an object
-;;                      ((("a" . 1)))     -> [{"a":1}]   an array of one
-;;                      (1 2 3)           -> [1,2,3]
+;;                      (("a" . 1))       -> {"a":1}
+;;                      #(("a" . 1))      -> [{"a":1}]
+;;                      #(1 2 3)          -> [1,2,3]
+;;                      (1 2 3)           -> refused, with the spelling
 ;;
-;;                    (Reading only the head is what used to happen,
-;;                    and a list of objects has a pair for its head
-;;                    too, so `[{"a":1},{"b":2}]` taken apart with
-;;                    json-array->list and handed back crashed the
-;;                    runtime.)
+;;                    '() is the empty OBJECT "{}"; the empty array is
+;;                    #().  An empty list cannot say which it meant,
+;;                    and the object side owns it.
 ;;
-;;                    '() is the empty OBJECT "{}", not "[]" -- an
-;;                    empty list cannot say which it meant, and the
-;;                    alist branch is the one that owns it.  Build the
-;;                    empty array as #().
+;;                    A plain list used to be an array as well.  Two
+;;                    defects came out of that overlap and only the
+;;                    first was an accident: `[{"a":1},{"b":2}]` taken
+;;                    apart with json-array->list and handed back was
+;;                    read as an object, and the runtime stopped; and
+;;                    `(("a" "b"))` was a legal one-entry alist AND a
+;;                    legal one-element array at the same time, which
+;;                    no rule reading the contents could have decided.
+;;                    Written here because the repair erases its own
+;;                    evidence: with arrays spelled #(...) there is one
+;;                    reading left and nothing shows there were two.
 ;;
 ;;                    RAISES `error` on a value with no JSON reading:
 ;;                    a char, a procedure, a bytevector, an improper
@@ -53,6 +87,11 @@
 ;; a branch that never runs.  An object is an alist, so `list?` IS true
 ;; of objects, which is exactly backwards from the guess.  Ask
 ;; json-array? instead; it exists to be the name that says so.
+;;
+;; That paragraph was true of the READER and false of the WRITER,
+;; which quietly accepted a list for an array -- so the sentence
+;; warning everyone about the rule was itself only half in force.  It
+;; is in force now, both directions.
 ;;
 ;; Copyright (c) 2026 guenchi. MIT license; see LICENSE.
 (library (web json)
@@ -540,67 +579,41 @@
         (if (or (fl-nan? f) (fl-inf? f)) "null" (number->string f))))
      (else (error 'json->string "JSON numbers must be real" v))))
 
-  ;; Is this list an OBJECT rather than an array of things?
+  ;; The predicate that used to stand here decided OBJECT from ARRAY
+  ;; by reading the list's contents, and the history is worth one
+  ;; paragraph because it is the argument for not having it:
   ;;
-  ;; The test used to be "a list whose car is a pair", which reads the
-  ;; whole shape off ONE element -- and a list of objects has a pair
-  ;; for its car too, since an object is itself a list of pairs.  So
-  ;; `(json-array->list (string->json "[{\"a\":1}]"))` came back a list
-  ;; whose first element is an alist, was taken for an object whose
-  ;; first KEY is the pair ("a" . 1), and json-escape got a pair where
-  ;; a string belongs: an illegal cast, which is a TRAP -- the caller
-  ;; cannot guard it, the program stops.  The vector spelling of the
-  ;; same data was always fine, so the route was chosen by whichever
-  ;; shape the caller happened to hold.
+  ;;   version one read the head element only.  A list of objects has
+  ;;   a pair for its head too, so the output of json-array->list came
+  ;;   back and was taken for an object whose first KEY was the pair
+  ;;   ("a" . 1); json-escape got a pair where a string belongs and
+  ;;   the runtime stopped -- a trap, unguardable.
+  ;;   version two read every element.  That fixed the instance and
+  ;;   not the cause: `(("a" "b"))` is a legal one-entry alist and a
+  ;;   legal one-element array at once, and reading further cannot
+  ;;   decide between two legal answers.
   ;;
-  ;; Every element now has to look like a member: a pair whose car is a
-  ;; string or a symbol.  That is what tells `(("a" . 1))` -- an object
-  ;; -- from `((("a" . 1)))` -- an array holding one object -- and it
-  ;; reads the whole list rather than guessing from its head.
-  ;; `list?` first, and not merely for tidiness: the loop below walks
-  ;; `cdr` without a bound, so a circular list whose cars all look like
-  ;; members would spin here exactly as the old `list?` did.  The
-  ;; finiteness question has one answer-giver; this predicate asks it
-  ;; rather than keeping a second, weaker copy of the walk.
-  (define (json-object-shape? x)
-    (and (pair? x)
-         (list? x)
-         (let loop ((l x))
-           (or (null? l)
-               (and (pair? l)
-                    (pair? (car l))
-                    (let ((k (caar l))) (or (string? k) (symbol? k)))
-                    (loop (cdr l)))))))
+  ;; So the decision was removed instead of improved.  An array is a
+  ;; vector; a pair is an object; the type comes from the outermost
+  ;; constructor and nothing inside changes it.
+  ;;
+  ;; A member of an object, checked while it is written rather than
+  ;; by a vote taken beforehand.  There is nothing left to decide:
+  ;; a pair IS an object, because an array is a vector and only a
+  ;; vector.  What remains is whether each member is well formed, and
+  ;; a member that is not gets the sentence that says how to fix it.
+  (define (member-key kv)
+    (unless (pair? kv)
+      (error 'json->string "a JSON array is a vector, not a list: #(a b) for [a,b], and ((\"k\" . #(v))) for {\"k\":[v]}; list->vector converts one" kv))
+    (let ((k (car kv)))
+      (cond ((string? k) k)
+            ((symbol? k) (symbol->string k))
+            (else
+             (error 'json->string
+                    (string-append "an object key is a string or a symbol -- "
+                                   "a JSON array is a vector, not a list: #(a b) for [a,b], and ((\"k\" . #(v))) for {\"k\":[v]}; list->vector converts one")
+                    k)))))
 
-  ;; The writer counts depth with the reader's $max-depth, and says
-  ;; the reader's sentence.  Two things it stops, and only one of them
-  ;; is about depth:
-  ;;
-  ;;   a value that REFERS TO ITSELF has no depth to exceed -- the
-  ;;   writer simply followed it until the stack was gone, which is
-  ;;   not a JSON error and not something the caller can guard.
-  ;;
-  ;; It does NOT stop a circular LIST: that one has a finite depth and
-  ;; an endless SPINE, never reaches this counter, and is answered by
-  ;; `list?` in the prelude.  One word covered both for two rounds.
-  ;;
-  ;; A counter and not a visited set: one integer on a path that runs
-  ;; per element, against a hash lookup that would run there too.
-  ;;
-  ;; Not a reason for this guard, but noticed while arguing about it,
-  ;; and left here because it is real: a document deeper than 64 is
-  ;; one BOTH readers refuse, so we can READ things we cannot safely
-  ;; echo back.  That gap is a wire question to settle with consumers,
-  ;; and this guard must not be mistaken for a fix to it -- turning a
-  ;; response nobody can parse into an exception on our side is not an
-  ;; improvement.
-  ;;
-  ;; This is a deliberate ONE-SIDED change: (igropyr json)'s writer
-  ;; still emits 65 levels.  Refusing to EMIT is unilateral -- see the
-  ;; note at the top of lib/web/utf8.ss for the axis -- because
-  ;; nothing downstream breaks by receiving less, and refusing to
-  ;; write a document neither reader accepts moves the two closer
-  ;; together, not further apart.
   (define (json->string x) (json->string* x 0))
 
   (define (json->string* x depth)
@@ -625,31 +638,46 @@
                        (string-append
                         acc "," (json->string* (vector-ref x i) (+ depth 1)))))))
        "]"))
-     ((null? x) "{}")
-     ((json-object-shape? x)                       ; alist -> object
+     ((null? x) "{}")                              ; the empty OBJECT
+     ((pair? x)                                    ; alist -> object
+      ;; No test of the contents decides this any more.  A pair is an
+      ;; object; a list that meant to be an array is a mistake with a
+      ;; one-call fix, and it is told so below rather than silently
+      ;; taken for one thing or the other.
       (string-append
        "{"
-       (fold-right
-        (lambda (kv acc)
-          (let ((entry (string-append
-                        "\"" (json-escape
-                              (if (symbol? (car kv))
-                                  (symbol->string (car kv))
-                                  (car kv)))
-                        "\":" (json->string* (cdr kv) (+ depth 1)))))
-            (if (string=? acc "") entry (string-append entry "," acc))))
-        "" x)
+       ;; The finiteness check is INSIDE this walk, and it has to be:
+       ;; it used to live in the shape predicate that decided object
+       ;; from array, and that predicate is gone because the decision
+       ;; is gone.  Deleting it took the cycle guard with it -- the
+       ;; guard was load-bearing for a reason unrelated to why the
+       ;; predicate existed, and nothing said so.  A circular alist
+       ;; walked here without end again, which is the defect that was
+       ;; just repaired one module over.
+       ;;
+       ;; Two cursors in the same single pass, not a second traversal:
+       ;; `slow` advances on every other step and meets `l` exactly
+       ;; when the spine cycles.
+       (let loop ((l x) (slow x) (step #f) (acc ""))
+         (cond
+          ((null? l) acc)
+          ((not (pair? l))
+           (error 'json->string
+                  (string-append "an object is a proper list of pairs -- "
+                                 "a JSON array is a vector, not a list: #(a b) for [a,b], and ((\"k\" . #(v))) for {\"k\":[v]}; list->vector converts one")
+                  x))
+          (else
+           (let* ((entry (string-append
+                          "\"" (json-escape (member-key (car l)))
+                          "\":" (json->string* (cdr (car l)) (+ depth 1))))
+                  (l* (cdr l))
+                  (slow* (if step (cdr slow) slow)))
+             (when (and step (pair? l*) (eq? l* slow*))
+               (error 'json->string "an object's members cycle" x))
+             (loop l* slow* (not step)
+                   (if (string=? acc "") entry
+                       (string-append acc "," entry)))))))
        "}"))
-     ((list? x)                                    ; plain list -> array
-      (string-append
-       "["
-       (fold-right
-        (lambda (v acc)
-          (if (string=? acc "")
-              (json->string* v (+ depth 1))
-              (string-append (json->string* v (+ depth 1)) "," acc)))
-        "" x)
-       "]"))
      ;; Anything else is not a JSON value, and saying so beats
      ;; answering `null`.  It used to answer null -- for a char, a
      ;; procedure, a bytevector, an improper pair, the unspecified
