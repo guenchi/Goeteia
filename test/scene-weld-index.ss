@@ -596,6 +596,64 @@
 (check "...and the first frame really did send the old value"
        (> (log-count-since wc-log "uniform4f:U:u_color:0.8") 0))
 
+;; ---- 7d-3. the other three ways a colour reaches the GPU ----------
+;; WHICH PATHS THESE CASES WALK, written down because the last two
+;; defects were both "the fix went into one consumer of five".  A
+;; colour reaches a draw by five routes, and they are chosen by the
+;; INPUT, not by anything the caller says:
+;;
+;;   1  instanced group   two nodes share a literal geometry   7d
+;;   2  welded            static lit singles, different shapes 7d-2
+;;   3  plain single lit  a lone lit node                      here
+;;   4  textured          the node has a texture               here
+;;   5  pbr               the node has metallic/roughness      here
+;;
+;; 1 and 2 each had the defect; 3, 4 and 5 are correct today and were
+;; unguarded, which is the same position 2 was in an hour ago. Counting
+;; the routes is what makes that sentence writable -- "I tested the
+;; colour" cannot be checked, "I tested five of five routes" can.
+(define (colour-moves? make bump want)
+  (let ((sc (make)))
+    (cmd-begin!) (sgl-draw! sc) (cmd-flush!)
+    (let ((a (log-length)))
+      (bump)
+      (cmd-begin!) (sgl-draw! sc) (cmd-flush!)
+      (> (log-count-since a want) 0))))
+
+(define p3-tex (fx-texture!))
+(define p3-sky (fx-texture!))
+(define p3-lut (fx-texture!))
+(define p3-r (signal 0.8))
+(check "a lone lit node's signal colour moves"
+       (colour-moves?
+        (lambda ()
+          (sgl (camera (@ (fov 0.9) (position 0.0 0.0 6.0) (look-at 0.0 0.0 0.0)))
+               (light (@ (direction 0.0 1.0 0.0) (ambient 0.25)))
+               (mesh (@ (geometry (sphere 1.0 8 4)) (color-r ,(signal-ref p3-r))))))
+        (lambda () (signal-set! p3-r 0.2))
+        "uniform4f:U:u_color:0.2"))
+(define p4-r (signal 0.8))
+(check "a textured node's signal colour moves"
+       (colour-moves?
+        (lambda ()
+          (sgl (camera (@ (fov 0.9) (position 0.0 0.0 6.0) (look-at 0.0 0.0 0.0)))
+               (light (@ (direction 0.0 1.0 0.0) (ambient 0.25)))
+               (mesh (@ (geometry (sphere 1.0 8 4)) (texture ,p3-tex)
+                        (color-r ,(signal-ref p4-r))))))
+        (lambda () (signal-set! p4-r 0.2))
+        "uniform4f:U:u_color:0.2"))
+(define p5-r (signal 0.8))
+(check "a pbr node's signal albedo moves"
+       (colour-moves?
+        (lambda ()
+          (sgl (camera (@ (fov 0.9) (position 0.0 0.0 6.0) (look-at 0.0 0.0 0.0)))
+               (light (@ (direction 0.0 1.0 0.0) (ambient 0.25)))
+               (probe (@ (sky ,p3-sky) (lut ,p3-lut) (mips 5)))
+               (mesh (@ (geometry (sphere 1.0 8 4)) (metallic 1.0) (roughness 0.3)
+                        (color-r ,(signal-ref p5-r))))))
+        (lambda () (signal-set! p5-r 0.2))
+        "uniform4f:U:u_albedo:0.2"))
+
 ;; ---- 7e. sharing a geometry must not make a mesh opaque ------------
 ;; Instancing groups by geometry identity alone, and the translucent
 ;; partition happens later -- so two translucent meshes that happen to
