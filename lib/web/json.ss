@@ -354,17 +354,25 @@
                        (let-values (((ep ek j2)
                                      (scan-digits k $max-number-digits)))
                          (when (= ek 0) (jfail "bad number" i))
-                         ;; ⚠ WHY THIS LINE IS HERE, because no test
-                         ;; can tell you.  Delete it and nothing goes
-                         ;; red: the finiteness check below refuses the
-                         ;; same inputs one step later, so every row in
-                         ;; test/json-rfc-surface.ss still passes.  What
-                         ;; happens instead is that the parser stops
-                         ;; answering -- measured, not guessed: with
-                         ;; this line removed the suite ran past a
-                         ;; two-minute timeout with no output, because
-                         ;; pow10 was building a bignum with an
-                         ;; attacker-chosen number of digits.
+                         ;; ⚠ WHY THIS LINE IS HERE.  When it was
+                         ;; written, no test could tell: deleting it
+                         ;; left every row in
+                         ;; test/json-rfc-surface.ss green, because the
+                         ;; finiteness check below refuses the same
+                         ;; inputs one step later.  What happened
+                         ;; instead was that the parser stopped
+                         ;; answering -- measured, not guessed: the run
+                         ;; went past a two-minute limit with no
+                         ;; output, because pow10 was building a bignum
+                         ;; sized by the input.
+                         ;;
+                         ;; test/json.ss now asks for the refusal BY
+                         ;; NAME, so deleting this does fail rather than
+                         ;; only hang.  The paragraph above is kept
+                         ;; because it says why that assertion had to be
+                         ;; written at all: a bound whose only symptom
+                         ;; is "no answer" has nothing to announce it,
+                         ;; and a timeout is not a red.
                          ;;
                          ;; It was not always load-bearing.  While the
                          ;; exponent scan was capped at three digits

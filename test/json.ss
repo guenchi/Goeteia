@@ -264,6 +264,12 @@
                 'accepted))))
    (and (string=? "exponent out of range" (why "1e1000000"))
         (string=? "exponent out of range" (why "1e0000000000000001000000"))
+        ;; the sign is a three-member family -- absent, +, - -- and the
+        ;; oversized cases used to exercise only the first, so guarding
+        ;; the bound with `(and (not esign) ...)` kept every row green
+        ;; while a signed exponent walked past it
+        (string=? "exponent out of range" (why "1e+1000000"))
+        (string=? "exponent out of range" (why "1e-1000000"))
         (string=? "number out of range" (why "1e309"))
         (string=? "number out of range" (why "0.5e400"))
         ;; and the digit-count judge is not one of these two

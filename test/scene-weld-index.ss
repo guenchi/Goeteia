@@ -438,12 +438,19 @@
 ;; and each one draws through its own pass.  Part 6 makes the argument
 ;; for the textured pass ("asserting the width on the lit path alone
 ;; would leave half the writers unchecked") and then stops at two of
-;; three: no test in this file, or in the scene tests beside it, ever
-;; built a pbr node.  So the width rule was pinned on two passes and
-;; assumed on the third, and the pbr branch of the draw loop was
-;; reachable by nothing at all -- replacing its material test with #f,
-;; which drops u_albedo/u_metallic/u_roughness from every pbr draw,
-;; changed no assertion anywhere.
+;; three: no case in THIS file built a pbr node, so the INDEX WIDTH was
+;; pinned on two passes and assumed on the third.
+;;
+;; Only the width.  test/scene.ss has built a pbr node all along and
+;; asserts u_metallic and u_roughness on it -- measured: deleting the
+;; u_metallic send turns that file red.  An earlier version of this
+;; comment said the pbr branch was reachable by nothing at all, which
+;; came from taking a review finding's "this mutation survives every
+;; pinned scene assertion" at face value: the mutation was run against
+;; this file only, and the half of the claim that was about the OTHER
+;; files was never checked.  A claim that nothing else covers something
+;; is a claim about the whole suite, and checking it means running the
+;; whole suite.
 ;;
 ;; A pbr mesh is spelled by giving it metallic/roughness, and it needs a
 ;; probe in the scene; the geometry here is past 65536 vertices so the
