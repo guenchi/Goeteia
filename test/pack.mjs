@@ -1,7 +1,7 @@
 // rt/pack.mjs: one .ss in, one self-contained .html out.
 //
 // The claim a packaged page makes is not "it was written" but "what
-// ships is the program you verified, and it fetches nothing".  So the
+// ships is the program you verified".  So the
 // assertions here go through the artifact: the module is read back OUT
 // of the HTML text and run, and its trace signature is compared with
 // the compiled module's -- same frames, same readable state.  "It did
@@ -26,7 +26,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { extractWasm, packageFile, renderPage, selfCheck } from '../rt/pack.mjs';
+import { extractWasm, externalRefs, packageFile, renderPage, selfCheck } from '../rt/pack.mjs';
 
 const PAGES = path.resolve(
     path.dirname(fileURLToPath(import.meta.url)), 'pages');
@@ -48,7 +48,12 @@ test('a DOM page packages into one file that carries the same program', async ()
     assert.match(html, /<div id="app">/);
     assert.match(html, /<canvas id="c" width="800" height="600">/);
     assert.match(html, /<title>static<\/title>/, 'the title defaults to the base name');
-    // the page's own claim: nothing is fetched, not even the module.
+    // Not "nothing is fetched" -- see rt/pack.mjs's header for why that
+    // stronger claim is not asserted anywhere.  What is checked is that
+    // the module comes off the page rather than from a URL, and that no
+    // literal URL appears.  A request assembled at run time would pass
+    // all of this; catching that needs a headless load and a network
+    // log, which is named as a gap rather than implied to be covered.
     // The loader still CONTAINS the fetch-based entry points it has in
     // rt/web.mjs -- they are simply never reached, because the launch
     // block reads the payload off the page and calls runGoeteiaBytes
@@ -108,4 +113,161 @@ test('a page with no payload, or a payload that is not base64, is refused', () =
     const bad = renderPage(Buffer.from([0, 1, 2]))
         .replace(/(<script type="goeteia\/wasm" id="goeteia-module">)/, '$1!!');
     assert.throws(() => extractWasm(bad), /not base64/);
+});
+
+// A page whose payload is EXACTLY the given text, so a spelling can be
+// put on the wire without going through the encoder that would fix it.
+const pageWith = (payload) =>
+    renderPage(Buffer.from([0, 1, 2]))
+        .replace(/(<script type="goeteia\/wasm" id="goeteia-module">)[^<]*/,
+                 `$1${payload}`);
+
+test('an external reference is found however the attribute is spelled', () => {
+    // One rule, and HTML gives it four members: double quotes, single
+    // quotes, no quotes, and any casing of the name. The finder used to
+    // know only the first, so a shipped page carrying
+    // <script src='side.js'> passed the "no external references" claim.
+    for (const tag of [
+        '<script src="side.js"></script>',
+        "<script src='side.js'></script>",
+        '<script src=side.js></script>',
+        '<SCRIPT SRC="side.js"></SCRIPT>',
+        '<link href="side.css">',
+        "<img SRC='side.png'>",
+    ])
+        assert.deepEqual(externalRefs(`<body>${tag}</body>`).length, 1,
+            `missed the reference in ${tag}`);
+
+    // ...and the three kinds that reach nothing stay unreported, or the
+    // check fires on every correct page and gets switched off.
+    for (const tag of [
+        '<a href="#top">x</a>',
+        '<img src="data:image/gif;base64,AAAA">',
+        '<a href="javascript:void 0">x</a>',
+        '<a HREF="#top">x</a>',
+    ])
+        assert.deepEqual(externalRefs(`<body>${tag}</body>`), [],
+            `false positive on ${tag}`);
+
+    // The page inlines a runtime, and JS assigns to .src as a property.
+    // Scanning the script BODY reports that as a reference: a false red
+    // on a page that fetches nothing.
+    assert.deepEqual(
+        externalRefs('<script type="module">el.src = new URL(x); a.href=y;</script>'),
+        [], 'a script body is not markup');
+
+    // The two holes that narrowing the scan to markup opened up. Both
+    // were caught by the whole-document version it replaced, so they
+    // are regressions of the fix, not of the original -- a check that
+    // stops looking somewhere has to be asked what it stopped seeing.
+    assert.deepEqual(
+        externalRefs('<script data-x=">" src="side.js"></script>'), ['side.js'],
+        'a > inside a quoted attribute must not end the opening tag');
+    assert.deepEqual(
+        externalRefs('<!-- <script> --><img src="side.png"><!-- </script> -->'),
+        ['side.png'],
+        'script tags inside comments must not pair around real markup');
+    // and the should-GREEN side of that same comment handling: markup
+    // that is commented out is not fetched, so it is not a reference
+    assert.deepEqual(externalRefs('<!-- <img src="never.png"> -->'), [],
+        'a reference inside a comment is not a reference');
+
+    // srcset names several URLs in one attribute, each with an optional
+    // descriptor; poster is a third attribute that fetches.
+    assert.deepEqual(
+        externalRefs('<img srcset="a.png 1x, b.png 2x">'), ['a.png', 'b.png'],
+        'every candidate in a srcset is a reference');
+    assert.deepEqual(externalRefs('<video poster="p.jpg">'), ['p.jpg'],
+        'poster fetches too');
+
+    // Every row below is a document where this function and a browser
+    // disagreed. They are grouped because the shape repeats: each is
+    // some construct the HTML parser handles that a stricter reader
+    // does not, and the two directions are NOT equally bad -- a false
+    // negative ships a page that reaches the network, a false positive
+    // gets the check switched off. Both are pinned.
+    for (const [html, want, why] of [
+        // ...it stops looking (false negatives)
+        ['<!--><img src="x.png">', ['x.png'],
+         'an abrupt-closing empty comment ends there; it has no -->'],
+        ['<!---><img src="x.png">', ['x.png'],
+         'and so does the one with the extra dash'],
+        ['<script>0</script x><img src="x.png">', ['x.png'],
+         'an end tag may carry attributes; it still closes'],
+        ['<script>0</script/><img src="x.png">', ['x.png'],
+         'and it may carry a solidus'],
+        // ...it looks where a browser does not (false positives)
+        ['<textarea><img src="x.png"></textarea>', [],
+         'textarea holds text, not markup'],
+        ['<title><img src="x.png"></title>', [], 'and so does title'],
+        ['<div data-src="x.png"></div>', [],
+         'data-src is a different attribute; \\b is not a name boundary'],
+        ['<div data-href="x.png"></div>', [], 'nor is data-href'],
+        ['<div data-srcset="x.png 1x"></div>', [], 'nor data-srcset'],
+        // HTML has no self-closing script: the element stays open, so
+        // what follows is script text and is never fetched
+        ['<script src="a.js"/><img src="x.png">', ['a.js'],
+         'a script tag does not self-close'],
+    ])
+        assert.deepEqual(externalRefs(html), want, `${why}: ${html}`);
+});
+
+test('the payload has to be canonical base64, not merely decodable', () => {
+    // Buffer.from(x, 'base64') takes all of these: it skips characters
+    // it does not know, does not mind a length off a multiple of four,
+    // and ignores what the padding claims. Each spelling below is one
+    // of the ways a payload can be wrong while still "decoding", and
+    // our own encoder emits none of them -- so seeing one means the
+    // page was edited or damaged, and decoding it anyway turns a
+    // truncated payload into a wasm module that fails somewhere later.
+    for (const [payload, why] of [
+        // the unused-bit rule has two members, one for each padding
+        // length: one '=' leaves two unused bits, two leave four. Only
+        // the first was here, so the two-'=' mask could be dropped
+        // altogether and every line still passed. 'AB==' decodes to
+        // the same byte as the canonical 'AA=='.
+        ['AAB=', 'the bits the padding says are unused are not zero'],
+        ['AB==', 'the same, at the other padding length'],
+        ['A===', 'three pad characters, which no encoding produces'],
+        ['=AAA', 'padding at the front'],
+        ['AA=A', 'padding in the middle'],
+        ['AA==AAAA', 'padding in the middle of a longer payload'],
+        // three wrong residues, not one: with only the 3 case here,
+        // relaxing the rule to `length % 2` kept the whole table green
+        // while 'AA' -- a truncation of exactly one character -- got in.
+        ['A', 'a length of one past the group'],
+        ['AA', 'a length of two past the group'],
+        ['AAA', 'a length that is not a multiple of four'],
+        ['AA A=', 'whitespace inside the payload'],
+        ['AA\nA=', 'a newline inside the payload'],
+        ['AA-A', 'a character outside the alphabet'],
+    ])
+        assert.throws(() => extractWasm(pageWith(payload)), /not base64/,
+            `accepted "${payload}": ${why}`);
+
+    // ...and the three canonical shapes go through, each to the bytes
+    // it spells. Without these the check above would be satisfied by a
+    // reader that refused everything.
+    for (const [payload, bytes] of [
+        ['AA==', [0]],
+        ['AAA=', [0, 0]],
+        ['AAAA', [0, 0, 0]],
+        ['/w==', [255]],
+        // both of the two non-alphanumeric characters: '/' above, '+'
+        // here. Nothing else in the valid table reaches '+', so an
+        // alphabet that had lost it would still pass every other line.
+        ['+/8=', [251, 255]],
+        ['AQID', [1, 2, 3]],
+        ['', []],
+        // whitespace AROUND the payload is trimmed and accepted: it is
+        // outside the token, and an HTML tool reindenting around the
+        // tag is a benign thing to survive. Whitespace inside it is
+        // refused above -- that is the token itself being rewritten.
+        [' AAA=', [0, 0]],
+        ['AAA= ', [0, 0]],
+        ['\nAAA=\n', [0, 0]],
+        ['  ', []],
+    ])
+        assert.deepStrictEqual(Array.from(extractWasm(pageWith(payload))), bytes,
+            `"${payload}" did not decode to what it spells`);
 });
