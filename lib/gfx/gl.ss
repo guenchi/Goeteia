@@ -55,6 +55,7 @@
           cmd-bind-index! cmd-index-data! cmd-draw-elements!
           cmd-index-data32! cmd-draw-elements32!
           cmd-attrib-divisor! cmd-draw-elements-instanced!
+          cmd-draw-elements-instanced32!
           cmd-uniform-matrices! cmd-uniform-matrices4s!
           cmd-draw-arrays! cmd-viewport! cmd-blend!
           GL-POINTS GL-LINES GL-TRIANGLES GL-TRIANGLE-STRIP)
@@ -408,6 +409,11 @@
      "                gl.drawElementsInstanced(m, u[p+1], gl.UNSIGNED_SHORT,"
      "                                         0, u[p+2]);"
      "                p += 3; break; }"
+     "     case 44: { const m = u[p] === 0 ? gl.POINTS : u[p] === 1 ? gl.LINES"
+     "                : u[p] === 5 ? gl.TRIANGLE_STRIP : gl.TRIANGLES;"
+     "                gl.drawElementsInstanced(m, u[p+1], gl.UNSIGNED_INT,"
+     "                                         0, u[p+2]);"
+     "                p += 3; break; }"
      "     case 24: gl.uniformMatrix4fv(slots[u[p]], false,"
      "                f.subarray(p + 2, p + 2 + 16 * u[p+1]));"
      "              p += 2 + 16 * u[p+1]; break;"
@@ -719,6 +725,13 @@
   (define (cmd-attrib-divisor! loc div) (u! 22) (u! loc) (u! div))
   (define (cmd-draw-elements-instanced! mode count n)
     ($draw!) (u! 23) (u! mode) (u! count) (u! n))
+  ;; ...and the u32-index form of it.  The non-instanced pair has had a
+  ;; 32-bit variant since the glTF path needed one (36/37); the
+  ;; instanced draw did not, so instanced geometry was u16-only however
+  ;; wide its index buffer was.  Additive: opcode 44, nothing existing
+  ;; changes meaning.
+  (define (cmd-draw-elements-instanced32! mode count n)
+    ($draw!) (u! 44) (u! mode) (u! count) (u! n))
   ;; ms: a vector of m4s (16-element flonum vectors) -- one upload
   ;; carries a whole skeleton's joint matrices
   (define (cmd-uniform-matrices! slot ms)

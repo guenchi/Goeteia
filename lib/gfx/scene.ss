@@ -132,16 +132,28 @@
 
   ;; geometry, shared: nodes with the SAME literal spec point at one
   ;; of these -- one upload, and the key instancing groups by.
-  ;; #(vbuf ibuf vbase ibase vbytes ibytes icount uploaded? bc br)
+  ;; #(vbuf ibuf vbase ibase vbytes ibytes icount uploaded? bounds u32?)
   (define ($sgl-geo-vbuf g) (vector-ref g 0))
   (define ($sgl-geo-ibuf g) (vector-ref g 1))
   (define ($sgl-geo-icount g) (vector-ref g 6))
+  ;; Index width.  The scene graph used to be u16 everywhere: a mesh past
+  ;; 65536 vertices was taken in silence and drawn with UNSIGNED_SHORT,
+  ;; so every index above the boundary named some other vertex.  The
+  ;; mesh layer had carried u32 all along (mesh-index-u32?,
+  ;; mesh-index-bytes) and so had the command layer
+  ;; (cmd-index-data32!/cmd-draw-elements32!, WebGL2 baseline); what was
+  ;; missing was the wiring here.  A u32 index buffer costs twice the
+  ;; memory of a u16 one, which is why the width is per-geometry rather
+  ;; than a global.
+  (define ($sgl-geo-u32? g) (vector-ref g 9))
   (define ($sgl-geo-upload! g)          ; geometry ships on first use
     (unless (vector-ref g 7)
       (cmd-bind-buffer! ($sgl-geo-vbuf g))
       (cmd-buffer-data! (vector-ref g 2) (vector-ref g 4))
       (cmd-bind-index! ($sgl-geo-ibuf g))
-      (cmd-index-data! (vector-ref g 3) (vector-ref g 5))
+      (if ($sgl-geo-u32? g)
+          (cmd-index-data32! (vector-ref g 3) (vector-ref g 5))
+          (cmd-index-data! (vector-ref g 3) (vector-ref g 5)))
       (vector-set! g 7 #t)))
 
   (define-record-type ($sgl-node $make-sgl-node $sgl-node?)
@@ -351,7 +363,16 @@
             (let ((geo (vector vbuf ibuf vbase ibase
                                vbytes (mesh-index-bytes geom)
                                (mesh-index-count geom) #f
-                               (mesh-bounds geom))))
+                               (mesh-bounds geom)
+                               ;; slot 9: the INDEX WIDTH, decided once
+                               ;; at construction.  Slot 7 is the
+                               ;; "already uploaded" flag and cannot
+                               ;; carry this -- the two have different
+                               ;; lifetimes, one flipping after the
+                               ;; first frame and one fixed for the
+                               ;; geometry's life.  mesh-index-bytes
+                               ;; above already sizes by the same rule.
+                               (mesh-index-u32? geom))))
               (when key
                 (set-car! cache (cons (cons key geo) (car cache))))
               geo)))))
@@ -532,10 +553,19 @@
            (total-i (fold-left (lambda (a nd)
                                  (+ a (vector-ref ($sgl-nd-geo nd) 6)))
                                0 nodes))
+           ;; The OUTPUT width follows the welded vertex count: a u16
+           ;; index names 0..65535, so anything past 65536 vertices has
+           ;; to go out as u32.  Sources may be either width and may be
+           ;; mixed within one group -- each is read as it was written,
+           ;; and all of them are written out at the group's width.
+           (out-u32? (> total-v 65536))
+           (ibytes (if out-u32?
+                       (* 4 total-i)
+                       (* 4 (quotient (+ total-i 1) 2))))
            (vbuf (fx-buffer!))
            (ibuf (fx-buffer!))
            (vbase (fx-alloc! (* total-v 24)))
-           (ibase (fx-alloc! (* 4 (quotient (+ total-i 1) 2)))))
+           (ibase (fx-alloc! ibytes)))
       ;; bake each node's vertices; indices shift by the running base
       (let weld ((ns nodes) (v0 0) (i0 0)
                  (cx 0.0) (cy 0.0) (cz 0.0))
@@ -546,7 +576,8 @@
                    (src (vector-ref geo 2))
                    (nsrc (quotient (vector-ref geo 4) 24))
                    (isrc (vector-ref geo 3))
-                   (icnt (vector-ref geo 6)))
+                   (icnt (vector-ref geo 6))
+                   (src-u32? ($sgl-geo-u32? geo)))
               (let vtx ((k 0))
                 (when (< k nsrc)
                   (let* ((at (+ src (* k 24)))
@@ -590,15 +621,31 @@
                   (vtx (+ k 1))))
               (let idx ((k 0))
                 (when (< k icnt)
-                  (let* ((w (%mem-i32-ref (+ isrc (* 4 (quotient k 2)))))
-                         (half (if (= 0 (remainder k 2))
-                                   (remainder w 65536)
-                                   (quotient w 65536)))
-                         (v (+ half v0))
-                         (oat (+ ibase (* 2 (+ i0 k))))
-                         )
+                  ;; BYTEWISE at both ends, never as one packed number:
+                  ;; a u16 pair packed into an i32 passes 2^29 as soon as
+                  ;; the odd-half index reaches 8192, which is past the
+                  ;; fixnum range, and %mem-i32-ref then returns a
+                  ;; wrapped negative -- whose remainder and quotient are
+                  ;; negative halves.  (Mirrors the store side fixed in
+                  ;; 101ade9.)  A u32 index is worse: it needs 32 bits
+                  ;; and the fixnum range is 31, so no whole-word read
+                  ;; can hold one either.
+                  (let* ((at (+ isrc (* (if src-u32? 4 2) k)))
+                         (raw (if src-u32?
+                                  (+ (%mem-u8-ref at)
+                                     (* 256 (%mem-u8-ref (+ at 1)))
+                                     (* 65536 (%mem-u8-ref (+ at 2)))
+                                     (* 16777216 (%mem-u8-ref (+ at 3))))
+                                  (+ (%mem-u8-ref at)
+                                     (* 256 (%mem-u8-ref (+ at 1))))))
+                         (v (+ raw v0))
+                         (oat (+ ibase (* (if out-u32? 4 2) (+ i0 k)))))
                     (%mem-u8-set! oat (remainder v 256))
-                    (%mem-u8-set! (+ oat 1) (quotient v 256)))
+                    (%mem-u8-set! (+ oat 1) (remainder (quotient v 256) 256))
+                    (when out-u32?
+                      (%mem-u8-set! (+ oat 2)
+                                    (remainder (quotient v 65536) 256))
+                      (%mem-u8-set! (+ oat 3) (quotient v 16777216))))
                   (idx (+ k 1))))
               (weld (cdr ns) (+ v0 nsrc) (+ i0 icnt)
                     ;; running centroid of part centers, for the hull
@@ -650,9 +697,10 @@
                    (f0 ($sgl-nd-f (car nodes)))
                    (geo (vector vbuf ibuf vbase ibase
                                 (* total-v 24)
-                                (* 4 (quotient (+ total-i 1) 2))
+                                ibytes
                                 total-i #f
-                                (cons (v3 0.0 0.0 0.0) 1.0))))
+                                (cons (v3 0.0 0.0 0.0) 1.0)
+                                out-u32?)))
               ($make-sgl-node geo
                               (vector 0.0 0.0 0.0 0.0 0.0 0.0 1.0
                                       (vector-ref f0 7)
@@ -678,15 +726,17 @@
                  (fold-left
                   (lambda (acc g)
                     (let ((members (cdr g)))
-                      (if (and (pair? (cdr members))
-                               (< (fold-left
-                                   (lambda (a nd)
-                                     (+ a (quotient
-                                           (vector-ref
-                                            ($sgl-nd-geo nd) 4)
-                                           24)))
-                                   0 members)
-                                  65536))
+                      ;; Any group of two or more welds now.  There
+                      ;; used to be a second condition -- a total under
+                      ;; 65536 vertices -- because the welded indices
+                      ;; were written u16 regardless, and a wider group
+                      ;; would have been truncated.  It was never a
+                      ;; truncation guard in practice: it skipped the
+                      ;; weld entirely, so a large group simply drew
+                      ;; part by part.  With the output width following
+                      ;; the total there is nothing left for it to
+                      ;; prevent, and skipping the weld was the cost.
+                      (if (pair? (cdr members))
                           (cons ($sgl-weld (reverse members)) acc)
                           (append (reverse members) acc))))
                   '() groups)
@@ -793,7 +843,9 @@
               (fx-uniform! prog 'u_roughness (vector-ref f 12)))
             (fx-uniform! prog 'u_color (vector-ref f 7) (vector-ref f 8)
                          (vector-ref f 9) (vector-ref f 10)))
-        (cmd-draw-elements! GL-TRIANGLES ($sgl-geo-icount geo)))))
+        (if ($sgl-geo-u32? geo)
+            (cmd-draw-elements32! GL-TRIANGLES ($sgl-geo-icount geo))
+            (cmd-draw-elements! GL-TRIANGLES ($sgl-geo-icount geo))))))
 
   ;; ---- the instanced path: staging all the way down ----
   ;; the node's TRS composes in closed form (m4s-trs!), the chain
@@ -922,8 +974,11 @@
                 (cmd-bind-index! ($sgl-geo-ibuf geo))
                 (cmd-bind-buffer! ibuf)
                 (when up? (cmd-buffer-data! ibase (* n 80)))
-                (cmd-draw-elements-instanced!
-                 GL-TRIANGLES ($sgl-geo-icount geo) n)))))
+                (if ($sgl-geo-u32? geo)
+                    (cmd-draw-elements-instanced32!
+                     GL-TRIANGLES ($sgl-geo-icount geo) n)
+                    (cmd-draw-elements-instanced!
+                     GL-TRIANGLES ($sgl-geo-icount geo) n))))))
       (if (and ($sgl-camera-key=? (vector-ref ig 5) cam aspect)
                (= gen (vector-ref ig 6))
                (>= (vector-ref ig 7) 0))

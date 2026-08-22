@@ -585,8 +585,23 @@
                           (+ misses 1)))))))))
 
   ;; ---- into the staging memory: f32 verts, u16 index pairs ----
-  ;; each u16 lands as two byte stores: packing a pair into one i32
-  ;; would push indices past 16383 out of fixnum (i31) range
+  ;; Each u16 lands as TWO BYTE STORES.  Packing a pair into one i32
+  ;; would materialise lo + 65536*hi, and this runtime's fixnums are
+  ;; i31: the representable range is -536870912..536870911.  The packed
+  ;; value passes it as soon as the ODD-HALF index reaches 8192, since
+  ;; 8192 * 65536 is 536870912 -- one past the top.  Bytewise, no
+  ;; whole-pair number is ever formed, so the boundary does not exist.
+  ;;
+  ;; Two ways to get this wrong, both of which have been written down
+  ;; here before: doing the arithmetic against 2^30 instead of 2^29,
+  ;; which puts the boundary at 16383 -- twice too high; and stating it
+  ;; about the index in general, when the value that crosses first is
+  ;; the HIGH half of the pair.
+  ;;
+  ;; $mesh-u32! is the same rule one level up: it splits into two u16
+  ;; halves and hands each to $mesh-u16!, so a u32 index -- which needs
+  ;; 32 bits and could not fit a 31-bit fixnum at all -- never exists as
+  ;; one number either.
   (define ($mesh-u16! at v)
     (%mem-u8-set! at (remainder v 256))
     (%mem-u8-set! (+ at 1) (quotient v 256)))
