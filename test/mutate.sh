@@ -209,7 +209,15 @@ else
         # line ("✔ the transport failing is a rejection") as the
         # explanation of a red.  A pattern loose enough to match prose
         # will eventually match the wrong prose.
-        detail=$(grep -E '^✖|^✗|^not ok|^FAIL|AssertionError' "$W/one.log" | head -1 | cut -c1-90)
+        # ALL of them, not the first.  Criterion (1) is "it reddened
+        # THAT assertion", and the first failing line is often a
+        # neighbour: a mutation frequently trips a golden vector before
+        # it trips the claim you derived it from, and reading only the
+        # head turns "it did redden the right one" into "it reddened
+        # something else".
+        detail=$(grep -E '^✖|^✗|^not ok|^FAIL|AssertionError' "$W/one.log" \
+                 | grep -v 'failing tests' | sed 's/ ([0-9.]*ms)$//' \
+                 | sort -u | head -4 | tr '\n' '|' | cut -c1-200)
         [ -n "$detail" ] || detail="want '$(head -1 "$W/t/test/${s%.mjs}" 2>/dev/null | sed 's/^;; expect: //')', got '$(head -c 60 "$W/one.log")'"
         echo "✅ RED (test/$s only — 1 suite, NOT the gate) <- $detail$RL_NOTE"
     else
