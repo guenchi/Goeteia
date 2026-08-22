@@ -337,9 +337,20 @@ test('the ratio policy is wide in and narrow out, in all four cases', () => {
     // what reaches the wire is the canonical form -- these are BYTE
     // assertions because "2/4" on the wire is a datum the authority
     // would never produce for this value
+    // FOUR, and they are the four sign combinations -- count them:
+    // (+,+) (+,-) (-,-) and (-,+).  The last one used to be missing,
+    // and its absence was invisible because the other three are not
+    // interchangeable with it: `(-,+)` is the only combination whose
+    // numerator is negative WITHOUT the `d < 0n` flip running, so a
+    // change to that flip's condition can break it alone.  Measured:
+    // widening the flip to `d < 0n || n < 0n` leaves all three of the
+    // old rows green and reddens five OTHER assertions in this file --
+    // the property was held, by names that do not claim it, while the
+    // name that did claim it exercised three of its four cases.
     assert.equal(write(new Ratio(2n, 4n)), '1/2');
     assert.equal(write(new Ratio(1n, -2n)), '-1/2');
     assert.equal(write(new Ratio(-2n, -4n)), '1/2');
+    assert.equal(write(new Ratio(-2n, 4n)), '-1/2');
     // narrow out: a ratio that reduces to a whole number is refused
     // rather than silently changing type on the far side
     assert.throws(() => new Ratio(4n, 2n), /reduces to the integer 2/);
