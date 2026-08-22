@@ -1270,10 +1270,32 @@
                  ;; view rendered blank with nothing reported.
                  ;;
                  ;; Y stays the up vector everywhere else, so no
-                 ;; ordinary camera's matrix changes; only a view within
-                 ;; a thousandth of vertical takes Z instead, and any
-                 ;; choice is as good as another once the roll is
-                 ;; unconstrained.
+                 ;; ordinary camera's matrix changes.
+                 ;;
+                 ;; THE THRESHOLD IS A DELIBERATE DISCONTINUITY, and an
+                 ;; earlier version of this note got that wrong: it said
+                 ;; any choice is as good as another once the roll is
+                 ;; unconstrained.  That is true AT the vertical, and
+                 ;; only there.  0.999 draws a band about 2.56 degrees
+                 ;; wide, and inside it the roll is still perfectly well
+                 ;; defined by Y -- this overrides it.  Measured, eye
+                 ;; overhead, moving the target sideways across the
+                 ;; threshold:
+                 ;;
+                 ;;   |fwd.y| = 0.99899  (Y)    u_mvp[0] =  0.00
+                 ;;   |fwd.y| = 0.99912  (Z)    u_mvp[0] = -1.55
+                 ;;
+                 ;; a quarter turn of the right vector.  So a camera
+                 ;; animating through vertical rolls once, sharply, at
+                 ;; that point.  That is the trade: a visible roll in
+                 ;; place of a blank frame, and the blank frame reported
+                 ;; nothing at all.  The alternative -- carrying the
+                 ;; previous frame's up vector -- would make the matrix
+                 ;; depend on history, which is worse.
+                 ;;
+                 ;; If someone reports "the camera spins when it passes
+                 ;; overhead", this is the answer; it is not a new
+                 ;; defect.
                  (if (fl<? 0.999 (flabs (v3-y fwd)))
                      (v3 0.0 0.0 1.0)
                      (v3 0.0 1.0 0.0)))))
