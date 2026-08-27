@@ -154,15 +154,63 @@ export class Vec {
 //     quietly.  `ratio()` collapses it to a BigInt on purpose; the
 //     constructor says so and stops.
 //   * a zero denominator is refused outright -- it is not a number.
+// The normalisation both entries need, in one place.  What they do NOT
+// share is what happens afterwards: the constructor refuses an integral
+// ratio, the factory collapses it to a BigInt.  So this is not "one of
+// them delegates to the other" -- `new Ratio(4n,2n)` must throw while
+// `ratio(4n,2n)` must answer 2n, and both need the reduction finished
+// before they can tell which case they are in.
+//
+// `ratio()` ends by calling `new Ratio(n, d)`, which normalises what is
+// already normalised.  That is NOT redundant work to be removed: both
+// are public entries, both take whatever a caller hands them, and the
+// constructor's normalisation is its own promise to anyone who calls it
+// directly -- `new Ratio(1n, -2n)` has to work whether or not some
+// other function happened to tidy the arguments first.  A part may not
+// skip its own contract because another part usually runs first.
+//
+// The observable consequence, so that nobody reads a green suite as
+// coverage: a SIGN mutation here is invisible through ratio()'s Ratio
+// branch.  That branch hands its result to `new Ratio`, which runs
+// this same function again, and applying a sign flip twice undoes it
+// -- measured, not argued.  So a green reading from that path is not
+// evidence about this line; test sign behaviour through the
+// constructor, where one application is all there is.
+//
+// Not every mutation is invisible that way: skipping the reduction
+// (`g = 1n`) changes both entries and reddens both sides' assertions,
+// because reduction has no self-inverse to hide behind.  The rule is
+// about the SHAPE of the mutation, not about the entry.
+//
+// The factory's own normalisation is observable in exactly one place,
+// the `d === 1n` branch that returns `n` without building a Ratio,
+// which is why all four sign combinations of that collapse are
+// asserted in test/sexpr-mjs.mjs.
+//
+// It was two verbatim copies until the mutation tool refused to touch
+// either: "NOT LANDED, occurrences: 2".  Both copies were reached by
+// assertions, so this was never "untested" -- it was UNPROVABLE, and
+// those are different entries on a coverage ledger.  A single-point
+// mutation cannot land on text that appears twice, so no experiment
+// could show which copy an assertion had exercised.
+//
+// `who` spells the caller's own name into the messages.  The four
+// messages are four distinct strings and callers match on them; the
+// case difference between "Ratio wants" and "ratio wants" is part of
+// the behaviour, not an accident of style.
+function normalize(num, den, who) {
+    if (typeof num !== 'bigint' || typeof den !== 'bigint')
+        throw new TypeError(`${who} wants BigInt numerator and denominator`);
+    if (den === 0n) throw new RangeError(`${who} with zero denominator`);
+    let n = num, d = den;
+    if (d < 0n) { n = -n; d = -d; }
+    const g = gcd(n < 0n ? -n : n, d);
+    return [n / g, d / g];
+}
+
 export class Ratio {
     constructor(num, den) {
-        if (typeof num !== 'bigint' || typeof den !== 'bigint')
-            throw new TypeError('Ratio wants BigInt numerator and denominator');
-        if (den === 0n) throw new RangeError('Ratio with zero denominator');
-        let n = num, d = den;
-        if (d < 0n) { n = -n; d = -d; }
-        const g = gcd(n < 0n ? -n : n, d);
-        n /= g; d /= g;
+        const [n, d] = normalize(num, den, 'Ratio');
         // An integral "ratio" is not a value this wire has: the peer's
         // arithmetic reduces, so 4/2 is the integer 2 there and a
         // Ratio{4,2} here would serialize to a datum that reads back as
@@ -180,13 +228,14 @@ function gcd(a, b) { while (b) { [a, b] = [b, a % b]; } return a || 1n; }
 // A ratio that reduces to a whole number is an integer on this wire,
 // not a ratio: the authority's `/` reduces, so 4/2 arrives as 2.
 export const ratio = (num, den) => {
-    if (typeof num !== 'bigint' || typeof den !== 'bigint')
-        throw new TypeError('ratio wants BigInt numerator and denominator');
-    if (den === 0n) throw new RangeError('ratio with zero denominator');
-    let n = num, d = den;
-    if (d < 0n) { n = -n; d = -d; }
-    const g = gcd(n < 0n ? -n : n, d);
-    n /= g; d /= g;
+    // `new Ratio` re-normalizes what this hands it, so a SIGN defect in
+    // normalize is invisible through this entry: applying the flip
+    // twice self-corrects (measured).  A green reading here is not
+    // coverage of normalize's sign handling -- that lives on the
+    // constructor, which applies it once.  What IS observable here is
+    // the branch below that returns `n` directly, and its four sign
+    // combinations are asserted in test/sexpr-mjs.mjs.
+    const [n, d] = normalize(num, den, 'ratio');
     return d === 1n ? n : new Ratio(n, d);
 };
 

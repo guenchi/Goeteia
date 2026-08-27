@@ -355,9 +355,34 @@ test('the ratio policy is wide in and narrow out, in all four cases', () => {
     // rather than silently changing type on the far side
     assert.throws(() => new Ratio(4n, 2n), /reduces to the integer 2/);
     assert.throws(() => new Ratio(0n, 7n), /reduces to the integer 0/);
-    // (the factory's collapse is asserted once, in "a ratio that
-    // reduces to an integer is an integer" -- repeating it here was a
-    // second copy of one assertion, not a second assertion)
+    // ...and the factory collapses it instead, in all four sign
+    // combinations.  This is the ONE place the factory's own
+    // normalisation is observable: every other path hands its result
+    // to `new Ratio`, whose own normalisation runs again and would
+    // repair a sign mistake before anyone could see it.  Two of these
+    // four rows used to be the whole set, and both were non-negative --
+    // the same missing-sign-combination shape as the wide-in half
+    // above, one layer down.
+    assert.strictEqual(ratio(4n, 2n), 2n);
+    assert.strictEqual(ratio(-4n, 2n), -2n);
+    assert.strictEqual(ratio(4n, -2n), -2n);
+    assert.strictEqual(ratio(-4n, -2n), 2n);
+    assert.strictEqual(ratio(0n, 7n), 0n);
+    // `ratio(4n,2n) === 2n` also appears in "a ratio that reduces to
+    // an integer is an integer", and the overlap is deliberate.  The
+    // two tests hold different quantities and that row is the smallest
+    // witness of both: there, that the factory COLLAPSES rather than
+    // building a Ratio; here, that the collapse branch is the factory's
+    // only observable normalisation, which is why its four sign
+    // combinations are above.  Deleting it from either leaves that
+    // test's name half-true, and a name that is half-true is the thing
+    // this file has spent a batch removing.
+    //
+    // This comment used to say the opposite -- that repeating the row
+    // here would be "a second copy of one assertion, not a second
+    // assertion" -- and the four rows above falsified it three lines
+    // later, in the same screenful.
+    //
     // and a zero denominator is not a number anywhere
     assert.throws(() => new Ratio(1n, 0n), /zero denominator/);
     assert.throws(() => ratio(1n, 0n), /zero denominator/);
