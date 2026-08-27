@@ -979,7 +979,21 @@ test('rt/sexpr.mjs depends on nothing but the language', () => {
     // strip comments first: the header says "no Buffer" in prose, and a
     // scanner that reads prose would report the promise as the breach
     const src = raw.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
-    for (const forbidden of [/\brequire\s*\(/, /from\s+['"]node:/, /\bBuffer\b/,
+    // The first two patterns are DERIVED, not listed: a module a
+    // browser can load may import only relative paths, so any `from`
+    // whose specifier does not begin with ./ or ../ is a dependency
+    // whatever it is named, and a dynamic import is one too.  The
+    // hand-written list that used to stand alone here named six
+    // spellings and missed both `import x from 'fs'` (no node: prefix)
+    // and `import('node:fs')` -- measured: adding either left this
+    // assertion green, and it is the only place in the tree that reads
+    // this file's text, so nothing else was holding the claim.
+    //
+    // The named patterns below stay: they catch uses that are not
+    // imports at all -- a bare `Buffer` or `process` reference that a
+    // bundler would leave to fail at run time.
+    for (const forbidden of [/\bfrom\s+['"](?!\.\.?\/)/, /\bimport\s*\(/,
+                             /\brequire\s*\(/, /\bBuffer\b/,
                              /\bprocess\b/, /\b__dirname\b/, /\bglobal\b(?!This)/])
         assert.ok(!forbidden.test(src),
             `rt/sexpr.mjs mentions ${forbidden}; it must run unchanged in a browser`);
