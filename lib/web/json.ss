@@ -15,8 +15,26 @@
 ;; CONSTRUCTOR -- you never look inside to find out what something is.
 ;; `(` opens an object, `#(` opens an array:
 ;;
-;;     ((a . #("b")))   -> {"a":["b"]}     a one-element array inside
-;;     #(((a . b)))     -> [{"a":"b"}]     a one-key object inside
+;;     (("a" . #("b")))   -> {"a":["b"]}   a one-element array inside
+;;     #((("a" . "b")))   -> [{"a":"b"}]   a one-key object inside
+;;
+;; A SYMBOL IS NOT A JSON VALUE HERE, in either position -- `null` is
+;; the one exception, because it is the spelling that means null.  The
+;; writer used to take `'foo` for a key or a value and spell it
+;; `"foo"`, which made `'foo` and `"foo"` the same document.
+;;
+;; The reason for removing it is worth stating exactly, because the
+;; short version is false and someone will measure it: symbols do NOT
+;; leak here.  What leaks is `string->symbol` applied to text that came
+;; from outside -- it interns an unbounded set from untrusted input --
+;; and that call is in nobody's codec, it is in the program between
+;; them.  A writer that accepts symbols is what makes
+;;
+;;     read -> intern the keys as symbols -> write back
+;;
+;; the obvious shape to write, and the middle step is the leak.  So
+;; this narrowing removes an invitation, not a hole.  The reader is
+;; untouched and has always produced string keys only.
 ;;
 ;; An array is a vector -- `#(1 2)` -- and nothing else; a pair is an
 ;; object.  The writer used to take a plain
@@ -68,14 +86,21 @@
 ;;
 ;;                    RAISES `error` on a value with no JSON reading:
 ;;                    a char, a procedure, a bytevector, an improper
-;;                    pair, the unspecified value.  ⚠ CHANGED: those
-;;                    used to serialize as `null`, silently, which is
-;;                    a legal value of the wrong type and one the
-;;                    caller may have meant -- nothing downstream
-;;                    could tell.  If you were relying on that, the
-;;                    fix is to convert before calling: 'null for a
-;;                    JSON null, a string for anything textual.
-;; (json-ref x k ...) path access: string/symbol key for objects,
+;;                    pair, the unspecified value, and A SYMBOL in
+;;                    either position -- key or value -- except `null`.
+;;                    ⚠ CHANGED, twice: those first five used to
+;;                    serialize as `null`, silently, which is a legal
+;;                    value of the wrong type and one the caller may
+;;                    have meant; and a symbol used to serialize as the
+;;                    string of its name, so `'foo` and `"foo"` were one
+;;                    document.  If you were relying on either, the fix
+;;                    is to convert before calling: `'null` for a JSON
+;;                    null, a string for anything textual, and
+;;                    `(symbol->string k)` for a key.
+;; (json-ref x k ...) path access: string/symbol key for objects --
+;;                    a symbol is a QUERY here, not a document, so it
+;;                    stays accepted where the writer no longer takes
+;;                    one; the asymmetry is the point, not an oversight,
 ;;                    integer index for arrays; #f when absent
 ;; (json-array? x)    is this datum a JSON array?  A NAME for vector?,
 ;;                    because the answer is the thing people get wrong
@@ -631,11 +656,19 @@
       (error 'json->string "a JSON array is a vector, not a list: #(a b) for [a,b], and ((\"k\" . #(v))) for {\"k\":[v]}; list->vector converts one" kv))
     (let ((k (car kv)))
       (cond ((string? k) k)
-            ((symbol? k) (symbol->string k))
             (else
+             ;; BOTH signposts, because a non-string key arrives two
+             ;; ways and they need different repairs: `(k . 1)` is a
+             ;; symbol key and wants quoting, while `((("a" . 1)))` is
+             ;; a list that meant to be an array and wants
+             ;; list->vector.  The message cannot tell which, so it
+             ;; carries both -- and dropping either half breaks the
+             ;; assertions that name it.
              (error 'json->string
-                    (string-append "an object key is a string or a symbol -- "
-                                   "a JSON array is a vector, not a list: #(a b) for [a,b], and ((\"k\" . #(v))) for {\"k\":[v]}; list->vector converts one")
+                    (string-append
+                     "an object key is a string: write (\"k\" . v), not (k . v)"
+                     " -- and a JSON array is a vector, not a list:"
+                     " #(a b) for [a,b]; list->vector converts one")
                     k)))))
 
   (define (json->string x) (json->string* x 0))
@@ -649,7 +682,10 @@
      ((eq? x 'null) "null")
      ((number? x) (number->json x))
      ((string? x) (string-append "\"" (json-escape x) "\""))
-     ((symbol? x) (string-append "\"" (json-escape (symbol->string x)) "\""))
+     ;; `null` is answered above; every other symbol is refused here.
+     ((symbol? x)
+      (error 'json->string
+             "a JSON string is a string: write \"foo\", not 'foo" x))
      ((vector? x)
       (string-append
        "["

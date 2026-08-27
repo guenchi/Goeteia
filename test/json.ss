@@ -262,8 +262,15 @@
  ;; still mean what they say -- and that the old spelling is refused.
  (string=? "[{\"a\":1}]" (json->string (vector (list (cons "a" 1)))))
  (string=? "{\"a\":1}" (json->string (list (cons "a" 1))))
- (string=? "{\"a\":1}" (json->string (list (cons 'a 1))))
- (string=? "[{\"a\":1}]" (json->string (vector (list (cons 'a 1)))))
+ ;; these two used to assert that a SYMBOL key spelled the same
+ ;; object.  It does not any more, and the rows are kept as the
+ ;; refusal rather than deleted: the pair `(a . 1)` is exactly what a
+ ;; reader-then-writer program produces after interning its keys, so
+ ;; it is the input most likely to arrive here by accident.
+ (refused-saying? "an object key is a string"
+                  (lambda () (json->string (list (cons 'a 1)))))
+ (refused-saying? "an object key is a string"
+                  (lambda () (json->string (vector (list (cons 'a 1))))))
  (string=? "[[1],[2]]" (json->string (vector (vector 1) (vector 2))))
  ;; the old spelling of that last one, now named rather than guessed
  (refused-saying? "list->vector"
@@ -271,7 +278,7 @@
  ;; an improper tail and a non-string key each get the same signpost
  (refused-saying? "proper list of pairs"
                   (lambda () (json->string (cons (cons "a" 1) 7))))
- (refused-saying? "string or a symbol"
+ (refused-saying? "an object key is a string"
                   (lambda () (json->string (list (cons 7 1)))))
 
  ;; ---- the writer will not emit bytes that are not UTF-8 ----------
@@ -441,6 +448,56 @@
  ;; signed zero to carry
  (eqv? 0 (string->json "-0"))
 
+ ;; ---- a symbol is not a JSON value on the way out ----------------
+ ;; JSON has one string type and no symbols, so `'foo` and `"foo"` were
+ ;; the same document -- the writer spelled both `"foo"`.  Accepting
+ ;; both is now refused, and the reason is not that a symbol is unsafe
+ ;; in itself.  It is that a codec whose WRITER takes symbols makes
+ ;; this the natural shape for a program:
+ ;;
+ ;;     read a document -> turn its keys into symbols to work with ->
+ ;;     write it back
+ ;;
+ ;; and the middle step is `string->symbol` on text that arrived from
+ ;; outside.  That is the step that leaks -- it interns an unbounded
+ ;; number of symbols from untrusted input -- and it is not in this
+ ;; file, or in the reader, which only ever produces string keys.
+ ;; Narrowing the writer removes the invitation, not the leak.  Written
+ ;; out because "symbols leak" is false of this code and someone who
+ ;; measures it will find it false and undo the decision.
+ ;;
+ ;; Each refusal names the spelling to use instead: a fail-fast that
+ ;; stops someone without telling them the new form has only cost them
+ ;; time.
+ (refused-saying? "an object key is a string"
+                  (lambda () (json->string (list (cons 'k 1)))))
+ (refused-saying? "(\"k\" . v)"
+                  (lambda () (json->string (list (cons 'k 1)))))
+ (refused-saying? "a JSON string is a string"
+                  (lambda () (json->string (list (cons "a" 'foo)))))
+ (refused-saying? "a JSON string is a string"
+                  (lambda () (json->string 'foo)))
+ ;; `null` is the one symbol that stays, because it is the spelling
+ ;; that MEANS null and has its own clause before the refusal.
+ (string=? "null" (json->string 'null))
+ (string=? "{\"a\":null}" (json->string (list (cons "a" 'null))))
+ ;; ...but not as a KEY: an object key is a string, and `null` is not
+ ;; an exception to that -- the exception is about the value position
+ (refused-saying? "an object key is a string"
+                  (lambda () (json->string (list (cons 'null 1)))))
+ ;; The should-GREEN half, seven rows: narrowing symbols must not move
+ ;; anything else.  Without these a change that refused too much would
+ ;; look exactly like this one.
+ (string=? "{}" (json->string '()))
+ (string=? "[]" (json->string (vector)))
+ (string=? "[1,2,3]" (json->string (vector 1 2 3)))
+ (string=? "{\"a\":1}" (json->string (list (cons "a" 1))))
+ (string=? "{\"a\":[\"b\"]}" (json->string (list (cons "a" (vector "b")))))
+ (string=? "true" (json->string #t))
+ (string=? "false" (json->string #f))
+ (refused-saying? "list->vector" (lambda () (json->string (list (list "a" "b")))))
+ (refused-saying? "list->vector" (lambda () (json->string '(1 2 3))))
+
  ;; ---- numbers past the printer's fixnum cap ----------------------
  ;; The integer part of a flonum was printed through %fl->fx, an i31
  ;; fixnum that stops at 2^29-1.  Past that the printer emitted
@@ -569,10 +626,14 @@
  ;; of those read as ordinary two-element LISTS and are refused, so
  ;; the dot is not decoration here -- it is what makes the entry a
  ;; pair.  Measured, both directions.
- (string=? "{\"a\":[\"b\"]}" (json->string '((a . #("b")))))
- (string=? "[{\"a\":\"b\"}]"  (json->string '#(((a . b)))))
- (refused-saying? "list->vector" (lambda () (json->string '(a #(b)))))
- (refused-saying? "list->vector" (lambda () (json->string '#((a b)))))
+ (string=? "{\"a\":[\"b\"]}" (json->string '(("a" . #("b")))))
+ (string=? "[{\"a\":\"b\"}]"  (json->string '#((("a" . "b")))))
+ ;; and the symbol spellings of the same two, which the ruling's own
+ ;; examples used: they are refused now, key side and value side
+ (refused-saying? "an object key is a string"
+                  (lambda () (json->string '((a . #("b"))))))
+ (refused-saying? "a JSON string is a string"
+                  (lambda () (json->string '(("a" . b)))))
  ;; a value that is a legal object nested in a legal object
  (string=? "{\"a\":{\"b\":1}}" (json->string '(("a" ("b" . 1)))))
  ;; and the dotted-tail spelling of a one-element list is refused for
