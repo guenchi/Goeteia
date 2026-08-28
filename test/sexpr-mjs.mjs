@@ -1066,10 +1066,25 @@ test('the fixture is whole, named and self-consistent', () => {
         assert.ok(have.has(required), `the fixture lost the "${required}" vector`);
     // named membership on the read and symbol groups too: thresholds
     // alone let an ordinary entry be deleted without a sound
-    // THE SAME LIST the Scheme read suite names, spelled identically.
-    // Two lists that overlapped but differed meant the same deletion was
-    // caught by one suite and not the other -- and every asymmetry
-    // between these suites has been a hole in whichever asserted less.
+    // THE SAME LIST the Scheme read suite names, spelled identically
+    // (test/sexpr-golden-read.ss, its "the fixture lost the probe"
+    // check).  Two lists that overlapped but differed meant the same
+    // deletion was caught by one suite and not the other -- and every
+    // asymmetry between these suites has been a hole in whichever
+    // asserted less.
+    //
+    // That rule is about THIS pair, and it does not generalise to
+    // every list of probe names in the two suites.  The Scheme file
+    // also names an OVERSIZED SET -- the probes too large to run in a
+    // Scheme runtime, "read-long-token" among them -- and that list
+    // answers a different question: not "is this probe still in the
+    // fixture" but "is the set of skipped probes still exactly these
+    // five".  It is held on that side alone, on purpose.  Adding its
+    // names here would not close a gap; it would couple an
+    // exact-set assertion to an existence assertion and teach the
+    // next reader that the two must agree, which they must not.
+    // Renaming "read-long-token" in the fixture was measured: the
+    // Scheme side goes red, this side does not, and that is correct.
     for (const required of [
                              'read-int', 'read-ratio-reduces',
                              'read-plus-five', 'read-trailing-datum',

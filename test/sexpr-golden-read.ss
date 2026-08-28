@@ -269,7 +269,19 @@
   ;; pinned: exactly the non-ASCII probes may skip the position check
   (check "byte-position exemptions are the known ones" (= byte-position-notes 1))
   ;; membership, not just the count: an equal-sized substitution would
-  ;; silently change WHICH cases this file stops holding anyone to
+  ;; silently change WHICH cases this file stops holding anyone to.
+  ;;
+  ;; This is the third of three probe-name lists across the two suites,
+  ;; and the only one with no counterpart.  The other two -- the
+  ;; "fixture lost the probe" list below and the identical one in
+  ;; test/sexpr-mjs.mjs -- assert EXISTENCE and are deliberately kept
+  ;; in lockstep.  This one asserts an EXACT SET: these five and no
+  ;; others are the probes skipped for size.  "read-long-token" is
+  ;; named only here, and that is not an omission on the JS side: it
+  ;; is the only assertion that would notice the skipped set changing
+  ;; shape, and it has no business being restated as an existence
+  ;; check.  Measured, not assumed -- renaming that entry in the
+  ;; fixture reds this check and nothing in the JS suite.
   (check "oversized set is the known one"
          (and (= oversized 5)
               (let loop ((want (list "read-long-token" "read-token-65536" "read-token-65537" "read-number-token-65536" "read-number-token-65537")) (ok #t))
