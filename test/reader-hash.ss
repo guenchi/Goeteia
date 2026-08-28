@@ -58,19 +58,35 @@
     (or (ok? (rd src))
         (begin (fail! (string-append src " read as the wrong value")) #f))))
 
-;; ---- the forms with no branch: every one used to answer eof-object --
-(refuses? "#b101" "#")
-(refuses? "#o17" "#")
-(refuses? "#d15" "#")
-(refuses? "#e1.5" "#")
-(refuses? "#i3" "#")
+;; ---- the forms that used to answer eof-object ----------------------
+;; These five now READ -- the radix and exactness prefixes landed after
+;; this file was written -- and the rows are kept rather than deleted
+;; because what this file holds is the DISPATCHER, not the absence of
+;; those features: each of them must reach its branch and produce a
+;; value, and the ones with no branch at all must still raise.
+(reads-as? "#b101" (lambda (v) (eqv? v 5)))
+(reads-as? "#o17"  (lambda (v) (eqv? v 15)))
+(reads-as? "#d15"  (lambda (v) (eqv? v 15)))
+(reads-as? "#e1.5" (lambda (v) (eqv? v 3/2)))
+(reads-as? "#i3"   (lambda (v) (and (flonum? v) (fl=? v 3.0))))
+;; and a form whose prefix letter exists but whose body does not parse
+;; still raises, naming the base -- "#bad" looks like a word and is a
+;; binary literal with two illegal digits
+(refuses? "#bad" "base-2")
+(refuses? "#q1" "#")
 ;; `#` followed by real end of input.  This is the purest cell in the
 ;; file: before the fix its answer was an eof-object, which is EXACTLY
 ;; what a well-formed empty input returns, so the two were not merely
 ;; hard to tell apart -- they were the same value.
 (refuses? "#" "#")
-;; the structure-corruption judge: a bad form in the middle of a list
-(refuses? "(1 #b101 3)" "#")
+;; the structure-corruption judge: a bad form in the middle of a list.
+;; `#b101` reads now, so the judge uses a form that still has no
+;; branch -- what is being held is that an unreadable form cannot end
+;; the datum, not that any particular spelling is unreadable.
+(refuses? "(1 #q1 3)" "#")
+;; and the one that started it: three elements stay three
+(reads-as? "(1 #b101 3)"
+           (lambda (v) (and (= 3 (length v)) (eqv? 5 (cadr v)))))
 
 ;; ---- #vu8(, which the writer emits and the reader had no branch for
 ;; The printer spells a bytevector "#vu8(...)"; with no entry here the
@@ -112,11 +128,10 @@
 ;; Both signs, not just the one that was reported: "#x-1f" happened to
 ;; be loud when compiled (the leftover became an unbound variable) and
 ;; "#x+1f" was never mentioned, which is how a sign gets half-fixed.
-;; In THIS change both are refused; making them read as -31 and 31
-;; belongs to the change that generalises the digit loop over a radix,
-;; and that change gets its own cells.
-(refuses? "#x-1f" "base-16 digit")
-(refuses? "#x+1f" "base-16 digit")
+;; They were refused when this file was written and read as numbers
+;; now; both spellings are here because a sign has two of them.
+(reads-as? "#x-1f" (lambda (v) (eqv? v -31)))
+(reads-as? "#x+1f" (lambda (v) (eqv? v 31)))
 
 ;; ---- negative controls: one per branch that already worked ----------
 ;; The risk in this change is not the new error, it is the six working

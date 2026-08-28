@@ -183,9 +183,32 @@ The entry is kept rather than deleted because the message it quotes
 was public: anyone who met that text and searched for it should land
 here and be told it is obsolete, not find nothing.
 
-Note that `e` is an exponent marker **only in base ten**. Where a
-radix prefix makes `e` a digit, there is no exponent syntax to have —
-`#x1e3` is 483, not 1000.
+## Number syntax beyond R6RS
+
+The reader accepts two things R6RS does not define, deliberately and
+for the same reason: refusing them would be more code than accepting
+them.
+
+**Fractions and exponents at any radix.** R6RS defines `<decimal R>`
+for radix ten only, so `#o1.5e2` and `#x.8` are not standard. This
+reader takes them, using one rule for every base: an exponent marker
+is a letter of `e s f d l` (either case) that is **not a digit in the
+current radix**, its digits are read in that radix, and it scales by a
+power of that radix. So `#x1e3` is 483 — `e` is a hex digit there, so
+there is no exponent to find — while `#o1e3` is 8³ = 512 and `#o1e8`
+is refused, because `8` is not an octal digit. Restricting markers to
+base ten would mean adding a guard whose only purpose is to reject
+input the general rule already handles.
+
+**What is still refused**: a numeral whose denominator is zero. Chez
+reads `#i1/0` as `+inf.0`; this reader refuses it and says so, naming
+`+inf.0`, `-inf.0` and `+nan.0` as the spellings that work. Accepting
+it would mean deferring the division past the exactness prefix and
+adding a separate `0/0`-is-NaN case — a second shape in the parser for
+a spelling nobody writes. `test/number-face.tsv` records those rows as
+a deliberate divergence from its oracle, and the list of them lives in
+the generator so that regenerating the fixture cannot quietly restore
+Chez's answer.
 
 ## Bitwise operations and big operands
 

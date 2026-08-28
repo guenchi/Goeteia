@@ -149,14 +149,17 @@
 (flonum-is? "0.0000450283909042984704236981542"  "3f079b9bbb08d887")
 (flonum-is? "2.9543127272310226444988358905020e-5" "3efefa6c3f4eef7b")
 
-;; The seam with the radix/exactness change: `#e1e3` must read as the
-;; EXACT integer 1000, and an assembly that converted to a flonum too
-;; early would answer 1000.0 instead.  It is the sharpest cell for
-;; "the exact rational survives" -- and it cannot run until `#e` is
-;; implemented, which is the next change, not this one.
-(not-exercised! "external blocker: #e is not implemented until the
-radix and exactness prefixes land; this is the seam cell for both
-changes and must be green in each" "#e1e3 reading as the exact 1000")
+;; The seam with the radix and exactness prefixes, now that they are
+;; here: `#e1e3` must read as the EXACT integer 1000.  An assembly that
+;; converted to a flonum too early would answer 1000.0, and the two are
+;; indistinguishable through `=`, which is why the cell asks for
+;; exactness rather than for the value.
+(reads-as? "#e1e3" (lambda (v) (and (exact? v) (eqv? v 1000))))
+(reads-as? "#i1e3" (lambda (v) (and (inexact? v) (fl=? v 1000.0))))
+(reads-as? "#e1.5" (lambda (v) (and (exact? v) (eqv? v 3/2))))
+;; the same digits at another radix, where the exponent scales by that
+;; radix: #o1e3 is 8^3, not 10^3
+(reads-as? "#o#e1e3" (lambda (v) (and (exact? v) (eqv? v 512))))
 
 ;; A long decimal in the SUBNORMAL range is deliberately not here: the
 ;; converter rounds at 53 bits and then scales down, rounding a second

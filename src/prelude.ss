@@ -620,55 +620,214 @@
 ;; double -- and lands there differently on the two targets, which is
 ;; what the exact integer layer exists to prevent.
 (define (%decimal->flonum bs)                     ; -> flonum, or #f
-  (let* ((neg (and (pair? bs) (= (car bs) 45)))
-         (bs (if (and (pair? bs) (%sign-byte? (car bs))) (cdr bs) bs)))
-    (let scan ((bs bs) (digits 0) (before 0) (after 0) (seen-dot #f))
-      (cond
-       ((and (pair? bs) (< 47 (car bs)) (< (car bs) 58))
-        (scan (cdr bs) (+ (* digits 10) (- (car bs) 48))
-              (if seen-dot before (+ before 1))
-              (if seen-dot (+ after 1) after)
-              seen-dot))
-       ((and (pair? bs) (= (car bs) 46) (not seen-dot))
-        (scan (cdr bs) digits before after #t))
-       (else
-        ;; a number needs at least one digit somewhere; ".5" and "5."
-        ;; are both legal, "." and "+" are not numbers at all
-        (and (< 0 (+ before after))
-             (let ((e (%exponent-of bs)))
-               (and e
-                    (or seen-dot (not (eq? e 'none)))
-                    (let* ((k (- (if (eq? e 'none) 0 e) after))
-                           (num (if (< k 0) digits (* digits (%pow10 k))))
-                           (den (if (< k 0) (%pow10 (- 0 k)) 1))
-                           (v ($exact->fl num den)))
-                      ;; The sign is applied AFTER the conversion, by
-                      ;; multiplying.  Carrying it into the exact layer
-                      ;; instead loses it exactly where it matters: the
-                      ;; exact integer 0 has no sign, so "-0.0" and any
-                      ;; magnitude that rounds away to zero would come
-                      ;; back positive.  (lib/web/json.ss says the same
-                      ;; thing about its own reader, and it was written
-                      ;; first.)
-                      (if neg (fl* v (fixnum->flonum -1)) v))))))))))
+  ;; The base-ten face, which is the one an unprefixed token reaches.
+  ;; It is the general body parser at radix 10 with the answer forced
+  ;; inexact, so the two cannot describe different grammars: a number
+  ;; face stated twice is a number face that will be edited once.
+  (let ((r (%body->number bs 10)))
+    (and r (cadr r) (%apply-exactness r 'inexact))))
+
+;; ---- the number body, in any radix -------------------------------
+;; A body is  sign? ( digits / digits | digits? . digits? exp? ) and
+;; the SAME procedure reads it in base 2, 8, 10 and 16.  Writing a
+;; separate digit loop per radix is how `#x` came to have no sign, no
+;; length check and no digit validation while base ten had all three:
+;; four copies of one grammar, and only the copy anyone used got
+;; fixed.
+;;
+;; Answers (magnitude inexact? negative?) with the magnitude an EXACT
+;; rational, or #f.  The sign travels separately all the way to the
+;; conversion, because the exact number 0 has no sign and applying it
+;; early is exactly how a negative zero is lost.
+;;
+;; An exponent exists only at radix ten.  Anywhere else `e` is a digit
+;; or it is nothing: `#x1e3` is 483, and `#x1.8e2` is a hex fraction
+;; whose last three digits are `8`, `e` and `2`.
+(define (%digit-val b radix)
+  (let ((v (cond
+            ((and (< 47 b) (< b 58)) (- b 48))      ; 0-9
+            ((and (< 96 b) (< b 123)) (+ 10 (- b 97)))  ; a-z
+            ((and (< 64 b) (< b 91)) (+ 10 (- b 65)))   ; A-Z
+            (else 99))))
+    (and (< v radix) v)))
+
+(define (%digits-of bs radix)           ; -> (value count rest)
+  (let loop ((bs bs) (v 0) (n 0))
+    (if (and (pair? bs) (%digit-val (car bs) radix))
+        (loop (cdr bs) (+ (* v radix) (%digit-val (car bs) radix)) (+ n 1))
+        (list v n bs))))
+
+(define (%body->number bs radix)        ; -> (magnitude inexact? neg) or #f
+  (and
+   (pair? bs)
+   (let* ((neg (= (car bs) 45))
+          (bs (if (%sign-byte? (car bs)) (cdr bs) bs)))
+     (let* ((ip (%digits-of bs radix))
+            (int-v (car ip)) (int-n (cadr ip)) (rest (caddr ip)))
+       (cond
+        ;; ratio: no decimal point, no exponent, both halves required
+        ((and (pair? rest) (= (car rest) 47))       ; /
+         (let* ((dp (%digits-of (cdr rest) radix))
+                (den-v (car dp)) (den-n (cadr dp)) (tail (caddr dp)))
+           (and (< 0 int-n) (< 0 den-n) (null? tail)
+                (begin
+                  ;; A zero denominator is refused, and the message
+                  ;; names the spellings that work.  Chez answers
+                  ;; +inf.0 for "#i1/0", which would need the division
+                  ;; deferred past the exactness prefix plus a separate
+                  ;; 0/0-is-NaN case: a second shape in the parser for
+                  ;; a spelling nobody writes.
+                  (when (= den-v 0)
+                    (errorf 'read
+                            (string-append
+                             "division by zero in a numeral -- write "
+                             "+inf.0, -inf.0 or +nan.0 at "
+                             (%at-line $reader-line $reader-column))))
+                  (list ($make-rat int-v den-v) #f neg)))))
+        ;; a decimal point, an exponent, or neither
+        (else
+         (let* ((dotted (and (pair? rest) (= (car rest) 46)))
+                (fp (if dotted (%digits-of (cdr rest) radix) (list 0 0 rest)))
+                (frac-v (car fp)) (frac-n (cadr fp)) (tail (caddr fp))
+                (e (%exponent-of tail radix)))
+           (and (< 0 (+ int-n frac-n)) e
+                (let* (;; Both scales follow the RADIX: the fraction
+                       ;; digits are a power of it ("#x.8" is 8/16, not
+                       ;; 8/10) and so is the exponent ("#o1e3" is
+                       ;; 8^3).  They collapse into a single power,
+                       ;; which is why this is shorter than the version
+                       ;; that treated ten specially.
+                       (whole (+ (* int-v (%expt-int radix frac-n)) frac-v))
+                       (scale (- (if (eq? e 'none) 0 e) frac-n))
+                       (mag (if (< scale 0)
+                                ($make-rat whole (%expt-int radix (- 0 scale)))
+                                (* whole (%expt-int radix scale)))))
+                  ;; R6RS: a decimal point or an exponent makes it
+                  ;; inexact unless a prefix says otherwise
+                  (list mag (or dotted (not (eq? e 'none))) neg)))))))))) 
+
+(define (%expt-int b n) (let loop ((i n) (a 1)) (if (= i 0) a (loop (- i 1) (* a b)))))
+
+;; Turn (magnitude inexact? neg) into the number, under an exactness
+;; that is 'exact, 'inexact, or #f for "whatever the spelling said".
+(define (%apply-exactness r want)
+  (let* ((mag (car r)) (neg (caddr r))
+         (inexact? (if want (eq? want 'inexact) (cadr r))))
+    (if inexact?
+        (let ((v ($exact->fl (numerator mag) (denominator mag))))
+          ;; sign applied after the conversion -- see %decimal->flonum
+          (if neg (fl* v (fixnum->flonum -1)) v))
+        (if neg (- 0 mag) mag))))
+
+;; ---- #b #o #d #x and #e #i ---------------------------------------
+;; Entered with the byte after `#` already read.  The rest of the
+;; token is gathered and the prefixes are peeled off the front, at
+;; most one radix and at most one exactness, in either order --
+;; `#e#x1f` and `#x#e1f` are both 31, and `#x#x1f` and `#e#i1.5` are
+;; both refused.
+(define (%read-prefixed first)
+  (let ((token (cons 35 (cons first (%read-token '())))))
+    (let peel ((bs token) (radix #f) (exactness #f))
+      (if (and (pair? bs) (= (car bs) 35) (pair? (cdr bs)))
+          (let* ((c (cadr bs))
+                 (radix! (lambda (r)
+                           (when radix (%prefix-twice "radix"))
+                           (peel (cddr bs) r exactness)))
+                 (exact! (lambda (x)
+                           (when exactness (%prefix-twice "exactness"))
+                           (peel (cddr bs) radix x))))
+            (cond
+             ((memv c '(98 66)) (radix! 2))
+             ((memv c '(111 79)) (radix! 8))
+             ((memv c '(100 68)) (radix! 10))
+             ((memv c '(120 88)) (radix! 16))
+             ((memv c '(101 69)) (exact! 'exact))
+             ((memv c '(105 73)) (exact! 'inexact))
+             ;; A `#` inside a number token that is not a prefix is an
+             ;; error, not a datum.  Answering #f here would make the
+             ;; reader hand back the boolean false for "#x#q1" -- a
+             ;; value, from a token that has no value.
+             (else
+              (errorf 'read
+                      (string-append "unrecognised number prefix #"
+                                     (string (integer->char c)) " at "
+                                     (%at-line $reader-line $reader-column))))))
+          (let* ((base (or radix 10))
+                 (r (%body->number bs base)))
+            (if r
+                (%apply-exactness r exactness)
+                (%bad-prefixed bs base)))))))
+
+;; Say WHY, naming the byte and the base.  A reader that only reports
+;; "that is not a number" sends the writer looking at the wrong end of
+;; the token; #bad and #b101 differ by two bytes and by nothing else
+;; the message would show.
+(define (%prefix-twice what)
+  (errorf 'read
+          (string-append "a number carries at most one " what
+                         " prefix at "
+                         (%at-line $reader-line $reader-column))))
+
+(define (%bad-prefixed bs base)
+  (let ((offender
+         (let find ((bs bs))
+           (cond
+            ((null? bs) #f)
+            ((or (%digit-val (car bs) base) (%sign-byte? (car bs))
+                 (= (car bs) 46) (= (car bs) 47))
+             (find (cdr bs)))
+            (else (car bs))))))
+    (errorf 'read
+            (if offender
+                (string-append (string (integer->char offender))
+                               " is not a base-" (number->string base)
+                               " digit at "
+                               (%at-line $reader-line $reader-column))
+                (string-append "a #-prefixed number needs at least one base-"
+                               (number->string base) " digit at "
+                               (%at-line $reader-line $reader-column))))))
 
 (define (%pow10 k) (let loop ((i k) (a 1)) (if (= i 0) a (loop (- i 1) (* a 10)))))
 
-;; What follows the digits: nothing at all, or an exponent.  Answers
-;; the exponent as an integer, the symbol `none` when the token simply
-;; ended, and #f when the rest is not an exponent -- which is how "1e"
-;; and "1e+" stay symbols, as they are in R6RS and in Chez.  The marker
-;; is only ever `e` here because this is the decimal face; in base 16
-;; `e` is a digit, so an exponent has no spelling there.
-(define (%exponent-of bs)
+
+;; What follows the digits: nothing, or an exponent.  Answers the
+;; exponent as an integer, `none` when the token simply ended, and #f
+;; when the rest is not an exponent -- which is how "1e" and "1e+"
+;; stay symbols, as they are in R6RS and in Chez.
+;;
+;; ONE rule covers every radix: a marker is a letter of `e s f d l`
+;; (either case) that is NOT a digit in the current radix, its digits
+;; are read in that radix, and it scales by a power of that radix.
+;; So `#x1e3` is 483 -- `e` is a hex digit there, so no exponent
+;; exists -- while `#o1e3` is 8^3 and `#o1e8` is refused because `8`
+;; is not an octal digit.
+;;
+;; The alternative was to honour markers only at radix ten.  That is
+;; MORE code: it needs a guard whose only purpose is to reject input
+;; this rule already handles.  The general rule is the smaller
+;; program, and it agrees with Chez.  It does go beyond R6RS, which
+;; defines decimals for radix ten alone, and docs/limits.md carries
+;; that declaration -- an undeclared extension is an accident, a
+;; declared one is a feature.
+;;
+;; Four of the five markers were missing when this was decimal-only.
+;; docs/sexpr.md had already recorded s/f/d/l as a dimension a
+;; hand-written list missed, in a different corpus, with "assume it is
+;; still incomplete" attached.
+(define (%exp-marker? b radix)
+  (and (memv b '(101 69 115 83 102 70 100 68 108 76))   ; e E s S f F d D l L
+       (not (%digit-val b radix))))
+
+(define (%exponent-of bs radix)
   (cond
    ((null? bs) 'none)
-   ((or (= (car bs) 101) (= (car bs) 69))         ; e E
+   ((%exp-marker? (car bs) radix)
     (let* ((rest (cdr bs))
            (neg (and (pair? rest) (= (car rest) 45)))
-           (rest (if (and (pair? rest) (%sign-byte? (car rest))) (cdr rest) rest)))
-      (and (pair? rest) (%all-digits? rest)
-           (let ((m (%digits->int rest 0))) (if neg (- 0 m) m)))))
+           (rest (if (and (pair? rest) (%sign-byte? (car rest))) (cdr rest) rest))
+           (d (%digits-of rest radix)))
+      (and (< 0 (cadr d)) (null? (caddr d))
+           (if neg (- 0 (car d)) (car d)))))
    (else #f)))
 
 (define (%decimal-token? bs) (if (%decimal->flonum bs) #t #f))
@@ -805,7 +964,8 @@
      ((= b 102) #f)                                ; f
      ((= b 39) (list 'syntax ($read)))              ; ' -- #'x
      ((= b 40) (list->vector (%read-list)))        ; ( -- #(...) vector
-     ((= b 120) (%read-hex 0 0))                   ; x -- hex literal
+     ((memv b '(98 66 111 79 100 68 120 88 101 69 105 73))
+      (%read-prefixed b))                          ; b B o O d D x X e E i I
      ((= b 118) (%read-bytevector))                ; v -- #vu8(...)
      ((= b 92)                                     ; \ -- character
       (let ((first (%next-byte)))
@@ -858,42 +1018,6 @@
                            (%at-line $reader-line $reader-column))))
                 (bytevector-u8-set! bv i e)
                 (loop (+ i 1) (cdr es)))))))))
-
-(define (%read-hex acc n)
-  ;; `n` counts digits actually consumed.  Without it this loop began
-  ;; at 0 and returned whatever it had when it met a byte it did not
-  ;; recognise, so "#x" answered 0 -- a reading indistinguishable from
-  ;; "#x0" -- and the bytes it stopped at were re-read as separate
-  ;; data.  A zero that means "nothing was there" is the shape of
-  ;; defect that has no symptom.
-  (let ((b (%peek-byte)))
-    (cond
-     ((and (< 47 b) (< b 58))                      ; 0-9
-      (%next-byte)
-      (%read-hex (+ (* acc 16) (- b 48)) (+ n 1)))
-     ((and (< 96 b) (< b 103))                     ; a-f
-      (%next-byte)
-      (%read-hex (+ (* acc 16) (+ 10 (- b 97))) (+ n 1)))
-     ((and (< 64 b) (< b 71))                      ; A-F
-      (%next-byte)
-      (%read-hex (+ (* acc 16) (+ 10 (- b 65))) (+ n 1)))
-     ((%delimiter? b)
-      (if (= n 0)
-          (errorf 'read
-                  (string-append "#x must be followed by at least one "
-                                 "base-16 digit at "
-                                 (%at-line $reader-line $reader-column)))
-          acc))
-     ;; A byte that is neither a digit nor a delimiter ends the number
-     ;; and starts a symbol, which is how "#x1g" used to read as 1 and
-     ;; a variable named g.  Signs land here too: "#x-1f" and "#x+1f"
-     ;; are both refused, not one of them -- reading them as -31 and 31
-     ;; belongs to the change that generalises this loop over a radix.
-     (else
-      (errorf 'read
-              (string-append (string (integer->char b))
-                             " is not a base-16 digit at "
-                             (%at-line $reader-line $reader-column)))))))
 
 (define (%named-char name)
   ;; the full R6RS set; an unknown name is an error, not a silent
