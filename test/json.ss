@@ -11,8 +11,12 @@
 (define (near? v x) (and (< (- x 0.000001) v) (< v (+ x 0.000001))))
 ;; A zero's sign, asked WITHOUT going through the printer: 1/-0.0 is
 ;; negative infinity and 1/+0.0 is positive, which is the only way to
-;; tell them apart here.  (There is no -0.0 literal to compare with --
-;; this reader has none -- so the fixture below is built.)
+;; tell them apart here.  (The fixture below is built rather than
+;; written.  That began as a necessity -- the self-hosted reader
+;; collapsed a -0.0 literal into +0.0 -- and is now a choice: the
+;; literal works on all three targets, but a fixture built by
+;; arithmetic keeps this file's subject the JSON reader rather than
+;; the Scheme one.)
 (define (neg-zero? v)
   (and (flonum? v) (fl=? v 0.0) (fl<? (fl/ 1.0 v) 0.0)))
 (define (parse-ok? s) (guard (e (#t #f)) (string->json s) #t))

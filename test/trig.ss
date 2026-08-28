@@ -88,7 +88,9 @@
 ;; substitute stops being one is negative zero: (fl+ x 0.0) collapses
 ;; -0.0 to +0.0, while multiplication keeps the sign.  sin(-0.0) is
 ;; -0.0 (as libm has it), so this goes red on that substitution.
-;; (-0.0 is built here, not written: the reader has no literal for it)
+;; (-0.0 is built here rather than written.  The reader had no working
+;; -0.0 literal when this was written -- it collapsed to +0.0 -- and
+;; now it has one; building it keeps this check independent of that.)
 (define $neg-zero (fl* (fl- 0.0 1.0) 0.0))
 (define (neg-zero? v) (fl<? (fl/ 1.0 v) 0.0))
 (check "the fixture really is -0.0" (neg-zero? $neg-zero))
