@@ -583,7 +583,12 @@
         (let* ((den (let tens ((k fraclen) (acc 1))
                       (if (zero? k) acc (tens (- k 1) (* acc 10)))))
                (v ($nonneg->fl digits den)))
-          (if neg (fl- (fixnum->flonum 0) v) v)))
+          ;; Negate by multiplying, not by subtracting from zero:
+          ;; 0.0 - 0.0 is +0.0, so "-0.0" and every magnitude that
+          ;; rounds away to zero would lose its sign right here.  The
+          ;; sign of a zero is observable -- (fl/ 1.0 -0.0) is -inf --
+          ;; so this is a value change, not a formatting one.
+          (if neg (fl* v (fixnum->flonum -1)) v)))
        ((= (car bs) 46) (loop (cdr bs) digits fraclen #t))
        (else (loop (cdr bs)
                    (+ (* digits 10) (- (car bs) 48))
@@ -1387,7 +1392,9 @@
 
 (define ($exact->fl num den)            ; den > 0
   (if (< num 0)
-      (fl- 0.0 ($nonneg->fl (- 0 num) den))
+      ;; multiply, don't subtract: an exact negative small enough to
+      ;; round to zero must come out as -0.0, and 0.0 - 0.0 is +0.0
+      (fl* (fixnum->flonum -1) ($nonneg->fl (- 0 num) den))
       ($nonneg->fl num den)))
 
 (define ($->fl x)

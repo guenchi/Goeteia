@@ -1523,20 +1523,78 @@
 ;;
 ;; This used to say "Normal numbers and zero; source literals don't
 ;; produce the rest", and a source literal produces the rest as soon as
-;; anyone writes one: 1e-320, or the same value spelled out with 320
-;; zeros, is subnormal.  The scale loop below drives `e` past -1022 for
-;; those, `(+ e 1023)` goes negative, exp-bits takes `remainder` of a
-;; negative number and returns negative bits, and the compiler dies in
-;; u8-list->bytevector with "invalid value -129" -- loud, but naming a
-;; byte rather than the literal that produced it.
+;; anyone writes one.  That sentence named a class and was believed
+;; instead of checked, three times: the first rewrite of it here
+;; handled the subnormals and left the non-finite values unhandled;
+;; the second added those and left negative zero collapsing into
+;; positive zero -- each under a comment that read as though the class
+;; were closed.  So this one states the partition, says how many
+;; inhabitants each part has, and the code holds every one of them.
+;;
+;; An f64 is exactly one of five things, and each has a branch below:
+;; NaN, zero, infinite, subnormal, normal.  There is no sixth.
+;;
+;; But completeness of the PARTITION is not completeness of the code,
+;; and that is how this went wrong a third time: "zero" is one class
+;; with two members and two bit patterns, +0.0 and -0.0, and a branch
+;; that answers the class encoded them alike.  Ask of every class here
+;; whether it has more than one inhabitant -- zero does, and the sign
+;; of a zero is observable ((fl/ 1.0 -0.0) is -inf), which is exactly
+;; why it is preserved here while the sign of a NaN is not.
+;;
+;;   NaN     is tested first and only by (not (fl=? x x)) -- it is the
+;;           one value that compares false against itself, so every
+;;           other test here would otherwise take a branch by accident
+;;           (it is not less than, equal to, or greater than zero).
+;;           The emitted pattern is the canonical quiet NaN, 7ff8...:
+;;           the sign bit and the payload are CHOSEN, not preserved, so
+;;           -nan.0 and a NaN with a payload both come out as the one
+;;           NaN the runtime itself produces from 0.0/0.0.  Preserving
+;;           them would be a promise about bits R6RS does not give the
+;;           reader, and the two spellings would then disagree with
+;;           every computed NaN in the program.
+;;
+;;           That choice is THIS ENCODER'S policy and covers literals
+;;           in source text and nothing else.  (web sexpr) takes its
+;;           own position on NaN payloads, arrived at by measurement
+;;           and stated as non-guaranteed; neither artifact speaks for
+;;           the other, and a change here is not a change there.
+;;           So a green cell for -nan.0 is evidence that the encoder
+;;           matches the policy stated here -- NOT that it matches
+;;           what another implementation emits, which for -nan.0 would
+;;           be fff8... and is deliberately not what comes out.
+;;   inf     is recognised by doubling being a fixed point.  Zero has
+;;           that property too, which is why zero is settled first.
+;;           Before this branch existed the scale loop below divided
+;;           infinity by two forever: the compiler HUNG on +inf.0,
+;;           which is the one failure a test run cannot report.
 ;;
 ;; A subnormal has no implicit leading 1 and a zero exponent field: it
 ;; is exactly M * 2^-1074 for an integer M in [1, 2^52).  Doubling a
 ;; flonum is exact, so scaling the magnitude up by 2^1074 recovers M
-;; with nothing lost, and its bits ARE the mantissa field.
+;; with nothing lost, and its bits ARE the mantissa field.  Without
+;; that branch the scale loop drove `e` past -1022, `(+ e 1023)` went
+;; negative, exp-bits took `remainder` of a negative number and
+;; returned negative bits, and the compiler died in
+;; u8-list->bytevector with "invalid value -129" -- loud, but naming a
+;; byte rather than the literal that produced it.
+(define (zero-bits n)                   ; n zero bits, for the fields
+  (let z ((i 0) (acc '())) (if (= i n) acc (z (+ i 1) (cons 0 acc)))))
 (define (ieee-bytes x)
-  (if (fl=? x (fixnum->flonum 0))
-      '(0 0 0 0 0 0 0 0)
+  (cond
+   ((not (fl=? x x))                     ; NaN -- see the note above
+    (assemble-f64 #f 2047 (cons 1 (zero-bits 51))))
+   ((fl=? x (fixnum->flonum 0))
+    ;; Both zeros land here -- (fl=? -0.0 0.0) is true -- and they must
+    ;; not leave here alike.  The usual sign test is no help either:
+    ;; (fl<? -0.0 0.0) is false, so a negative zero reaching the code
+    ;; below would be encoded as positive.  Dividing separates them,
+    ;; because 1/-0.0 is -inf and 1/+0.0 is +inf, and it stays inside
+    ;; this file's rule of flonum compare and arithmetic only.
+    (if (fl<? (fl/ (fixnum->flonum 1) x) (fixnum->flonum 0))
+        '(0 0 0 0 0 0 0 128)                 ; -0.0: sign bit alone
+        '(0 0 0 0 0 0 0 0)))
+   (else
       (let* ((neg (fl<? x (fixnum->flonum 0)))
              (mag (if neg (fl- (fixnum->flonum 0) x) x))
              (one (fixnum->flonum 1))
@@ -1545,6 +1603,8 @@
              ;; this file needs no literal of its own magnitude
              (min-normal (let h ((v one) (k 0))
                            (if (= k 1022) v (h (fl/ v two) (+ k 1))))))
+        (if (fl=? mag (fl* mag two))     ; infinite: doubling is a fixed
+            (assemble-f64 neg 2047 (zero-bits 52))   ; point (zero is gone)
         (if (fl<? mag min-normal)
             (let up ((m mag) (k 0))
               (if (< k 1074)
@@ -1574,7 +1634,7 @@
                   (let ((d (fl* frac two)))
                     (if (or (fl<? one d) (fl=? one d))
                         (bits (fl- d one) (+ i 1) (cons 1 acc))
-                        (bits d (+ i 1) (cons 0 acc)))))))))))))
+                        (bits d (+ i 1) (cons 0 acc)))))))))))))))
 (define (assemble-f64 neg biased mant)
   ;; mant: 52 bits, most significant first -> 8 LE bytes
   (let* ((bits (append (list (if neg 1 0))
