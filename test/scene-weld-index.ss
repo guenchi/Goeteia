@@ -264,16 +264,24 @@
        (let* ((up (upload-with (cdr b2) (mesh-index-count over)))
               (ix (mesh-indices over))
               (n (vector-length ix)))
-         ;; the whole buffer is 396000 entries; compare the ones that
-         ;; carry the property -- the first and last runs, and every
-         ;; entry naming a vertex past the u16 boundary
-         (let loop ((k 0) (ok #t))
-           (cond ((not ok) #f)
-                 ((= k n) #t)
-                 ((or (< k 64) (> k (- n 64))
-                      (> (vector-ref ix k) 65535))
-                  (loop (+ k 1) (= (upload-ref up k) (vector-ref ix k))))
-                 (else (loop (+ k 1) ok))))))
+         ;; EVERY entry, which is what the name says.  It used to
+         ;; compare the first and last runs plus everything naming a
+         ;; vertex past the u16 boundary, and skip the rest -- about
+         ;; 396000 entries in this buffer, of which it looked at a few
+         ;; hundred.  Writing one wrong value at index 1000 left this
+         ;; check green while two OTHER assertions went red, which is
+         ;; how the gap stayed invisible: the suite was red, so the
+         ;; mutation looked caught.  The comment under the name was
+         ;; honest about the subset; the name was not, and the name is
+         ;; what gets read.
+         ;;
+         ;; The full sweep costs about a tenth of a second here, which
+         ;; is not a reason to hold a weaker property than the one
+         ;; advertised.
+         (let loop ((k 0))
+           (cond ((= k n) #t)
+                 ((= (upload-ref up k) (vector-ref ix k)) (loop (+ k 1)))
+                 (else #f)))))
 
 
 ;; ---- 4. the same boundary, on the welded side ------------------------
