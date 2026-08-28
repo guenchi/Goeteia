@@ -236,6 +236,13 @@
            (or (= i (vector-length a))
                (and (equal? (vector-ref a i) (vector-ref b i))
                     (loop (+ i 1)))))))
+   ;; Bytevectors compare by content, like the other aggregates.  They
+   ;; used to fall through to eqv?, so two bytevectors with identical
+   ;; bytes were not equal? -- and the failure direction is the quiet
+   ;; one: an assertion that two differ was satisfied for free, by
+   ;; every pair of bytevectors in existence.
+   ((bytevector? a)
+    (and (bytevector? b) (bytevector=? a b)))
    (else (eqv? a b))))
 
 ;; Multiple values: a list tagged with a unique pair, collapsing to
@@ -733,28 +740,95 @@
      ((= b 102) #f)                                ; f
      ((= b 39) (list 'syntax ($read)))              ; ' -- #'x
      ((= b 40) (list->vector (%read-list)))        ; ( -- #(...) vector
-     ((= b 120) (%read-hex 0))                     ; x -- hex literal
+     ((= b 120) (%read-hex 0 0))                   ; x -- hex literal
+     ((= b 118) (%read-bytevector))                ; v -- #vu8(...)
      ((= b 92)                                     ; \ -- character
       (let ((first (%next-byte)))
         (if (%delimiter? (%peek-byte))
             (integer->char first)
             (%named-char (%bytes->string
                           (cons first (%read-token '())))))))
-     (else (eof-object)))))
+     ;; Anything else is an error, and it has to be: this branch used
+     ;; to answer (eof-object), which is not a weak error but the wrong
+     ;; KIND of value.  End-of-input is a control signal, so a form the
+     ;; reader did not implement did not fail -- it ended the datum,
+     ;; and a consumer's correct response to that is to stop and treat
+     ;; what it has as complete.  `(read "(1 #b101 3)")` answered
+     ;; `(1 #<eof> 101 3)`: three elements became four, with different
+     ;; contents, silently.  A failure encoded as a legal protocol
+     ;; signal is worse than a crash, because the caller handles it.
+     (else
+      (errorf 'read
+              (string-append "unrecognised # syntax: #"
+                             (if (< b 0) "<end of input>"
+                                 (string (integer->char b)))
+                             " at " (%at-line $reader-line $reader-column)))))))
 
-(define (%read-hex acc)
+(define (%read-bytevector)
+  ;; #vu8( ... ) -- the spelling the writer emits for a bytevector, so
+  ;; the reader owes it an entry: without one this library could not
+  ;; read back its own output.
+  (let ((u (%next-byte)) (eight (%next-byte)) (open (%next-byte)))
+    (unless (and (= u 117) (= eight 56) (= open 40))   ; u 8 (
+      (errorf 'read
+              (string-append "unrecognised # syntax: #v (only #vu8( is a "
+                             "bytevector) at "
+                             (%at-line $reader-line $reader-column))))
+    (let ((elements (%read-list)))
+      ;; Check every element rather than letting bytevector-u8-set!
+      ;; take what it is given: an out-of-range value would be
+      ;; truncated or wrapped, and a wrapped byte is a wrong value that
+      ;; looks like a right one.
+      (let ((bv (make-bytevector (length elements))))
+        (let loop ((i 0) (es elements))
+          (if (null? es)
+              bv
+              (let ((e (car es)))
+                (unless (and (integer? e) (exact? e)
+                             (<= 0 e) (<= e 255))
+                  (errorf 'read
+                          (string-append
+                           "a bytevector element is an exact integer in "
+                           "0..255 at "
+                           (%at-line $reader-line $reader-column))))
+                (bytevector-u8-set! bv i e)
+                (loop (+ i 1) (cdr es)))))))))
+
+(define (%read-hex acc n)
+  ;; `n` counts digits actually consumed.  Without it this loop began
+  ;; at 0 and returned whatever it had when it met a byte it did not
+  ;; recognise, so "#x" answered 0 -- a reading indistinguishable from
+  ;; "#x0" -- and the bytes it stopped at were re-read as separate
+  ;; data.  A zero that means "nothing was there" is the shape of
+  ;; defect that has no symptom.
   (let ((b (%peek-byte)))
     (cond
      ((and (< 47 b) (< b 58))                      ; 0-9
       (%next-byte)
-      (%read-hex (+ (* acc 16) (- b 48))))
+      (%read-hex (+ (* acc 16) (- b 48)) (+ n 1)))
      ((and (< 96 b) (< b 103))                     ; a-f
       (%next-byte)
-      (%read-hex (+ (* acc 16) (+ 10 (- b 97)))))
+      (%read-hex (+ (* acc 16) (+ 10 (- b 97))) (+ n 1)))
      ((and (< 64 b) (< b 71))                      ; A-F
       (%next-byte)
-      (%read-hex (+ (* acc 16) (+ 10 (- b 65)))))
-     (else acc))))
+      (%read-hex (+ (* acc 16) (+ 10 (- b 65))) (+ n 1)))
+     ((%delimiter? b)
+      (if (= n 0)
+          (errorf 'read
+                  (string-append "#x must be followed by at least one "
+                                 "base-16 digit at "
+                                 (%at-line $reader-line $reader-column)))
+          acc))
+     ;; A byte that is neither a digit nor a delimiter ends the number
+     ;; and starts a symbol, which is how "#x1g" used to read as 1 and
+     ;; a variable named g.  Signs land here too: "#x-1f" and "#x+1f"
+     ;; are both refused, not one of them -- reading them as -31 and 31
+     ;; belongs to the change that generalises this loop over a radix.
+     (else
+      (errorf 'read
+              (string-append (string (integer->char b))
+                             " is not a base-16 digit at "
+                             (%at-line $reader-line $reader-column)))))))
 
 (define (%named-char name)
   ;; the full R6RS set; an unknown name is an error, not a silent
