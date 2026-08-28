@@ -27,6 +27,24 @@
 # sentence about 427 tests while sounding like one about 438 -- so the
 # count travels with the word, or the word is not said.
 #
+# THE TOOL ITSELF NEEDS NEGATIVE CONTROLS, and they are not optional
+# ceremony.  Three holes turned up in a hand-rolled copy of this script
+# during one afternoon, every one of them found by accident:
+#
+#   * a "mutation" whose NEW text equalled OLD passed every check --
+#     the text occurred once, the file parsed, the suite was green,
+#     because nothing had changed;
+#   * the refusal message named one reason ("does not occur exactly
+#     once") whatever the actual reason had been -- a guard reporting a
+#     finding it had not made;
+#   * `node --check` was run on a .ss file and its complaint was
+#     printed as a NOT-LANDED verdict about the mutation.
+#
+# So before trusting a sweep, run the tool against itself: an empty
+# mutation must be refused, a deliberately broken probe must be
+# refused, and each language must be checked by its own checker.  The
+# judge of the judge is otherwise nobody.
+#
 # Usage:
 #   test/mutate.sh FILE OLD NEW gate            [--probe P.ss]
 #   test/mutate.sh FILE OLD NEW SUITE           [--probe P.ss]
@@ -185,10 +203,16 @@ run_probe() { # dir -> stdout of the probe, or the word FAILED
 cp "$W/t/$FILE" "$W/pre.keep"      # the pre-mutation file, for the clean baseline
 before=$(run_probe "$W/t")
 
-python3 - "$W/t/$FILE" "$OLD" "$NEW" <<'PY' || { verdict BLOCKED "" "" "NOT LANDED — the text to replace does not occur exactly once (no reading)"; exit 0; }
+python3 - "$W/t/$FILE" "$OLD" "$NEW" <<'PY' || { verdict BLOCKED "" "" "NOT LANDED — the replacement is identical to the original, or the text does not occur exactly once (see stderr; no reading)"; exit 0; }
 import io, sys
 p, old, new = sys.argv[1], sys.argv[2], sys.argv[3]
 s = io.open(p, encoding='utf-8').read()
+# An empty mutation passes every other check in this script: the text
+# occurs once, the file is written, the suite compiles and is green --
+# because nothing changed.  Found by running this tool against itself
+# after a failed sed produced a replacement identical to the original.
+if old == new:
+    sys.stderr.write("identical\n"); sys.exit(2)
 n = s.count(old)
 if n != 1:
     sys.stderr.write("occurrences: %d\n" % n); sys.exit(1)
@@ -245,6 +269,28 @@ if [ "$TARGET" = gate ]; then
 else
     s=${TARGET%.ss}; s=${s%.mjs}
     if [ -f "$W/t/test/$s.mjs" ]; then
+        # A .mjs suite loads the PREBUILT goeteia.wasm.  So a mutation
+        # to src/ never reaches it: the text changes, the tree is fine,
+        # the suite runs the artifact built before the mutation, and the
+        # verdict is a confident GREEN about nothing.  Measured: putting
+        # a format directive back into src/js-backend.ss left
+        # test/reader-diagnostics.mjs at pass 23 / fail 0; the same
+        # mutation with the worktree rebuilt reds the named assertion.
+        #
+        # The .ss path above does not need this -- it compiles the suite
+        # with ./bin/goeteiac, which reads src/ fresh every time.  That
+        # asymmetry is why this stayed invisible: most mutations in a
+        # sweep take the path that works.
+        case "$FILE" in
+          src/*)
+            if ( cd "$W/t" && sh build-self.sh >/dev/null 2>&1 ); then
+                RL_NOTE="$RL_NOTE — goeteia.wasm rebuilt in the worktree so the mutation reaches this suite"
+            else
+                verdict BLOCKED "" "" \
+                  "the mutated compiler does not reach a bootstrap fixpoint, so this suite cannot be run against it — no reading"
+                exit 0
+            fi ;;
+        esac
         # a .mjs suite reports through node:test, so the failing
         # assertion's own message is what comes back
         # The oracle here is node --test's exit status, not a word in
