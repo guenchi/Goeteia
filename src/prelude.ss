@@ -519,6 +519,15 @@
 
 (define (%finish-atom bs)
   (cond
+   ;; A lone dot is not a symbol.  Inside a list it is the dotted-tail
+   ;; marker and never reaches here; standing alone it is the one
+   ;; spelling in this whole face that Chez refuses outright, and
+   ;; letting it become a symbol would make `(read ".")` answer a datum
+   ;; where the reference answers an error.
+   ((and (pair? bs) (null? (cdr bs)) (= (car bs) 46))
+    (errorf 'read (string-append "a lone . is not a datum at "
+                                 (%at-line $reader-line $reader-column))))
+   ((%special-number bs) => (lambda (v) v))
    ((%number-token? bs) (%parse-int bs))
    ((%decimal-token? bs) (%parse-decimal bs))
    ((%ratio-token? bs) (%parse-ratio bs))
@@ -587,55 +596,111 @@
               (else (%parse-real
                      (if (= (car imbs) 43) (cdr imbs) imbs))))))
     ($cx re im)))
-(define (%parse-decimal bs)
-  ;; exact digits over a power of ten, converted to a flonum in one
-  ;; rounding -- deterministic across hosts, unlike floating-point
-  ;; accumulation
-  (let* ((neg (and (pair? bs) (= (car bs) 45)))
-         (bs (if neg (cdr bs) bs)))
-    (let loop ((bs bs) (digits 0) (fraclen 0) (seen-dot #f))
-      (cond
-       ((null? bs)
-        (let* ((den (let tens ((k fraclen) (acc 1))
-                      (if (zero? k) acc (tens (- k 1) (* acc 10)))))
-               (v ($nonneg->fl digits den)))
-          ;; Negate by multiplying, not by subtracting from zero:
-          ;; 0.0 - 0.0 is +0.0, so "-0.0" and every magnitude that
-          ;; rounds away to zero would lose its sign right here.  The
-          ;; sign of a zero is observable -- (fl/ 1.0 -0.0) is -inf --
-          ;; so this is a value change, not a formatting one.
-          (if neg (fl* v (fixnum->flonum -1)) v)))
-       ((= (car bs) 46) (loop (cdr bs) digits fraclen #t))
-       (else (loop (cdr bs)
-                   (+ (* digits 10) (- (car bs) 48))
-                   (if seen-dot (+ fraclen 1) fraclen)
-                   seen-dot))))))
+(define (%parse-decimal bs) (%decimal->flonum bs))
+
+(define (%sign-byte? b) (or (= b 45) (= b 43)))   ; - +
 
 (define (%number-token? bs)
-  (if (and (pair? bs) (= (car bs) 45))             ; leading -
+  ;; Both signs.  This took only `-` for its whole life, so `+42` was a
+  ;; symbol and `-42` a number -- a sign has two spellings and a face
+  ;; that accepts one of them is a half-fix that reads as a whole one.
+  (if (and (pair? bs) (%sign-byte? (car bs)))
       (and (pair? (cdr bs)) (%all-digits? (cdr bs)))
       (and (pair? bs) (%all-digits? bs))))
-(define (%decimal-token? bs)
-  (let ((bs (if (and (pair? bs) (= (car bs) 45)) (cdr bs) bs)))
-    (let scan ((bs bs) (digits-before 0) (seen-dot #f) (digits-after 0))
+
+;; The decimal face is ONE procedure that both recognises and builds,
+;; and the predicate below is defined in terms of it.  It used to be a
+;; scanner and a parser walking the same bytes by separate rules, which
+;; is two statements of one grammar: whichever one is edited alone
+;; becomes a token the other side answers differently.
+;;
+;; The digits are assembled as an EXACT RATIONAL and converted once.
+;; Accumulating in floating point on the way in, or dividing by a power
+;; of ten afterwards, rounds more than once and lands on a different
+;; double -- and lands there differently on the two targets, which is
+;; what the exact integer layer exists to prevent.
+(define (%decimal->flonum bs)                     ; -> flonum, or #f
+  (let* ((neg (and (pair? bs) (= (car bs) 45)))
+         (bs (if (and (pair? bs) (%sign-byte? (car bs))) (cdr bs) bs)))
+    (let scan ((bs bs) (digits 0) (before 0) (after 0) (seen-dot #f))
       (cond
-       ((null? bs) (and seen-dot (< 0 digits-before) (< 0 digits-after)))
-       ((= (car bs) 46)
-        (and (not seen-dot) (scan (cdr bs) digits-before #t 0)))
-       ((and (< 47 (car bs)) (< (car bs) 58))
-        (if seen-dot
-            (scan (cdr bs) digits-before #t (+ digits-after 1))
-            (scan (cdr bs) (+ digits-before 1) #f 0)))
-       (else #f)))))
+       ((and (pair? bs) (< 47 (car bs)) (< (car bs) 58))
+        (scan (cdr bs) (+ (* digits 10) (- (car bs) 48))
+              (if seen-dot before (+ before 1))
+              (if seen-dot (+ after 1) after)
+              seen-dot))
+       ((and (pair? bs) (= (car bs) 46) (not seen-dot))
+        (scan (cdr bs) digits before after #t))
+       (else
+        ;; a number needs at least one digit somewhere; ".5" and "5."
+        ;; are both legal, "." and "+" are not numbers at all
+        (and (< 0 (+ before after))
+             (let ((e (%exponent-of bs)))
+               (and e
+                    (or seen-dot (not (eq? e 'none)))
+                    (let* ((k (- (if (eq? e 'none) 0 e) after))
+                           (num (if (< k 0) digits (* digits (%pow10 k))))
+                           (den (if (< k 0) (%pow10 (- 0 k)) 1))
+                           (v ($exact->fl num den)))
+                      ;; The sign is applied AFTER the conversion, by
+                      ;; multiplying.  Carrying it into the exact layer
+                      ;; instead loses it exactly where it matters: the
+                      ;; exact integer 0 has no sign, so "-0.0" and any
+                      ;; magnitude that rounds away to zero would come
+                      ;; back positive.  (lib/web/json.ss says the same
+                      ;; thing about its own reader, and it was written
+                      ;; first.)
+                      (if neg (fl* v (fixnum->flonum -1)) v))))))))))
+
+(define (%pow10 k) (let loop ((i k) (a 1)) (if (= i 0) a (loop (- i 1) (* a 10)))))
+
+;; What follows the digits: nothing at all, or an exponent.  Answers
+;; the exponent as an integer, the symbol `none` when the token simply
+;; ended, and #f when the rest is not an exponent -- which is how "1e"
+;; and "1e+" stay symbols, as they are in R6RS and in Chez.  The marker
+;; is only ever `e` here because this is the decimal face; in base 16
+;; `e` is a digit, so an exponent has no spelling there.
+(define (%exponent-of bs)
+  (cond
+   ((null? bs) 'none)
+   ((or (= (car bs) 101) (= (car bs) 69))         ; e E
+    (let* ((rest (cdr bs))
+           (neg (and (pair? rest) (= (car rest) 45)))
+           (rest (if (and (pair? rest) (%sign-byte? (car rest))) (cdr rest) rest)))
+      (and (pair? rest) (%all-digits? rest)
+           (let ((m (%digits->int rest 0))) (if neg (- 0 m) m)))))
+   (else #f)))
+
+(define (%decimal-token? bs) (if (%decimal->flonum bs) #t #f))
+
+;; +inf.0 -inf.0 +nan.0 -nan.0, built by arithmetic: this file cannot
+;; write a literal for any of them, and would not want to -- a literal
+;; would be read by the very reader being defined.
+(define (%special-number bs)                      ; -> flonum, or #f
+  ;; Every atom in every source file reaches this, so it costs a byte
+  ;; comparison before it costs a string: all four spellings are six
+  ;; bytes beginning with a sign.
+  (if (not (and (pair? bs) (%sign-byte? (car bs)) (= 6 (length bs))))
+      #f
+      (%special-number* bs)))
+(define (%special-number* bs)
+  (let ((s (%bytes->string bs))
+        (zero (fixnum->flonum 0)))
+    (cond
+     ((string=? s "+inf.0") (fl/ (fixnum->flonum 1) zero))
+     ((string=? s "-inf.0") (fl/ (fixnum->flonum -1) zero))
+     ((or (string=? s "+nan.0") (string=? s "-nan.0")) (fl/ zero zero))
+     (else #f))))
 (define (%all-digits? bs)
   (if (null? bs)
       #t
       (and (< 47 (car bs)) (< (car bs) 58)
            (%all-digits? (cdr bs)))))
 (define (%parse-int bs)
-  (if (= (car bs) 45)
-      (- 0 (%digits->int (cdr bs) 0))
-      (%digits->int bs 0)))
+  (cond
+   ((= (car bs) 45) (- 0 (%digits->int (cdr bs) 0)))
+   ((= (car bs) 43) (%digits->int (cdr bs) 0))
+   (else (%digits->int bs 0))))
 (define (%digits->int bs acc)
   (if (null? bs)
       acc

@@ -404,10 +404,7 @@
                             (list "((" (jsep "," ps) ")=>"
                                   (jp r (map (lambda (x) 'eta) ps) ps)
                                   ")"))
-                          (errorf 'goeteia
-                                  (string-append "unbound variable ~s"
-                                                 (unbound-hint r))
-                                  e))))))))))
+                          (errorf 'goeteia "unbound variable ~s" e))))))))))
 
 (define (jx-let e env lctx)
   ;; parallel let in expression position: an arrow IIFE; inits
@@ -442,9 +439,7 @@
   (let* ((r (unmark (cadr e)))
          (v (assq r *vars*)))
     (unless v
-      (errorf 'goeteia
-              (string-append "set! of unbound variable ~s" (unbound-hint r))
-              (cadr e)))
+      (errorf 'goeteia "set! of unbound variable ~s" (cadr e)))
     (list "((" (jvar-name (cdr v)) "=(" (jx (caddr e) env lctx) ")),VOID)")))
 
 (define (jx-apply e env lctx tail?)

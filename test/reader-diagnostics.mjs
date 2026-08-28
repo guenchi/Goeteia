@@ -36,48 +36,60 @@ function compile(name, source, opts = {}) {
 
 test.after(() => fs.rmSync(tmp, { recursive: true, force: true }));
 
-test('an exponent literal is named as such, not just "unbound"', () => {
+// These three used to assert a HINT: the reader had no exponent
+// notation, so `1e-3` became a symbol, and an "unbound variable"
+// message was so misleading that the compiler appended "exponent
+// literals are not supported by this reader -- write the constant
+// out".  The reader takes exponents now, so the hint would be a false
+// statement and it is gone; what is asserted here instead is the thing
+// the hint was apologising for.
+//
+// The hint lived in TWO backends, and only the JS test said so.  That
+// is why a test named for a target is worth its duplication: removing
+// it from src/compiler.ss alone left src/js-backend.ss calling a
+// procedure that no longer existed, and the bootstrap said so at once.
+test('an exponent literal compiles as a number', () => {
     const { status, stderr } = compile('exponent.ss',
         ';; expect: 0\n(define eps 1e-3)\n(display eps)\n');
-    assert.notEqual(status, 0);
-    assert.match(stderr, /unbound variable/);
-    assert.match(stderr, /exponent literals are not supported by this reader/);
-    assert.match(stderr, /write the constant out/);
+    assert.equal(status, 0, `expected a clean compile, got: ${stderr}`);
 });
 
-test('set! of an exponent literal carries the same hint', () => {
+test('set! of a numeric literal is refused', () => {
+    // `2.5E+7` reads as a number now, so this is set! on something
+    // that is not an identifier at all.  The message it gets is the
+    // generic unbound-variable one, which is not accurate for a
+    // number -- that wording predates this change and is recorded in
+    // the batch notes rather than fixed here.  What this cell holds is
+    // that the form is REFUSED, and that nothing claims the reader
+    // cannot read the literal.
     const { status, stderr } = compile('exponent-set.ss',
         ';; expect: 0\n(set! 2.5E+7 1)\n');
     assert.notEqual(status, 0);
-    assert.match(stderr, /exponent literals are not supported by this reader/);
+    assert.doesNotMatch(stderr, /exponent literals are not supported/);
 });
 
-test('an ordinary name that merely contains an e gets no exponent hint', () => {
-    // the negative control: elf-3 is unbound, and saying anything
-    // about exponents here would be a lie that costs the reader time
+test('an unbound ordinary name is still named', () => {
     const { status, stderr } = compile('ordinary.ss',
         ';; expect: 0\n(display elf-3)\n');
     assert.notEqual(status, 0);
     assert.match(stderr, /unbound variable/);
-    assert.doesNotMatch(stderr, /exponent/);
+    assert.match(stderr, /elf-3/);
 });
 
-test('the JS target carries the exponent hint too', () => {
-    // --js reaches a second backend with its own reference compiler;
-    // a hint only the wasm backend gives is half a fix
+test('the JS target reads exponents too', () => {
+    // --js reaches a second backend with its own copy of this code
+    // path; a fix only the wasm backend has is half a fix
     const { status, stderr } = compile('exponent-js.ss',
         ';; expect: 0\n(define eps 1e-3)\n(display eps)\n', { js: true });
-    assert.notEqual(status, 0);
-    assert.match(stderr, /unbound variable/);
-    assert.match(stderr, /exponent literals are not supported by this reader/);
+    assert.equal(status, 0, `expected a clean compile, got: ${stderr}`);
 });
 
-test('the JS target keeps the same negative control', () => {
+test('the JS target still names an unbound ordinary name', () => {
     const { status, stderr } = compile('ordinary-js.ss',
         ';; expect: 0\n(display elf-3)\n', { js: true });
     assert.notEqual(status, 0);
     assert.match(stderr, /unbound variable/);
-    assert.doesNotMatch(stderr, /exponent/);
+    assert.match(stderr, /elf-3/);
 });
 
 // The compiler is fed one stream holding the prelude, the runtime
