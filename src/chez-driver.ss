@@ -6,6 +6,26 @@
 ;; the core calls (%abort) through errorf-compatible error reporting
 (define (%abort) (error 'goeteia "compilation failed"))
 
+;; errorf, with the SAME contract the goeteia runtime gives it: the
+;; message is text, and the irritants are written after it.
+;;
+;; Chez has an errorf of its own, and the compiler sources used to get
+;; that one here and the prelude's one when self-hosted.  The two do
+;; not agree: Chez interprets `~s` in the message and drops arguments
+;; the control string does not name, while the prelude ignores the
+;; message's content and appends every irritant.  So the same errorf
+;; call produced "unbound variable elf-3" under this host and
+;; "unbound variable ~s elf-3" under the other -- a difference no test
+;; could see, because nothing compared the two hosts' diagnostics.
+;;
+;; Defining it here makes the contract one contract.  The message
+;; texts carry no format directives, and both hosts append.
+(define (errorf who msg . irritants)
+  (error who
+         (apply string-append msg
+                (map (lambda (x) (string-append " " (format "~s" x)))
+                     irritants))))
+
 (define here (path-parent (car (command-line))))
 (load (string-append here "/compiler.ss"))
 (load (string-append here "/js-backend.ss"))
@@ -102,7 +122,7 @@
                         "" spec)))
     (let scan ((ds dirs))
       (if (null? ds)
-          (errorf 'goeteia "library not found: ~s" spec)
+          (errorf 'goeteia "library not found:" spec)
           (let ((path (string-append (car ds) "/" rel ".ss")))
             (if (file-exists? path) path (scan (cdr ds))))))))
 (define (library-imports lib)

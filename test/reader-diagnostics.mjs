@@ -34,7 +34,66 @@ function compile(name, source, opts = {}) {
     return { status: 0, stderr: '' };
 }
 
+// Compile with the CHEZ-HOSTED driver instead of the self-hosted one.
+// Both exist, both report errors, and until this was written nothing
+// compared what they say.  That gap is why a message could read
+// "unbound variable elf-3" under one host and "unbound variable ~s
+// elf-3" under the other for as long as it did: each host's output was
+// plausible on its own, and no cell ever put them side by side.
+function compileHosted(name, source) {
+    const src = path.join(tmp, name);
+    fs.writeFileSync(src, source);
+    const out = path.join(tmp, 'hosted.wasm');
+    try {
+        execFileSync(path.join(here, '../bin/goeteiac'), [src, out],
+                     { stdio: ['ignore', 'pipe', 'pipe'] });
+    } catch (e) {
+        return { status: e.status, stderr: String(e.stderr) };
+    }
+    return { status: 0, stderr: '' };
+}
+
+// Each host wraps the diagnostic in its own prefix -- the driver says
+// "Exception in", the runtime says "unhandled exception:" -- so the
+// comparison is of the message BODY, which is the part the compiler
+// wrote and the part that has to agree.
+function messageBody(stderr) {
+    const line = String(stderr).split('\n').find(l => /goeteia/.test(l)) || '';
+    return line.replace(/^.*?goeteia:?\s*/, '').trim();
+}
+
 test.after(() => fs.rmSync(tmp, { recursive: true, force: true }));
+
+// COMPILER diagnostics only.  The Chez-hosted driver reads source with
+// CHEZ's reader, so a malformed literal is refused before any goeteia
+// code sees it and the two hosts say different things by construction:
+//
+//   #q1  hosted:      invalid sharp-sign prefix #q at char 22 of #<input port ...>
+//        self-hosted: unrecognised # syntax: #q at FILE line 2 column 11
+//
+// That is not a disagreement to fix -- they are two different readers,
+// and the self-hosted one is the more useful of the two here.  Reader
+// diagnostics are held against Chez by test/number-face.ss and the
+// reader suites; what these cells hold is the part both hosts really
+// do share, which is everything after the source has been read.
+for (const [what, source] of [
+        ['an unbound variable', '(display elf-3)'],
+        ['an unbound call', '(nosuchfn 1)'],
+        ['a set! on a number', '(set! 5 1)'],
+        ['a bad argument count', '(car)']]) {
+    test(`both hosts word ${what} identically`, () => {
+        const a = compileHosted(`two-${what.replace(/ /g, '-')}.ss`,
+                                `;; expect: 0\n${source}\n`);
+        const b = compile(`two-b-${what.replace(/ /g, '-')}.ss`,
+                          `;; expect: 0\n${source}\n`);
+        assert.notEqual(a.status, 0, 'the Chez-hosted driver accepted it');
+        assert.notEqual(b.status, 0, 'the self-hosted compiler accepted it');
+        assert.equal(messageBody(a.stderr), messageBody(b.stderr));
+        // and neither shows a format directive
+        assert.doesNotMatch(a.stderr, /~[sad]/);
+        assert.doesNotMatch(b.stderr, /~[sad]/);
+    });
+}
 
 // These three used to assert a HINT: the reader had no exponent
 // notation, so `1e-3` became a symbol, and an "unbound variable"
@@ -85,6 +144,38 @@ for (const [what, source] of [['a numeric literal', '(set! 2.5E+7 1)'],
         assert.doesNotMatch(stderr, /unbound/);
     });
 }
+
+// Compiler messages carried an unsubstituted `~s` for their whole
+// life: errorf stores the text and the irritants separately and the
+// printer writes the text verbatim, so every one of them showed the
+// directive to the user.  A format hole that nothing fills reads as
+// the tool being broken.
+//
+// Two things have to hold together, which is why these are two
+// assertions and not one: the directive is GONE, and the irritant it
+// was standing in for is STILL THERE.  Dropping the text would satisfy
+// the first on its own.
+for (const [what, source, irritant] of [
+        ['an unbound variable', '(display elf-3)', 'elf-3'],
+        ['an unbound call', '(nosuchfn 1)', 'nosuchfn'],
+        ['a set! on a number', '(set! 5 1)', '5']]) {
+    test(`the message for ${what} has no format directive and keeps its irritant`, () => {
+        const { status, stderr } = compile(
+            `fmt-${what.replace(/ /g, '-')}.ss`, `;; expect: 0\n${source}\n`);
+        assert.notEqual(status, 0);
+        assert.doesNotMatch(stderr, /~[sad]/);
+        assert.ok(stderr.includes(irritant),
+                  `the irritant ${irritant} is missing from: ${stderr}`);
+    });
+}
+
+test('the JS backend messages carry no directive either', () => {
+    const { status, stderr } = compile('fmt-js.ss',
+        ';; expect: 0\n(display elf-3)\n', { js: true });
+    assert.notEqual(status, 0);
+    assert.doesNotMatch(stderr, /~[sad]/);
+    assert.ok(stderr.includes('elf-3'));
+});
 
 test('set! of a name that IS a variable but unbound still says unbound', () => {
     // the should-GREEN half: narrowing the message must not swallow

@@ -79,10 +79,16 @@ function excerptOf(file, line, col) {
     return `${line} | ${shown}\n${pad}^`;
 }
 
-// Split "unbound variable ~s; exponent literals ... out 1e10" into a
-// message with its arguments substituted and the advisory clause on
-// its own.  errorf prints the format string verbatim and appends the
-// arguments, so the trailing tokens belong to the ~s holes.
+// Turn one compiler diagnostic into a structured error.
+//
+// This used to reconstruct the message: every compiler error carried
+// an unsubstituted `~s`, errorf appended the arguments after the text,
+// and this function pulled the trailing tokens back into the holes so
+// a reader would not be shown a format directive.  The messages carry
+// no directives now -- they end where the irritant begins -- so the
+// text arrives already correct and there is nothing to rebuild.  What
+// is still worth extracting is the irritant itself, because a line
+// number can be guessed from it.
 export function parseDiagnostic(output, sourceFile) {
     const lines = String(output || '').split('\n');
     const at = lines.map(l => l.match(RE_AT)).find(Boolean);
@@ -100,44 +106,16 @@ export function parseDiagnostic(output, sourceFile) {
     const wm = message.match(/^([a-z0-9$%!?*<>=+-]+):\s+([\s\S]*)$/i);
     if (wm) { who = wm[1]; message = wm[2]; }
 
-    // the advisory clause, if the compiler appended one
-    const semi = message.indexOf('; ');
-    let tail = message;
-    if (semi >= 0) { hint = message.slice(semi + 2); tail = message.slice(0, semi); }
-
-    // errorf prints the format string verbatim and appends the
-    // arguments, so the trailing tokens fill the ~s holes.  When a
-    // hint clause followed, the arguments landed after IT.
+    // The irritant, when there is one: errorf writes it after the
+    // message text, and a message that takes one ends with a colon.
+    // Split at the FIRST ": " -- the message texts do not contain one
+    // internally, and taking the last would cut inside an irritant
+    // that happens to have a colon in it.
     let args = [];
-    const holes = tail.match(RE_FMT);
-    if (holes) {
-        if (hint !== null) {
-            // the hint clause came between the format string and the
-            // arguments, so the arguments are the hint's last tokens
-            const toks = hint.trim().split(/\s+/);
-            if (toks.length > holes.length) {
-                args = toks.slice(toks.length - holes.length);
-                hint = toks.slice(0, toks.length - holes.length).join(' ');
-            }
-        } else {
-            // Everything after the LAST placeholder is the argument
-            // text.  Splitting the whole message on whitespace would
-            // tear an s-expression argument apart -- and those are
-            // exactly the arguments the interesting errors carry.
-            const last = tail.lastIndexOf(holes[holes.length - 1]);
-            const argText = tail.slice(last + 2).trim();
-            const cut = tail.slice(0, last + 2);
-            if (argText) {
-                args = holes.length === 1 ? [argText] : argText.split(/\s+/);
-                if (args.length === holes.length) tail = cut;
-                else args = [];
-            }
-        }
-        if (args.length === holes.length) {
-            let i = 0;
-            tail = tail.replace(RE_FMT, () => clip(args[i++]));
-        }
-    }
+    let tail = message;
+    const im = message.match(/^([^:]*:)\s+(\S[\s\S]*)$/);
+    if (im) args = [im[2].trim()];
+
     message = tail;
     if (who && who !== 'goeteia') message = `${who}: ${message}`;
 

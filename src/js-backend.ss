@@ -102,7 +102,7 @@
 ;; missing-helper compile error
 (define (jgeneric name)
   (let ((f (assq name *fns*)))
-    (unless f (errorf 'goeteia "missing generic helper ~s" name))
+    (unless f (errorf 'goeteia "missing generic helper:" name))
     (jfn-name name (cadr f))))
 
 ;; a glue call into a prelude generic: TR only when it may bounce
@@ -342,7 +342,7 @@
         (list "L2([" (jsep "," (reverse acc)) "])"))
        (else
         (list "LD([" (jsep "," (reverse acc)) "]," (jd x) ")")))))
-   (else (errorf 'goeteia "unsupported datum ~s" d))))
+   (else (errorf 'goeteia "unsupported datum:" d))))
 
 ;;;; ------------------------------------------------------------------
 ;;;; expressions
@@ -383,7 +383,7 @@
       ((apply) (jx-apply e env lctx #f))
       ((call/cc call-with-current-continuation) (jx-callcc e env lctx))
       (else (jx-app e env lctx #f))))
-   (else (errorf 'goeteia "cannot compile ~s" e))))
+   (else (errorf 'goeteia "cannot compile:" e))))
 
 (define (jref e env)
   (let ((slot (assq e env)))
@@ -404,7 +404,7 @@
                             (list "((" (jsep "," ps) ")=>"
                                   (jp r (map (lambda (x) 'eta) ps) ps)
                                   ")"))
-                          (errorf 'goeteia "unbound variable ~s" e))))))))))
+                          (errorf 'goeteia "unbound variable:" e))))))))))
 
 (define (jx-let e env lctx)
   ;; parallel let in expression position: an arrow IIFE; inits
@@ -444,16 +444,16 @@
     ;; two faults get two messages, and the wrong one is not a weaker
     ;; version of the right one -- it points somewhere else.
     (unless (symbol? r)
-      (errorf 'goeteia "set! target must be an identifier, not ~s" (cadr e)))
+      (errorf 'goeteia "set! target must be an identifier, not:" (cadr e)))
     (unless v
-      (errorf 'goeteia "set! of unbound variable ~s" (cadr e)))
+      (errorf 'goeteia "set! of unbound variable:" (cadr e)))
     (list "((" (jvar-name (cdr v)) "=(" (jx (caddr e) env lctx) ")),VOID)")))
 
 (define (jx-apply e env lctx tail?)
   (let ((f (cadr e))
         (args (cddr e)))
     (when (null? args)
-      (errorf 'goeteia "apply needs an argument list in ~s" e))
+      (errorf 'goeteia "apply needs an argument list in:" e))
     (let* ((leading (first-n args (- (length args) 1)))
            (final (car (list-tail args (- (length args) 1))))
            (fc (jx f env lctx))
@@ -658,16 +658,16 @@
              (variadic? (caddr entry)))
         (if variadic?
             (when (< (length args) nfixed)
-              (errorf 'goeteia "too few arguments in ~s" e))
+              (errorf 'goeteia "too few arguments in:" e))
             (unless (= nfixed (length args))
-              (errorf 'goeteia "wrong argument count in ~s" e)))
+              (errorf 'goeteia "wrong argument count in:" e)))
         (jcall rop (jfn-name rop (car entry)) args env lctx tail?)))
      ((and rop (assq rop *vars*))
       (jicall (list "(" (jvar-name (cdr (assq rop *vars*))) ")")
               args env lctx tail?))
      ((pair? op)
       (jicall (list "(" (jx op env lctx) ")") args env lctx tail?))
-     (else (errorf 'goeteia "cannot call ~s" op)))))
+     (else (errorf 'goeteia "cannot call:" op)))))
 
 ;; test position: a raw JS boolean; the predicate set the wasm
 ;; backend fast-paths lands here too, everything else is !==FALSE
@@ -835,14 +835,14 @@
     (when (and expect
                (not (memq op '(+ - *)))
                (not (= (length trees) (cdr expect))))
-      (errorf 'goeteia "wrong argument count for primitive ~s" op)))
+      (errorf 'goeteia "wrong argument count for primitive:" op)))
   (case op
     ((+ - *)
      (cond
       ((and (eq? op '-) (= (length trees) 1))
        (list (jhelper! "JSUB") "((0)," (a 0) ")"))
       ((< (length trees) 2)
-       (errorf 'goeteia "primitive ~s needs two or more arguments" op))
+       (errorf 'goeteia "this primitive needs two or more arguments:" op))
       (else
        (let ((h (jhelper! (case op ((+) "JADD") ((-) "JSUB") (else "JMUL")))))
          (let fold ((code (a 0)) (i 1))
@@ -1011,7 +1011,7 @@
     ;; no JSPI on this target: the promise comes back unawaited,
     ;; mirroring the wasm host's no-engine-support fallback
     ((%js-await) (a 0))
-    (else (errorf 'goeteia "unhandled primitive ~s" op))))
+    (else (errorf 'goeteia "unhandled primitive:" op))))
 
 ;;;; ------------------------------------------------------------------
 ;;;; the runtime kernel
@@ -1257,7 +1257,7 @@
     (list "const JFN=(clo)=>(...args)=>{const fr={args,ret:void 0};"
           "CBS.push(fr);try{" (jgeneric-tr '$jscb "clo") ";}finally{CBS.pop();}"
           "return fr.ret;};"))
-   (else (errorf 'goeteia "unknown glue helper ~s" name))))
+   (else (errorf 'goeteia "unknown glue helper:" name))))
 
 ;;;; ------------------------------------------------------------------
 ;;;; program assembly
@@ -1382,7 +1382,7 @@
              (lambda (n)
                (let ((f (assq n *fns*)))
                  (unless f
-                   (errorf 'goeteia "exported name is not a function ~s" n))
+                   (errorf 'goeteia "exported name is not a function:" n))
                  ;; nothing outside the module unwinds a thunk, so an
                  ;; export that may return one goes out through TR --
                  ;; the rest are handed over directly, keeping their

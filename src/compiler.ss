@@ -465,7 +465,7 @@
             (if (and (pair? (cddr fs)) (pair? (cdddr fs)))
                 (cadddr fs)
                 (sym-cat (list rec-name "-" f "-set!"))))))
-   (else (errorf 'goeteia "bad field spec ~s" fs))))
+   (else (errorf 'goeteia "bad field spec:" fs))))
 
 ;; case compiles to eq? chains; fixnums, characters, symbols and
 ;; booleans are all eq-comparable in goeteia
@@ -558,7 +558,7 @@
 (define (make-transformer spec)
   (let ((v (meta-eval spec (base-meta-env))))
     (unless (mv? mv-closure v)
-      (errorf 'goeteia "transformer is not a procedure: ~s" spec))
+      (errorf 'goeteia "transformer is not a procedure:" spec))
     v))
 (define (macro-def? f)
   (and (pair? f) (symbol? (car f)) (eq? (unmark (car f)) 'define-syntax)))
@@ -631,7 +631,7 @@
         ((set!)
          (let ((slot (assq (cadr e) env)))
            (unless slot
-             (errorf 'goeteia "set! of unbound ~s in transformer" (cadr e)))
+             (errorf 'goeteia "set! of an unbound name in a transformer:" (cadr e)))
            (set-cdr! slot (meta-eval (caddr e) env))
            (void)))
         ((syntax-case) (meta-syntax-case e env))
@@ -648,12 +648,12 @@
           (if (mv? mv-pvar v)
               (if (zero? (pvar-level v))
                   (pvar-value v)
-                  (errorf 'goeteia "pattern variable ~s at wrong depth" name))
+                  (errorf 'goeteia "pattern variable used at the wrong depth:" name))
               v))
         (let ((o (marked-origin name)))
           (if o
               (meta-ref o env)
-              (errorf 'goeteia "unbound ~s in transformer" name))))))
+              (errorf 'goeteia "unbound name in a transformer:" name))))))
 (define (meta-seq es env)
   (cond
    ((null? es) (void))
@@ -756,7 +756,9 @@
                (map2* (lambda (x y) (meta-apply (a) (list x y)))
                       (b) (caddr args))
                (map-in-order (lambda (x) (meta-apply (a) (list x))) (b))))
-    ((error) (errorf 'macro-transformer "~s" args))
+    ;; a transformer calling (error ...): its own arguments are the
+    ;; irritants, and the message says whose error it is
+    ((error) (errorf 'macro-transformer "error raised by a macro transformer:" args))
     ((gensym) (gensym (if (and (pair? args) (string? (a))) (a) "g")))
     ((string->symbol) (string->symbol (a)))
     ((symbol->string) (symbol->string (unmark (a))))
@@ -770,7 +772,7 @@
     ((datum->syntax) (b))
     ((generate-temporaries) (map-in-order (lambda (x) (gensym "t")) (a)))
     ((void) (void))
-    (else (errorf 'goeteia "unhandled transformer primitive ~s" name))))
+    (else (errorf 'goeteia "unhandled transformer primitive:" name))))
 
 ;;;; syntax-case pattern matching.  Match results are alists of
 ;;;; (pvar level . value); level is the ellipsis depth.
@@ -848,7 +850,7 @@
                      (map (lambda (m)
                             (let ((e (assq (car var) m)))
                               (unless e
-                                (errorf 'goeteia "missing pattern variable ~s"
+                                (errorf 'goeteia "missing pattern variable:"
                                         (car var)))
                               (cddr e)))
                           per-item))))
@@ -865,7 +867,7 @@
         (lits (caddr e)))
     (let try ((clauses (cdddr e)))
       (if (null? clauses)
-          (errorf 'goeteia "no matching syntax-case clause for ~s" v)
+          (errorf 'goeteia "no matching syntax-case clause for:" v)
           (let* ((clause (car clauses))
                  (bindings (sc-match (car clause) v lits)))
             (if bindings
@@ -884,7 +886,7 @@
         (meta-seq (cddr e) env*)
         (let ((m (sc-match (caar bs) (meta-eval (cadar bs) env) '())))
           (unless m
-            (errorf 'goeteia "with-syntax pattern mismatch: ~s" (caar bs)))
+            (errorf 'goeteia "with-syntax pattern mismatch:" (caar bs)))
           (bind (cdr bs) (sc-extend m env*))))))
 (define (desugar-rules e)
   ;; (syntax-rules (lit ...) (pattern template) ...)
@@ -907,7 +909,7 @@
           (let ((pv (cdr slot)))
             (if (zero? (pvar-level pv))
                 (pvar-value pv)
-                (errorf 'goeteia "too few ellipses after ~s" tmpl)))
+                (errorf 'goeteia "too few ellipses after:" tmpl)))
           (rename-introduced tmpl))))
    ((pair? tmpl)
     (cond
@@ -1145,16 +1147,16 @@
     i))
 (define (record-fn! idx entry)
   (when (assv idx *lifted*)
-    (errorf 'goeteia "duplicate function index ~s" idx))
+    (errorf 'goeteia "duplicate function index:" idx))
   (set! *lifted* (cons (cons idx entry) *lifted*)))
 
 (define (clos-ty arity)
   (let ((e (assv arity *clos-ty*)))
-    (unless e (errorf 'goeteia "missing closure type for arity ~s" arity))
+    (unless e (errorf 'goeteia "missing closure type for arity:" arity))
     (cdr e)))
 (define (rec-ty nfields)
   (let ((e (assv nfields *rec-ty*)))
-    (unless e (errorf 'goeteia "missing record type for ~s fields" nfields))
+    (unless e (errorf 'goeteia "missing record type for a record with this many fields:" nfields))
     (cdr e)))
 
 (define (intern! kind datum)
@@ -1368,7 +1370,7 @@
       ((call/cc call-with-current-continuation)
        (compile-callcc e locals cell))
       (else (compile-app e locals cell tail?))))
-   (else (errorf 'goeteia "cannot compile ~s" e))))
+   (else (errorf 'goeteia "cannot compile:" e))))
 
 ;; An unbound name that is really a number the reader could not read:
 ;; the self-hosted reader has no exponent syntax, so 1e-3 arrives here
@@ -1405,7 +1407,7 @@
                                          (nums-below (cdr p)))))
                             (compile-lambda ps (list (cons r ps))
                                             locals cell))
-                          (errorf 'goeteia "unbound variable ~s" e))))))))))
+                          (errorf 'goeteia "unbound variable:" e))))))))))
 
 ;; walk an argument list held in local t, pushing n elements
 (define (unpack-args t n)
@@ -1657,7 +1659,7 @@
     (let* ((head (compile-datum (car d)))
            (tail (compile-datum (cdr d))))
       (list head tail (struct-new TY-PAIR))))
-   (else (errorf 'goeteia "unsupported datum ~s" d))))
+   (else (errorf 'goeteia "unsupported datum:" d))))
 
 (define (compile-if e locals cell tail?)
   ;; compile in source order: codegen effects (function indices,
@@ -1948,9 +1950,9 @@
     ;; two faults get two messages, and the wrong one is not a weaker
     ;; version of the right one -- it points somewhere else.
     (unless (symbol? r)
-      (errorf 'goeteia "set! target must be an identifier, not ~s" (cadr e)))
+      (errorf 'goeteia "set! target must be an identifier, not:" (cadr e)))
     (unless v
-      (errorf 'goeteia "set! of unbound variable ~s" (cadr e)))
+      (errorf 'goeteia "set! of unbound variable:" (cadr e)))
     (list (compile-exp (caddr e) locals cell #f)
           (global-set (cdr v))
           (global-get G-VOID))))
@@ -2103,7 +2105,7 @@
       (compile-indirect (compile-ref op locals cell) args locals cell tail?))
      ((pair? op)
       (compile-indirect (compile-exp op locals cell #f) args locals cell tail?))
-     (else (errorf 'goeteia "cannot call ~s" op)))))
+     (else (errorf 'goeteia "cannot call:" op)))))
 
 (define (compile-direct entry e args locals cell tail? spec)
   (let ((idx (car entry))
@@ -2113,7 +2115,7 @@
         ;; extra arguments are consed into the rest list at the call
         (let ((n (length args)))
           (when (< n nfixed)
-            (errorf 'goeteia "too few arguments in ~s" e))
+            (errorf 'goeteia "too few arguments in:" e))
           (let* ((fixed (map-in-order (lambda (a) (compile-exp a locals cell #f))
                                       (first-n args nfixed)))
                  (extras (arg-chain (list-tail args nfixed)
@@ -2121,7 +2123,7 @@
             (list fixed extras (if tail? #x12 #x10) (uleb idx))))
         (begin
           (unless (= nfixed (length args))
-            (errorf 'goeteia "wrong argument count in ~s" e))
+            (errorf 'goeteia "wrong argument count in:" e))
           ;; f64 parameter positions take the argument in the f64
           ;; context (the analysis proved every such argument is a
           ;; flonum expression)
@@ -2186,7 +2188,7 @@
   (let ((f (cadr e))
         (args (cddr e)))
     (when (null? args)
-      (errorf 'goeteia "apply needs an argument list in ~s" e))
+      (errorf 'goeteia "apply needs an argument list in:" e))
     (let* ((leading (first-n args (- (length args) 1)))
            (final (car (list-tail args (- (length args) 1))))
            (tmp (fresh-local! cell))
@@ -2250,7 +2252,7 @@
 ;; call a generic arithmetic helper from the prelude by name
 (define (generic-call name)
   (let ((f (assq name *fns*)))
-    (unless f (errorf 'goeteia "missing generic helper ~s" name))
+    (unless f (errorf 'goeteia "missing generic helper:" name))
     (list #x10 (uleb (cadr f)))))
 (define (pred-i32 op argc cell)
   (define (arg i) (list-ref argc i))
@@ -2471,7 +2473,7 @@
 (define (compile-i32-prim op args locals cell)
   (let ((expect (assq op prim-arity)))
     (unless (= (length args) (cdr expect))
-      (errorf 'goeteia "wrong argument count for primitive ~s" op)))
+      (errorf 'goeteia "wrong argument count for primitive:" op)))
   (let* ((a (compile-i32 (car args) locals cell))
          (b (compile-i32 (cadr args) locals cell)))
     (list a b
@@ -2542,7 +2544,7 @@
 (define (compile-fl-prim op args locals cell)
   (let ((expect (assq op prim-arity)))
     (unless (= (length args) (cdr expect))
-      (errorf 'goeteia "wrong argument count for primitive ~s" op)))
+      (errorf 'goeteia "wrong argument count for primitive:" op)))
   (case op
     ((fl+ fl- fl* fl/)
      (let* ((a (compile-f64 (car args) locals cell))
@@ -2630,7 +2632,7 @@
     (when (and expect
                (not (memq op '(+ - *)))
                (not (= (length args) (cdr expect))))
-      (errorf 'goeteia "wrong argument count for primitive ~s" op)))
+      (errorf 'goeteia "wrong argument count for primitive:" op)))
   (case op
     ((+ - *)
      ;; n-ary as nested binary ops, each with a fixnum fast path and
@@ -2639,7 +2641,7 @@
       ((and (eq? op '-) (= (length args) 1))
        (arith2 '- (emit-fixnum 0) (arg 0) cell))
       ((< (length args) 2)
-       (errorf 'goeteia "primitive ~s needs two or more arguments" op))
+       (errorf 'goeteia "this primitive needs two or more arguments:" op))
       (else
        (let fold ((code (arg 0)) (i 1))
          (if (= i (length args))
@@ -2900,7 +2902,7 @@
      (list (arg 0) (ref-cast TY-STRING) (struct-new TY-SYMBOL)))
     ((%interned-symbols)
      (list #x10 (uleb *reg-fn*)))
-    (else (errorf 'goeteia "unhandled primitive ~s" op))))
+    (else (errorf 'goeteia "unhandled primitive:" op))))
 
 ;;;; ------------------------------------------------------------------
 ;;;; top level
@@ -3896,7 +3898,7 @@
         (let* ((jstext (conjure-sub-compile body 'js))
                (bytes (conjure-sub-compile body 'wasm)))
           (embed-section-auto jstext bytes wurl)))
-       (else (errorf 'goeteia "unknown embed mode ~s" mode))))))
+       (else (errorf 'goeteia "unknown embed mode:" mode))))))
 
 ;; the define- family wraps conjure into named definitions, the
 ;; head's shape picking the wasm's home (like define itself):
@@ -3940,7 +3942,7 @@
          (jspath (and (pair? head) (pair? (cddr head)) (car (cddr head))))
          (body (map-in-order embed-expand (embed-strip-locs (cdr rest)))))
     (when (and jspath (not (eq? mode 'auto)))
-      (errorf 'goeteia "a fallback file needs define-wasm-js: ~s" head))
+      (errorf 'goeteia "a fallback file needs define-wasm-js:" head))
     (case mode
       ((js)
        (let ((jstext (conjure-sub-compile body 'js)))
@@ -4392,7 +4394,7 @@
                  (map (lambda (n)
                         (let ((f (assq n *fns*)))
                           (unless f
-                            (errorf 'goeteia "exported name is not a function ~s" n))
+                            (errorf 'goeteia "exported name is not a function:" n))
                           (export-entry (symbol->string n) #x00 (cadr f))))
                       export-names))))
     ;; element section: functions referenced by ref.func
