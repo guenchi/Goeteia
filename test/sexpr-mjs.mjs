@@ -427,15 +427,39 @@ function writeSymText(e) {
 }
 
 test('no name is written that cannot be read back', () => {
-    // The generator measures this: every name the authority writes is
-    // fed back to its own reader and compared.  An entry marked here
-    // would mean the authority emits a datum nobody can read -- it did,
-    // for five names, until the fix this fixture was regenerated
-    // against.  Asserting the empty set keeps that closed rather than
-    // trusting it to stay closed.
-    const marked = FIXTURE.write_reject.filter(e => e.divergence);
-    assert.deepStrictEqual(marked.map(e => e.sym), [],
-        'the authority writes a name its own reader refuses again');
+    // This used to read a `divergence` marker off each entry and
+    // assert that none was set.  No entry has that key -- the 1593
+    // write_reject entries carry name, sym, rejected, error and
+    // wire_b64, and nothing else -- so the filter matched nothing, the
+    // empty set compared equal, and the assertion COULD NOT FAIL.  It
+    // was not weakly checking the property; it was checking a field
+    // that does not exist, and reading green either way.
+    //
+    // The property is computable from what IS there: every name the
+    // authority accepts comes with the bytes it writes, so feed those
+    // back to this reader and require the name to survive the trip.
+    // That is the half of the original claim this side can observe --
+    // whether the AUTHORITY's own reader takes them back is a
+    // measurement only the generator can make, and it no longer
+    // records it.
+    let checked = 0;
+    for (const e of FIXTURE.write_reject) {
+        if (e.rejected) continue;
+        const text = writeSymText(e);
+        const back = read(text);
+        assert.equal(back.name, e.sym,
+            `the authority writes ${JSON.stringify(e.sym)} as `
+            + `${JSON.stringify(text)}, which reads back as `
+            + `${JSON.stringify(back.name)}`);
+        checked++;
+    }
+    // The count travels with the claim.  "No name fails" over zero
+    // names reads exactly like it does over 449, and the version this
+    // replaced is what that looks like when nobody checks.
+    assert.ok(checked > 400,
+        `only ${checked} accepted names were checked; the corpus should `
+        + 'carry hundreds, and a collapsed denominator is how the '
+        + 'previous version of this test passed');
     // and our writer agrees with it name for name, which the test above
     // checks; here are the five names that used to be the divergence
     for (const name of ['0x10', '12abc', '1/-2', '1//2', '1/0']) {
