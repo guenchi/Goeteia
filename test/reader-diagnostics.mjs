@@ -54,18 +54,46 @@ test('an exponent literal compiles as a number', () => {
     assert.equal(status, 0, `expected a clean compile, got: ${stderr}`);
 });
 
-test('set! of a numeric literal is refused', () => {
-    // `2.5E+7` reads as a number now, so this is set! on something
-    // that is not an identifier at all.  The message it gets is the
-    // generic unbound-variable one, which is not accurate for a
-    // number -- that wording predates this change and is recorded in
-    // the batch notes rather than fixed here.  What this cell holds is
-    // that the form is REFUSED, and that nothing claims the reader
-    // cannot read the literal.
-    const { status, stderr } = compile('exponent-set.ss',
-        ';; expect: 0\n(set! 2.5E+7 1)\n');
+// set! on something that is not a name at all used to report "set! of
+// unbound variable 25000000.0" -- which classifies the fault wrongly.
+// The target is not a variable that happens to be unbound; it is not a
+// variable.  A maintainer reading "unbound" goes looking for a missing
+// definition, and there is none to find.
+//
+// The distinction matters more since the reader took exponent
+// notation: `2.5E+7` used to be a symbol, so "unbound variable" was
+// accurate for it, and it silently stopped being accurate when the
+// literal became a number.
+for (const [what, source] of [['a numeric literal', '(set! 2.5E+7 1)'],
+                              ['a string', '(set! "s" 1)'],
+                              ['a boolean', '(set! #t 1)']]) {
+    test(`set! of ${what} says the target is not an identifier`, () => {
+        const { status, stderr } = compile(`set-${what.replace(/ /g, '-')}.ss`,
+            `;; expect: 0\n${source}\n`);
+        assert.notEqual(status, 0);
+        assert.match(stderr, /set! target/);
+        assert.match(stderr, /identifier/);
+        // and NOT the wrong classification
+        assert.doesNotMatch(stderr, /unbound/);
+    });
+
+    test(`the JS target says the same for ${what}`, () => {
+        const { status, stderr } = compile(`set-js-${what.replace(/ /g, '-')}.ss`,
+            `;; expect: 0\n${source}\n`, { js: true });
+        assert.notEqual(status, 0);
+        assert.match(stderr, /set! target/);
+        assert.doesNotMatch(stderr, /unbound/);
+    });
+}
+
+test('set! of a name that IS a variable but unbound still says unbound', () => {
+    // the should-GREEN half: narrowing the message must not swallow
+    // the case it was carved out of
+    const { status, stderr } = compile('set-unbound.ss',
+        ';; expect: 0\n(set! elf-3 1)\n');
     assert.notEqual(status, 0);
-    assert.doesNotMatch(stderr, /exponent literals are not supported/);
+    assert.match(stderr, /unbound variable/);
+    assert.match(stderr, /elf-3/);
 });
 
 test('an unbound ordinary name is still named', () => {

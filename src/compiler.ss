@@ -1942,6 +1942,13 @@
 (define (compile-global-set e locals cell)
   (let* ((r (unmark (cadr e)))
          (v (assq r *vars*)))
+    ;; "unbound" is a claim about a NAME, and this target may not be
+    ;; one.  Reporting (set! 5 1) as an unbound variable sends the
+    ;; reader looking for a missing definition that cannot exist.  The
+    ;; two faults get two messages, and the wrong one is not a weaker
+    ;; version of the right one -- it points somewhere else.
+    (unless (symbol? r)
+      (errorf 'goeteia "set! target must be an identifier, not ~s" (cadr e)))
     (unless v
       (errorf 'goeteia "set! of unbound variable ~s" (cadr e)))
     (list (compile-exp (caddr e) locals cell #f)
