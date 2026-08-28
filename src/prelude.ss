@@ -926,8 +926,55 @@
         (if (or (%intraline-ws? n) (%line-ending? n))
             (begin (%skip-string-continuation line col)
                    (%read-string line col acc))
-            (%read-string line col (cons (%read-escape (%next-byte)) acc)))))
+            (let ((c (%next-byte)))
+              (cond
+               ;; End of input after the backslash: the fault is the
+               ;; unclosed string, not an unknown escape.  Before the
+               ;; escape table refused anything, this fell through and
+               ;; the loop reported the missing quote by itself; now
+               ;; the refusal would get there first and name a
+               ;; character that does not exist.  test/read-errors.ss
+               ;; was already holding this case -- "a trailing
+               ;; backslash cannot swallow the end of input" -- and it
+               ;; is what caught the regression.
+               ((< c 0)
+                (errorf 'read
+                        (string-append "string opened at " (%at-line line col)
+                                       " never closed")))
+               ((= c 120)                              ; x -- hex escape
+                (%read-string line col
+                              (%push-utf8 (%read-hex-escape line col) acc)))
+               (else
+                (%read-string line col (cons (%read-escape c) acc))))))))
+
      (else (%read-string line col (cons b acc))))))
+
+;; A string in this runtime is a sequence of UTF-8 BYTES: the reader
+;; takes source bytes one at a time, so a literal lambda is the two
+;; characters 206 and 187, and the compiler encodes what its host read
+;; the same way.  So a hex escape has to encode too, or "\x3bb;" and
+;; "lambda spelled literally" would be different strings -- and the
+;; escape is the spelling a source file uses precisely when it cannot
+;; carry the character itself.  That equality is the property, and the
+;; cells assert it directly rather than asserting a byte count.
+;;
+;; `acc` is built in reverse, so the bytes are consed in order.
+(define (%push-utf8 v acc)
+  (cond
+   ((< v 128) (cons v acc))
+   ((< v 2048)
+    (cons (+ 128 (bitwise-and v 63))
+          (cons (+ 192 (bitwise-arithmetic-shift-right v 6)) acc)))
+   ((< v 65536)
+    (cons (+ 128 (bitwise-and v 63))
+          (cons (+ 128 (bitwise-and (bitwise-arithmetic-shift-right v 6) 63))
+                (cons (+ 224 (bitwise-arithmetic-shift-right v 12)) acc))))
+   (else
+    (cons (+ 128 (bitwise-and v 63))
+          (cons (+ 128 (bitwise-and (bitwise-arithmetic-shift-right v 6) 63))
+                (cons (+ 128 (bitwise-and (bitwise-arithmetic-shift-right v 12) 63))
+                      (cons (+ 240 (bitwise-arithmetic-shift-right v 18))
+                            acc)))))))
 
 (define (%intraline-ws? b) (or (= b 32) (= b 9)))
 (define (%line-ending? b) (or (= b 10) (= b 13)))
@@ -949,13 +996,66 @@
   (let skip ()
     (when (%intraline-ws? (%peek-byte)) (%next-byte) (skip))))
 (define (%read-escape b)
-  ;; translate the byte after a backslash; \" and \\ fall through to
-  ;; themselves, \n \t \r become the control characters
+  ;; The byte after a backslash.  This table had three entries and an
+  ;; `else` that answered the byte itself, so "\a" was the letter a and
+  ;; "\q" was the letter q: not a refusal, not a diagnostic, a
+  ;; different string from the one the source says.  An unknown escape
+  ;; is a typo, and a reader that invents a meaning for it can never
+  ;; report one.
   (cond
-   ((= b 110) 10)      ; \n -> newline
+   ((= b 97) 7)        ; \a -> alarm
+   ((= b 98) 8)        ; \b -> backspace
    ((= b 116) 9)       ; \t -> tab
+   ((= b 110) 10)      ; \n -> newline
+   ((= b 118) 11)      ; \v -> vertical tab
+   ((= b 102) 12)      ; \f -> form feed
    ((= b 114) 13)      ; \r -> return
-   (else b)))
+   ((= b 34) 34)       ; \" -> quote
+   ((= b 92) 92)       ; \\ -> backslash
+   (else
+    (errorf 'read
+            (string-append "\\" (string (integer->char b))
+                           " is not a string escape at "
+                           (%at-line $reader-line $reader-column))))))
+
+;; \xHHHH; -- the `x` is already consumed.  The semicolon is required
+;; and it TERMINATES: "\x41;f" is A followed by the letter f, so a
+;; reader that swallowed the terminator or stopped at the wrong byte
+;; only shows itself when something follows the escape.
+(define (%read-hex-escape line col)
+  (let loop ((v 0))
+    (let ((b (%next-byte)))
+      (cond
+       ((< b 0)
+        (errorf 'read
+                (string-append "a \\x escape in the string opened at "
+                               (%at-line line col)
+                               " reaches end of input with no ;")))
+       ((= b 59)                                   ; ;
+        ;; No digits at all is accepted, as code point zero, which is
+        ;; what the reference implementation does; refusing it would
+        ;; cost a check that buys nothing.  What must be refused is a
+        ;; value that is not a character: past the last code point, or
+        ;; inside the surrogate range, which UTF-16 reserves and which
+        ;; integer->char would have to invent a meaning for.
+        (when (< 1114111 v)
+          (errorf 'read
+                  (string-append "a \\x escape in the string opened at "
+                                 (%at-line line col)
+                                 " is past the last code point")))
+        (when (and (<= 55296 v) (<= v 57343))
+          (errorf 'read
+                  (string-append "a \\x escape in the string opened at "
+                                 (%at-line line col)
+                                 " names a surrogate, which is not a character")))
+        v)
+       ((%digit-val b 16) => (lambda (d) (loop (+ (* v 16) d))))
+       (else
+        (errorf 'read
+                (string-append (string (integer->char b))
+                               " is not a hexadecimal digit in the \\x escape"
+                               " in the string opened at "
+                               (%at-line line col))))))))
 
 (define (%read-hash)
   (let ((b (%next-byte)))
