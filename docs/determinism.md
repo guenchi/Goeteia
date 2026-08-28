@@ -99,15 +99,30 @@ crossing the bridge. A battery run with a single `Math.random()` in it
 is caught by the three-runs-per-channel check, which is what that
 check is for.
 
-**Correct rounding below the subnormal floor.** `$exact->fl` builds a
-53-bit significand and then scales it by a power of two, which is
-exact until the scale drives the value into the subnormal range —
-below `2.2250738585072014e-308` the significand no longer fits and
-each further halving rounds again. Measured over 200 random decimals
-between `1e-323` and `1e-305`: 26 are one ulp from the nearest double,
-and **all 200 agree between the two targets**. So this is an accuracy
-limit, not a determinism one, and everything at or above the normal
-floor is correctly rounded.
+**Correct rounding below the subnormal floor — fixed.** This entry
+used to describe a real accuracy limit. `$exact->fl` built a 53-bit
+significand and scaled it by a power of two, which is exact until the
+scale drives the value into the subnormal range: below
+`2.2250738585072014e-308` the significand no longer fits, so each
+further halving rounded *again*. The rounding decision was being made
+at 53 bits for a result that had fewer, and the first rounding
+absorbed the evidence the second one needed — "strictly above the
+halfway point" arrived as "exactly at it", and ties-to-even sent it
+the other way. Measured over 200 random decimals between `1e-323` and
+`1e-305`, 26 were one ulp from the nearest double.
+
+The bits are now dropped in one step, at the width the result
+actually has, so the value is rounded once and the scaling afterwards
+is exact. The same measurement is **0 of 200**, and re-running it
+against a build of the previous commit still gives 28 — the check
+distinguishes the two, which is the only reason the zero means
+anything. `test/exact-to-flonum.ss` holds the boundary cases,
+including the exact-halfway value whose carry crosses back into the
+normal range.
+
+It was never a determinism problem — both targets always agreed — and
+that is exactly why it survived: every golden in the tree was stable,
+and only a comparison against exact arithmetic could see it.
 
 **Denormal flush.** Not a wasm or JS behaviour on any engine we
 target, and section `edge` walks 80 values from 2^-1000 down past

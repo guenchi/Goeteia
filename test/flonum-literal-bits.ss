@@ -23,16 +23,13 @@
 ;; WRITTEN.  They can now, and they are below -- the promotion is the
 ;; point of keeping such a list rather than a vague note.
 ;;
-;; One blocker is left, and it is not this encoder's:
-;;
-;;   A decimal in the subnormal range whose value needs many mantissa
-;;   bits is converted by rounding at 53 bits and then scaling down,
-;;   which rounds a second time.  1e-317 is the witness -- the
-;;   Chez-hosted host reads it as ...1ee257 and the self-hosted one
-;;   produces ...1ee256, one low -- and it is the conversion that is
-;;   wrong, not the reader or the encoder.  Subnormals needing FEW
-;;   bits are fine and are cells below (1e-320, 3e-320, 5e-324), which
-;;   is why "subnormals are blocked" would have been the wrong summary.
+;; The last blocker is gone too.  A decimal in the subnormal range
+;; whose value needs many mantissa bits used to be converted by
+;; rounding at 53 bits and then scaling down, which rounded a second
+;; time: 1e-317 came out as ...1ee256 on the self-hosted compiler and
+;; ...1ee257 on the Chez-hosted one, one low, from the same source
+;; text.  The conversion rounds once now, and that cell is below with
+;; the rest rather than in a list of things this file cannot say.
 ;;
 ;; NaN gets TWO cells, because two different things are worth holding
 ;; and one cell cannot hold both:
@@ -103,6 +100,13 @@
 
 ;; Subnormals the converter handles exactly: few mantissa bits needed.
 (want! 1e-320  "00000000000007e8")
+;; The cell the blocked list used to hold: a subnormal needing many
+;; mantissa bits, where the two hosts once disagreed by one ulp.  Its
+;; neighbour is here too, because a conversion that is one out in the
+;; other direction would still pass on 1e-317 alone.
+(want! 1e-317  "00000000001ee257")
+(want! -1e-317 "80000000001ee257")
+(want! 1e-318  "00000000000316a2")
 (want! 3e-320  "00000000000017b8")
 (want! 5e-324  "0000000000000001")   ; the smallest positive subnormal
 (want! -5e-324 "8000000000000001")

@@ -1752,15 +1752,65 @@
              ((< q 9007199254740992) (norm (* n 2) d (- e 1)))     ; 2^53
              ((< 18014398509481983 q) (norm n (* d 2) (+ e 1)))    ; 2^54
              (else
-              (let* ((sticky (not (= (- n (* q d)) 0)))
-                     (half (quotient q 2))
-                     (guard (- q (* half 2)))
-                     (odd (- half (* (quotient half 2) 2)))
+              ;; q holds 53 significant bits and one guard bit, and the
+              ;; division remainder is the sticky bit.  Rounding here
+              ;; is right only when the RESULT has 53 bits to keep.
+              ;;
+              ;; Below the normal floor it does not.  The value is
+              ;; about half * 2^(e+1), so its binade exponent is
+              ;; e + 53, and a result under 2^-1022 has
+              ;;     deficit = -1075 - e
+              ;; bits fewer than 53 to store.  Rounding at 53 and then
+              ;; letting $fl-scale2 halve into place rounds a SECOND
+              ;; time, and the first rounding has already absorbed the
+              ;; evidence the second one needs: "strictly above the
+              ;; halfway point" becomes "exactly at it", and ties-to-
+              ;; even sends it the other way.  That is one ulp, on the
+              ;; values that sit just above a halfway point -- which is
+              ;; why most subnormals were right and a few were not.
+              ;;
+              ;; So drop the bits in ONE step, at the width the result
+              ;; actually has.  `drop` is 1 in the normal case, which
+              ;; is the old behaviour: one formula, not a special case
+              ;; bolted beside it.
+              ;;
+              ;; The unit works out to exactly 2^-1074 whenever the
+              ;; result is subnormal (2^(e+drop) with drop = 1+deficit),
+              ;; so `keep` counts smallest-subnormals and the scaling
+              ;; afterwards is exact by construction rather than by
+              ;; hope.  A carry out of the top -- keep reaching 2^52 --
+              ;; needs no special handling: that value times 2^-1074 IS
+              ;; the smallest normal, which is the correct answer, and
+              ;; the transition cells in test/exact-to-flonum.ss are
+              ;; the ones that would notice if it were dropped.
+              (let* ((deficit (- (- 0 1075) e))
+                     ;; Past 55 the answer is zero and the width stops
+                     ;; mattering: q is under 2^54, so it cannot reach
+                     ;; half of the unit, and building a power of two
+                     ;; with thousands of bits to divide by would only
+                     ;; slow down the way there.  1e-4000 takes this
+                     ;; path.
+                     (drop (cond ((< deficit 1) 1)
+                                 ((< 54 deficit) 55)
+                                 (else (+ 1 deficit))))
+                     (unit ($pow2 drop))
+                     (keep (quotient q unit))
+                     (rest (- q (* keep unit)))
+                     (halfway (quotient unit 2))
+                     ;; sticky = some bit BELOW the guard is set.  The
+                     ;; guard is the top bit of `rest`, so that is
+                     ;; exactly rest > halfway -- and the division
+                     ;; remainder carries the bits that never reached
+                     ;; the quotient at all.
+                     (sticky (or (not (= (- n (* q d)) 0))
+                                 (< halfway rest)))
+                     (guard (if (< rest halfway) 0 1))
+                     (odd (- keep (* (quotient keep 2) 2)))
                      (rounded                     ; nearest, ties to even
                       (if (and (= guard 1) (or sticky (= odd 1)))
-                          (+ half 1)
-                          half)))
-                ($fl-scale2 ($small->fl rounded) (+ e 1))))))))))
+                          (+ keep 1)
+                          keep)))
+                ($fl-scale2 ($small->fl rounded) (+ e drop))))))))))
 
 (define ($exact->fl num den)            ; den > 0
   (if (< num 0)

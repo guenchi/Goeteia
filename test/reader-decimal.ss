@@ -161,13 +161,17 @@
 ;; radix: #o1e3 is 8^3, not 10^3
 (reads-as? "#o#e1e3" (lambda (v) (and (exact? v) (eqv? v 512))))
 
-;; A long decimal in the SUBNORMAL range is deliberately not here: the
-;; converter rounds at 53 bits and then scales down, rounding a second
-;; time, so such a cell would be red for the converter's reason rather
-;; than the reader's.  It belongs to that fix.
-(not-exercised! "external blocker: the exact-to-double conversion
-rounds twice at the subnormal floor, so a subnormal-range decimal is
-judged by that defect and not by this reader" "long decimals below 2^-1022")
+;; Long decimals in the subnormal range, which this file could not
+;; hold until the conversion stopped rounding twice.  These were the
+;; blocked cell: the reader assembles the exact rational correctly and
+;; the converter is what used to be one ulp low, so a red here would
+;; once have been the converter's fault and not the reader's.  Both are
+;; right now, and the rows say so instead of a note saying they cannot.
+(flonum-is? "0.00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001"
+            "00000000001ee257")            ; 1e-317, written out
+(flonum-is? "1e-317"  "00000000001ee257")   ; and with an exponent
+(flonum-is? "1e-320"  "00000000000007e8")
+(flonum-is? "2.4703282292062328e-324" "0000000000000001")  ; smallest subnormal
 
 (display (if (= failures 0)
              "every decimal spelling reads as the number Chez reads"
