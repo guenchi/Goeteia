@@ -15,67 +15,36 @@
 ;;       .map(v=>v.toString(16).padStart(2,"0")).join("")};
 ;;     console.log(h(Number("123.456")))'
 ;;
-;; NOT COVERED HERE, and both reasons are blockers rather than choices:
+;; WHAT IS AND IS NOT COVERED
 ;;
-;;  - The exact boundary the new condition tests -- 2^-1022, the
-;;    smallest normal -- IS the control this file most wants, and it
-;;    cannot be written.  The self-hosted reader rejects exponent
-;;    notation outright ("exponent literals are not supported by this
-;;    reader"), and spelling 2.2250738585072014e-308 out longhand
-;;    routes it through the decimal assembly the two hosts currently
-;;    disagree about.  So it would be red for the reader's reason, not
-;;    for this file's.  It lands when the reader takes exponents.
+;; This file once carried a list of cells it could not run: the reader
+;; had no exponent notation and no +inf.0 / +nan.0 spellings, so the
+;; boundary values this encoder most needs checking at could not be
+;; WRITTEN.  They can now, and they are below -- the promotion is the
+;; point of keeping such a list rather than a vague note.
 ;;
-;;  - The positive cells for the subnormal arm itself (a literal like
-;;    1e-320) are blocked the same way, and additionally on the
-;;    converter: a subnormal's value is assembled by rounding at 53
-;;    bits and then scaling down, which rounds a second time.
+;; One blocker is left, and it is not this encoder's:
 ;;
-;;  - The non-finite literals (+inf.0, -inf.0, +nan.0, -nan.0).  The
-;;    encoder handles all four as of this commit -- before it, +inf.0
-;;    HUNG the compiler and both NaN spellings were silently encoded as
-;;    1.0 -- but the cells cannot run here, because the self-hosted
-;;    reader does not accept those tokens either.  They were measured
-;;    against node-generated patterns on the Chez-hosted compiler,
-;;    which does read them; the readings are in the commit.
+;;   A decimal in the subnormal range whose value needs many mantissa
+;;   bits is converted by rounding at 53 bits and then scaling down,
+;;   which rounds a second time.  1e-317 is the witness -- the
+;;   Chez-hosted host reads it as ...1ee257 and the self-hosted one
+;;   produces ...1ee256, one low -- and it is the conversion that is
+;;   wrong, not the reader or the encoder.  Subnormals needing FEW
+;;   bits are fine and are cells below (1e-320, 3e-320, 5e-324), which
+;;   is why "subnormals are blocked" would have been the wrong summary.
 ;;
-;; Neither is forgotten; each lands with the fix that unblocks it, and
-;; all three groups land together, because one change to the reader
-;; unblocks all of them:
-;;
-;;   WHEN THE READER TAKES EXPONENT NOTATION AND THE NON-FINITE
-;;   TOKENS, ADD HERE: the adjacent pair that straddles the branch
-;;   condition itself -- 2.225073858507201e-308 (000fffffffffffff, the
-;;   LARGEST SUBNORMAL) and 2.2250738585072014e-308
-;;   (0010000000000000, the smallest normal), which differ by one bit
-;;   and are the pair an off-by-one in the exponent would separate
-;;   while every other cell here still passed -- and its negative
-;;   800fffffffffffff; then 2^-1021, 1e-307, +inf.0, -inf.0,
-;;   +nan.0 and -nan.0 as TWO cells each, because two different things
-;;   are worth holding and one cell cannot hold both:
-;;     - a SPEC cell: the value is a NaN at all (exponent field all
-;;       ones, mantissa non-zero).  This is what the format requires
-;;       and it must not be tightened into a bit pattern, or an
-;;       implementation choice gets recorded as though it were a
-;;       guarantee.
-;;     - a POLICY cell: the pattern is exactly 7ff8000000000000.  This
-;;       is not a spec cell.  It pins the choice this encoder states
-;;       in src/compiler.ss -- canonical quiet NaN, sign and payload
-;;       chosen rather than preserved -- so that changing the policy
-;;       means changing this cell in the same commit, which is the
-;;       point of it.  Without it the encoder could drift to 7ff4...
-;;       and disagree with every NaN the runtime computes, silently.
-;;   Then a subnormal such as 1e-320, and
-;;   the underflow pair 2e-324/-2e-324 (0000000000000000 and
-;;   8000000000000000 -- a magnitude that rounds away to zero must
-;;   still keep its sign) together with the smallest subnormals
-;;   5e-324/-5e-324 (...0001 and 8...0001).
-;;
-;; All eleven were measured against node-generated patterns on the
-;; Chez-hosted compiler, which does read those spellings, and all
-;; eleven pass there today.  They are listed because a cell that
-;; cannot run is not a cell that has been checked -- the run that
-;; matters is the one in the gate, on both hosts.
+;; NaN gets TWO cells, because two different things are worth holding
+;; and one cell cannot hold both:
+;;   - a SPEC cell: it is a NaN at all (exponent field all ones,
+;;     mantissa non-zero).  What the format requires, and it must not
+;;     be tightened into a bit pattern or an implementation choice
+;;     gets recorded as though it were a guarantee.
+;;   - a POLICY cell: exactly 7ff8000000000000.  Not a spec cell.  It
+;;     pins the choice src/compiler.ss states -- canonical quiet NaN,
+;;     sign and payload chosen rather than preserved -- so changing
+;;     the policy means changing this cell in the same commit, which
+;;     is the point of it.
 (import (rnrs) (gfx fx))
 
 (define $hex "0123456789abcdef")
@@ -120,6 +89,45 @@
 (want! 0.5      "3fe0000000000000")
 (want! 1024.0   "4090000000000000")
 (want! 0.30000000000000004 "3fd3333333333334")   ; the classic .1+.2 result
+
+;; ---- the boundary values, now that they can be written ------------
+;; The adjacent pair that straddles the encoder's own branch condition:
+;; these two differ by ONE BIT, and an off-by-one in the exponent would
+;; separate them while every other cell in this file still passed.
+(want! 2.225073858507201e-308  "000fffffffffffff")  ; largest subnormal
+(want! 2.2250738585072014e-308 "0010000000000000")  ; smallest normal
+(want! -2.225073858507201e-308 "800fffffffffffff")
+(want! 4.450147717014403e-308  "0020000000000000")  ; 2^-1021
+(want! 1e-307                  "0031fa182c40c60d")
+(want! 1e308                   "7fe1ccf385ebc8a0")
+
+;; Subnormals the converter handles exactly: few mantissa bits needed.
+(want! 1e-320  "00000000000007e8")
+(want! 3e-320  "00000000000017b8")
+(want! 5e-324  "0000000000000001")   ; the smallest positive subnormal
+(want! -5e-324 "8000000000000001")
+;; and the underflow pair -- a magnitude that rounds away to zero must
+;; still keep its sign
+(want! 2e-324  "0000000000000000")
+(want! -2e-324 "8000000000000000")
+
+;; ---- the non-finite literals ---------------------------------------
+;; Before the encoder had these branches, +inf.0 HUNG the compiler and
+;; both NaN spellings were silently encoded as 1.0.
+(want! +inf.0 "7ff0000000000000")
+(want! -inf.0 "fff0000000000000")
+;; the SPEC cell: a NaN at all, asked without naming a pattern
+(let ((n +nan.0))
+  (unless (and (flonum? n) (not (fl=? n n)))
+    (set! failures (+ failures 1))
+    (display "literal +nan.0 is not a NaN") (newline)))
+(let ((n -nan.0))
+  (unless (and (flonum? n) (not (fl=? n n)))
+    (set! failures (+ failures 1))
+    (display "literal -nan.0 is not a NaN") (newline)))
+;; the POLICY cells: exactly the canonical quiet NaN, both spellings
+(want! +nan.0 "7ff8000000000000")
+(want! -nan.0 "7ff8000000000000")
 
 (display (if (= failures 0)
              "all f64 literal bit patterns match"

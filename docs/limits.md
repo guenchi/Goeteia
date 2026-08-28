@@ -164,28 +164,28 @@ at small `|x|`, `tan` is as good as `sin`/`cos`.
 under other names — one polynomial for the whole system — so all of
 the above applies to them unchanged.
 
-## No exponent syntax in the self-hosted reader
+## Exponent syntax: fixed, and the hint that named it is gone
 
-**Symptom**: a file compiles under the Chez-hosted driver
-(`bin/goeteiac`) but stage1 (`goeteia.wasm` compiling itself) fails
-with
+This entry described a real limitation and no longer does. The
+self-hosted reader had no `1e-9` / `1.5e3` syntax, so such a literal
+was read as a *symbol* and surfaced as `unbound variable` — a message
+so misleading that the compiler appended `exponent literals are not
+supported by this reader -- write the constant out`.
 
-```
-unbound variable ~s; exponent literals are not supported by this
-reader -- write the constant out 1e-3
-```
+The reader takes exponents now (`e` and `E`, with an optional sign),
+along with `+1.5`, `.5`, `5.` and the `+inf.0` / `-inf.0` / `+nan.0`
+spellings. The hint said something untrue once that was so, and was
+removed from both backends; `test/reader-decimal.ss` holds the
+acceptance face against Chez, and `test/reader-diagnostics.mjs` holds
+what the messages say now.
 
-— the literal was read as a *symbol*.  A name that merely contains
-an `e` (`elf-3`, `vec3`) gets the plain `unbound variable` message;
-the hint appears only for something shaped like a number.
+The entry is kept rather than deleted because the message it quotes
+was public: anyone who met that text and searched for it should land
+here and be told it is obsolete, not find nothing.
 
-**Cause**: the self-hosted reader has no `1e-9` / `1.5e3` exponent
-syntax.
-
-**Workaround**: write small and large constants out in full
-(`0.000000001`), as the existing `(gfx mat)` code does.  Anything
-that must pass the full test matrix (stage0 + stage1 + JS backend)
-cannot use exponent literals.
+Note that `e` is an exponent marker **only in base ten**. Where a
+radix prefix makes `e` a digit, there is no exponent syntax to have —
+`#x1e3` is 483, not 1000.
 
 ## Bitwise operations and big operands
 

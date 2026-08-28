@@ -66,11 +66,21 @@ numeric goldens" "flonums needing more than twelve fractional digits")
 (not-exercised! "infinities print as <big-flonum>, a token rather than a
 numeral, by a recorded decision -- there is no decimal expansion to
 read back" "+inf.0 and -inf.0")
-;; NaN is different: it prints as "+nan.0", which IS its numeral, and
-;; the reader does not accept that spelling yet.  Blocked, not decided.
-(not-exercised! "external blocker: the reader does not yet accept the
-+nan.0 spelling; this lands with the change that makes it a number
-rather than a symbol" "+nan.0")
+;; NaN prints as "+nan.0", which IS its numeral, and the reader takes
+;; that spelling now -- so this row is a cell rather than the exemption
+;; it used to be.
+;;
+;; It needs its own judge: `equal?` answers #f for a NaN against a
+;; freshly read NaN, and that is IEEE arithmetic being itself, not a
+;; defect to route around.  (Measured: equal? on 0.5 and its
+;; round-trip is #t, on a NaN and its round-trip is #f.)  So the
+;; property asked here is "a NaN came back", which is the whole of
+;; what the text can carry -- the payload is chosen by the encoder,
+;; not preserved through the numeral, and src/compiler.ss says so.
+(let* ((nan (fl/ (fixnum->flonum 0) (fixnum->flonum 0)))
+       (back (rd (wr nan))))
+  (unless (and (flonum? back) (not (fl=? back back)))
+    (fail! "a NaN did not read back as a NaN")))
 
 ;; ---- string ---------------------------------------------------------
 (trips? "string" "abc")
