@@ -434,10 +434,14 @@
  ;; values from the pair, silently: nothing downstream can see the
  ;; difference except by dividing.
  ;;
- ;; Which is how it is asked here.  `display` cannot judge this: the
- ;; printer has its own defect and spells a true negative zero "0.0",
- ;; so a test that read the output would blame the wrong stage.  The
- ;; criterion must not pass through the layer under suspicion.
+ ;; Which is how the READ side is asked here.  It has to be: when
+ ;; these rows were written the printer spelled a true negative zero
+ ;; "0.0", so a criterion that went through `display` would have
+ ;; blamed the wrong stage -- the criterion must not pass through the
+ ;; layer under suspicion.  The printer has since been fixed, and the
+ ;; division test is kept anyway, because it judges the reader without
+ ;; depending on the printer being right; that independence was the
+ ;; reason, not the printer's defect.
  (neg-zero? (string->json "-0.0"))
  (neg-zero? (string->json "-0e5"))       ; the exponent path, no dot
  (neg-zero? (string->json "-0.0e10"))
@@ -447,6 +451,24 @@
  (not (neg-zero? (string->json "0e5")))
  (not (neg-zero? (string->json "1.0")))
  (neg-zero? (fl* -1.0 0.0))              ; the fixture really is one
+
+ ;; ---- and the WRITE side, which used to drop what the reader kept --
+ ;; The reader above preserved the sign and the writer threw it away,
+ ;; so a value could survive being read and not survive being written:
+ ;; one half of a round trip held a property the other half did not,
+ ;; and no cell here asked the two halves the same question.  These do.
+ ;;
+ ;; The expected text is "-0.0", not "-0": (igropyr json) always emits
+ ;; a fraction on a flonum, and its output for a negative zero was
+ ;; measured on 2026-08-28 across its top-level, in-container and
+ ;; object-value paths.  That the two libraries agree here is a FACT
+ ;; about both implementations, not a convention negotiated between
+ ;; them -- neither is free to change it quietly on that basis.
+ (string=? "-0.0" (json->string (fl* -1.0 0.0)))
+ (string=? "0.0" (json->string 0.0))     ; the should-GREEN half
+ ;; the round trip closes: written, read back, still negative
+ (neg-zero? (string->json (json->string (fl* -1.0 0.0))))
+ (not (neg-zero? (string->json (json->string 0.0))))
  ;; "-0" has no fraction and no exponent, so it stays an EXACT zero --
  ;; that is the counterpart's answer too, and an integer has no
  ;; signed zero to carry

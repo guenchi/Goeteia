@@ -1,4 +1,4 @@
-;; expect: trig 357c/c6b3 m4scalar 7c8c/267a m4simd baef/73e9 slerp 7d6d/512d gltf 1481/d453 intbits 4631/adbf fltext 54d4/8563 numlit bccc/537b edge 0478/553a bigfl 3e32/924a
+;; expect: trig 357c/c6b3 m4scalar 7c8c/267a m4simd baef/73e9 slerp 7d6d/512d gltf 1481/d453 intbits 4631/adbf fltext 32ed/9b30 numlit bccc/537b edge 0478/553a bigfl 3e32/924a
 ;; Numeric determinism battery: one fixed computation list whose every
 ;; result is printed as an IEEE 754 bit pattern, so "the two backends
 ;; agree" becomes a byte comparison instead of an assumption.
@@ -469,6 +469,14 @@
 (ne! 0.1) (ne! 0.2) (ne! 0.30000000000000004)
 (ne! (fl+ 0.1 0.2))
 (ne! (fl/ 1.0 3.0))
+;; The two zeros, side by side, and the point is that they no longer
+;; print alike.  (fl- 0.0 0.0) is +0.0 and (fl* -1.0 0.0) is -0.0; the
+;; printer used to render both as "0.0", so this pair was two cells
+;; asserting one fact and a text golden could not see the sign at all.
+;; The fltext digest moved from 54d4/8563 to 32ed/9b30 for this and
+;; only this: of the 13377 values this file prints, exactly one
+;; changed, "0.0" -> "-0.0", verified by running the value dump
+;; against a build of the previous commit.
 (ne! (fl- 0.0 0.0))
 (ne! (fl* -1.0 0.0))
 (ne! 0.000000001) (ne! 0.000000000001) (ne! 0.0000000000001)

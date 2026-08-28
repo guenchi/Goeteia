@@ -162,7 +162,7 @@ shortest-round-trip dtoa. The printer is `$display-flonum` in
 | `1000000000.0` | `1000000000.0` |
 | `1700000000000.0` | `1700000000000.0` |
 | `(fl/ 1.0 0.0)` | `<big-flonum>` |
-| `(fl* -1.0 0.0)` | `0.0` |
+| `(fl* -1.0 0.0)` | `-0.0` |
 | `(fl/ 0.0 0.0)` | `+nan.0` |
 
 Three consequences:
@@ -178,8 +178,15 @@ Three consequences:
   agree to 12 decimals print identically, so a text golden cannot see
   a low-bit difference. Section `fltext` pins the printer; the bit
   sections are what pin the values.
-* **Negative zero prints as `0.0`.** The sign survives in the bits and
-  in arithmetic, not in the text.
+* **Negative zero prints as `-0.0`.** It did print as `0.0` — the sign
+  survived in the bits and in arithmetic but not in the text, and a
+  text golden could not tell the two zeros apart. The printer now asks
+  for the sign the only way a zero can be asked (`(fl/ 1.0 x)` is
+  `-inf` for one and `+inf` for the other), so text, bits and
+  arithmetic agree. `(json->string -0.0)` is `"-0.0"` accordingly,
+  which is what `(igropyr json)` emits as well — measured on
+  2026-08-28, on all three of its paths, and a fact about the two
+  implementations rather than a convention negotiated between them.
 
 Use bit patterns when the golden is about numbers. Reading them back
 costs three lines:

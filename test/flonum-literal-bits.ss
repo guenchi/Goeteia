@@ -51,8 +51,21 @@
 ;;   and are the pair an off-by-one in the exponent would separate
 ;;   while every other cell here still passed -- and its negative
 ;;   800fffffffffffff; then 2^-1021, 1e-307, +inf.0, -inf.0,
-;;   +nan.0 (canonical 7ff8000000000000), -nan.0 (also 7ff8..., the
-;;   sign is chosen, not preserved), a subnormal such as 1e-320, and
+;;   +nan.0 and -nan.0 as TWO cells each, because two different things
+;;   are worth holding and one cell cannot hold both:
+;;     - a SPEC cell: the value is a NaN at all (exponent field all
+;;       ones, mantissa non-zero).  This is what the format requires
+;;       and it must not be tightened into a bit pattern, or an
+;;       implementation choice gets recorded as though it were a
+;;       guarantee.
+;;     - a POLICY cell: the pattern is exactly 7ff8000000000000.  This
+;;       is not a spec cell.  It pins the choice this encoder states
+;;       in src/compiler.ss -- canonical quiet NaN, sign and payload
+;;       chosen rather than preserved -- so that changing the policy
+;;       means changing this cell in the same commit, which is the
+;;       point of it.  Without it the encoder could drift to 7ff4...
+;;       and disagree with every NaN the runtime computes, silently.
+;;   Then a subnormal such as 1e-320, and
 ;;   the underflow pair 2e-324/-2e-324 (0000000000000000 and
 ;;   8000000000000000 -- a magnitude that rounds away to zero must
 ;;   still keep its sign) together with the smallest subnormals

@@ -191,11 +191,13 @@
   ;; two libraries give one text two values, with nothing downstream
   ;; able to see the difference except by dividing.
   ;;
-  ;; Built, not written: this compiler's reader has no literal for a
-  ;; negative zero (test/trig.ss says the same thing and builds its
-  ;; own).  And a MULTIPLICATION -- (fl+ x 0.0) collapses the sign,
-  ;; which is correct IEEE behaviour and exactly why it cannot be
-  ;; used here.
+  ;; Built, not written.  That was once forced -- the reader collapsed
+  ;; a -0.0 literal into +0.0 -- and now it is a choice: the literal
+  ;; works, but building the value keeps this code independent of the
+  ;; reader it is not testing (test/trig.ss builds its own for the
+  ;; same reason).  And a MULTIPLICATION -- (fl+ x 0.0) collapses the
+  ;; sign, which is correct IEEE behaviour and exactly why it cannot
+  ;; be used here.
   ;;
   ;; "-0" is not this function's business: with no fraction and no
   ;; exponent it stays an exact zero, which is what the counterpart

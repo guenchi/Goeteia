@@ -96,8 +96,17 @@
       (%display-string "+nan.0" 0)
       ($display-flonum* x)))
 (define ($display-flonum* x)
+  ;; Negative zero has to be asked for separately: (fl<? -0.0 0.0) is
+  ;; false, so a plain sign test prints it as "0.0" and the text loses
+  ;; a distinction the bits keep -- (fl/ 1.0 -0.0) is -inf.  Division
+  ;; tells the two zeros apart, but ONLY zeros may be asked that way:
+  ;; 1/-inf is -0.0, which is not less than zero, so negative infinity
+  ;; would come back positive.  Hence the ordinary test first and the
+  ;; division only for values that compare equal to zero.
   (let* ((zero (fixnum->flonum 0))
-         (neg (fl<? x zero))
+         (neg (or (fl<? x zero)
+                  (and (fl=? x zero)
+                       (fl<? (fl/ (fixnum->flonum 1) x) zero))))
          (mag (if neg (fl- zero x) x)))
     (when neg ($wb 45))
     (cond
