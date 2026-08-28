@@ -1520,14 +1520,49 @@
 
 ;; f64 bits of a flonum, little-endian, using only flonum compare
 ;; and arithmetic so it runs identically under both hosts.
-;; Normal numbers and zero; source literals don't produce the rest.
+;;
+;; This used to say "Normal numbers and zero; source literals don't
+;; produce the rest", and a source literal produces the rest as soon as
+;; anyone writes one: 1e-320, or the same value spelled out with 320
+;; zeros, is subnormal.  The scale loop below drives `e` past -1022 for
+;; those, `(+ e 1023)` goes negative, exp-bits takes `remainder` of a
+;; negative number and returns negative bits, and the compiler dies in
+;; u8-list->bytevector with "invalid value -129" -- loud, but naming a
+;; byte rather than the literal that produced it.
+;;
+;; A subnormal has no implicit leading 1 and a zero exponent field: it
+;; is exactly M * 2^-1074 for an integer M in [1, 2^52).  Doubling a
+;; flonum is exact, so scaling the magnitude up by 2^1074 recovers M
+;; with nothing lost, and its bits ARE the mantissa field.
 (define (ieee-bytes x)
   (if (fl=? x (fixnum->flonum 0))
       '(0 0 0 0 0 0 0 0)
       (let* ((neg (fl<? x (fixnum->flonum 0)))
              (mag (if neg (fl- (fixnum->flonum 0) x) x))
              (one (fixnum->flonum 1))
-             (two (fixnum->flonum 2)))
+             (two (fixnum->flonum 2))
+             ;; 2^-1022, the smallest normal, built by halving so that
+             ;; this file needs no literal of its own magnitude
+             (min-normal (let h ((v one) (k 0))
+                           (if (= k 1022) v (h (fl/ v two) (+ k 1))))))
+        (if (fl<? mag min-normal)
+            (let up ((m mag) (k 0))
+              (if (< k 1074)
+                  (up (fl* m two) (+ k 1))
+                  ;; m now holds the integer M; take 52 bits of it,
+                  ;; most significant first, by the same compare-and-
+                  ;; subtract the normal path uses
+                  (assemble-f64
+                   neg 0
+                   (let ((p51 (let d ((v one) (k 0))
+                                (if (= k 51) v (d (fl* v two) (+ k 1))))))
+                     (let bits ((v m) (p p51) (i 0) (acc '()))
+                       (if (= i 52)
+                           (reverse acc)
+                           (if (fl<? v p)
+                               (bits v (fl/ p two) (+ i 1) (cons 0 acc))
+                               (bits (fl- v p) (fl/ p two) (+ i 1)
+                                     (cons 1 acc)))))))))
         (let scale ((m mag) (e 0))
           (cond
            ((fl<? m one) (scale (fl* m two) (- e 1)))
@@ -1539,7 +1574,7 @@
                   (let ((d (fl* frac two)))
                     (if (or (fl<? one d) (fl=? one d))
                         (bits (fl- d one) (+ i 1) (cons 1 acc))
-                        (bits d (+ i 1) (cons 0 acc))))))))))))
+                        (bits d (+ i 1) (cons 0 acc)))))))))))))
 (define (assemble-f64 neg biased mant)
   ;; mant: 52 bits, most significant first -> 8 LE bytes
   (let* ((bits (append (list (if neg 1 0))
