@@ -491,7 +491,49 @@
       (%next-byte)
       (%read-string $reader-line $reader-column '()))
      ((= b 35) (%next-byte) (%read-hash))          ; #
-     (else (%finish-atom (%read-token '()))))))
+     (else (let ((r (%read-atom '() #f)))
+             (%finish-atom (cdr r) (car r)))))))
+
+;; An atom's bytes, with the two escape forms understood.
+;;
+;; This could not live in %read-token: that stops at the first
+;; delimiter, and `;` IS one, so `a\x20;b` tokenised as `a\x20`
+;; followed by a comment -- the escape's own terminator ended the
+;; token.  Every name the writer escapes would have come back wrong,
+;; and quietly, because the truncated name is still a symbol.
+;;
+;; Answers (escaped? . bytes).  The flag matters: `\x31;` denotes the
+;; SYMBOL 1, and without it %finish-atom would classify the decoded
+;; bytes as the number.  An escape is how a name says it is a name.
+(define (%read-atom acc esc)
+  (let ((b (%peek-byte)))
+    (cond
+     ((%delimiter? b) (cons esc (reverse acc)))
+     ((= b 124)                                    ; | ... |
+      (%next-byte)
+      (let bar ((acc acc))
+        (let ((c (%next-byte)))
+          (cond
+           ((< c 0)
+            (errorf 'read
+                    (string-append "a |...| symbol reaches end of input at "
+                                   (%at-line $reader-line $reader-column))))
+           ((= c 124) (%read-atom acc #t))
+           (else (bar (cons c acc)))))))
+     ((= b 92)                                     ; backslash
+      (%next-byte)
+      (let ((c (%next-byte)))
+        (if (= c 120)                              ; x
+            (%read-atom (%push-utf8
+                         (%read-hex-escape $reader-line $reader-column) acc)
+                        #t)
+            (errorf 'read
+                    (string-append "a backslash in a symbol must begin \\x, not \\"
+                                   (if (< c 0) "<end of input>"
+                                       (string (integer->char c)))
+                                   " at "
+                                   (%at-line $reader-line $reader-column))))))
+     (else (%next-byte) (%read-atom (cons b acc) esc)))))
 
 (define (%delimiter? b)
   (or (< b 0) (= b 32) (= b 10) (= b 9) (= b 13)
@@ -517,8 +559,13 @@
       (reverse acc)
       (%read-token (cons (%next-byte) acc))))
 
-(define (%finish-atom bs)
+(define (%finish-atom bs escaped?)
   (cond
+   ;; An escaped name is a NAME.  `\x31;` is the symbol 1, not the
+   ;; number; `||` is the empty symbol, not an empty token.  Deciding
+   ;; that from the decoded bytes alone is impossible -- they are the
+   ;; same bytes either way -- so the tokenizer carries the flag.
+   (escaped? (string->symbol (%bytes->string bs)))
    ;; A lone dot is not a symbol.  Inside a list it is the dotted-tail
    ;; marker and never reaches here; standing alone it is the one
    ;; spelling in this whole face that Chez refuses outright, and
@@ -896,7 +943,8 @@
                 (%unclosed-list line col)
                 (%next-byte))                      ; consume )
             d)
-          (cons (%finish-atom (cons 46 (%read-token '())))
+          (cons (let ((r (%read-atom (list 46) #f)))
+                  (%finish-atom (cdr r) (car r)))
                 (%read-list-from line col))))
      (else
       (let ((x ($read)))
@@ -1165,7 +1213,72 @@
         (write (vector-ref x i))
         (loop (+ i 1))))
     ($wb 41))
+   ((symbol? x) (%write-symbol (symbol->string x)))
    (else (display x))))
+
+;; A symbol name that cannot be spelled bare has to be escaped, or the
+;; writer emits something that is not the datum it was handed: the name
+;; "a b" went out as `a b` and came back as `a` with `b` left over, and
+;; the empty name went out as nothing at all.
+;;
+;; The escape set is MEASURED, not reasoned about -- every byte from 1
+;; to 126 was written as a symbol under the reference implementation
+;; and the ones it escaped are the ones escaped here.  Two positions
+;; differ, so there are two predicates: `+`, `-`, `.`, a digit and `@`
+;; are fine inside a name and not at the front of one.
+;;
+;; Two different exemptions, and conflating them was a defect.
+;;
+;; `+`, `-` and `...` are WHOLE names that need no escaping at all.
+;; `->` is not one of those: it exempts only the LEADING byte from the
+;; leading rule, and every byte after it is judged normally.  Treating
+;; `->` as a whole-name exemption meant "->a b" went out unescaped and
+;; read back as `->a` with `b` left over -- the exact failure this
+;; change exists to remove, reintroduced by the exemption meant to
+;; spell `->x` correctly.  Measured against the reference:
+;;   "->a b" => ->a\x20;b      "->|" => ->\x7C;      "->#" => ->\x23;
+(define (%sym-whole-name-safe? s)
+  (or (string=? s "+") (string=? s "-") (string=? s "...")))
+
+(define (%sym-arrow? s)                 ; leading byte exempt, rest normal
+  (and (>= (string-length s) 2)
+       (char=? #\- (string-ref s 0))
+       (char=? #\> (string-ref s 1))))
+
+(define (%sym-escape-mid? b)
+  (or (< b 33)                                     ; controls and space
+      (memv b '(34 35 39 40 41 44 59 91 92 93 96 123 124 125))))
+
+(define (%sym-escape-lead? b)
+  (or (%sym-escape-mid? b)
+      (memv b '(43 45 46 64))                      ; + - . @
+      (and (>= b 48) (<= b 57))))                  ; a digit
+
+(define $hex-upper "0123456789ABCDEF")
+(define (%write-sym-escape b)                      ; \xHH; upper case, no padding
+  ($wb 92) ($wb 120)
+  (when (< 15 b) ($wb (char->integer (string-ref $hex-upper (quotient b 16)))))
+  ($wb (char->integer (string-ref $hex-upper (remainder b 16))))
+  ($wb 59))
+
+(define (%write-symbol s)
+  (let ((n (string-length s)))
+    (cond
+     ;; the one name with no inline spelling: there is no escape for
+     ;; nothing, so the bars carry it
+     ((= n 0) ($wb 124) ($wb 124))
+     ((%sym-whole-name-safe? s) (%display-string s 0))
+     (else
+      (let ((arrow (%sym-arrow? s)))
+        (let loop ((i 0))
+          (when (< i n)
+            (let ((b (char->integer (string-ref s i))))
+              (if (if (and (= i 0) (not arrow))
+                      (%sym-escape-lead? b)
+                      (%sym-escape-mid? b))
+                  (%write-sym-escape b)
+                  ($wb b)))
+            (loop (+ i 1)))))))))
 
 (define (%write-tail x)
   (cond

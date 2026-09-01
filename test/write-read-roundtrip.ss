@@ -96,16 +96,20 @@ read back" "+inf.0 and -inf.0")
 ;; ---- symbol ---------------------------------------------------------
 (trips? "symbol" 'abc)
 (trips? "symbol with punctuation" (string->symbol "a-b?!"))
-;; A symbol whose name needs quoting is written bare, so it reads back
-;; as a DIFFERENT symbol (or as several data): (write (string->symbol
-;; "a b")) emits `a b`, which reads as `a`.  Fixing it needs |...| on
-;; both sides, writer and reader, which is its own change; the failure
-;; is recorded here rather than left for the round trip to discover.
-(not-exercised! "known defect, own change: the writer has no |...| form,
-so a symbol whose name contains a delimiter is written bare and reads
-back as a different symbol -- (string->symbol \"a b\") writes as `a b`
-and reads as `a`; the empty symbol writes as nothing and reads as an
-end-of-input object" "symbols whose names need quoting")
+;; A name that cannot be spelled bare is escaped now, so these are
+;; cells rather than the exemption they used to be.  The writer emits
+;; inline \xNN; escapes and reserves || for the empty name -- what the
+;; reference implementation does, measured rather than chosen; the
+;; escape set and the byte-for-byte agreement live in
+;; test/symbol-quoting.ss.  Here what matters is only that the trip
+;; survives, which is this file's question.
+(trips? "symbol with a space" (string->symbol "a b"))
+(trips? "symbol, empty" (string->symbol ""))
+(trips? "symbol with a bar" (string->symbol "a|b"))
+(trips? "symbol with a backslash" (string->symbol "a\\b"))
+(trips? "symbol with a newline" (string->symbol (string #\a (integer->char 10) #\b)))
+(trips? "symbol that looks like a number" (string->symbol "1abc"))
+(trips? "symbol that is a lone dot" (string->symbol "."))
 
 ;; ---- the small aggregates ------------------------------------------
 (trips? "null" '())
