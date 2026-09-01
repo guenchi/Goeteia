@@ -62,33 +62,72 @@
   ;; escaped blind to protect the second.  Decoded, they are one
   ;; character each and the question does not arise.
   ;;
-  ;; The scan records each top-level form's start line; the result is a
-  ;; list of (line . form).
+  ;; The start line of each top-level form, for diagnostics.
+  ;;
+  ;; This used to be a parenthesis counter walking the whole file, and
+  ;; it was wrong in five ways at once -- it did not count newlines
+  ;; inside strings or line comments (so every form after one was
+  ;; attributed a line early), it counted parens inside block comments
+  ;; and inside |bar symbols|, and it read `#;` as a line comment.
+  ;;
+  ;; None of that is needed.  A form starts at the first character that
+  ;; is not whitespace and not a comment, and `read` finds the end by
+  ;; itself; the port's own position says where it got to.  So the only
+  ;; thing to skip is NOISE, and nothing inside a datum -- no strings,
+  ;; no character literals, no bars, no depth -- which is why the five
+  ;; failures cannot recur here.  The line counter advances with the
+  ;; scan and never rescans, so this stays linear.
   (let* ((src (decode-source path))
          (n (string-length src))
-         (lines '()))
-    (let scan ((i 0) (line 1) (depth 0))
-      (when (< i n)
-        (let* ((c (string-ref src i))
-               (line (if (char=? c #\newline) (+ line 1) line)))
-          (cond
-           ((char=? c #\() (when (= depth 0) (set! lines (cons line lines)))
-                           (scan (+ i 1) line (+ depth 1)))
-           ((char=? c #\)) (scan (+ i 1) line (- depth 1)))
-           ;; a string or a character literal can hold a paren, so step
-           ;; over both without counting what is inside
-           ((char=? c #\") (scan (skip-string src (+ i 1) n) line depth))
-           ((char=? c #\;) (scan (skip-comment src (+ i 1) n) line depth))
-           ((and (char=? c #\#) (< (+ i 1) n) (char=? (string-ref src (+ i 1)) #\\))
-            (scan (+ i 3) line depth))
-           (else (scan (+ i 1) line depth))))))
-    (let ((forms (call-with-port (open-string-input-port src) read-forms)))
-      (let zip ((fs forms) (ls (reverse lines)) (acc '()))
-        (if (null? fs)
+         (port (open-string-input-port src)))
+    (let loop ((pos 0) (line 1) (acc '()))
+      (let* ((start (skip-noise src pos n))
+             (line (+ line (count-newlines src pos start))))
+        (if (>= start n)
             (reverse acc)
-            (zip (cdr fs) (if (pair? ls) (cdr ls) '())
-                 (cons (cons (if (pair? ls) (car ls) 0) (host-bytes (car fs)))
-                       acc)))))))
+            (begin
+              (set-port-position! port start)
+              (let ((form (read port)))
+                (if (eof-object? form)
+                    (reverse acc)
+                    (loop (port-position port) line
+                          (cons (cons line (host-bytes form)) acc))))))))))
+
+;; Whitespace, `;` to end of line, and nested `#| ... |#`.  A `#;` is
+;; NOT skipped: `read` handles it and answers the datum after it, and
+;; stopping here means the form is attributed to the line the comment
+;; starts on, which is where a reader would look for it.
+(define (skip-noise src i n)
+  (cond
+   ((>= i n) n)
+   ((char-whitespace? (string-ref src i)) (skip-noise src (+ i 1) n))
+   ((char=? (string-ref src i) #\;) (skip-noise src (skip-to-eol src i n) n))
+   ((and (char=? (string-ref src i) #\#) (< (+ i 1) n)
+         (char=? (string-ref src (+ i 1)) #\|))
+    (skip-noise src (skip-block src (+ i 2) n 1) n))
+   (else i)))
+
+(define (skip-to-eol src i n)
+  (cond ((>= i n) n)
+        ((char=? (string-ref src i) #\newline) (+ i 1))
+        (else (skip-to-eol src (+ i 1) n))))
+
+(define (skip-block src i n depth)       ; past the opening #|
+  (cond
+   ((>= i n) n)                          ; unclosed: `read` will say so
+   ((and (< (+ i 1) n) (char=? (string-ref src i) #\#)
+         (char=? (string-ref src (+ i 1)) #\|))
+    (skip-block src (+ i 2) n (+ depth 1)))
+   ((and (< (+ i 1) n) (char=? (string-ref src i) #\|)
+         (char=? (string-ref src (+ i 1)) #\#))
+    (if (= depth 1) (+ i 2) (skip-block src (+ i 2) n (- depth 1))))
+   (else (skip-block src (+ i 1) n depth))))
+
+(define (count-newlines src from to)
+  (let loop ((i from) (k 0))
+    (cond ((>= i to) k)
+          ((char=? (string-ref src i) #\newline) (loop (+ i 1) (+ k 1)))
+          (else (loop (+ i 1) k)))))
 
 ;; Bytes -> code points, refusing anything that is not UTF-8.  The
 ;; default decoder SUBSTITUTES U+FFFD for a bad byte, which would turn

@@ -183,6 +183,35 @@ The entry is kept rather than deleted because the message it quotes
 was public: anyone who met that text and searched for it should land
 here and be told it is obsolete, not find nothing.
 
+## Character literals stop at U+007F
+
+`#\a` and `#\space` work; `#\λ` is refused, by name, on both hosts:
+
+```
+a character literal above U+007F has no self-hosted spelling: #\λ
+```
+
+A character in this runtime is a byte, and a string is a sequence of
+bytes, so there is no room in a character for a code point that needs
+more than one. Non-ASCII text in a **string** is fine — write it
+directly or as `\x3bb;`, both of which mean the same UTF-8 bytes.
+
+The refusal is deliberate rather than incidental. The Chez-hosted
+driver decodes source as UTF-8, so it *could* read `#\λ` as one
+character; the self-hosted reader takes source as bytes and cannot.
+Accepting it on one host would mean the two compilers disagreed about
+which programs exist, which is worse than the limitation.
+
+## Comments
+
+`;` to end of line, `#| ... |#` which **nests**, and `#;` which
+comments out the next **datum** — not the next token, so `#;(1 2) 3`
+reads as `3` and `(1 #;2 . 3)` reads as `(1 . 3)`. Two datum comments
+in a row apply to two data: `#; #; 1 2 3` reads as `3`.
+
+A `#|` with no `|#` and a `#;` with no datum after it are both refused
+by name rather than treated as end of input.
+
 ## Number syntax beyond R6RS
 
 The reader accepts two things R6RS does not define, deliberately and

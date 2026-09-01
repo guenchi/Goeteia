@@ -490,7 +490,17 @@
      ((= b 34)                                     ; "
       (%next-byte)
       (%read-string $reader-line $reader-column '()))
-     ((= b 35) (%next-byte) (%read-hash))          ; #
+     ((= b 35)                                     ; #
+      (%next-byte)
+      (let ((c (%peek-byte)))
+        (cond
+         ;; Neither of these is a datum, so neither can be the value of
+         ;; a read: both consume text and then ask for the next datum.
+         ;; That is why they live here and not in %read-hash, which has
+         ;; to answer with something.
+         ((= c 124) (%next-byte) (%skip-block-comment 1) ($read))
+         ((= c 59) (%next-byte) (%skip-datum) ($read))
+         (else (%read-hash)))))
      (else (let ((r (%read-atom '() #f)))
              (%finish-atom (cdr r) (car r)))))))
 
@@ -934,6 +944,19 @@
     (cond
      ((< b 0) (%unclosed-list line col))
      ((= b 41) (%next-byte) '())                   ; )
+     ;; A comment inside a list has to be skipped HERE, not by $read.
+     ;; $read answers with a datum, so "#;2 . 3" made it read the dot
+     ;; as the next datum -- and a lone dot is not one.  The list is
+     ;; the only place that knows a dot is a tail marker.
+     ((= b 35)                                     ; #
+      (%next-byte)
+      (let ((c (%peek-byte)))
+        (cond
+         ((= c 124) (%next-byte) (%skip-block-comment 1)
+                    (%read-list-from line col))
+         ((= c 59) (%next-byte) (%skip-datum)
+                   (%read-list-from line col))
+         (else (cons (%read-hash) (%read-list-from line col))))))
      ((= b 46)                                     ; . -- dotted tail
       (%next-byte)                                 ;      or dot-initial
       (if (%delimiter? (%peek-byte))               ;      symbol
@@ -1168,6 +1191,38 @@
                              (if (< b 0) "<end of input>"
                                  (string (integer->char b)))
                              " at " (%at-line $reader-line $reader-column)))))))
+
+;; #| ... |# and it NESTS.  Scanning to the last |# accepts
+;; "#| a |# b |#" as one comment and swallows `b`; stopping at the
+;; first accepts "#| outer #| inner |# still-outer |#" too early and
+;; leaves `still-outer |#` as data.  Both pass a single-level test, so
+;; the depth is carried and test/reader-comments.ss reads what comes
+;; AFTER the comment rather than the comment itself.
+(define (%skip-block-comment depth)
+  (let ((b (%next-byte)))
+    (cond
+     ((< b 0)
+      (errorf 'read
+              (string-append "a #| block comment reaches end of input with "
+                             "no |# at "
+                             (%at-line $reader-line $reader-column))))
+     ((and (= b 35) (= (%peek-byte) 124))         ; #|
+      (%next-byte) (%skip-block-comment (+ depth 1)))
+     ((and (= b 124) (= (%peek-byte) 35))         ; |#
+      (%next-byte)
+      (unless (= depth 1) (%skip-block-comment (- depth 1))))
+     (else (%skip-block-comment depth)))))
+
+;; #; comments out the next DATUM, not the next token: "#;(1 2) 3"
+;; drops the whole list.  Reading it is what finds its end, so this
+;; reads and discards -- and refuses when there is nothing to discard,
+;; which is what "#;" alone and "(#;)" are.
+(define (%skip-datum)
+  (let ((d ($read)))
+    (when (eof-object? d)
+      (errorf 'read
+              (string-append "a #; datum comment has no datum after it at "
+                             (%at-line $reader-line $reader-column))))))
 
 (define (%read-bytevector)
   ;; #vu8( ... ) -- the spelling the writer emits for a bytevector, so

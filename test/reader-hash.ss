@@ -111,11 +111,15 @@
 (refuses? "#vu8(x)" "0..255")
 (refuses? "#v(1)" "#v")                 ; #v not followed by u8(
 
-;; ---- still unimplemented, and now refused by name rather than ended -
-;; Neither is a shape the writer emits, so refusing them loudly has no
-;; asymmetry to answer for; they land with their own change.
-(refuses? "#| c |# 7" "#")              ; block comment
-(refuses? "#;(x) 7" "#")                ; datum comment
+;; ---- and the two that have since been implemented ------------------
+;; These were refused by name when this file was written, which was
+;; the right intermediate state -- answering an end-of-input object
+;; was the defect.  They read now, and the rows are kept rather than
+;; deleted because what this file holds is the DISPATCHER: every form
+;; must reach its branch, and the ones with no branch must still raise.
+;; Their behaviour is held in detail by test/reader-comments.ss.
+(reads-as? "#| c |# 7" (lambda (v) (eqv? v 7)))
+(reads-as? "#;(x) 7" (lambda (v) (eqv? v 7)))
 
 ;; ---- #x, which had a branch but no validation -----------------------
 ;; It read digits until a byte it did not recognise and then returned
