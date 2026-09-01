@@ -185,6 +185,21 @@
 (define up-before (uploads))
 (weld-two big tiny)
 
+;; This one was carried as "no mutation face found" for two rounds.
+;; It has one: the claim is about the DRAW EMISSION, and both halves of
+;; it move from the single point that issues the draw --
+;; lib/gfx/scene.ss's `cmd-draw-elements!` for a plain node.
+;;
+;;   swap it for cmd-draw-elements-instanced! with one instance
+;;       -> reds THIS ROW AND NOTHING ELSE
+;;   issue it twice
+;;       -> reds this row, and three others that count draws
+;;
+;; The earlier attempts failed because they were aimed a layer too high
+;; -- splitting the weld into per-node draws, or doubling at the scene
+;; level -- where everything downstream moves at once and no red is
+;; attributable.  The layer that produces "exactly once" is the one
+;; that calls the GL entry point, not the one that decides what to draw.
 (check "a welded pair draws exactly once, not instanced"
        (and (= 1 (- (draw-count) draws-before))
             (= 0 (draw-inst draws-before))
