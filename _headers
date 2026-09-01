@@ -1,0 +1,7 @@
+# Cloudflare Pages headers.  A URL under /cdn/<version>/ names the same
+# bytes forever (versions are directories and are never rebuilt in
+# place -- see build-cdn.sh), so it can be cached as immutable.  Nothing
+# else on the site is versioned this way, so nothing else gets this.
+/cdn/*
+  Cache-Control: public, max-age=31536000, immutable
+  Access-Control-Allow-Origin: *
