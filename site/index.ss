@@ -43,6 +43,7 @@
     (".feature > *" (min-width 0))
     (".feature.flip .txt" (order 2))
     (".feature h3" (font-size (em 1 12)) (margin 0 0 (em 0 50)))
+    (".feature h4" (font-size (em 1)) (margin (em 1 20) 0 (em 0 50)))
     (".feature p" (color (var dim)) (font-size (em 0 95)) (margin 0 0 (em 0 70)))
     (".feature p b" (color (var ink)))
     (".feature ul.points" (list-style none) (padding 0) (margin 0 0 (em 0 70)))
@@ -206,105 +207,141 @@
            (p "Paste any of this into the editor above and hit Run."))
          r6rs-code)
       ,(show "02" "The web as list" "Macros expand into HTML and CSS"
-         '("A document is a tree; a stylesheet is a list of rules — the "
-           "exact shapes s-expressions were made for. " (code "(web html)")
-           " and " (code "(web css)") " are two pure functions over one "
-           "representation, and " (code "(web sx)") " is a macro over it.")
+         '("A document is a tree; a stylesheet is a list of rules. These are "
+           "the exact physical shapes s-expressions were invented for. "
+           (code "(web html)") " and " (code "(web css)") " are just two pure "
+           "functions mapping over a single, unified representation. "
+           (code "(web sx)") " is the macro that drives them.")
          #t
          '((h3 "The page you're reading is the proof")
-           (p "Every element and every CSS rule of this site expands from "
-              "Scheme — " (code "site/index.ss") " is the whole page; the "
-              (b "\"Built in pure Scheme\"") " badge shows you the source. "
-              "A colour is one binding shared by styles and code; DRY is "
+           (p "Every single DOM element and CSS rule on this site expands "
+              "directly from Scheme. " (code "site/index.ss") " is the entire "
+              "page. A color hex code is just a lexical binding shared "
+              "seamlessly between the stylesheet and the rendering logic. In "
+              "this world, DRY isn't a design pattern—DRY is just "
               (code "append") ".")
-           (p "The " (code "sx") " template macro splits at expansion "
-              "time: the static tree is built once, each unquote becomes a "
-              "hole wired to a signal — one text node updates, and "
-              (b "nothing re-renders") ". No virtual DOM, no diffing."))
+           (h4 "Surgical reactivity")
+           (p "The " (code "sx") " template macro splits the tree at expansion "
+              "time. The static scaffolding is built exactly once. Every "
+              "unquote becomes a surgical hole wired directly to a reactive "
+              "signal. When state changes, exactly one text node updates, and "
+              (b "nothing else re-renders") ".")
+           (p "No virtual DOM. No diffing."))
          webdsl-code)
       ,(show "03" "Text & the DOM" "Typesetting without a layout engine"
-         '((code "(web dom)") " wraps the browser in ordinary procedures. "
-           (code "(web typeset)") " — after "
+         '((code "(web dom)") " wraps the chaotic browser in predictable "
+           "procedures, but " (code "(web typeset)") "—after "
            (a (@ (href "https://www.pretext.cool")) "pretext")
-           " — takes the layout engine " (em "out") " of the browser: "
-           "measure each distinct code point once, then layout is a pure "
-           "function from metrics to line boxes.")
+           "—takes it a step further: it rips the layout engine " (em "out")
+           " of the browser entirely. By measuring each distinct code point "
+           "exactly once, layout ceases to be a black-box browser side-effect. "
+           "It becomes a pure function—a deterministic mapping from raw "
+           "metrics directly to line boxes.")
          #f
-         '((h3 "Layout you can compute, not await")
-           (p "Heights are known " (b "before") " anything touches the DOM "
-              "— virtual scrolls and streaming chat stop guessing — and "
-              "text can be set where no layout engine exists at all: "
-              "canvas and WebGL scenes. Greedy first-fit breaking with CJK "
-              "kinsoku — closing punctuation never starts a line.")
-           (p "It is at work on this site: the hero's subtitle and the "
-              (b "Why Scheme?") " page's headings are set glyph by glyph "
-              "by " (code "(web typeset)") " — which is why they can dodge "
-              "your cursor."))
+         '((h3 "Layout you compute, not await")
+           (p "Because layout is computed entirely in Scheme, exact heights "
+              "are known " (b "before") " a single pixel touches the DOM. "
+              "Virtual scrolls and streaming chats finally stop guessing and "
+              "shifting. Better yet, text can now be seamlessly typeset in "
+              "environments where no native layout engine exists at all: "
+              "Canvas and WebGL scenes. It even ships with a greedy first-fit "
+              "line breaker that strictly enforces CJK kinsoku shori (closing "
+              "punctuation will physically never start a line).")
+           (h4 "The proof is on the screen")
+           (p "This engine is actively at work on the page you are reading. "
+              "The hero's subtitle and the headings on the " (b "Why Scheme?")
+              " page aren't standard text nodes—they are positioned "
+              "independently, glyph by glyph, by " (code "(web typeset)") ".")
+           (p "That is exactly why the letters can dodge your cursor."))
          typeset-code)
       ,(show "04" "Graphics" "Textures in Scheme, frames on the GPU"
-         '("A pure-Scheme KTX2/Basis transcoder — ETC1S and UASTC, "
-           "written from the Khronos specs — decodes compressed textures "
-           "in ~12 KB gzipped, where the official C++ one ships 462 KB. "
-           "And rendering is GPU-driven: a compute shader culls the "
-           "frustum, compacts the survivors, and issues one "
-           (code "drawIndexedIndirect") " per geometry — the whole frame "
-           "is decided on the card.")
+         '("A pure-Scheme KTX2/Basis transcoder—written completely from "
+           "scratch against the Khronos specs—decodes ETC1S and UASTC "
+           "textures in just ~12 KB gzipped. The official C++ reference ships "
+           "at 462 KB. Rendering is ruthlessly GPU-driven: a compute shader "
+           "culls the frustum, compacts the surviving instances, and issues "
+           "exactly one " (code "drawIndexedIndirect") " per geometry. The CPU "
+           "simply steps out of the way. The entire frame is decided directly "
+           "on the card.")
          #t
-         '((h3 "3D, from s-expressions")
-           (p "It is the sky of the " (code "skybox.ss") " tab in the live "
-              "editor — switch to it, edit a form, press Run. The relativistic "
-              "accretion disk of " (code "blackhole.ss") " and the WebGPU fire of "
-              (code "particles.ss") " — a hundred thousand particles whose "
-              "physics is a compute shader — are tabs beside it.")
-           (p "Because a shader is a datum, " (b "macros can write shaders")
-              ": the hero's twelve thousand particles run their physics in "
-              "a vertex shader assembled by Scheme."))
+         '((h3 "3D out of s-expressions")
+           (p "The proof is in the live editor. Switch to the "
+              (code "skybox.ss") " tab, tweak a form, and hit Run. Right "
+              "beside it, " (code "blackhole.ss") " mathematically renders a "
+              "relativistic accretion disk, while " (code "particles.ss")
+              " drives a hundred thousand WebGPU fire particles—their physics "
+              "engine running purely as a compute shader.")
+           (h4 "Macros that write shaders")
+           (p "In Lisp, code is data. Because a shader is just another datum, "
+              (b "Scheme macros can generate GPU code at expansion time")
+              ". The twelve thousand particles burning in the hero section "
+              "above don't run on canned scripts. Their physics run inside a "
+              "vertex shader, dynamically assembled and injected by Scheme."))
          shader-code)
       ,(show "05" "Networking" "S-expressions on the wire, continuations over it"
-         '("When the backend is also Scheme ("
+         '("When the backend is also Scheme (like "
            (a (@ (href "https://igropyr.dev")) "Igropyr")
-           "), requests and replies are s-expressions — there is no "
-           "protocol to design, " (code "read") " and " (code "write")
-           " are the codec. And with continuations on the server, a whole "
-           "multi-request dialogue is ordinary control flow.")
+           "), requests and replies are pure s-expressions. There is no custom "
+           "protocol to design, agree upon, or parse—the language's native "
+           (code "read") " and " (code "write") " are the codec. And with "
+           "continuations running on the server, an entire multi-request "
+           "dialogue becomes ordinary control flow, seamlessly stretched "
+           "across the network.")
          #f
-         '((h3 "The dialogue is a process")
-           (p "A wizard, a booking, a transfer — the flow runs as "
-              (b "one process") " whose local bindings are the "
-              "conversation state. “The user is at the confirm "
-              "step” means the process is parked " (b "at that line")
-              " — a step order the code cannot express cannot happen.")
-           (p "Death for any reason answers " (code "gone") " — proof the "
-              "transaction rolled back. On this side it is all "
-              (code "(web rpc)") ": datum in, datum out, exact rationals "
-              "intact; " (code "(web ws)") " and " (code "(web sse)")
-              " push datum streams; " (code "(web json)") " covers every "
-              "other backend."))
+         '((h3 "The conversation is the process")
+           (p "A checkout wizard, a booking, a fund transfer—the flow runs as "
+              (b "a single process") " whose local lexical bindings hold the "
+              "conversation state. “The user is at the confirm step” literally "
+              "means the remote process is parked " (b "at that exact line of "
+              "code") ". A state transition that the code cannot express "
+              "simply cannot happen.")
+           (h4 "Datum in, datum out")
+           (p "Backend death for any reason answers with " (code "gone")
+              "—absolute physical proof that the transaction rolled back. On "
+              "the client side, consuming this is effortless. It is all routed "
+              "through " (code "(web rpc)") ": pure datum in, pure datum out, "
+              "with exact mathematical rationals surviving the roundtrip "
+              "completely intact.")
+           (p (code "(web ws)") " and " (code "(web sse)") " push raw datum "
+              "streams directly to your signals, while " (code "(web json)")
+              " gracefully covers any ordinary, non-Scheme backend you might "
+              "need to talk to."))
          rpc-code)
 
-      ,(show "06" "Fallback" "The page carries its own retreat — generated, not maintained"
-         '("One mount point, two artifacts: " (code "define-wasm-js")
-           " compiles the same Scheme to WebAssembly " (em "and")
-           " to plain JavaScript, and inlines the loader that probes the "
-           "engine and picks. No WasmGC — an older Safari, a restricted "
-           "embedded engine — and the page runs the JS twin. Nobody "
-           "hand-maintains a second implementation, so nothing drifts. "
-           "And the twin carries only the runtime it actually reaches — "
-           "the kernel ships by group, unreached library code never "
-           "compiles in — so the fallback costs what the page uses, not "
-           "what the libraries hold.")
+      ,(show "06" "Fallback" "The page carries its own retreat"
+         '("One mount point, two physical artifacts. " (code "define-wasm-js")
+           " compiles the exact same Scheme source into both WebAssembly GC "
+           (em "and") " plain JavaScript, inlining a smart loader that probes "
+           "the engine and routes execution on the fly. No WasmGC support in "
+           "an older Safari or a restricted embedded WebView? The page "
+           "instantly falls back to its JS twin. Nobody hand-maintains a "
+           "secondary implementation, which means the logic physically never "
+           "drifts.")
          #t
-         '((h3 "Two questions, two answers")
-           (p (b "Engine fallback") " is automatic: the twin is compiled "
-              "from the same source, so a differential test can hold the "
-              "two backends to " (em "identical") " behaviour.")
-           (p (b "Capability degradation") " — no WebGL2, no layout box, "
-              "a 4.6 MB module that should not even be fetched — is "
-              "application logic, so it is written, not generated: "
-              "another mount point, " (code "define-js") ", probing and "
-              "revealing and rolling back in Scheme, reaching the "
-              "loader through the handle the glue publishes. "
-              "The page ends up with zero hand-written JavaScript."))
+         '((h3 "Dead code is dead weight")
+           (p "Crucially, this twin is ruthlessly tree-shaken. It carries only "
+              "the runtime it actually reaches. The kernel ships by group, and "
+              "unreached library code is simply never compiled in. Your "
+              "fallback payload costs " (b "exactly what the page executes")
+              ", never what the dependency tree holds.")
+           (h4 "Automatic fallbacks, explicit degradations")
+           (p "Goeteia strictly separates mechanical compatibility from "
+              "application logic.")
+           (ul (@ (class "points"))
+             (li (b "Engine fallback is generated:") " Because the JS twin is "
+                 "compiled from the identical AST, a differential test "
+                 "mathematically holds both backends to the exact same "
+                 "execution behavior.")
+             (li (b "Capability degradation is written:") " What if the device "
+                 "lacks WebGL2? Or a layout box? What if fetching a 4.6 MB "
+                 "module is too expensive for the current connection? This is "
+                 "application logic. Using another mount point, "
+                 (code "define-js") ", you write explicit browser probes and "
+                 "graceful rollbacks purely in Scheme, reaching the loader "
+                 "through a published handle to control exactly what gets "
+                 "fetched."))
+           (p "The page safely degrades across any hostile environment, "
+              "leaving you with absolutely zero hand-written JavaScript."))
          fallback-code))
 
    (section* "features" "What's inside"
