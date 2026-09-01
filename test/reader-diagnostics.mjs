@@ -177,6 +177,41 @@ test('the JS backend messages carry no directive either', () => {
     assert.ok(stderr.includes('elf-3'));
 });
 
+// The Chez-hosted driver decodes source as UTF-8 now, and two inputs
+// have to be refused by name rather than mangled.  Both are on that
+// host only -- the self-hosted reader takes source as bytes and never
+// decodes -- so they go through the hosted compiler.
+test('a source file that is not valid UTF-8 is refused by name', () => {
+    const src = path.join(tmp, 'badbytes.ss');
+    // a lone 0xFF, which no UTF-8 sequence can contain
+    fs.writeFileSync(src, Buffer.concat([
+        Buffer.from(';; expect: 0\n(define e "a'), Buffer.from([0xff]),
+        Buffer.from('b")\n')]));
+    const out = path.join(tmp, 'badbytes.wasm');
+    let status = 0, stderr = '';
+    try {
+        execFileSync(path.join(here, '../bin/goeteiac'), [src, out],
+                     { stdio: ['ignore', 'pipe', 'pipe'] });
+    } catch (e) { status = e.status; stderr = String(e.stderr); }
+    assert.notEqual(status, 0);
+    assert.match(stderr, /not valid UTF-8/);
+    // and NOT the silent substitution the default decoder would do:
+    // U+FFFD in the output would mean a corrupt file compiled
+    assert.doesNotMatch(stderr, /\uFFFD/);
+});
+
+test('a character literal above U+007F is refused by name', () => {
+    // The decoded reading makes #\<non-ascii> a single character on this
+    // host, which the self-hosted reader has no spelling for.  Refusing
+    // keeps the two hosts answering alike instead of adding a form to
+    // one of them; before the decode it failed on both hosts with two
+    // different messages.
+    const r = compileHosted('bigchar.ss',
+        ';; expect: 0\n(display (char->integer #\\\u03bb))\n');
+    assert.notEqual(r.status, 0);
+    assert.match(r.stderr, /U\+007F/);
+});
+
 test('set! of a name that IS a variable but unbound still says unbound', () => {
     // the should-GREEN half: narrowing the message must not swallow
     // the case it was carved out of

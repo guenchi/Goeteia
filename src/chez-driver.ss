@@ -37,78 +37,115 @@
         (cons form (read-forms port)))))
 
 (define (read-file-forms path)
-  ;; read the source as raw bytes (latin-1: one byte = one char) so
-  ;; multi-byte UTF-8 in string literals survives verbatim, matching
-  ;; the self-hosted byte reader -- otherwise Chez decodes UTF-8 to
-  ;; code points and compile-datum truncates them, and the two hosts
-  ;; disagree on every non-ASCII literal.
+  ;; Source is DECODED as UTF-8 here, and every string and symbol in the
+  ;; result is re-encoded to bytes before the compiler sees it.
   ;;
-  ;; One wrinkle: r6rs readers normalize line endings inside string
-  ;; literals, and #x85 (NEL) and #x0D (CR) are line endings -- but
-  ;; they are also UTF-8 continuation bytes (U+5185 "nei" ends in
-  ;; #x85).  Escape them as hex escapes inside strings, and blank
-  ;; them in line comments so a NEL cannot end a comment early.
+  ;; It used to be read as raw bytes -- one byte, one char -- so that a
+  ;; literal written in UTF-8 survived verbatim.  That worked for raw
+  ;; bytes and silently failed for escapes: `\x3bb;` in the same stream
+  ;; produced the CODE POINT 955, and compile-datum, which takes each
+  ;; char's integer as a byte, truncated it to 187.  The old comment
+  ;; here named that truncation and guarded only half of it.
   ;;
-  ;; The same scan records each top-level form's start line; the
-  ;; result is a list of (line . form).
-  (let* ((bv (call-with-port (open-file-input-port path)
-               get-bytevector-all))
-         (n (bytevector-length bv))
-         (out (open-output-string))
+  ;; The two cannot be told apart downstream -- one byte of a UTF-8
+  ;; sequence and a code point below 256 are the same char -- so the
+  ;; conversion belongs at this boundary, not in the emitter.  Decode
+  ;; once, and the source is code points however it was spelled;
+  ;; re-encode once, and the compiler sees the byte strings it sees on
+  ;; the self-hosted host.  The compiler is not told which host it is
+  ;; on, which is the point.
+  ;;
+  ;; Decoding also retires a hack.  Line endings inside string literals
+  ;; are normalised by the reader, and NEL (U+0085) is one -- but 0x85
+  ;; is also a UTF-8 continuation byte, so under a byte-wise reading a
+  ;; NEL was indistinguishable from the tail of U+5185, and both were
+  ;; escaped blind to protect the second.  Decoded, they are one
+  ;; character each and the question does not arise.
+  ;;
+  ;; The scan records each top-level form's start line; the result is a
+  ;; list of (line . form).
+  (let* ((src (decode-source path))
+         (n (string-length src))
          (lines '()))
-    (let scan ((i 0) (mode 'code) (line 1) (depth 0))
+    (let scan ((i 0) (line 1) (depth 0))
       (when (< i n)
-        (let* ((b (bytevector-u8-ref bv i))
-               (line (if (= b 10) (+ line 1) line)))
-          (case mode
-            ((code)
-             (cond
-              ((= b 34) (put-char out #\") (scan (+ i 1) 'str line depth))
-              ((= b 59) (put-char out #\;) (scan (+ i 1) 'cmt line depth))
-              ((and (= b 35) (< (+ i 1) n)
-                    (= (bytevector-u8-ref bv (+ i 1)) 92))
-               ;; #\x -- copy the literal char blindly so #\" or #\;
-               ;; cannot flip the mode
-               (put-char out #\#) (put-char out #\\)
-               (when (< (+ i 2) n)
-                 (put-char out (integer->char (bytevector-u8-ref bv (+ i 2)))))
-               (scan (+ i 3) 'code line depth))
-              ((= b 40)
-               (when (= depth 0) (set! lines (cons line lines)))
-               (put-char out #\()
-               (scan (+ i 1) 'code line (+ depth 1)))
-              ((= b 41)
-               (put-char out #\))
-               (scan (+ i 1) 'code line (- depth 1)))
-              (else (put-char out (integer->char b))
-                    (scan (+ i 1) 'code line depth))))
-            ((str)
-             (cond
-              ((= b 92)                 ; copy an escape pair verbatim
-               (put-char out #\\)
-               (when (< (+ i 1) n)
-                 (put-char out (integer->char (bytevector-u8-ref bv (+ i 1)))))
-               (scan (+ i 2) 'str line depth))
-              ((= b 34) (put-char out #\") (scan (+ i 1) 'code line depth))
-              ((= b #x85) (put-string out "\\x85;") (scan (+ i 1) 'str line depth))
-              ((= b #x0D) (put-string out "\\xD;") (scan (+ i 1) 'str line depth))
-              (else (put-char out (integer->char b))
-                    (scan (+ i 1) 'str line depth))))
-            ((cmt)
-             (cond
-              ((= b 10) (put-char out #\newline) (scan (+ i 1) 'code line depth))
-              ((or (= b #x85) (= b #x0D))
-               (put-char out #\space) (scan (+ i 1) 'cmt line depth))
-              (else (put-char out (integer->char b))
-                    (scan (+ i 1) 'cmt line depth))))))))
-    (let ((forms (call-with-port
-                  (open-string-input-port (get-output-string out))
-                  read-forms)))
+        (let* ((c (string-ref src i))
+               (line (if (char=? c #\newline) (+ line 1) line)))
+          (cond
+           ((char=? c #\() (when (= depth 0) (set! lines (cons line lines)))
+                           (scan (+ i 1) line (+ depth 1)))
+           ((char=? c #\)) (scan (+ i 1) line (- depth 1)))
+           ;; a string or a character literal can hold a paren, so step
+           ;; over both without counting what is inside
+           ((char=? c #\") (scan (skip-string src (+ i 1) n) line depth))
+           ((char=? c #\;) (scan (skip-comment src (+ i 1) n) line depth))
+           ((and (char=? c #\#) (< (+ i 1) n) (char=? (string-ref src (+ i 1)) #\\))
+            (scan (+ i 3) line depth))
+           (else (scan (+ i 1) line depth))))))
+    (let ((forms (call-with-port (open-string-input-port src) read-forms)))
       (let zip ((fs forms) (ls (reverse lines)) (acc '()))
         (if (null? fs)
             (reverse acc)
             (zip (cdr fs) (if (pair? ls) (cdr ls) '())
-                 (cons (cons (if (pair? ls) (car ls) 0) (car fs)) acc)))))))
+                 (cons (cons (if (pair? ls) (car ls) 0) (host-bytes (car fs)))
+                       acc)))))))
+
+;; Bytes -> code points, refusing anything that is not UTF-8.  The
+;; default decoder SUBSTITUTES U+FFFD for a bad byte, which would turn
+;; a corrupt source file into a program that compiles and is wrong.
+(define (decode-source path)
+  (let ((bv (call-with-port (open-file-input-port path) get-bytevector-all)))
+    (guard (e (#t (errorf 'goeteia
+                          "this source file is not valid UTF-8:" path)))
+      (bytevector->string
+       bv (make-transcoder (utf-8-codec) (eol-style none)
+                           (error-handling-mode raise))))))
+
+;; Skip past a string literal or a line comment, so the paren counter
+;; does not see what is inside one.  These replace a character-by-
+;; character state machine that also rewrote the text; nothing is
+;; rewritten now.
+(define (skip-string src i n)
+  (cond ((>= i n) n)
+        ((char=? (string-ref src i) #\\) (skip-string src (+ i 2) n))
+        ((char=? (string-ref src i) #\") (+ i 1))
+        (else (skip-string src (+ i 1) n))))
+(define (skip-comment src i n)
+  (cond ((>= i n) n)
+        ((char=? (string-ref src i) #\newline) (+ i 1))
+        (else (skip-comment src (+ i 1) n))))
+
+;; The datum the compiler is given, in the representation it has on the
+;; self-hosted host: a string is a sequence of BYTES.  Everything the
+;; reader produced is code points, so strings and symbol names are
+;; encoded here and nothing downstream needs to know which host read
+;; the file.
+;;
+;; A character datum above 127 is refused rather than converted: a char
+;; is one value and cannot become several bytes, and the self-hosted
+;; reader has no spelling for it either.  Refusing keeps the two hosts
+;; answering the same way instead of adding a form to only one of them.
+(define (host-bytes d)
+  (cond
+   ((string? d) (utf8-bytes-of d))
+   ((symbol? d) (string->symbol (utf8-bytes-of (symbol->string d))))
+   ((char? d)
+    (if (< (char->integer d) 128)
+        d
+        (errorf 'goeteia
+                "a character literal above U+007F has no self-hosted spelling:"
+                d)))
+   ((pair? d) (cons (host-bytes (car d)) (host-bytes (cdr d))))
+   ((vector? d) (vector-map host-bytes d))
+   (else d)))
+
+(define (utf8-bytes-of s)
+  (let ((bv (string->utf8 s)))
+    (let loop ((i 0) (acc '()))
+      (if (= i (bytevector-length bv))
+          (list->string (reverse acc))
+          (loop (+ i 1) (cons (integer->char (bytevector-u8-ref bv i)) acc))))))
+
 
 ;; ---- library resolution ----
 ;; (import (math utils)) reads math/utils.ss -- a single (library ...)

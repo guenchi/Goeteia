@@ -995,6 +995,38 @@
                (else
                 (%read-string line col (cons (%read-escape c) acc))))))))
 
+     ;; A LINE ENDING inside a literal is one newline, whatever it was
+     ;; spelled as.  The reference normalises LF, CR, CRLF, NEL
+     ;; (U+0085) and LS (U+2028) alike, and leaves PS (U+2029) alone;
+     ;; measured, not taken from the report.
+     ;;
+     ;; This reader sees bytes, so NEL arrives as C2 85 and LS as
+     ;; E2 80 A8, and a lookahead that guesses wrong has to put the
+     ;; bytes back -- which this port cannot do.  So each branch only
+     ;; consumes what it has already confirmed, and anything it
+     ;; consumed that turned out not to be a line ending is emitted as
+     ;; the data it is.
+     ((= b 10) (%read-string line col (cons 10 acc)))
+     ((= b 13)
+      (let ((n (%peek-byte)))
+        (cond
+         ((= n 10) (%next-byte) (%read-string line col (cons 10 acc)))
+         ((= n 194)                              ; CR then maybe NEL
+          (%next-byte)
+          (if (= (%peek-byte) 133)
+              (begin (%next-byte) (%read-string line col (cons 10 acc)))
+              ;; not NEL: the CR is still one newline and the 194 is
+              ;; an ordinary byte
+              (%read-string line col (cons 194 (cons 10 acc)))))
+         (else (%read-string line col (cons 10 acc))))))
+     ((and (= b 194) (= (%peek-byte) 133))       ; NEL
+      (%next-byte)
+      (%read-string line col (cons 10 acc)))
+     ((and (= b 226) (= (%peek-byte) 128))       ; maybe LS, E2 80 A8
+      (%next-byte)
+      (if (= (%peek-byte) 168)
+          (begin (%next-byte) (%read-string line col (cons 10 acc)))
+          (%read-string line col (cons 128 (cons 226 acc)))))
      (else (%read-string line col (cons b acc))))))
 
 ;; A string in this runtime is a sequence of UTF-8 BYTES: the reader
