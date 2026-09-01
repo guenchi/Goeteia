@@ -135,7 +135,7 @@
 (define (decode-source path)
   (let ((bv (call-with-port (open-file-input-port path) get-bytevector-all)))
     (guard (e (#t (errorf 'goeteia
-                          "this source file is not valid UTF-8:" path)))
+                          (string-append "this source file is not valid UTF-8: " path))))
       (bytevector->string
        bv (make-transcoder (utf-8-codec) (eol-style none)
                            (error-handling-mode raise))))))
@@ -399,10 +399,36 @@
     (call-with-port (open-file-output-port out)
       (lambda (p) (put-bytevector p (u8-list->bytevector bytes))))))
 
+;; --dump-lines prints the start line this driver records for each
+;; top-level form, one per line, as "<line> <head>".
+;;
+;; It exists because that number had no observable path: it travels
+;; into %loc markers and surfaces only through a runtime trap, so a
+;; scanner that attributed every form one line early stayed invisible
+;; through five distinct bugs.  A switch that prints a diagnostic the
+;; compiler already computes is a thing with its own name, not a hole
+;; opened for a test.
+(define (dump-lines path)
+  (for-each
+   (lambda (lf)
+     (display (car lf)) (display " ")
+     (let ((f (cdr lf)))
+       (display (cond ((pair? f) (car f))
+                      (else f))))
+     (newline))
+   (read-file-forms path)))
+
 (let* ((raw (cdr (command-line)))
-       (args (filter (lambda (a) (not (string=? a "--js"))) raw)))
+       (args (filter (lambda (a) (and (not (string=? a "--js"))
+                                      (not (string=? a "--dump-lines"))))
+                     raw)))
   (when (member "--js" raw) (set! *target* 'js))
-  (if (or (null? args) (null? (cdr args)))
-      (begin (display "usage: goeteiac [--js] <input.ss> <output.wasm|.js>\n")
-             (exit 1))
-      (compile-file (car args) (cadr args))))
+  (cond
+   ((member "--dump-lines" raw)
+    (if (null? args)
+        (begin (display "usage: goeteiac --dump-lines <input.ss>\n") (exit 1))
+        (dump-lines (car args))))
+   ((or (null? args) (null? (cdr args)))
+    (display "usage: goeteiac [--js] <input.ss> <output.wasm|.js>\n")
+    (exit 1))
+   (else (compile-file (car args) (cadr args)))))

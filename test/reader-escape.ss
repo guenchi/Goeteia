@@ -99,6 +99,49 @@
 (reads? "\"a\\\n   b\"" '(97 98))
 (reads? "\"a\\   \n   b\"" '(97 98))
 
+;; ---- a continuation ends on every line ending, not just LF ---------
+;; A backslash followed by a line ending stands for nothing.  The
+;; reference accepts LF, CR, CRLF, NEL and CR+NEL and LS there; this
+;; reader knew only LF and CR, so "\<NEL>" was reported as an unknown
+;; escape -- the string BODY had been taught the whole set and the
+;; continuation test had not.  One predicate now answers for both.
+(define (bytes->text . bs) (list->string (map integer->char bs)))
+(define (continues? name . mid)
+  (let ((text (apply bytes->text 34 97 92 (append mid (list 98 34)))))
+    (guard (e (#t (fail! (string-append "continuation by " name ": raised"))))
+      (let ((v (rd text)))
+        (unless (and (string? v) (same? (codes v) '(97 98)))
+          (fail! (string-append "continuation by " name ": wrong value")))))))
+(continues? "LF" 10)
+(continues? "CR" 13)
+(continues? "CRLF" 13 10)
+(continues? "NEL" 194 133)
+(continues? "LS" 226 128 168)
+(continues? "CR+NEL" 13 194 133)
+
+;; ---- and the string BODY, read at runtime --------------------------
+;; A line ending inside a literal is one newline.  That is the third
+;; caller of the same predicate, and it needs its own cell HERE rather
+;; than in test/source-literal-encoding.ss: that file tests SOURCE
+;; literals, and on the Chez-hosted compiler those are read by Chez, so
+;; a mutation to this reader cannot reach it.  Measured -- the same
+;; mutation reds the two suites that read at runtime and leaves that
+;; one green.
+(define (body-is? name want . mid)
+  (let ((text (apply bytes->text 34 97 (append mid (list 98 34)))))
+    (guard (e (#t (fail! (string-append "body " name ": raised"))))
+      (let ((v (rd text)))
+        (unless (and (string? v) (same? (codes v) want))
+          (fail! (string-append "body " name ": wrong bytes")))))))
+(body-is? "LF"     '(97 10 98) 10)
+(body-is? "CR"     '(97 10 98) 13)
+(body-is? "CRLF"   '(97 10 98) 13 10)
+(body-is? "NEL"    '(97 10 98) 194 133)
+(body-is? "LS"     '(97 10 98) 226 128 168)
+(body-is? "CR+NEL" '(97 10 98) 13 194 133)
+;; PS is not a line ending: its three bytes stay
+(body-is? "PS"     '(97 226 128 169 98) 226 128 169)
+
 (display (if (= failures 0)
              "every string escape reads as the characters Chez reads"
              "SEE FAILURES ABOVE"))

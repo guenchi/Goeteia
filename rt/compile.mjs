@@ -276,7 +276,7 @@ function loadLibrary(spec, dirs, visited) {
             // a library body may itself hold mount points, whose
             // imports resolve in their own scope (the chez driver
             // walks library forms the same way)
-            const text = resolveEmbedImports(fs.readFileSync(p, 'latin1'),
+            const text = resolveEmbedImports(readSource(p),
                                              dirs, p);
             const deps = libraryImports(text)
                 .map(s => loadLibrary(specTarget(s), dirs, visited)
@@ -316,6 +316,25 @@ function conjureGlueDirective() {
 // the bundled self-hosted compiler, shipped at the package root
 const defaultCompiler = path.join(here, '../goeteia.wasm');
 
+// Read one Scheme source file, refusing anything that is not UTF-8.
+//
+// The compiler wants one byte per char (latin-1), which is the shape
+// its reader works in.  Reading straight to latin-1 accepts ANY bytes,
+// so a file the Chez-hosted driver rejects as malformed compiled fine
+// here -- the two hosts disagreed about which programs exist, which is
+// the one thing they may not do.  The message is word for word the
+// driver's so that the disagreement cannot come back as a difference
+// in wording.
+function readSource(p) {
+    const bytes = fs.readFileSync(p);
+    try {
+        new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+    } catch {
+        throw new Error(`this source file is not valid UTF-8: ${p}`);
+    }
+    return bytes.toString('latin1');
+}
+
 // feed a prelude+source stream to the compiler, collect wasm bytes
 async function runCompiler(input, compilerWasm) {
     const out = [];
@@ -353,9 +372,9 @@ export async function compileToBytes(sourceFile,
     const inDir = path.dirname(path.resolve(sourceFile));
     const dirs = [inDir, path.join(inDir, 'lib'), path.join(here, '../lib')];
     const preludePath = path.join(here, '../src/prelude.ss');
-    const prelude = fs.readFileSync(preludePath, 'latin1');
+    const prelude = readSource(preludePath);
     const source = resolveImports(
-        resolveEmbedImports(fs.readFileSync(sourceFile, 'latin1'),
+        resolveEmbedImports(readSource(sourceFile),
                             dirs, sourceFile),
         dirs, new Set(), sourceFile);
     const input = Buffer.from((target ? `(%target ${target})\n` : '')
@@ -372,7 +391,7 @@ export async function compileSource(text,
       name = 'repl', script = false, target = null } = {}) {
     const dirs = [baseDir, path.join(baseDir, 'lib'), path.join(here, '../lib')];
     const preludePath = path.join(here, '../src/prelude.ss');
-    const prelude = fs.readFileSync(preludePath, 'latin1');
+    const prelude = readSource(preludePath);
     // utf-8 text to one-byte-per-char, matching the byte reader
     const raw = Buffer.from(text, 'utf8').toString('latin1');
     const source = resolveImports(resolveEmbedImports(raw, dirs, name),

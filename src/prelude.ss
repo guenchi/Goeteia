@@ -390,11 +390,23 @@
      ((eq? k 'file-out) (%fwrite ($port-a p) byte))
      (else (errorf 'write "not an output port")))))
 
-(define (%peek-byte) ($peek-byte-port $cip))
+;; One byte of pushback.  The line-ending forms are multi-byte -- NEL is
+;; C2 85 and LS is E2 80 A8 -- so recognising one means looking past a
+;; byte that may turn out to be data.  Without somewhere to put it back
+;; every caller had to be told what was speculatively eaten, and the
+;; three callers handled it three ways; with it the recogniser is one
+;; procedure that consumes exactly what it matched.
+(define $pushed -1)
+(define (%push-back b)
+  (set! $pushed b)
+  (when (< 0 $reader-column) (set! $reader-column (- $reader-column 1))))
+(define (%peek-byte) (if (< -1 $pushed) $pushed ($peek-byte-port $cip)))
 ;; the reader's byte source, and the one place the position advances:
 ;; two integer updates, no allocation, on the hottest path there is
 (define (%next-byte)
-  (let ((b ($next-byte-port $cip)))
+  (let ((b (if (< -1 $pushed)
+               (let ((p $pushed)) (set! $pushed -1) p)
+               ($next-byte-port $cip))))
     (cond
      ((= b 10) (set! $reader-line (+ $reader-line 1))
                (set! $reader-column 0))
@@ -492,15 +504,11 @@
       (%read-string $reader-line $reader-column '()))
      ((= b 35)                                     ; #
       (%next-byte)
-      (let ((c (%peek-byte)))
-        (cond
-         ;; Neither of these is a datum, so neither can be the value of
-         ;; a read: both consume text and then ask for the next datum.
-         ;; That is why they live here and not in %read-hash, which has
-         ;; to answer with something.
-         ((= c 124) (%next-byte) (%skip-block-comment 1) ($read))
-         ((= c 59) (%next-byte) (%skip-datum) ($read))
-         (else (%read-hash)))))
+      ;; Neither comment form is a datum, so neither can be the value of
+      ;; a read: both consume text and then ask for the next datum.
+      ;; That is why they are handled here and not in %read-hash, which
+      ;; has to answer with something.
+      (if (%skip-hash-comment) ($read) (%read-hash)))
      (else (let ((r (%read-atom '() #f)))
              (%finish-atom (cdr r) (car r)))))))
 
@@ -560,8 +568,12 @@
       (%skip-blanks))
      (else #f))))
 (define (%skip-line)
+  ;; ends on ANY line ending, which is one of the three callers of
+  ;; %line-ending? -- it used to end only on LF, so a comment closed by
+  ;; a CR ran on and swallowed the next form on this host while the
+  ;; reference read it
   (let ((b (%next-byte)))
-    (unless (or (< b 0) (= b 10))
+    (unless (or (< b 0) (%line-ending? b))
       (%skip-line))))
 
 (define (%read-token acc)
@@ -950,13 +962,9 @@
      ;; the only place that knows a dot is a tail marker.
      ((= b 35)                                     ; #
       (%next-byte)
-      (let ((c (%peek-byte)))
-        (cond
-         ((= c 124) (%next-byte) (%skip-block-comment 1)
-                    (%read-list-from line col))
-         ((= c 59) (%next-byte) (%skip-datum)
-                   (%read-list-from line col))
-         (else (cons (%read-hash) (%read-list-from line col))))))
+      (if (%skip-hash-comment)
+          (%read-list-from line col)
+          (cons (%read-hash) (%read-list-from line col))))
      ((= b 46)                                     ; . -- dotted tail
       (%next-byte)                                 ;      or dot-initial
       (if (%delimiter? (%peek-byte))               ;      symbol
@@ -993,63 +1001,22 @@
       ;; strings depending on whose reader saw it: Chez elides it, this
       ;; one did not, and a file using the escape compiled to different
       ;; bytes on the two hosts.
+      ;; %line-ending? consumes what it matches, so the byte has to be
+      ;; taken before it is asked about, and handed on when it turns out
+      ;; to be an ordinary escape.
       (let ((n (%peek-byte)))
-        (if (or (%intraline-ws? n) (%line-ending? n))
+        (if (%intraline-ws? n)
             (begin (%skip-string-continuation line col)
                    (%read-string line col acc))
             (let ((c (%next-byte)))
-              (cond
-               ;; End of input after the backslash: the fault is the
-               ;; unclosed string, not an unknown escape.  Before the
-               ;; escape table refused anything, this fell through and
-               ;; the loop reported the missing quote by itself; now
-               ;; the refusal would get there first and name a
-               ;; character that does not exist.  test/read-errors.ss
-               ;; was already holding this case -- "a trailing
-               ;; backslash cannot swallow the end of input" -- and it
-               ;; is what caught the regression.
-               ((< c 0)
-                (errorf 'read
-                        (string-append "string opened at " (%at-line line col)
-                                       " never closed")))
-               ((= c 120)                              ; x -- hex escape
-                (%read-string line col
-                              (%push-utf8 (%read-hex-escape line col) acc)))
-               (else
-                (%read-string line col (cons (%read-escape c) acc))))))))
-
+              (if (and (< -1 c) (%line-ending? c))
+                  (begin (%skip-intraline-ws)
+                         (%read-string line col acc))
+                  (%escape-after-backslash c line col acc))))))
      ;; A LINE ENDING inside a literal is one newline, whatever it was
-     ;; spelled as.  The reference normalises LF, CR, CRLF, NEL
-     ;; (U+0085) and LS (U+2028) alike, and leaves PS (U+2029) alone;
-     ;; measured, not taken from the report.
-     ;;
-     ;; This reader sees bytes, so NEL arrives as C2 85 and LS as
-     ;; E2 80 A8, and a lookahead that guesses wrong has to put the
-     ;; bytes back -- which this port cannot do.  So each branch only
-     ;; consumes what it has already confirmed, and anything it
-     ;; consumed that turned out not to be a line ending is emitted as
-     ;; the data it is.
-     ((= b 10) (%read-string line col (cons 10 acc)))
-     ((= b 13)
-      (let ((n (%peek-byte)))
-        (cond
-         ((= n 10) (%next-byte) (%read-string line col (cons 10 acc)))
-         ((= n 194)                              ; CR then maybe NEL
-          (%next-byte)
-          (if (= (%peek-byte) 133)
-              (begin (%next-byte) (%read-string line col (cons 10 acc)))
-              ;; not NEL: the CR is still one newline and the 194 is
-              ;; an ordinary byte
-              (%read-string line col (cons 194 (cons 10 acc)))))
-         (else (%read-string line col (cons 10 acc))))))
-     ((and (= b 194) (= (%peek-byte) 133))       ; NEL
-      (%next-byte)
-      (%read-string line col (cons 10 acc)))
-     ((and (= b 226) (= (%peek-byte) 128))       ; maybe LS, E2 80 A8
-      (%next-byte)
-      (if (= (%peek-byte) 168)
-          (begin (%next-byte) (%read-string line col (cons 10 acc)))
-          (%read-string line col (cons 128 (cons 226 acc)))))
+     ;; spelled as -- the third caller of the one predicate, alongside
+     ;; %skip-line and the continuation test above.
+     ((%line-ending? b) (%read-string line col (cons 10 acc)))
      (else (%read-string line col (cons b acc))))))
 
 ;; A string in this runtime is a sequence of UTF-8 BYTES: the reader
@@ -1080,7 +1047,44 @@
                             acc)))))))
 
 (define (%intraline-ws? b) (or (= b 32) (= b 9)))
-(define (%line-ending? b) (or (= b 10) (= b 13)))
+;; THE single answer to "does a line ending start here".  Call it with
+;; the byte already consumed; it answers #t having consumed the rest of
+;; the ending, or #f having consumed nothing (anything it looked at and
+;; did not want is pushed back).
+;;
+;; The reference treats LF, CR, CRLF, NEL (U+0085), CR+NEL and LS
+;; (U+2028) alike and does NOT treat PS (U+2029) as one -- measured.
+;; Three places need this answer: skipping a line comment, normalising
+;; the body of a string literal, and deciding whether a backslash
+;; begins a continuation.  They used to disagree: the body knew the
+;; whole set, the continuation knew LF and CR, and the comment knew
+;; only LF, so the same file read as different programs on the two
+;; hosts.  One supplier, three callers -- removing NEL from here turns
+;; all three suites red, which is what says they share it.
+(define (%line-ending? b)
+  (cond
+   ((= b 10) #t)                                 ; LF
+   ((= b 13)                                     ; CR, CRLF, CR+NEL
+    (let ((n (%peek-byte)))
+      (cond
+       ((= n 10) (%next-byte) #t)
+       ((= n 194)
+        (%next-byte)
+        (if (= (%peek-byte) 133)
+            (begin (%next-byte) #t)
+            (begin (%push-back 194) #t)))        ; a lone CR is still one
+       (else #t))))
+   ((= b 194) (if (= (%peek-byte) 133)           ; NEL
+                  (begin (%next-byte) #t)
+                  #f))
+   ((= b 226)                                    ; LS, and only LS
+    (if (= (%peek-byte) 128)
+        (begin (%next-byte)
+               (if (= (%peek-byte) 168)
+                   (begin (%next-byte) #t)
+                   (begin (%push-back 128) #f)))
+        #f))
+   (else #f)))
 
 ;; the backslash is already consumed; take the rest of the continuation
 ;; and produce nothing
@@ -1098,6 +1102,28 @@
     (when (and (= b 13) (= (%peek-byte) 10)) (%next-byte)))
   (let skip ()
     (when (%intraline-ws? (%peek-byte)) (%next-byte) (skip))))
+;; The byte after a backslash, once it is known not to begin a line
+;; ending.  Split out so the continuation test above reads as one
+;; question rather than as a cond with an unrelated tail.
+(define (%escape-after-backslash c line col acc)
+  (cond
+   ;; End of input after the backslash: the fault is the unclosed
+   ;; string, not an unknown escape.  Before the escape table refused
+   ;; anything this fell through and the loop reported the missing
+   ;; quote by itself; the refusal would now get there first and name a
+   ;; character that does not exist.  test/read-errors.ss was already
+   ;; holding this case -- "a trailing backslash cannot swallow the end
+   ;; of input" -- and it is what caught that regression.
+   ((< c 0)
+    (errorf 'read (string-append "string opened at " (%at-line line col)
+                                 " never closed")))
+   ((= c 120)                                    ; x -- hex escape
+    (%read-string line col (%push-utf8 (%read-hex-escape line col) acc)))
+   (else (%read-string line col (cons (%read-escape c) acc)))))
+
+(define (%skip-intraline-ws)
+  (when (%intraline-ws? (%peek-byte)) (%next-byte) (%skip-intraline-ws)))
+
 (define (%read-escape b)
   ;; The byte after a backslash.  This table had three entries and an
   ;; `else` that answered the byte itself, so "\a" was the letter a and
@@ -1198,6 +1224,22 @@
 ;; leaves `still-outer |#` as data.  Both pass a single-level test, so
 ;; the depth is carried and test/reader-comments.ss reads what comes
 ;; AFTER the comment rather than the comment itself.
+;; The `#` is consumed; if what follows begins a comment, consume the
+;; whole comment and answer #t.  Otherwise consume nothing more and
+;; answer #f, leaving the caller to read the hash form.
+;;
+;; One procedure because there are two callers -- a comment can begin a
+;; datum or sit between two elements of a list -- and they had the same
+;; three-way cond written out twice.  Two statements of one grammar is
+;; how "#;2 . 3" came to be read as a dot: the list's copy was added
+;; later, and the two were only accidentally the same.
+(define (%skip-hash-comment)
+  (let ((c (%peek-byte)))
+    (cond
+     ((= c 124) (%next-byte) (%skip-block-comment 1) #t)
+     ((= c 59) (%next-byte) (%skip-datum) #t)
+     (else #f))))
+
 (define (%skip-block-comment depth)
   (let ((b (%next-byte)))
     (cond

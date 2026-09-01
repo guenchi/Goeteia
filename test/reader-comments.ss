@@ -90,6 +90,30 @@
 (refuses? "#;" "datum")                ; nothing to comment out
 (refuses? "(#;)" "")                   ; must not quietly read as ()
 
+;; ---- what ends a line comment ---------------------------------------
+;; The reference ends one on LF, CR, NEL (U+0085) and LS (U+2028), and
+;; NOT on PS (U+2029).  This reader sees bytes, so NEL arrives as C2 85
+;; and LS as E2 80 A8.  All four go through the SAME line-ending
+;; predicate as the string body and the string continuation -- one
+;; supplier, three callers, and test/reader-escape.ss and
+;; test/source-literal-encoding.ss hold the other two.
+(define (bytes->text . bs)
+  (list->string (map integer->char bs)))
+(define (comment-ends? name text want)
+  (guard (e (#t (fail! (string-append "comment ended by " name ": raised"))))
+    (let ((v (car (two text))))
+      (unless (equal? v want)
+        (fail! (string-append "comment ended by " name ": read " 
+                              (if (eof-object? v) "end of input" "something else")))))))
+(comment-ends? "LF"  (bytes->text 59 120 10 55) 7)
+(comment-ends? "CR"  (bytes->text 59 120 13 55) 7)
+(comment-ends? "NEL" (bytes->text 59 120 194 133 55) 7)
+(comment-ends? "LS"  (bytes->text 59 120 226 128 168 55) 7)
+;; PS is not a line ending, so the 7 stays inside the comment
+(let ((v (car (two (bytes->text 59 120 226 128 169 55)))))
+  (unless (eof-object? v)
+    (fail! "PS ended a line comment; it is not a line ending")))
+
 (display (if (= failures 0)
              "block and datum comments read as the reference reads them"
              "SEE FAILURES ABOVE"))

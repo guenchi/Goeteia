@@ -200,6 +200,60 @@ test('a source file that is not valid UTF-8 is refused by name', () => {
     assert.doesNotMatch(stderr, /\uFFFD/);
 });
 
+// The start line the hosted driver records for each top-level form.
+// It reaches diagnostics through %loc markers and surfaces only from a
+// runtime trap, so it had no observable path and was wrong in five
+// ways at once -- newlines inside strings and inside line comments
+// were not counted, parens inside block comments and inside |bar
+// symbols| were counted, and `#;` was read as a line comment.  These
+// are those five, plus the baseline they all shifted.
+for (const [what, source, want] of [
+        ['a form after a line comment',
+         ';; c\n(define a 1)\n; comment\n(define b 2)\n', ['2', '4']],
+        ['a form after a string holding a newline',
+         ';; c\n(display "a\nb")\n(define b 2)\n', ['2', '3']],
+        ['a form after a block comment holding a paren',
+         ';; c\n#| ( |#\n(define b 2)\n', ['3']],
+        ['a form after a bar symbol holding a paren',
+         ';; c\n(list (quote |(|))\n(define b 2)\n', ['2', '3']],
+        ['a form after a datum comment',
+         ';; c\n#;(ignored) (define b 2)\n', ['2']]]) {
+    test(`--dump-lines: ${what}`, () => {
+        const src = path.join(tmp, `lines-${want.join('-')}-${want.length}.ss`);
+        fs.writeFileSync(src, source);
+        const out = execFileSync(path.join(here, '../bin/goeteiac'),
+                                 ['--dump-lines', src],
+                                 { stdio: ['ignore', 'pipe', 'pipe'] });
+        const got = String(out).trim().split('\n').map(l => l.split(' ')[0]);
+        assert.deepEqual(got, want);
+    });
+}
+
+test('both hosts refuse a non-UTF-8 source with the same words', () => {
+    // The hosted driver decodes source as UTF-8 and refuses what is not;
+    // the self-hosted path read the bytes straight through and compiled
+    // the file happily.  The two hosts may differ about many things but
+    // not about WHICH PROGRAMS EXIST, so this pins that they refuse the
+    // same file -- and with the same sentence, so the agreement cannot
+    // rot into two wordings that both look right.
+    const src = path.join(tmp, 'utf8-both.ss');
+    fs.writeFileSync(src, Buffer.concat([
+        Buffer.from(';; expect: 0\n(define e "a'), Buffer.from([0xff]),
+        Buffer.from('b")\n')]));
+    const out = path.join(tmp, 'utf8-both.wasm');
+    const run = (cmd, args) => {
+        try { execFileSync(cmd, args, { stdio: ['ignore', 'pipe', 'pipe'] }); }
+        catch (e) { return String(e.stdout || '') + String(e.stderr || ''); }
+        return '';
+    };
+    const hosted = run(path.join(here, '../bin/goeteiac'), [src, out]);
+    const selfHosted = run(process.execPath, [compileMjs, compilerWasm, src, out]);
+    const line = t => (t.match(/this source file is not valid UTF-8: .*/) || [''])[0];
+    assert.ok(line(hosted), `the hosted driver accepted it: ${hosted}`);
+    assert.ok(line(selfHosted), `the self-hosted compiler accepted it: ${selfHosted}`);
+    assert.equal(line(hosted), line(selfHosted));
+});
+
 test('a character literal above U+007F is refused by name', () => {
     // The decoded reading makes #\<non-ascii> a single character on this
     // host, which the self-hosted reader has no spelling for.  Refusing
