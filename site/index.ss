@@ -266,11 +266,12 @@
          #t
          '((h3 "3D out of s-expressions")
            (p "The proof is in the live editor. Switch to the "
-              (code "skybox.ss") " tab, tweak a form, and hit Run. Right "
-              "beside it, " (code "blackhole.ss") " mathematically renders a "
-              "relativistic accretion disk, while " (code "particles.ss")
-              " drives a hundred thousand WebGPU fire particles—their physics "
-              "engine running purely as a compute shader.")
+              (code "blackhole.ss") " tab, tweak a form, and hit Run—it "
+              "renders a relativistic accretion disk from 1.5 million "
+              "particles whose physics is pure arithmetic in the vertex "
+              "shader: each particle is just four numbers (radius, phase, "
+              "height, seed), and its position is a pure function of time "
+              "(Keplerian shear, with the inner disk lapping the outer).")
            (h4 "Macros that write shaders")
            (p "In Lisp, code is data. Because a shader is just another datum, "
               (b "Scheme macros can generate GPU code at expansion time")
@@ -317,7 +318,7 @@
            "instantly falls back to its JS twin. Nobody hand-maintains a "
            "secondary implementation, which means the logic physically never "
            "drifts.")
-         #t
+         #f
          '((h3 "Dead code is dead weight")
            (p "Crucially, this twin is ruthlessly tree-shaken. It carries only "
               "the runtime it actually reaches. The kernel ships by group, and "
