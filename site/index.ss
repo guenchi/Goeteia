@@ -28,7 +28,7 @@
 
 ;; ---- the numbered feature showcases: kicker, title, lead, then a
 ;; text column beside a code block (flip? alternates the sides) ----
-(define-component (show num kick title lead flip? txt code)
+(define-component (show num kick title lead flip? txt code . aside)
   ;; the showcase block's whole shape -- kicker, title, the text|code
   ;; feature grid, its responsive single-column fallback -- lives with
   ;; it; the six calls intern to one class
@@ -52,6 +52,7 @@
     (".feature ul.points > li::before"
      (content "\"→\"") (position absolute) (left 0) (color (var azure)) (font-weight 700))
     (".feature ul.points b" (color (var ink)))
+    (".feature .codecol" (min-width 0))
     (".feature pre" (background (var bg2)) (border (px 1) solid (var line)) (border-radius (px 10)) (padding (em 1 10) (em 1 20)) (overflow-x auto) (font-family (var mono)) (font-size (px 12 50)) (line-height (dec 1 55)) (color (var ink)) (margin 0) (box-shadow 0 (px 1) (px 3) (rgba 16 20 42 (dec 0 6))))
     ,@(hl-styles ".feature pre")
     (@media 64
@@ -63,7 +64,7 @@
     (p (@ (class "slead")) ,@lead)
     (div (@ (class ,(if flip? "feature flip" "feature")))
       (div (@ (class "txt")) ,@txt)
-      (pre ,(raw code)))))
+      (div (@ (class "codecol")) ,@aside (pre ,(raw code))))))
 
 ;; the code samples, as plain text; (hl)'s build-time highlighter
 ;; paints them with the same token classes the live editor uses
@@ -318,14 +319,8 @@
            "instantly falls back to its JS twin. Nobody hand-maintains a "
            "secondary implementation, which means the logic physically never "
            "drifts.")
-         #f
-         '((h3 "Dead code is dead weight")
-           (p "Crucially, this twin is ruthlessly tree-shaken. It carries only "
-              "the runtime it actually reaches. The kernel ships by group, and "
-              "unreached library code is simply never compiled in. Your "
-              "fallback payload costs " (b "exactly what the page executes")
-              ", never what the dependency tree holds.")
-           (h4 "Automatic fallbacks, explicit degradations")
+         #t
+         '((h3 "Automatic fallbacks, explicit degradations")
            (p "Goeteia strictly separates mechanical compatibility from "
               "application logic.")
            (ul (@ (class "points"))
@@ -343,7 +338,14 @@
                  "fetched."))
            (p "The page safely degrades across any hostile environment, "
               "leaving you with absolutely zero hand-written JavaScript."))
-         fallback-code))
+         fallback-code
+         ;; this block sits in the code column, above the sample
+         '(h3 "Dead code is dead weight")
+         '(p "Crucially, this twin is ruthlessly tree-shaken. It carries only "
+             "the runtime it actually reaches. The kernel ships by group, and "
+             "unreached library code is simply never compiled in. Your "
+             "fallback payload costs " (b "exactly what the page executes")
+             ", never what the dependency tree holds.")))
 
    (section* "features" "What's inside"
       `(div (@ (class "grid"))
