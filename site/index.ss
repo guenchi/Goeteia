@@ -45,6 +45,12 @@
     (".feature h3" (font-size (em 1 12)) (margin 0 0 (em 0 50)))
     (".feature p" (color (var dim)) (font-size (em 0 95)) (margin 0 0 (em 0 70)))
     (".feature p b" (color (var ink)))
+    (".feature ul.points" (list-style none) (padding 0) (margin 0 0 (em 0 70)))
+    (".feature ul.points > li"
+     (position relative) (padding-left (em 1 30)) (margin (em 0 50) 0) (color (var dim)) (font-size (em 0 95)))
+    (".feature ul.points > li::before"
+     (content "\"→\"") (position absolute) (left 0) (color (var azure)) (font-weight 700))
+    (".feature ul.points b" (color (var ink)))
     (".feature pre" (background (var bg2)) (border (px 1) solid (var line)) (border-radius (px 10)) (padding (em 1 10) (em 1 20)) (overflow-x auto) (font-family (var mono)) (font-size (px 12 50)) (line-height (dec 1 55)) (color (var ink)) (margin 0) (box-shadow 0 (px 1) (px 3) (rgba 16 20 42 (dec 0 6))))
     ,@(hl-styles ".feature pre")
     (@media 64
@@ -176,21 +182,28 @@
            "and each Run recompiles the source above in about 80 ms.")))
 
    `(section (@ (id "showcase"))
-      ,(show "01" "The language" "R6RS and syntax-case, complete — in the page"
-         '("Not a toy subset: hygienic " (code "syntax-rules") " and "
-           "procedural " (code "syntax-case") " with fenders, nested "
-           "ellipses and " (code "datum->syntax") ", compiled to Wasm GC "
-           "right here in your browser.")
+      ,(show "01" "The language" "R6RS and syntax-case, complete and in-page"
+         '("This is not a toy subset. Goeteia ships full hygienic "
+           (code "syntax-rules") " and procedural " (code "syntax-case")
+           "—complete with fenders, nested ellipses, and "
+           (code "datum->syntax") ". It compiles directly to Wasm GC, right "
+           "here in your browser.")
          #f
-         '((h3 "The whole standard, running above")
-           (p "Exact bignums and rationals, " (code "call/cc") " and "
-              (code "dynamic-wind") " on Wasm's own exception handling, "
-              "and every tail call a " (code "return_call") " — a "
-              "hundred-million-iteration loop runs in "
-              (b "constant stack") ".")
-           (p "The expander is a compile-time interpreter with hygiene by "
-              "renaming: a macro's bindings and yours can never collide. "
-              "Paste any of this into the editor above and press Run."))
+         '((p "The macro expander is a full compile-time interpreter. It "
+              "enforces hygiene by renaming: a macro's internal bindings and "
+              "your lexical scope can physically never collide.")
+           (h3 "The full standard, running live")
+           (p "Goeteia implements the standard without compromises.")
+           (ul (@ (class "points"))
+             (li (b "The Math Tower:") " Exact rationals and bignums compute "
+                 "seamlessly.")
+             (li (b "Native Continuations:") " " (code "call/cc") " and "
+                 (code "dynamic-wind") " are mapped directly onto Wasm's own "
+                 "native exception handling.")
+             (li (b "True TCO:") " Every tail call is a true Wasm "
+                 (code "return_call") ". A hundred-million-iteration recursive "
+                 "loop runs in " (b "absolute constant stack space") "."))
+           (p "Paste any of this into the editor above and hit Run."))
          r6rs-code)
       ,(show "02" "The web as list" "Macros expand into HTML and CSS"
          '("A document is a tree; a stylesheet is a list of rules — the "
