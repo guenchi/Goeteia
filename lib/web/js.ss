@@ -31,9 +31,18 @@
   (define (number->js x) (%js-number (exact->inexact x)))
   (define (js->number r)
     (let ((f (%js-to-number r)))
+      ;; The fixnum range is CLOSED: -536870912 .. 536870911, one tag
+      ;; bit short of 31 and asymmetric because the tag costs a value
+      ;; at the top.  Two strict comparisons excluded both endpoints,
+      ;; so the two numbers most likely to be at a boundary in the
+      ;; caller's own arithmetic arrived as flonums -- and nothing
+      ;; downstream refuses a flonum, so the wrong representation just
+      ;; travelled.  Stated as refusals of what is OUTSIDE, so the
+      ;; endpoints are in by construction rather than by an off-by-one
+      ;; that has to be read twice.
       (if (and (integer? f)
-               (fl<? (fixnum->flonum -536870912) f)
-               (fl<? f (fixnum->flonum 536870911)))
+               (not (fl<? f (fixnum->flonum -536870912)))
+               (not (fl<? (fixnum->flonum 536870911) f)))
           (%fl->fx f)
           f)))
 
