@@ -4,6 +4,11 @@
 #   sh build-cdn.sh <goeteia-tree> <version>
 #   e.g.  sh build-cdn.sh ../03-goeteia 1.5.8
 #
+# The layout mirrors the source tree -- rt/, lib/, src/ and goeteia.wasm at
+# the top -- so a path under cdn/<version>/ is the same path in the
+# repository at that version, and a page that used to fetch ./rt/web.mjs
+# from a vendored copy changes only its prefix.
+#
 # What goes in, and why only that:
 #   * the browser-runnable half of rt/ -- web.mjs, jsbridge.mjs,
 #     worker.mjs, sexpr.mjs, react.mjs -- minified one file at a time so
@@ -38,10 +43,10 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 OUT="$HERE/cdn/$VER"
 STAGE=$(mktemp -d "${TMPDIR:-/tmp}/goeteia-cdn.XXXXXX")
 trap 'rm -rf "$STAGE"' EXIT
-mkdir -p "$STAGE"
+mkdir -p "$STAGE/rt"
 for f in web jsbridge worker sexpr react; do
   npx --yes "$ESBUILD" "$SRC/rt/$f.mjs" --minify --format=esm --target=es2022 \
-      --legal-comments=none --outfile="$STAGE/$f.mjs" 2>&1 | grep -v '^$' || true
+      --legal-comments=none --outfile="$STAGE/rt/$f.mjs" 2>&1 | grep -v '^$' || true
 done
 cp "$SRC/goeteia.wasm" "$STAGE/goeteia.wasm"
 mkdir -p "$STAGE/src"; cp "$SRC/src/prelude.ss" "$STAGE/src/prelude.ss"
