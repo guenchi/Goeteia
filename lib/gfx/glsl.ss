@@ -51,7 +51,7 @@
           glsl-uniform-blocks glsl-check
           glsl300-vs->string glsl300-fs->string
           fl-literal->string)          ; (gfx wgsl) renders (fl ...) with it
-  (import (rnrs))
+  (import (rnrs) (web frac))
 
   (define (join parts sep)
     (cond
@@ -59,20 +59,10 @@
      ((null? (cdr parts)) (car parts))
      (else (string-append (car parts) sep (join (cdr parts) sep)))))
 
-  (define (strip-trailing-zeros s)
-    (let loop ((i (string-length s)))
-      (if (and (> i 1) (char=? (string-ref s (- i 1)) #\0))
-          (loop (- i 1))
-          (substring s 0 i))))
-  ;; a fraction's digits, leading-zero-padded to `width' then
-  ;; trailing-zeros stripped.  Scheme drops a literal's leading zeros,
-  ;; so a third (fl) argument states the intended width: 2037 with
-  ;; width 5 is the fraction 02037, i.e. .02037
-  (define (frac->glsl f width)
-    (let loop ((s (number->string f)))
-      (if (< (string-length s) width)
-          (loop (string-append "0" s))
-          (strip-trailing-zeros s))))
+  ;; the fraction digits come from (web frac) -- the same rule (web css)
+  ;; renders a unit with.  This file had its own copy, and the two
+  ;; drifted: this one took a width, css always padded to two, so (fl 3 4)
+  ;; and (em 3 4) meant different numbers in the two languages.
 
   ;; ONE renderer for (fl W F [width]), and both backends call it.
   ;; There used to be a second copy in (gfx wgsl), which ignored the
@@ -93,14 +83,21 @@
   ;; evidence that it read backwards is that three documents carried a
   ;; warning about it.  A notation that needs to be warned about in
   ;; three places is arguing with itself.
+  ;; (web frac) hands back the digits and stops there, because the two
+  ;; consumers disagree about what no digits means: CSS drops the point
+  ;; and writes 1em, GLSL cannot -- "1." is not a float literal there --
+  ;; so it writes the zero back.  That disagreement is the reason the
+  ;; helper does not decide it.
   (define (fl-literal->string e)
-    (string-append
-     (number->string (cadr e)) "."
-     (if (null? (cddr e)) "0"
-         (frac->glsl (caddr e)
-                     (if (pair? (cdddr e))
-                         (cadddr e)
-                         (string-length (number->string (caddr e))))))))
+    (let ((digits
+           (if (null? (cddr e)) ""
+               (frac-digits (caddr e)
+                            (if (pair? (cdddr e))
+                                (cadddr e)
+                                (string-length
+                                 (number->string (caddr e))))))))
+      (string-append (number->string (cadr e)) "."
+                     (if (string=? digits "") "0" digits))))
 
   (define (expr->glsl e)
     (cond

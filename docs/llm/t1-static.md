@@ -9,8 +9,9 @@ parsing a single element out of it. Styling is `(web css)`: a
 stylesheet is a list of rules through `css->string`, so `append`
 composes stylesheets, and the sheet goes into a `<style>` element in
 the head, where its text is styling rather than page content. Two traps
-live here: a unit's second argument is the fraction in hundredths
-(`(em 1 20)` = 1.2em, `(em 0 9)` = 0.09em), and `get-element-by-id` on
+live here: a unit's second argument is the digits after the point as
+written (`(em 1 20)` = 1.2em, `(em 0 9)` = 0.9em; a leading zero needs
+the third width argument, `(em 0 9 2)` = 0.09em), and `get-element-by-id` on
 any id but `app` and `c` answers null — the first call through that
 null takes the whole program down.
 
@@ -29,8 +30,9 @@ null takes the whole program down.
 
 ;; css->string is a pure function from a list of rules to CSS text,
 ;; so `append` composes stylesheets.  A unit's SECOND argument is the
-;; fraction in HUNDREDTHS, padded to two places: (em 1 20) is 1.2em,
-;; (em 0 90) is 0.9em, (em 0 9) is 0.09em.  Delicate values are safer
+;; digits after the point AS WRITTEN: (em 1 20) is 1.2em, (em 0 9) is
+;; 0.9em.  A leading zero needs a third argument giving the minimum
+;; width -- (em 0 9 2) is 0.09em.  Delicate values are safer
 ;; written as strings.  palette->root emits :root custom properties
 ;; that (var ink) reads back.
 (define page-css

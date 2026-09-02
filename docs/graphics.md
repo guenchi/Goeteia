@@ -145,9 +145,10 @@ Top-level forms: `(attribute T name)`, `(uniform T name)`,
 MRT output), and `(define (name (T arg) ...) RET stmt ...)`. Statements
 include `local`, `set!`, `return`, `if` / `if-else`, `for`, and
 `discard`. In expressions, symbols pass through verbatim (`p`,
-`gl_Position`, `v.xy`); exact integers are themselves; `(fl W [F])` is a
-float literal with the fraction in hundredths (`(fl 2)` → `"2.0"`,
-`(fl 0 50)` → `"0.5"`) so there are no Scheme flonums and no printer
+`gl_Position`, `v.xy`); exact integers are themselves; `(fl W [F [width]])`
+is a float literal with the digits after the point as written (`(fl 2)` →
+`"2.0"`, `(fl 0 50)` → `"0.5"`, `(fl 0 5 2)` → `"0.05"`, the third operand
+being the fraction's minimum width) so there are no Scheme flonums and no printer
 noise; `+ - * /` are infix and `< > <= >= ==` compare; anything else is
 a function call. `glsl300-vs->string` / `glsl300-fs->string` emit
 `#version 300 es`, where `uniform-block` becomes a std140 block and

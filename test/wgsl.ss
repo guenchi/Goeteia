@@ -31,6 +31,31 @@
       (set! gl_FragColor (vec4 d d d (fl 1))))))
 
 (and
+ ;; WGSL is the third consumer of (web frac), and it reaches it through
+ ;; (gfx glsl)'s renderer rather than a copy of its own -- it once had a
+ ;; copy that ignored the width, so (fl 0 50 3) meant 0.05 on one
+ ;; backend and 0.5 on the other.  A width-bearing literal here is what
+ ;; keeps that from coming back.
+ (t (wgsl->string
+     '((attribute vec2 a_pos)
+       (define (main) void (set! gl_Position (vec4 a_pos (fl 0) (fl 1)))))
+     '((define (main) void
+         (local float x (fl 0 50 3))
+         (set! gl_FragColor (vec4 x x x (fl 1))))))
+    (string-append
+     "struct VOut { @builtin(position) goe_pos : vec4f } "
+     "@vertex fn vs(@location(0) a_pos : vec2f) -> VOut { "
+     "var o : VOut; o.goe_pos = vec4f(a_pos, 0.0, 1.0); return o; } "
+     "@fragment fn fs(vin : VOut) -> @location(0) vec4f { "
+     "var goe_out : vec4f; "
+     ;; 0.05, not 0.5: the width reaches WGSL.  It did not always --
+     ;; this backend once carried its own copy of the fraction renderer
+     ;; that dropped the third operand, so one shader source meant two
+     ;; different numbers on two devices.  Both backends now read the
+     ;; digits out of (web frac), and this is the cell that says so.
+     "var x : f32 = 0.05; "
+     "goe_out = vec4f(x, x, x, 1.0); return goe_out; } "))
+
  (t (wgsl->string vs fs)
     (string-append
      "struct U { u_mvp : mat4x4f, u_model : mat4x4f } "

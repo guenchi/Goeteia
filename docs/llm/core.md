@@ -137,10 +137,11 @@ most expensive trap there is.
 - DON'T use bitwise operators on operands ≥ 2^29 — `illegal cast`.
 
 **CSS values** — `lib/web/css.ss`. A unit's SECOND argument is the
-digits after the point, **padded to a minimum of two**: `(em 1 20)` =
-1.2em, `(em 0 90)` = 0.9em, `(em 0 9)` = **0.09em**, `(em 0 625)` =
-0.625em, `(dec 1 60)` = 1.6. Probe it, or write the value as a string
-(`"0.125em"` is always itself). Exact integers pass through as-is.
+digits after the point **as written**: `(em 1 20)` = 1.2em, `(em 0 9)`
+= 0.9em, `(dec 1 60)` = 1.6. Scheme drops a leading zero, so a THIRD
+argument is the minimum width: `(em 0 9 2)` = 0.09em — as `(fl W F
+[width])` in the shaders. Or write it as a string (`"0.125em"` is
+itself). Exact integers pass through.
 
 **Shaders** — `docs/limits.md` §2, `docs/graphics.md` §2.
 

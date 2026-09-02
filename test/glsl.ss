@@ -10,13 +10,25 @@
     "attribute vec2 p; ")
  (t (glsl->string '((precision mediump float) (uniform float u_time)))
     "precision mediump float; uniform float u_time; ")
- ;; float literals: whole + fraction-in-hundredths, no Scheme flonums
+ ;; float literals: whole + the fraction's digits as written, with an
+ ;; optional third operand giving the fraction's minimum width.  No
+ ;; Scheme flonums anywhere: the printer is not exact.
  (t (glsl->string '((define (main) void (set! x (fl 2)))))
     "void main() { x = 2.0; } ")
  (t (glsl->string '((define (main) void (set! x (fl 0 50)))))
     "void main() { x = 0.5; } ")
  (t (glsl->string '((define (main) void (set! x (fl 1 25)))))
     "void main() { x = 1.25; } ")
+ ;; The digits come from (web frac), shared with (web css), and that
+ ;; helper strips a fraction down to nothing when every digit is a zero
+ ;; -- CSS wants "1em" out of it.  GLSL must not inherit that: "1." is
+ ;; not a float literal.  This cell is the whole difference between the
+ ;; two consumers, so it is the cell that fails if either one starts
+ ;; deciding the question for the other.
+ (t (glsl->string '((define (main) void (set! x (fl 1 0)))))
+    "void main() { x = 1.0; } ")
+ (t (glsl->string '((define (main) void (set! x (fl 0 50 3)))))
+    "void main() { x = 0.05; } ")
  ;; A single-digit fraction is that digit, not that digit in the
  ;; hundredths place.  The default width used to be 2, so this line
  ;; read 0.05 -- the one shape where the rule contradicted the way the
@@ -31,8 +43,9 @@
     "void main() { x = 0.5; } ")
  (t (glsl->string '((define (main) void (set! x (fl 0 5 2)))))
     "void main() { x = 0.05; } ")
- ;; a zero fraction: strip-trailing-zeros must leave the digit alone
- ;; rather than emit the illegal "0." -- measured, both rules
+ ;; a zero fraction: (web frac) strips it to nothing, and this backend
+ ;; puts the zero back rather than emit the illegal "0." -- measured,
+ ;; both rules
  (t (glsl->string '((define (main) void (set! x (fl 0 0)))))
     "void main() { x = 0.0; } ")
  ;; a width third argument keeps leading zeros Scheme would drop:

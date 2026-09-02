@@ -5,13 +5,17 @@
 ;; (element names) or strings (anything with . # : > space).
 ;;
 ;; No floats anywhere -- the flonum printer isn't exact. Unit forms take
-;; variable arity: one integer is the whole value, two are the whole
-;; part and the fraction-in-hundredths. Whole values stay natural (no
-;; x100 inflation), fractions stay exact integers (no floats), and every
-;; value -- including a leading zero -- is expressible:
+;; variable arity: (unit W) is the whole value, (unit W F) adds the
+;; fraction's digits as written, and (unit W F width) states a minimum
+;; width so a leading zero can be recovered -- Scheme has already
+;; dropped it from the literal by the time we see it. Whole values stay
+;; natural (no x100 inflation), fractions stay exact integers (no
+;; floats), and every value is expressible:
 ;;   (em 1)   -> "1em"     (em 0 92) -> "0.92em"  (em 3 40) -> "3.4em"
-;;   (em 3 4) -> "3.04em"  (px 13 50) -> "13.5px" (px 13)   -> "13px"
+;;   (em 3 4) -> "3.4em"   (em 3 4 2) -> "3.04em" (px 13)   -> "13px"
 ;;   (pct 50) -> "50%"     (vh 100)  -> "100vh"   (deg 120) -> "120deg"
+;; The digits are rendered by (web frac), shared with (gfx glsl), so
+;; (em 3 4) and (fl 3 4) name the same number.
 ;; Non-unit values:
 ;;   integer           -> itself ("0", "650" for z-index / rgb parts)
 ;;   string            -> literal ("#fff", "solid")
@@ -33,7 +37,7 @@
 ;; Copyright (c) 2026 guenchi. MIT license; see LICENSE.
 (library (web css)
   (export css->string num->css palette->root)
-  (import (rnrs))
+  (import (rnrs) (web frac))
 
   ;; a palette alist ((name value) ...) as a :root rule of custom
   ;; properties -- one binding names a colour for Scheme AND css:
@@ -58,30 +62,42 @@
     (cond
      ((string? n) n)
      ((and (integer? n) (exact? n)) (number->string n))
-     (else (error 'css "use an exact integer, a two-arg unit form, or a string" n))))
+     (else (error 'css "use an exact integer, a unit form, or a string" n))))
 
-  ;; the fractional part is in hundredths, padded to two digits then
-  ;; trailing zeros dropped -- so a leading zero survives and every
-  ;; value is expressible: 92 -> ".92", 4 -> ".04", 40 -> ".4", 6 ->
-  ;; ".06". More digits give more precision: 625 -> ".625".
-  (define (strip-trailing-zeros s)
-    (let loop ((i (string-length s)))
-      (if (and (> i 0) (char=? (string-ref s (- i 1)) #\0))
-          (loop (- i 1))
-          (substring s 0 i))))
-  (define (frac->css f)
-    (let loop ((s (number->string f)))
-      (if (< (string-length s) 2)
-          (loop (string-append "0" s))
-          (strip-trailing-zeros s))))
-  ;; a unit value: (em 1) -> "1em"; (em 0 92) -> "0.92em" (whole . frac);
-  ;; (em 3 4) -> "3.04em", (em 3 40) -> "3.4em"
+  ;; a unit value: (em 1) -> "1em"; (em 0 92) -> "0.92em" (whole and
+  ;; fraction); (em 3 4) -> "3.4em"; (em 3 4 2) -> "3.04em", the third
+  ;; operand being the fraction's MINIMUM width, left-padded with zeros.
+  ;;
+  ;; A fraction used to mean hundredths however it was written, which is
+  ;; not what (fl W F [width]) means in (gfx glsl) -- and the same
+  ;; author writing both had two rules to keep straight.  One rule now,
+  ;; from (web frac).
+  ;;
+  ;; The operands are checked rather than taken on trust: extra ones
+  ;; used to be dropped in silence, so (em 1 5 2 9) rendered as though
+  ;; the 9 had never been written.
   (define (unit->css args suffix)
+    (unless (pair? args) (error 'css "unit form needs an argument"))
+    (when (and (pair? (cdr args)) (pair? (cddr args)) (pair? (cdddr args)))
+      (error 'css "a unit form takes at most a whole, a fraction and a width"
+             args))
     (string-append
-     (cond
-      ((null? args) (error 'css "unit form needs an argument"))
-      ((null? (cdr args)) (num->css (car args)))
-      (else (string-append (num->css (car args)) "." (frac->css (cadr args)))))
+     (if (null? (cdr args))
+         (num->css (car args))
+         (let ((f (cadr args)))
+           (unless (and (integer? f) (exact? f) (not (< f 0)))
+             (error 'css "a unit fraction is an exact non-negative integer; the sign belongs to the whole part" f))
+           (let* ((width (if (pair? (cddr args)) (caddr args)
+                             (string-length (number->string f))))
+                  (_ (unless (and (integer? width) (exact? width)
+                                  (not (< width 0)))
+                       (error 'css "a unit width is an exact non-negative integer" width)))
+                  (d (frac-digits f width)))
+             ;; no digits left means no decimal point: "1.em" is not a
+             ;; CSS value, and this used to emit exactly that for (em 1 0)
+             (if (string=? d "")
+                 (num->css (car args))
+                 (string-append (num->css (car args)) "." d)))))
      suffix))
 
   (define units
