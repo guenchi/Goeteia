@@ -1,22 +1,44 @@
 # Changelog
 
-Every published version of Goeteia, newest first.
-
-> **What counts as a release.** Version numbers and dates come from the npm
-> registry — `npm view goeteia versions` — which is the record of what was
-> actually shipped. Where a git tag or a `package.json` bump in the repository
-> disagrees, npm wins. Three numbers were never published and so are absent
-> here: `1.3.4`, `1.5.4`, and the whole `1.4` line. Commit counts are the
-> distance from the previous published version.
-
----
-
 ## 1.5.8 — 2026-09-01
 
 *123 commits.* Numeric and reader conformance. Every change in this release
-landed with a test that was red before it, and the whole cycle was driven by
-mutation testing: a claim that no mutation could redden was treated as a defect
-in the claim.
+landed with a test that was red before it, and the cycle was driven by mutation
+testing: a claim that no mutation could redden was treated as a defect in the
+claim.
+
+### API
+
+**New libraries.** `(gfx raster)` — a CPU rasterizer, 103 procedures covering
+cameras (`make-rcam`, `rcam-project!`, `rcam-ray!`), frames, masks, images,
+meshes, and the entry points `render-frame!`, `render-mask!`,
+`render-mask-add!`, `render-textured!`, `frame-diff`, `mask-iou`.
+`(gfx image)` — `png-decode!`, `png-encode!`, `png-info`, `tga-decode!`,
+`tga-info`, `inflate!`, `zlib-inflate!`, `crc32`, `adler32`.
+`(gfx glb)` — `glb-write!`, `glb-offset`, `glb-stride`.
+`(gfx retarget)` — `retarget-clip!`, `retarget-write-glb!`, `retarget-report`,
+`retarget-glb-node-names`, `retarget-normalize-name`.
+`(web fs)` — `fs-slurp!`, `fs-spit!`, `fs-slurp-string`, `fs-spit-string!`,
+`fs-exists?`, `fs-size`. `(web args)` — `args-count`, `args-ref`, `args-list`.
+`(web utf8)` — `utf8-well-formed?`, moved here so both codecs ask one predicate.
+
+**Added to existing libraries.** `(gfx gltf)` gains 22 node and skin accessors
+(`gltf-nodes`, `gltf-node-translation`/`-rotation`/`-scale` with setters,
+`gltf-node-parent`, `gltf-pose-at!`, `gltf-skins`, `gltf-skin-positions!`,
+`gltf-skin-normals!`, `gltf-skin-program3!`, `gltf-animation-duration`).
+`(gfx mat)` gains inverse trigonometry (`flasin`, `flacos`, `flatan`,
+`flatan2`) and the quaternion algebra (`q-mul`, `q-conj`, `q-neg`, `q-dot`,
+`q-normalize`, `q-slerp`). `(gfx gl)` gains `cmd-read-pixels!` and
+`cmd-draw-elements-instanced32!`; `(gfx fx)` gains `fx-read-target!`,
+`fx-mark`, `fx-release!`, `fx-program-blocks`; `(gfx glsl)` gains `glsl-check`,
+`glsl-uniform-blocks`, `fl-literal->string`; `(gfx wgsl)` gains `wgsl-check`;
+`(web json)` gains `json-array?` and `json-array->list`; `(web js)` gains
+`js-callback-error!`.
+
+**Added to the prelude**, as top-level bindings: `sin`, `cos`, `tan`, and the
+R6RS division operators `div`, `mod`, `div0`, `mod0`.
+
+**176 library exports and 7 prelude bindings added; none removed.**
 
 ### Breaking
 
@@ -27,7 +49,7 @@ in the claim.
   an array *or* as an object depending on its contents, and `'foo` and `"foo"`
   produced the same document.
 - **`(display -0.0)` prints `-0.0`.** It printed `0.0`; the sign survived in the
-  bits and in arithmetic but not in the text.
+  bits and in arithmetic but not in the text. `json->string` follows.
 - **Unknown string escapes and unrecognised `#` syntax raise.** `"\q"` used to
   read as the letter `q`, and an unimplemented `#` form used to answer an
   end-of-input object that flowed into the data as a value.
@@ -49,8 +71,8 @@ in the claim.
   killed the compiler with `invalid value -129`), both infinities (`+inf.0` hung
   it in a loop that never ended), NaN (silently encoded as `1.0`), and both
   zeros (a negative zero encoded as positive).
-- `list?` terminates on a circular list, as R7RS requires. It looped forever
-  with no output.
+- `list?` terminates on a circular list, as the standard requires. It looped
+  forever with no output.
 - `equal?` compares bytevectors by content; it fell through to `eqv?`, so two
   bytevectors with identical bytes were never equal.
 - `js->number` narrows on the **closed** fixnum range; both endpoint values
@@ -72,7 +94,7 @@ in the claim.
   rather than reading as its own four characters.
 - `|...|` symbol names and `\xNN;` in bare identifiers are read; the writer
   emits escapes for any name whose plain spelling would not read back, so a
-  symbol containing a space or an empty symbol survives a round trip.
+  symbol containing a space, or an empty symbol, survives a round trip.
 - `#| ... |#` block comments nest, and `#;` skips one datum, including inside a
   list and before a dotted tail.
 - `#vu8(...)` is read — the writer had always emitted it, so the library could
@@ -97,27 +119,16 @@ in the claim.
   `errorf` under the hosted driver and the prelude's when self-hosted; the two
   never agreed on what a message means, so `unbound variable ~s` printed with
   the name filled in under one host and with a literal `~s` under the other. All
-  48 message strings drop their format directives, and a new cell compiles the
+  48 message strings drop their format directives, and a new test compiles the
   same source with both drivers and compares what they say.
-
-### Added
-
-- `(gfx glb)` — write standard GLB from staging memory, including skins, node
-  trees and animation clips.
-- `(gfx retarget)` — bone-length-preserving clip retargeting.
-- `(gfx image)` — PNG and TGA codecs in pure Scheme.
-- `(gfx raster)` — a CPU rasterizer, byte-identical to its reference
-  implementation, with textured shading and CPU skinning.
-- `goeteia verify` and `goeteia pack` — the LLM substrate ships.
-- Inverse trigonometry, quaternion slerp, R6RS division operators and top-level
-  trigonometry in the prelude; pixel readback through the command buffer.
-- GLSL and WGSL refuse reserved words where a shader declares a name.
 
 ### Changed
 
 - One `(fl ...)` renderer serves both GLSL and WGSL. They had separate
   implementations and the WGSL one ignored the width argument, so the same
   shader source produced values ten times apart on the two backends.
+- GLSL and WGSL refuse reserved words where a shader declares a name.
+- `goeteia verify` and `goeteia pack` join the CLI.
 - `docs/limits.md` declares the number syntax accepted beyond R6RS — fractions
   and exponents at any radix — and what is still refused.
 
@@ -127,69 +138,88 @@ in the claim.
 
 *37 commits.* The `(gfx gltf)` hardening cycle.
 
-- **Added:** `gltf-skin-shader`, the skin combinator over vertex shaders, with
-  attribute and uniform contract checks; `TANGENT` and `COLOR_0` attributes;
-  material texture slots and layouts.
-- **Fixed:** sampler interpolation is honoured; `WEIGHTS_0` is dequantized;
-  quantization, poses and materials corrected across models; interrupted and
-  instant fades; the skinned primitive's world transform; attribute widths
-  checked in `gltf-draw!`; an attribute declared after `main` is refused.
-- **Fixed:** browser compiler diagnostics are preserved; external auto artifact
-  URLs are encoded; stale glyph event listeners are retired; conjure's
-  two-file artifact checks are enforced; the external JS fallback runs in
-  isolation; the optimizer preserves fallible dead initializers; loop retirement
-  is scoped to mounts; glyph lifecycles are scoped and disposed.
+### API
+
+`(gfx gltf)` gains 11 exports: `gltf-skin-shader` — the skin combinator over
+vertex shaders — `gltf-prim-world`, and the material slots `gprim-layout`,
+`gprim-etex`, `gprim-ntex`, `gprim-otex`, `gprim-emissive`,
+`gprim-emissive-img`, `gprim-normal-img`, `gprim-occlusion-img`.
+`(gfx fx)` gains `fx-program-attribute-names`, `fx-program-attribute-schema`
+and `fx-uniform?`. **14 added, none removed.**
+
+### Fixed
+
+- Sampler interpolation is honoured; `WEIGHTS_0` is dequantized; quantization,
+  poses and materials corrected across models; interrupted and instant fades;
+  the skinned primitive's world transform; attribute widths checked in
+  `gltf-draw!`; an attribute declared after `main` is refused.
+- Browser compiler diagnostics are preserved; external auto artifact URLs are
+  encoded; stale glyph event listeners are retired; conjure's two-file artifact
+  checks are enforced; the external JS fallback runs in isolation; the optimizer
+  preserves fallible dead initializers; loop retirement is scoped to mounts;
+  glyph lifecycles are scoped and disposed.
 
 ---
 
 ## 1.5.6 — 2026-08-03
 
-*76 commits.* The JavaScript backend and mount points.
+*76 commits.* The JavaScript backend and mount points. No library export
+changed; the new surface is at the compiler and CLI level.
 
-- **Added: a JavaScript target.** `--js` compiles to a plain ES module — no
-  WebAssembly — so a page can run where Wasm GC is unavailable. The numeric
-  tower rides native `BigInt`; pairs are tagged object literals; non-self tail
-  calls are trampolined, with the trampoline elided where chains cannot cycle;
-  the kernel ships by reachable group.
-- **Added: conjure.** Mount points stage compilation into the host page:
-  `conjure` and the `define-` family of wrappers, dispatching on the head's
-  shape, usable inside libraries, with quasiquote suspending a mount and
-  unquote resuming it. `goeteia-mount` assembles the two-artifact section.
-  `(web embed)` was folded into conjure and removed.
-- **Added:** compile-in-the-browser as a runtime primitive (`compileGoeteiaFrom`).
-- **Fixed (JS target):** SIMD overlap semantics; real memory growth; traps for
-  integer division by zero, collection bounds, byte memory bounds and invalid
-  float conversions; dynamic minimum arity; Unicode export names; operand
-  validation for flonums, pairs, tagged integers and collections; a plain
-  `ArrayBuffer` fallback when `WebAssembly` is absent; BigInt normalization
-  bounds.
-- **Fixed:** dead-code elimination recognises pure construction in top-level
-  initializers, and no longer swallows observable failures; `define-js`
-  filesystem URLs are percent-encoded; atomic quasiquote mount scanning;
-  `glyphs-dodge!` retires its loop on re-run.
+### API — toolchain
+
+- **`--js`** compiles to a plain-JavaScript ES module, so a page can run where
+  Wasm GC is unavailable. The numeric tower rides native `BigInt`; pairs are
+  tagged object literals; non-self tail calls are trampolined, with the
+  trampoline elided where chains cannot cycle; the kernel ships by reachable
+  group.
+- **`conjure`** and the `define-` family of mount-point wrappers stage
+  compilation into the host page, dispatching on the head's shape, usable inside
+  libraries, with quasiquote suspending a mount and unquote resuming it.
+  `define-js` takes a URL form. `goeteia-mount` assembles the two-artifact
+  section.
+- **`compileGoeteiaFrom`** makes compile-in-the-browser a runtime primitive.
+- `%target-case` selects code per target.
+
+### Fixed — the JS target
+
+SIMD overlap semantics; real memory growth; traps for integer division by zero,
+collection bounds, byte memory bounds and invalid float conversions; dynamic
+minimum arity; Unicode export names; operand validation for flonums, pairs,
+tagged integers and collections; a plain `ArrayBuffer` fallback when
+`WebAssembly` is absent; BigInt normalization bounds.
+
+### Fixed — elsewhere
+
+Dead-code elimination recognises pure construction in top-level initializers,
+and no longer swallows observable failures; `define-js` filesystem URLs are
+percent-encoded; atomic quasiquote mount scanning; `glyphs-dodge!` retires its
+loop on re-run.
 
 ---
 
 ## 1.5.5 — 2026-07-31
 
 *35 commits.* A security and robustness pass, largely from external
-contributions.
+contributions. No API change.
 
-- **Fixed:** dev server path containment; JSON number exponents are bounded;
-  CLI output and playground source are UTF-8; React prop keys and values are
-  tracked; direct scripts with file URLs are detected; comments are skipped in
-  import clauses; UASTC scratch stays inside the decoder; Zstd input and output
-  bounds are enforced (and literal scratch is bounded to the caller's real
-  length); KTX container ranges are validated; each module instance gets
-  isolated memory; scene camera cache keys compare completely; tangent spheres
-  stay inside frustums; command capacity is checked before writes; framebuffers
-  are registered for restarted XR sessions.
+### Fixed
+
+Dev server path containment; JSON number exponents are bounded; CLI output and
+playground source are UTF-8; React prop keys and values are tracked; direct
+scripts with file URLs are detected; comments are skipped in import clauses;
+UASTC scratch stays inside the decoder; Zstd input and output bounds are
+enforced, and literal scratch is bounded to the caller's real length; KTX
+container ranges are validated; each module instance gets isolated memory; scene
+camera cache keys compare completely; tangent spheres stay inside frustums;
+command capacity is checked before writes; framebuffers are registered for
+restarted XR sessions.
 
 ---
 
 ## 1.5.3 — 2026-07-18
 
-*5 commits.*
+*5 commits.* No API change.
 
 - **Fixed:** `(web js)` caches JS `true` / `false` so `->js` never re-enters
   argument marshalling.
@@ -200,7 +230,7 @@ contributions.
 
 ## 1.5.2 — 2026-07-16
 
-*4 commits.*
+*4 commits.* No API change.
 
 - **Changed:** `(gfx glsl)`'s `(fl ...)` takes a width, for fractions with
   leading zeros.
@@ -213,14 +243,23 @@ contributions.
 
 *7 commits.*
 
-- **Added:** `(gfx wgsl)` grows compute — structs, storage arrays, `gid` — one
-  dialect fewer between the two GPU paths; `@media` blocks in `(web component)`
-  carry descendant and pseudo sub-rules, so a component's responsive shape
-  travels with it.
-- **Fixed:** malformed `sgl` forms are named instead of trapping; `(gfx zstd)`
-  handles multi-block frames with persistent entropy state and a bignum-free
-  literals header; `(web glyphs)` calibrates its advance scale against a DOM
-  probe, so canvas drift on Firefox no longer wraps text the browser fits.
+### API
+
+`(gfx wgsl)` gains `wgsl-compute->string`. **1 added, none removed.**
+
+### Added
+
+Compute shaders in `(gfx wgsl)` — structs, storage arrays, `gid` — one dialect
+fewer between the two GPU paths; `@media` blocks in `(web component)` carry
+descendant and pseudo sub-rules, so a component's responsive shape travels with
+it.
+
+### Fixed
+
+Malformed `sgl` forms are named instead of trapping; `(gfx zstd)` handles
+multi-block frames with persistent entropy state and a bignum-free literals
+header; `(web glyphs)` calibrates its advance scale against a DOM probe, so
+canvas drift on Firefox no longer wraps text the browser fits.
 
 ---
 
@@ -228,12 +267,18 @@ contributions.
 
 *11 commits.*
 
-- **Added: script mode.** `(%opt 0)` or `--script` turns the optimization passes
-  off for fast compiles; the cheap older passes stay on.
-- **Added:** `KHR_mesh_quantization` — integer vertex formats — in
-  `(gfx gltf)`; hi-Z occlusion culling and GPU-side back-to-front sorting of
-  translucent instances in `(gfx sgpu)`; static instanced groups in
-  `(gfx scene)` skip the per-frame re-cull and re-upload.
+### API
+
+`(gfx sgpu)` gains `sgpu-occlusion!`. **1 added, none removed.**
+
+### Added
+
+- **Script mode.** `(%opt 0)` or `--script` turns the optimization passes off
+  for fast compiles; the cheap older passes stay on.
+- `KHR_mesh_quantization` — integer vertex formats — in `(gfx gltf)`; hi-Z
+  occlusion culling and GPU-side back-to-front sorting of translucent instances
+  in `(gfx sgpu)`; static instanced groups in `(gfx scene)` skip the per-frame
+  re-cull and re-upload.
 
 ---
 
@@ -241,15 +286,29 @@ contributions.
 
 *12 commits.*
 
-- **Added:** `cond`'s `=>` arrow clauses; `(gfx uastc)` — UASTC LDR 4×4 to RGBA
-  from the basisu transcoder — and end-to-end UASTC KTX2 decoding;
-  `(web component)` with `define-component` and element-attached CSS interned to
-  classes; `(web glyphs)`.
-- **Fixed:** macros defined and used within one library now expand, which
-  removed the in-library caveat from `(web component)`.
-- **Changed:** the site's working parts were extracted into the library —
-  `fx-mesh` handles, `palette->root`, `computed-style` — and fifteen copies of
-  the upload dance in the examples retired.
+### API
+
+**New libraries:** `(gfx uastc)`, `(web component)` — with `define-component` —
+and `(web glyphs)` (7 exports). `(gfx fx)` gains the `fx-mesh` handles
+(`fx-mesh!`, `fx-mesh-use!`, `fx-mesh-draw!`, `fx-mesh-count`, `fx-mesh?`);
+`(gfx ktx)` gains `ktx-uastc?` and `ktx-uastc-level!`; `(web css)` gains
+`palette->root`; `(web dom)` gains `computed-style` and `computed-px`.
+**23 added, none removed.**
+
+### Added
+
+`cond`'s `=>` arrow clauses; UASTC LDR 4×4 to RGBA from the basisu transcoder,
+and end-to-end UASTC KTX2 decoding; element-attached CSS interned to classes.
+
+### Fixed
+
+Macros defined and used within one library now expand, which removed the
+in-library caveat from `(web component)`.
+
+### Changed
+
+The site's working parts moved into the library, and fifteen copies of the
+upload dance in the examples retired.
 
 ---
 
@@ -257,16 +316,28 @@ contributions.
 
 *23 commits.* Compiler codegen and the compressed-asset pipeline.
 
-- **Added:** named lets lower to Wasm loops — no closure, no call per iteration
-  — and loop variables earn typed `f64` / `i32` slots across iterations; flonum
-  function specialization for top-level functions with f64 parameters.
-- **Added:** `mesh-optimize!` (Forsyth vertex-cache ordering, with `mesh-acmr`
-  to prove it), `mesh-remap!`, hierarchical-Z occlusion culling, static welding
-  of strangers into one draw, scene translucency as a back-to-front blended
-  pass, `(gfx sgpu)` — the declarative scene on WebGPU, culled where it lives —
-  and `(gfx meshopt)` and `(gfx zstd)`, both decoders written from the specs.
-- **Changed:** `%f32x4-axpy!` was fused to `relaxed_madd` and then reverted to
-  portable mul+add after cross-engine benchmarks; the benchmark harness ships.
+### API
+
+**New libraries:** `(gfx meshopt)` — the EXT_meshopt_compression decoder —
+`(gfx zstd)` — a Zstandard decompressor from RFC 8878 — and `(gfx sgpu)`, the
+declarative scene on WebGPU. `(gfx mesh)` gains `mesh-optimize!`, `mesh-remap!`
+and `mesh-acmr`; `(gfx gpu)` gains `gpu-hzb!`, `gpu-hzb-init!`,
+`gpu-compute-groupx!`, `gpu-end-pass!`, `gpu-pipeline2-blend!`; `(gfx ktx)`
+gains `ktx-stream!` and `ktx-alpha?`; `(gfx gl)` gains `cmd-depth-write!` and
+`gl-texture-base-level!`. **25 added, none removed.**
+
+### Added
+
+Named lets lower to Wasm loops — no closure, no call per iteration — and loop
+variables earn typed `f64` / `i32` slots across iterations; flonum function
+specialization for top-level functions with f64 parameters; Forsyth vertex-cache
+ordering; hierarchical-Z occlusion culling; static welding of strangers into one
+draw; scene translucency as a back-to-front blended pass.
+
+### Changed
+
+`%f32x4-axpy!` was fused to `relaxed_madd` and then reverted to portable
+mul+add after cross-engine benchmarks; the benchmark harness ships.
 
 ---
 
@@ -274,8 +345,13 @@ contributions.
 
 *3 commits.*
 
-- **Added: the i32 context** — raw machine integers in locals — together with an
-  ordering fix; the transcoder's design notes; `examples/fx-ktx`.
+### API
+
+`(gfx ktx)` gains `ktx-fetch!` and `ktx-upload!`. **2 added, none removed.**
+
+### Added
+
+**The i32 context** — raw machine integers in locals — with an ordering fix.
 
 ---
 
@@ -283,14 +359,26 @@ contributions.
 
 *11 commits.*
 
-- **Added:** `(gfx ktx)` — the Basis Universal transcoder, in Scheme, from the
-  spec; GPU-driven culling with compute-compacted instances and indirect draws;
-  the render loop leaves the main thread (`loadGoeteiaWorker` + `rt/worker.mjs`);
-  WebGPU frame time through timestamp queries.
-- **Changed:** the f64 context widens — per-binding capture, flonum `if`s,
-  unboxed `fl` tests; `%f32x4-dot`; scene matrices cache against a transform
-  generation; singles draw nearest first and textured passes group by texture;
-  animation channels sample through a play cursor.
+### API
+
+**New library:** `(gfx ktx)`, the Basis Universal transcoder written in Scheme
+from the spec (11 exports). `(gfx gpu)` gains `gpu-draw-indirect!`,
+`gpu-draw-indexed-indirect!`, `gpu-indirect!`, `gpu-compute-group*!`,
+`gpu-gpu-timer!`, `gpu-gpu-ms`; `(gfx gl)` gains `gl-texture-compressed!`,
+`gl-compressed-level!`, `gl-compressed-family`. **20 added, none removed.**
+
+### Added
+
+GPU-driven culling with compute-compacted instances and indirect draws; the
+render loop leaves the main thread (`loadGoeteiaWorker` + `rt/worker.mjs`);
+WebGPU frame time through timestamp queries.
+
+### Changed
+
+The f64 context widens — per-binding capture, flonum `if`s, unboxed `fl` tests;
+scene matrices cache against a transform generation; singles draw nearest first
+and textured passes group by texture; animation channels sample through a play
+cursor.
 
 ---
 
@@ -298,13 +386,27 @@ contributions.
 
 *11 commits.*
 
-- **Breaking:** `(web typeset canvas)` flattens to `(web canvas)`.
-- **Breaking (wire format):** `(web sexpr)` and `(web rpc)` encode and decode
-  flonums as `#f8"<IEEE base64>"`.
-- **Changed:** v3 hot paths stop allocating (destructive v3 ops, unboxed culls,
-  scalar slab sweep); the instanced cull goes SIMD; scene frame globals ride one
-  `Env` uniform block; skeletons go SIMD-resident; half-precision vertex streams
-  via `mesh-write-f16!`; texture arrays; GPU frame time in the stats HUD.
+### Breaking
+
+- **`(web typeset canvas)` becomes `(web canvas)`.**
+- **Wire format:** `(web sexpr)` and `(web rpc)` encode and decode flonums as
+  `#f8"<IEEE base64>"`.
+
+### API
+
+`(gfx mat)` gains the destructive v3 operations (`v3-add!`, `v3-sub!`,
+`v3-scale!`, `v3-cross!`, `v3-normalize!`, `v3-copy!`, `v3-set!`),
+`m4s-tqs!` and `sphere-in-frustum-xyz?`; `(gfx gl)` gains the texture-array and
+GPU-timer entries; `(gfx mesh)` gains `mesh-write-f16!` and
+`mesh-vertex-bytes-f16`; `(gfx gltf)` gains `gltf-joint-palette!` and
+`gltf-joint-count`; `(gfx fx)` gains `fx-texture-array!`. **23 added, 1 removed
+(the renamed library).**
+
+### Changed
+
+v3 hot paths stop allocating; the instanced cull goes SIMD; scene frame globals
+ride one `Env` uniform block; skeletons go SIMD-resident; half-precision vertex
+streams; texture arrays; GPU frame time in the stats HUD.
 
 ---
 
@@ -312,9 +414,18 @@ contributions.
 
 *2 commits.*
 
-- **Breaking: the library split.** `(web ...)` becomes `(web ...)`,
-  `(gfx ...)` and `(aud sfx)`. Graphics and audio libraries move out of the
-  `web` prefix.
+### Breaking — the library split
+
+**330 exported names move.** Every graphics library leaves the `web` prefix for
+`gfx`, and audio becomes `(aud sfx)`:
+
+| before | after |
+|---|---|
+| `(web audio)` | `(aud sfx)` |
+| `(web collide)` `(web fx)` `(web gl)` `(web glsl)` `(web gltf)` `(web gpu)` `(web ibl)` `(web mat)` `(web mesh)` `(web post)` `(web scene)` `(web sdf)` `(web sprite)` `(web stats)` `(web wgsl)` `(web xr)` | the same names under `gfx` |
+
+The exported names themselves are unchanged; only the library each lives in
+moved. `(web ...)` keeps the browser and document libraries.
 
 ---
 
@@ -322,9 +433,17 @@ contributions.
 
 *8 commits.*
 
-- **Added:** `m4s` staging matrices and the uniform cache; same-geometry
-  single-draw batching and LOD containers in `(web scene)`; render bundles in
-  `(web gpu)`; the cached shadow map; `fx-skybox` with a sea that mirrors.
+### API
+
+`(web mat)` gains the staging matrices `m4s-identity!`, `m4s-mul!`, `m4s-trs!`,
+`m4s-read`, `m4s-write!`; `(web gpu)` gains `gpu-bundle!` and `gpu-execute!`;
+`(web gl)` gains `cmd-uniform-matrix4s!`. **8 added, none removed.**
+
+### Added
+
+The uniform cache; same-geometry single-draw batching and LOD containers in
+`(web scene)`; render bundles; the cached shadow map; `fx-skybox` with a sea
+that mirrors.
 
 ---
 
@@ -332,18 +451,23 @@ contributions.
 
 *31 commits.* The graphics stack becomes an engine.
 
-- **Added:** `(web post)` post-processing chains — including depth of field,
-  grade and FXAA; `(web ibl)` light probes; MRT and deferred shading;
-  `(web collide)` capsules, swept spheres and move-and-slide; `anim-machine`
-  over glTF clips; `(web scene)` with materials, frustum culling and groups;
-  `(web gpu)` — the command buffer on WebGPU, with depth, indices, a uniform
-  struct, compute passes, instancing and textures; `(web wgsl)` — one shader
-  source, three dialects; `(web sdf)` sharp text; `(web xr)`; `(web stats)`;
-  `(web sexpr)`, an s-expression wire codec matching Igropyr's extended format;
-  the engine layer (fixed timestep, character controller, broadphase); PCSS soft
-  shadows and screen-space reflections.
-- **Added:** the compiler learns Wasm SIMD, and `m4-mul` goes 3.5× wide.
-- **Added:** 32-bit indices — meshes and assets past 65536 vertices.
+### API
+
+**New libraries:** `(web gpu)` — the command buffer on WebGPU, 27 exports —
+`(web post)` (15), `(web xr)` (7), `(web wgsl)`, `(web sexpr)`, `(web stats)`,
+`(web ibl)`, `(web sdf)`. `(web collide)` gains capsules, the swept sphere, the
+character controller and the broadphase grid (13); `(web gl)` gains the 32-bit
+index and MRT entries (7); `(web gltf)` gains the animation state machine (6);
+`(web fx)` gains `fx-loop-fixed!`, `fx-target-mrt!`, `fx-mrt-texture`.
+**89 added, none removed.**
+
+### Added
+
+Post-processing chains including depth of field, grade and FXAA; light probes;
+deferred shading; one shader source in three dialects; sharp SDF text; the
+engine layer (fixed timestep, character controller, broadphase); PCSS soft
+shadows and screen-space reflections; Wasm SIMD in the compiler, with `m4-mul`
+3.5× wide; 32-bit indices for meshes past 65536 vertices.
 
 ---
 
@@ -351,19 +475,36 @@ contributions.
 
 *38 commits.* The 3D renderer.
 
-- **Added:** WebGL 2 and offscreen render targets; instancing; glTF textures,
-  skeletal animation and morph targets; shadow mapping with PCF and cascades;
-  bloom; normal mapping; cube maps; particles; mipmaps; linear-space lighting;
-  MSAA; picking via `m4-inverse` and `m4-unproject`; animation crossfade;
-  frustum culling; Cook-Torrance GGX PBR with the sky as a light probe; terrain
-  from a height function; water; HDR half-float targets; SSAO; point-light
-  shadows; VAOs; UBOs; GPU particles through transform feedback; the ES 3.00
-  GLSL dialect.
-- **Fixed:** the mesh index writer stores u16 pairs as byte stores rather than
-  packed i32; anti-feedback-loop opcodes (`cmd-unbind-texture!`,
-  `cmd-unbind-cubemap!`) for what Chrome rejects.
-- **Changed:** the command region grows from 16 KiB to 64 KiB — the old budget
-  was a 2D budget.
+### API
+
+No new libraries; **74 exports added** to the existing ones. `(web gl)` gains
+26 — instancing, cube maps, UBOs, VAOs, transform feedback, MSAA resolve;
+`(web fx)` gains 17 render-target entries; `(web gltf)` gains 14 —
+`gltf-animate!`, `gltf-animate-blend!`, `gltf-joint-matrices`,
+`gltf-load-textures!`, `gltf-weights!`; `(web mesh)` gains 9 — `mesh-bounds`,
+`mesh-heightmap`, `mesh-tangents`, the PBR and normal-mapping shaders;
+`(web mat)` gains `m4-inverse`, `m4-ortho`, `m4-unproject`,
+`m4-frustum-planes`, `sphere-in-frustum?`; `(web glsl)` gains the ES 3.00
+dialect entries. **None removed.**
+
+### Added
+
+WebGL 2 and offscreen render targets; instancing; glTF textures, skeletal
+animation and morph targets; shadow mapping with PCF and cascades; bloom; normal
+mapping; cube maps; particles; mipmaps; linear-space lighting; MSAA; picking;
+animation crossfade; frustum culling; Cook-Torrance GGX PBR with the sky as a
+light probe; terrain from a height function; water; HDR half-float targets;
+SSAO; point-light shadows; GPU particles through transform feedback.
+
+### Fixed
+
+The mesh index writer stores u16 pairs as byte stores rather than packed i32;
+anti-feedback-loop opcodes (`cmd-unbind-texture!`, `cmd-unbind-cubemap!`) for
+what Chrome rejects.
+
+### Changed
+
+The command region grows from 16 KiB to 64 KiB — the old budget was a 2D budget.
 
 ---
 
@@ -371,11 +512,26 @@ contributions.
 
 *10 commits.*
 
-- **Breaking:** `(web three)` is removed. The Three.js binding is gone; the
-  native stack replaces it.
-- **Added:** `(web typeset)` with kinsoku line breaking; `(web collide)`;
-  `(web audio)`; texture coordinates and a textured lit shader in `(web mesh)`;
-  `(web gltf)` — GLB static meshes from real assets; pointer lock in `(web fx)`.
+### Breaking
+
+**`(web three)` is removed**, with its 6 exports (`s3d`, `three-loop!`,
+`three-ref`, `three-render!`, `three-renderer`, `$s3d-build`). The Three.js
+binding is gone; the native stack replaces it.
+
+### API
+
+**New libraries:** `(web gltf)` — `gltf-parse`, `gltf-fetch!`, `gltf-draw!`,
+`gltf-prims` and the `gprim-` accessors — `(web collide)` — `ray-sphere`,
+`ray-aabb`, `ray-mesh`, `ray-triangle`, `ray-plane`, `sphere-sphere?`,
+`sphere-aabb?`, `aabb-aabb?`, `sphere-aabb-push` — and `(web audio)` —
+`audio-init!`, `beep!`, `play!`, `load-sound!`, `loop-sound!`, `stop-sound!`,
+`audio-time`. `(web mesh)` gains the UV entries; `(web mat)` gains
+`m4-from-quat`; `(web fx)` gains pointer lock. **37 added, 6 removed.**
+
+### Added
+
+`(web typeset)` kinsoku line breaking; a textured lit shader; GLB static meshes
+from real assets.
 
 ---
 
@@ -383,16 +539,25 @@ contributions.
 
 *4 commits.*
 
-- **Added:** the graphics, text and 3D web stack, plus compiler ergonomics.
+### API
+
+**New libraries:** `(web fx)` (24 exports) — the frame loop, programs, targets
+and input — `(web mat)` (23), `(web mesh)` (15), `(web sprite)` (22),
+`(web typeset)` (13), `(web scroll)` (6), `(web scene)` (4),
+`(web typeset canvas)`. `(web gl)` gains 12 command entries; `(web glsl)` gains
+`glsl-attributes` and `glsl-uniforms`. **122 added, none removed.**
+
+### Added
+
+The graphics, text and 3D web stack, plus compiler ergonomics.
 
 ---
 
 ## 1.0.1 — 2026-07-12
 
-*4 commits.*
+*4 commits.* No API change.
 
-- **Changed:** the playground ships inside the npm package; the last `schwasm`
-  names become `goeteia`.
+- **Changed:** the playground ships inside the npm package.
 
 ---
 
@@ -401,20 +566,26 @@ contributions.
 *66 commits.* The first published version: a self-hosting Scheme compiler
 targeting WebAssembly GC, and a web stack written in the language it compiles.
 
-- **The compiler**, in seven milestones: a Scheme subset to Wasm GC end to end;
-  closures, `set!` and top-level variables; strings, symbols and characters;
-  variadic procedures, `apply` and `values`; `read`, `write` and runtime symbol
-  interning; hygienic macros; **self-hosting**. Then `call/cc` as escape
-  continuations over Wasm exception handling, `dynamic-wind`, the numeric tower
-  (bignums, flonums and fixnum fast paths, rationals, complex numbers), vectors,
-  bytevectors, hashtables, `define-record-type`, ports, `guard`/`raise`, the
-  library system with import resolution and splicing, and dead-code elimination
-  with predicate test fusion.
-- **The web stack:** `(web reactive)` fine-grained signals; `(web sx)` reactive
-  DOM templates; `(web react)`; `(web html)`; `(web css)` — every value
-  expressible under one uniform rule; `(web json)`; `(web rpc)`; `(web fetch)`
-  over JSPI; `(web ws)` and `(web sse)`; `(web gl)` — raw WebGL through a
-  command buffer; `(web glsl)`; `(web three)` (removed in 1.1.0).
-- **The toolchain:** `rt/dev.mjs`, a project-agnostic live-reload dev server;
-  the browser playground; the npm package and CLI.
-- Renamed from *schwasm* to **Goeteia** during this cycle.
+### API
+
+**15 libraries, 111 exports.** `(web reactive)` — fine-grained signals, effects
+and batching — `(web sx)` — reactive DOM templates — `(web react)`,
+`(web dom)`, `(web html)`, `(web css)`, `(web js)`, `(web json)`, `(web rpc)`,
+`(web fetch)`, `(web ws)`, `(web sse)`, `(web gl)` — raw WebGL through a
+command buffer — `(web glsl)`, and `(web three)` (removed in 1.1.0).
+
+### The compiler
+
+Seven milestones: a Scheme subset to Wasm GC end to end; closures, `set!` and
+top-level variables; strings, symbols and characters; variadic procedures,
+`apply` and `values`; `read`, `write` and runtime symbol interning; hygienic
+macros; **self-hosting**. Then `call/cc` as escape continuations over Wasm
+exception handling, `dynamic-wind`, the numeric tower (bignums, flonums with
+fixnum fast paths, rationals, complex numbers), vectors, bytevectors,
+hashtables, `define-record-type`, ports, `guard` / `raise`, the library system
+with import resolution and splicing, and dead-code elimination with predicate
+test fusion.
+
+### The toolchain
+
+`rt/dev.mjs`; the browser playground; the npm package and CLI.
