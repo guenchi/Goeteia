@@ -2,10 +2,7 @@
 
 ## 1.5.8 — 2026-09-01
 
-*123 commits.* Numeric and reader conformance. Every change in this release
-landed with a test that was red before it, and the cycle was driven by mutation
-testing: a claim that no mutation could redden was treated as a defect in the
-claim.
+*123 commits.* Numeric and reader conformance.
 
 ### API
 
