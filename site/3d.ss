@@ -209,7 +209,7 @@
 (define-component (layer n title sub)
   (style
     (display flex) (gap (em 1 10)) (align-items baseline)
-    (".n" (flex none) (font-family (var mono)) (font-weight 700) (font-size (em 1 5))
+    (".n" (flex none) (font-family (var mono)) (font-weight 700) (font-size (em 1 5 2))
           (color "#fff") (background (var lapis))
           (width (em 1 90)) (height (em 1 90)) (border-radius (pct 50))
           (display inline-flex) (align-items center) (justify-content center))
@@ -224,7 +224,7 @@
     (".head-row" (display flex) (align-items baseline) (justify-content flex-start)
                  (gap (em 0 70)) (flex-wrap wrap))
     (h1
-     (font-size (em 3)) (margin 0) (font-weight 650) (letter-spacing (em 0 2))
+     (font-size (em 3)) (margin 0) (font-weight 650) (letter-spacing (em 0 2 2))
      (background "linear-gradient(120deg, var(--lapis), var(--azure))")
      (-webkit-background-clip text) (background-clip text) (color transparent))
     (".era" (font-family (var mono)) (font-size (em 0 85)) (color (var dim)))
@@ -245,10 +245,10 @@
      (margin (em 1 40) 0 0) (padding (em 1 30) (em 1 50))
      (background (var bg2)) (border (px 1) solid (var line))
      (border-left (px 4) solid (var lapis)) (border-radius 0 (px 12) (px 12) 0)
-     (box-shadow 0 (px 1) (px 3) (rgba 16 20 42 (dec 0 6))))
+     (box-shadow 0 (px 1) (px 3) (rgba 16 20 42 (dec 0 6 2))))
     (".callout .k" (color (var lapis)) (font-weight 700) (font-size (em 0 80))
-                   (letter-spacing (em 0 8)) (text-transform uppercase))
-    (".callout p" (margin (em 0 50) 0 0) (font-size (em 1 8)))))
+                   (letter-spacing (em 0 8 2)) (text-transform uppercase))
+    (".callout p" (margin (em 0 50) 0 0) (font-size (em 1 8 2)))))
 
 (define page-css
   (string-append (css->string (base-styles 52))

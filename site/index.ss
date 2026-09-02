@@ -36,9 +36,9 @@
     (padding (em 1 80) 0 (em 0 80))
     (".kicker" (font-family (var mono)) (font-size (em 0 76)) (font-weight 600) (letter-spacing (em 0 16)) (text-transform uppercase) (color (var azure)))
     ("h2" (font-size (em 1 55)) (margin (em 0 25) 0 (em 0 40)) (letter-spacing "-.01em"))
-    (".slead" (color (var dim)) (font-size (em 1 5)) (max-width (em 44)) (margin 0))
-    (".slead code" (font-family (var mono)) (color (var lapis)) (font-size (em 0 88)) (background "#eef1f9") (padding (em 0 5) (em 0 35)) (border-radius (px 4)))
-    (".feature .txt code" (font-family (var mono)) (color (var lapis)) (font-size (em 0 88)) (background "#eef1f9") (padding (em 0 5) (em 0 35)) (border-radius (px 4)))
+    (".slead" (color (var dim)) (font-size (em 1 5 2)) (max-width (em 44)) (margin 0))
+    (".slead code" (font-family (var mono)) (color (var lapis)) (font-size (em 0 88)) (background "#eef1f9") (padding (em 0 5 2) (em 0 35)) (border-radius (px 4)))
+    (".feature .txt code" (font-family (var mono)) (color (var lapis)) (font-size (em 0 88)) (background "#eef1f9") (padding (em 0 5 2) (em 0 35)) (border-radius (px 4)))
     (".feature" (display grid) (grid-template-columns "1fr 1fr") (gap (em 2 60)) (align-items center) (margin-top (em 1 40)))
     (".feature > *" (min-width 0))
     (".feature.flip .txt" (order 2))
@@ -52,7 +52,7 @@
     (".feature ul.points > li::before"
      (content "\"→\"") (position absolute) (left 0) (color (var azure)) (font-weight 700))
     (".feature ul.points b" (color (var ink)))
-    (".feature pre" (background (var bg2)) (border (px 1) solid (var line)) (border-radius (px 10)) (padding (em 1 10) (em 1 20)) (overflow-x auto) (font-family (var mono)) (font-size (px 12 50)) (line-height (dec 1 55)) (color (var ink)) (margin 0) (box-shadow 0 (px 1) (px 3) (rgba 16 20 42 (dec 0 6))))
+    (".feature pre" (background (var bg2)) (border (px 1) solid (var line)) (border-radius (px 10)) (padding (em 1 10) (em 1 20)) (overflow-x auto) (font-family (var mono)) (font-size (px 12 50)) (line-height (dec 1 55)) (color (var ink)) (margin 0) (box-shadow 0 (px 1) (px 3) (rgba 16 20 42 (dec 0 6 2))))
     ,@(hl-styles ".feature pre")
     (@media 64
       (".feature" (grid-template-columns "1fr") (gap (em 1 20)))
@@ -426,7 +426,7 @@ $ node rt/run.mjs fact.wasm
     (".hero" (text-align center))
     (".hero h1"
      (font-family "\"Times New Roman\", Times, serif")
-     (font-size (em 4)) (margin 0) (font-weight 400) (letter-spacing (em 0 2))
+     (font-size (em 4)) (margin 0) (font-weight 400) (letter-spacing (em 0 2 2))
      (background "linear-gradient(120deg, var(--lapis), var(--azure))")
      (-webkit-background-clip text) (background-clip text) (color transparent))
     (".hero .tagline" (color (var dim)) (font-size (em 1 20)) (margin-top (em 0 70)))
@@ -468,7 +468,7 @@ $ node rt/run.mjs fact.wasm
     (".code .hl"
      (position absolute) (inset 0) (z-index 0) (overflow hidden)
      (border-color (var line)) (background (var bg2)) (color (var ink))
-     (pointer-events none) (box-shadow inset 0 (px 1) (px 3) (rgba 16 20 42 (dec 0 6))))
+     (pointer-events none) (box-shadow inset 0 (px 1) (px 3) (rgba 16 20 42 (dec 0 6 2))))
     (".code textarea"
      (position relative) (z-index 1) (width (pct 100)) (display block)
      (background transparent) (color transparent) (caret-color (var ink))

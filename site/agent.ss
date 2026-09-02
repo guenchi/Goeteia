@@ -148,7 +148,7 @@
 (define agent-styles
   `((header (padding (em 5) 0 (em 2 50)) (text-align center))
     (h1
-     (font-size (em 3)) (margin 0) (font-weight 650) (letter-spacing (em 0 2))
+     (font-size (em 3)) (margin 0) (font-weight 650) (letter-spacing (em 0 2 2))
      (background "linear-gradient(120deg, var(--lapis), var(--azure))")
      (-webkit-background-clip text) (background-clip text) (color transparent))
     (".tagline" (color (var dim)) (font-size (em 1 15)) (margin-top (em 0 70)))
@@ -165,7 +165,7 @@
     (".agent"
      (background (var bg2)) (border (px 1) solid (var line))
      (border-radius (px 14)) (padding (em 1 60) (em 1 60) (em 1 80))
-     (box-shadow 0 (px 1) (px 3) (rgba 16 20 42 (dec 0 6)))
+     (box-shadow 0 (px 1) (px 3) (rgba 16 20 42 (dec 0 6 2)))
      (margin-top (em 1 60)))
     (".agent-head"
      (display flex) (align-items flex-start) (justify-content space-between)
