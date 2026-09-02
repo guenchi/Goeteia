@@ -1,5 +1,46 @@
 # Changelog
 
+## 1.6.0 — 2026-09-02
+
+*3 commits.* One notation change, made deliberately.
+
+### Breaking
+
+**A unit's fraction is its digits as written, not hundredths.** In
+`(web css)`, `(em 3 4)` is now `3.4em`; it used to be `3.04em`. The
+optional third operand is the fraction's minimum width, so `(em 3 4 2)`
+is `3.04em` — the model the shader literal `(fl W F [width])` already
+used, and the two now share one implementation. Every one of the
+fourteen units and the unitless `(dec …)` form changes together.
+
+*Migration:* any call whose fraction has fewer digits than intended —
+in practice a single digit that meant hundredths, including spellings
+with a leading zero such as `(em 0 02)`, which the reader already read
+as `2` — gains an explicit width of `2`. Fractions written with two or
+more digits (`(em 0 90)`, `(em 3 40)`, `(em 0 625)`) render as before.
+The migrated form `(em 0 2 2)` renders identically under 1.5.x and
+1.6.0, so call sites can be migrated before upgrading.
+
+A unit form now refuses extra operands, a negative or non-integer
+fraction (the sign belongs to the whole part), and a non-integer width,
+where it used to ignore them. A zero fraction renders as the whole part
+alone (`1em`, not `1.em`).
+
+### API
+
+`(web frac)` is new: `frac-digits`, the single renderer of a fraction's
+digits — pad to the minimum width first, then drop trailing zeros — used
+by `(web css)` and `(gfx glsl)` (and through it `(gfx wgsl)`). Its
+contract stops at the digits: CSS drops the decimal point on an empty
+fraction, GLSL writes `1.0`, and the helper decides neither.
+
+### Changed
+
+The LLM-facing documents under `docs/llm` state the new rule and the
+third operand. Each document's byte budget is now recorded in exactly
+one place, and a budget failure names what to do instead of the number
+to raise.
+
 ## 1.5.8 — 2026-09-01
 
 *123 commits.* Numeric and reader conformance.
