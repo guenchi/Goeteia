@@ -23,7 +23,7 @@
 ;;   (dec 1 60)        -> "1.6"   ; a unitless decimal (line-height)
 ;;   (var ink)         -> "var(--ink)"
 ;;   (calc V ...)      -> "calc(V ...)"
-;;   (rgba 16 20 42 (dec 0 6)) -> "rgba(16,20,42,0.06)"  ; alpha
+;;   (rgba 16 20 42 (dec 0 6)) -> "rgba(16,20,42,0.6)"   ; alpha
 ;;   (A B ...)         -> "A B ..."  ; a space-joined compound value
 ;; @media / @keyframes / @supports nest rules.
 ;;
@@ -114,7 +114,7 @@
         (cond
          (u (unit->css (cdr v) (cdr u)))
          ;; a unitless decimal, same whole/frac convention as units:
-         ;; (dec 0 6) -> "0.06" (rgba alpha), (dec 1 6) -> "1.6" (line-height)
+         ;; (dec 0 6) -> "0.6" (rgba alpha), (dec 1 6) -> "1.6" (line-height)
          ((eq? h 'dec) (unit->css (cdr v) ""))
          ((eq? h 'var) (string-append "var(--" (symbol->string (cadr v)) ")"))
          ((eq? h 'calc) (string-append "calc(" (join (map val->css (cdr v)) " ") ")"))
