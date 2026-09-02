@@ -3,7 +3,12 @@
 // and pressing Run recompiles (~15 ms) and re-renders in place.
 // Copyright (c) 2026 guenchi. MIT license; see LICENSE.
 
-import { makeJsBridge, jsBridgeStubs } from './rt/jsbridge.mjs';
+// Everything Goeteia-versioned comes from one CDN prefix -- the loader
+// bridge, the compiler snapshot, and the prelude and library SOURCES the
+// in-browser compiler is fed -- so the three can never be different
+// versions of each other.  Bump this one string to move the page.
+const CDN = 'https://cdn.goeteia.dev/1.5.8';
+import { makeJsBridge, jsBridgeStubs } from 'https://cdn.goeteia.dev/1.5.8/jsbridge.mjs';
 
 // the library sources, prefetched once at boot; each compile resolves
 // the source's (import ...) forms against this set and inlines ONLY
@@ -43,11 +48,11 @@ const libSources = new Map();           // 'lib/web/sx.ss' -> source text
 
 export async function boot() {
     const [wasm, prelude, ...texts] = await Promise.all([
-        fetch('goeteia.wasm').then(r => {
-            if (!r.ok) throw new Error('goeteia.wasm not found');
+        fetch(CDN + '/goeteia.wasm').then(r => {
+            if (!r.ok) throw new Error(CDN + '/goeteia.wasm not found');
             return r.arrayBuffer();
         }),
-        ...LIB_FILES.map(p => fetch(p).then(r => r.text())),
+        ...LIB_FILES.map(p => fetch(CDN + '/' + p).then(r => r.text())),
     ]);
     compilerBytes = wasm;
     preludeText = prelude;              // LIB_FILES[0] is the prelude
