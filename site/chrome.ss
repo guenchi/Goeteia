@@ -108,6 +108,7 @@
            (a (@ (class ,(nav-class active '3d)) (href "3d.html")) "3D")
            (a (@ (class ,(nav-class active 'manual)) (href "manual.html")) "Manual")
            (a (@ (class ,(nav-class active 'agent)) (href "agent.html")) "Agents")
+           (a (@ (class ,(nav-class active 'changelog)) (href "changelog.html")) "Changelog")
            (a (@ (class "gh") (href "https://github.com/guenchi/Goeteia")) "GitHub")))))
 
   ;; a floating page badge in the top-right corner (not a nav item).

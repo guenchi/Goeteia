@@ -7,7 +7,7 @@
 # compile step, no hand-written loader script.
 set -e
 cd "$(dirname "$0")"
-for p in index why 3d agent manual; do
+for p in index why 3d agent manual changelog; do
     node rt/compile.mjs goeteia.wasm "site/$p.ss" "/tmp/$p.wasm"
     node rt/run.mjs "/tmp/$p.wasm"
     echo "built $p.html ($(wc -c < "$p.html" | tr -d ' ') bytes)"
