@@ -18,15 +18,12 @@
     "pack": "goeteia pack page.ss out.html [--selfcheck]",
     "note": "verify compiles the source with the self-hosted compiler and drives the result in one step; its verdict format and check-spec schema are documented in docs/verify.md"
   },
-  "budgets": {
-    "core.md": 9216,
-    "tier": 6144
-  },
   "files": [
     {
       "path": "core.md",
       "bytes": 9215,
       "budget": 9216,
+      "budget_note": "core.md sits at the cap; adding needs tightening or splitting a section out, not raising this number -- the cap is the ceiling on what every task injects, so raising it enlarges every injection at once",
       "layer": 0,
       "role": "always inject: the browser-half page shape and its two hosts, the (web dom) vocabulary, import sets, the DO/DONT table"
     },

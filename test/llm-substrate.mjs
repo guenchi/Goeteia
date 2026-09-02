@@ -93,14 +93,68 @@ test('docs/llm: the directory holds exactly what the manifest lists', () => {
             `manifest.json names ${f}, which is not in docs/llm/examples/`);
 });
 
+// The message an editor reads when they blow a budget, and the ONLY
+// place it is built.  A budget is a ruling about what may be injected
+// with every request, so the reflex on hitting it -- raise the number --
+// is the one move that is wrong, and the number is the only thing the
+// old message said.  A file may carry a `budget_note` saying what to do
+// instead, and it is spoken here, at the line the editor actually hits,
+// rather than waiting in a manifest they have no reason to open.
+//
+// This is a function and not an inline template because the cells below
+// check that the note travels.  Checking a second copy of the format
+// string would prove that the copy works.
+function overBudget(f, real) {
+    const say = `${f.path} is ${real} bytes, over its ${f.budget}-byte budget`;
+    return f.budget_note ? `${say}. ${f.budget_note}` : say;
+}
+
+test('docs/llm: a budget refusal carries its ruling to the editor', () => {
+    // the note reaches the message ...
+    const withNote = overBudget(
+        { path: 'x.md', budget: 1, budget_note: 'SPLIT-A-SECTION-OUT' }, 2);
+    assert.match(withNote, /SPLIT-A-SECTION-OUT/);
+    // ... and its absence is visible, so this cell cannot pass by the
+    // message happening to contain the text some other way.
+    const without = overBudget({ path: 'x.md', budget: 1 }, 2);
+    assert.doesNotMatch(without, /SPLIT-A-SECTION-OUT/);
+    assert.ok(!/\.\s*$/.test(without),
+        'a file with no note must not get a message ending in a dangling period');
+
+    // A field nothing populates would make the two lines above a test of
+    // an unused code path, so: the file that is actually at its cap has
+    // one, and it says something.
+    const core = manifest.files.find(f => f.path === 'core.md');
+    assert.ok(core, 'core.md is not in the manifest');
+    assert.ok(core.budget_note && core.budget_note.length > 20,
+        'core.md sits at its byte cap and carries no budget_note to say what '
+        + 'to do about it -- the editor who hits the budget will read a number '
+        + 'and raise it');
+    assert.match(overBudget(core, core.budget + 1), /tightening|splitting/);
+});
+
+test('docs/llm: a budget is written in exactly one place', () => {
+    // There was a top-level `budgets` block repeating these numbers, and
+    // the suite read only the per-file `budget`.  Two fields holding one
+    // value with no assertion between them: the copy could drift, and the
+    // drifted copy would still look authoritative while governing
+    // nothing.  It is gone, and this keeps it gone.
+    assert.ok(!('budgets' in manifest),
+        'a top-level `budgets` block is back; the budget the suite enforces '
+        + 'is each file\'s own `budget` field, and a second copy of it is a '
+        + 'number that looks authoritative and governs nothing');
+    for (const f of manifest.files)
+        assert.equal(typeof f.budget, 'number',
+            `${f.path} has no budget of its own`);
+});
+
 test('docs/llm: the manifest describes the files that are actually there', () => {
     assert.ok(manifest.files.length >= 2, 'the manifest lists no documents');
     for (const f of manifest.files) {
         const real = bytesOf(f.path);
         assert.equal(f.bytes, real,
             `manifest says ${f.path} is ${f.bytes} bytes; it is ${real}`);
-        assert.ok(real <= f.budget,
-            `${f.path} is ${real} bytes, over its ${f.budget}-byte budget`);
+        assert.ok(real <= f.budget, overBudget(f, real));
         if (!f.example) continue;
         const ex = bytesOf(f.example);
         assert.equal(f.example_bytes, ex,
