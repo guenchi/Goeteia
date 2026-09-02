@@ -17,7 +17,7 @@ from a tagged source tree; a directory here is never rebuilt in place.
 Usage, from any page:
 
     <script type="module">
-      import { loadGoeteiaAuto } from 'https://cdn.goeteia.dev/1.5.8/rt/web.mjs';
+      import { loadGoeteiaAuto } from 'https://cdn.goeteia.dev/1.6.0/rt/web.mjs';
       loadGoeteiaAuto('./app.wasm', './app.js');   // wasm on WasmGC engines, else the --js build
     </script>
 
@@ -29,3 +29,8 @@ browser.  They ship in the npm package.
 bytes: the subdomain is a Cloudflare URL rewrite that prefixes `/cdn`
 before the request reaches the site, so the immutable caching and
 CORS headers declared for `/cdn/*` apply to both.
+
+## Versions
+
+    1.6.0   (web css) unit fractions are digits as written, with an optional minimum width -- the (fl W F [width]) model; breaking for single-digit fractions
+    1.5.8   first published version

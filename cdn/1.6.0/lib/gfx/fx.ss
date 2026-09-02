@@ -1,0 +1,676 @@
+;; The effects harness over (gfx gl): programs that wire themselves.
+;;
+;; A shader authored as (gfx glsl) forms already declares its
+;; interface; fx reads the attribute/uniform declarations back out of
+;; the same forms and does the bookkeeping that gl-particles.ss does
+;; by hand -- attribute locations and interleaved offsets, uniform
+;; slots, resource slot numbers, staging-memory layout, the rAF loop:
+;;
+;;   (fx-init! canvas)
+;;   (define q (fx-fullscreen! fragment-forms))   ; a shadertoy in ~15 lines
+;;   (fx-loop! (lambda (t dt)
+;;               (fx-fullscreen-use! q t)
+;;               (fx-fullscreen-draw! q)))
+;;
+;; Slot numbers are owned by fx from (fx-init!) on: create resources
+;; through fx-program!/fx-buffer!/fx-texture!, not with hand-numbered
+;; gl-buffer! calls, or the two schemes collide.  Staging memory is
+;; owned the same way: bytes [0, 64KiB) are the command region,
+;; fx-alloc! hands out what lies above and grows the memory as
+;; needed.  A rebuild loop brackets its allocations with (fx-mark)
+;; and (fx-release! m) so the bytes come back.
+;;
+;; fx-ticks! (the timing pump: t and dt in seconds, no GL) and
+;; fx-init-input! (polled keys and pointer) work without fx-init!'s
+;; GL attachment, so a Three.js scene can use them too: pass the
+;; renderer's domElement to fx-init-input!.
+;;
+;; Every float that reaches the command encoder is coerced here --
+;; %mem-f32-set! traps on fixnums, so user code may pass either.
+;;
+;; Copyright (c) 2026 guenchi. MIT license; see LICENSE.
+(library (gfx fx)
+  (export fx-init! fx-slot! fx-alloc! fx-mark fx-release!
+          fx-buffer! fx-texture!
+          fx-texture-array!
+          fx-mesh! fx-mesh? fx-mesh-use! fx-mesh-draw! fx-mesh-count
+          fx-width fx-height
+          fx-target! fx-target-hdr! fx-target-msaa! fx-resolve!
+          fx-target-mrt! fx-mrt-texture
+          fx-cube-target! fx-bind-cube-face!
+          fx-target? fx-target-texture
+          fx-target-width fx-target-height
+          fx-bind-target! fx-bind-canvas! fx-read-target!
+          fx-program! fx-program3! fx-tf-program! fx-ubo!
+          fx-program? fx-program-slot fx-program-stride
+          fx-program-attribute-names fx-program-attribute-schema
+          fx-program-istride fx-program-blocks
+          fx-use! fx-use-instanced! fx-uniform! fx-uniform?
+          fx-ticks! fx-loop! fx-loop-fixed!
+          fx-init-input! key-down? pointer-x pointer-y pointer-down?
+          pointer-lock! pointer-locked? pointer-motion!
+          fx-fullscreen! fx-quad-program
+          fx-fullscreen-use! fx-fullscreen-draw!)
+  (import (rnrs) (web js) (gfx gl) (gfx glsl) (gfx mat) (gfx mesh))
+
+  (define ($fx-fl v) (if (flonum? v) v (exact->inexact v)))
+
+  ;; ---- init, slots, staging-memory allocation ----
+  (define $fx-cmd-limit 65536)          ; command region [0, 64KiB)
+  (define $fx-canvas #f)
+  (define $fx-slot 0)
+  (define $fx-heap 65536)
+  (define $fx-owner (js-global))
+
+  (define ($fx-gen owner)
+    (let ((g (js-get owner "goeteiaFxGeneration")))
+      (if (js-truthy? g) (js->number g) 0)))
+
+  ;; the VAO cache: (program, buffer, instance buffer) -> vao slot
+  (define $fx-vaos (make-eq-hashtable))
+
+  ;; An optional owner scopes loop retirement, for a page running two
+  ;; independent widgets that must not retire each other: pass the node
+  ;; that OUTLIVES the runs -- a container you keep, never one the run
+  ;; itself creates.  The default is deliberately the global scope: on a
+  ;; live page every run builds a fresh subtree, so scoping to anything
+  ;; the run made (the canvas, its parent) hands each run a private
+  ;; counter and no run can ever retire the one before it -- the leak
+  ;; this counter exists to prevent.
+  (define (fx-init! canvas . owner)
+    (set! $fx-canvas canvas)
+    (set! $fx-owner (if (pair? owner) (car owner) (js-global)))
+    (gl-attach! canvas)
+    (set! $fx-slot 0)
+    (set! $fx-heap $fx-cmd-limit)
+    (set! $fx-vaos (make-eq-hashtable))
+    ;; 128 bytes of scratch turn every m4-mul into wasm SIMD
+    (m4-scratch! (fx-alloc! 128))
+    ;; a fresh init retires loops from any earlier run of this mount
+    ;; (live editors re-run whole programs; fx-ticks! checks this).
+    ;; The key is deliberately OUTSIDE the __goeteia_ namespace: the
+    ;; bridge keeps that private per module instance, so a counter
+    ;; living there could never retire a previous instance's loop --
+    ;; exactly the case a live page hits on every demo switch.
+    (js-set! $fx-owner "goeteiaFxGeneration" (+ 1 ($fx-gen $fx-owner)))
+    (cmd-region! 0 $fx-cmd-limit))
+
+  (define (fx-slot!)
+    (unless $fx-canvas (error 'fx-slot! "call fx-init! first"))
+    (let ((s $fx-slot)) (set! $fx-slot (+ s 1)) s))
+
+  (define (fx-alloc! bytes)             ; 8-aligned bump; grows memory
+    (let* ((r (remainder $fx-heap 8))
+           (base (if (= r 0) $fx-heap (+ $fx-heap (- 8 r))))
+           (end (+ base bytes))
+           (have (* 65536 (%mem-size))))
+      (when (> end have)
+        (%mem-grow (quotient (+ (- end have) 65535) 65536)))
+      (set! $fx-heap end)
+      base))
+
+  ;; ---- water marks: the bump heap's one form of release ----
+  ;; (fx-mark) reads the current water level; (fx-release! m) drops
+  ;; the level back to m, so the next fx-alloc! hands those bytes
+  ;; out again.  That is the whole mechanism: no per-object free, no
+  ;; second arena, no compaction.
+  ;;
+  ;; The discipline is the caller's, and it is absolute: EVERYTHING
+  ;; allocated after the mark dies at the release, at once and
+  ;; without a trace.  Nothing warns you -- the bytes are simply
+  ;; handed out again and overwritten by whatever comes next.  Pose
+  ;; arenas, joint palettes, resident mesh bases, readback buffers,
+  ;; any staging address a record still carries: after the release
+  ;; every one of them points at somebody else's data.  So mark
+  ;; before building a set of assets, release when tearing that
+  ;; whole set down, and drop the handles in the same breath.  A
+  ;; mark taken before an allocation that outlives the release is a
+  ;; use-after-free with no diagnostic.
+  ;;
+  ;; Wasm memory itself never shrinks; only the pointer moves.  Peak
+  ;; occupancy is therefore the highest water level ever reached,
+  ;; not the sum of everything ever allocated -- which is exactly
+  ;; what makes a rebuild loop bounded instead of unbounded.
+  (define (fx-mark) $fx-heap)
+
+  ;; A mark below the command region would hand the encoder's own
+  ;; bytes out as staging; one above the current level would hand
+  ;; out memory that was never allocated.  Both report the offered
+  ;; mark and the level it was measured against.
+  (define (fx-release! m)
+    (when (< m $fx-cmd-limit)
+      (error 'fx-release! "mark below the command region" m $fx-heap))
+    (when (> m $fx-heap)
+      (error 'fx-release! "mark above the current water level" m $fx-heap))
+    (set! $fx-heap m))
+
+  (define (fx-buffer!) (let ((s (fx-slot!))) (gl-buffer! s) s))
+  (define (fx-texture!) (let ((s (fx-slot!))) (gl-texture! s) s))
+  (define (fx-ubo! bytes) (let ((s (fx-slot!))) (gl-ubo! s bytes) s))
+  ;; many same-size images behind one bind; fill layers with
+  ;; gl-texture-layer!/-data!, sample with sampler2DArray
+  (define (fx-texture-array! w h layers)
+    (let ((s (fx-slot!))) (gl-texture-array! s w h layers) s))
+
+  ;; ---- mesh handles: the upload dance every demo used to repeat ----
+  ;; (fx-mesh! m) takes a (gfx mesh) mesh, allocates its buffers and
+  ;; stages the data; (fx-mesh-use! prog h) binds it for drawing --
+  ;; the upload itself happens once, lazily, inside the first frame;
+  ;; (fx-mesh-draw! h) issues the indexed triangles.  Bind once, set
+  ;; uniforms and draw as many times as the scene needs.
+  (define-record-type ($fx-mesh $make-fx-mesh fx-mesh?)
+    (fields (immutable vbuf $fx-mesh-vbuf) (immutable ibuf $fx-mesh-ibuf)
+            (immutable vbase $fx-mesh-vbase) (immutable ibase $fx-mesh-ibase)
+            (immutable vbytes $fx-mesh-vbytes) (immutable ibytes $fx-mesh-ibytes)
+            (immutable count fx-mesh-count)
+            (mutable up $fx-mesh-up $fx-mesh-up!)))
+
+  (define (fx-mesh! m)
+    (let* ((vbuf (fx-buffer!)) (ibuf (fx-buffer!))
+           (vbase (fx-alloc! (mesh-vertex-bytes m)))
+           (ibase (fx-alloc! (mesh-index-bytes m))))
+      (mesh-write! m vbase ibase)
+      ($make-fx-mesh vbuf ibuf vbase ibase (mesh-vertex-bytes m)
+                     (mesh-index-bytes m) (mesh-index-count m) #f)))
+  (define (fx-mesh-use! prog h)
+    (fx-use! prog ($fx-mesh-vbuf h))
+    (cmd-bind-index! ($fx-mesh-ibuf h))
+    (unless ($fx-mesh-up h)
+      (cmd-buffer-data! ($fx-mesh-vbase h) ($fx-mesh-vbytes h))
+      (cmd-index-data! ($fx-mesh-ibase h) ($fx-mesh-ibytes h))
+      ($fx-mesh-up! h #t)))
+  (define (fx-mesh-draw! h)
+    (cmd-draw-elements! GL-TRIANGLES (fx-mesh-count h)))
+
+  ;; ---- offscreen render targets (webgl2) ----
+  (define-record-type (fx-target $make-fx-target fx-target?)
+    (fields (immutable fb $fx-target-fb)
+            (immutable tex fx-target-texture)  ; sample it like any texture
+            (immutable w fx-target-width)
+            (immutable h fx-target-height)
+            (immutable rfb $fx-target-rfb)))   ; msaa resolve fb, or #f
+
+  (define (fx-target! w h . depth-only?)
+    (let* ((fb (fx-slot!))
+           (tex (fx-slot!)))
+      (if (and (pair? depth-only?) (car depth-only?))
+          (gl-target! fb tex w h #t)
+          (gl-target! fb tex w h))
+      ($make-fx-target fb tex w h #f)))
+
+  ;; a half-float target: values past 1.0 survive for bloom and
+  ;; tonemapping (WebGL 2 + EXT_color_buffer_float)
+  (define (fx-target-hdr! w h)
+    (let* ((fb (fx-slot!))
+           (tex (fx-slot!)))
+      (gl-target-hdr! fb tex w h)
+      ($make-fx-target fb tex w h #f)))
+
+  ;; a multi render target: n half-float attachments behind one
+  ;; framebuffer -- the G-buffer of deferred shading.  A fragment
+  ;; shader with (out 0 ...) (out 1 ...) forms (fx-program3!) fills
+  ;; every attachment in one pass; (fx-mrt-texture t i) is the
+  ;; texture that caught output i
+  (define (fx-target-mrt! n w h)
+    (let* ((fb (fx-slot!))
+           (t0 (fx-slot!)))
+      (let eat ((k 1)) (when (< k n) (fx-slot!) (eat (+ k 1))))
+      (gl-target-mrt! fb t0 n w h)
+      ($make-fx-target fb t0 w h #f)))
+  (define (fx-mrt-texture t i) (+ (fx-target-texture t) i))
+
+  ;; a cube target: six faces around a point.  Bind face i, render
+  ;; the world as the light sees it, then sample the texture with a
+  ;; direction -- point-light shadows
+  (define (fx-cube-target! dim)
+    (let* ((fb (fx-slot!)))
+      (let eat ((k 1)) (when (< k 6) (fx-slot!) (eat (+ k 1))))
+      (let ((tex (fx-slot!)))
+        (gl-cube-target! fb tex dim)
+        ($make-fx-target fb tex dim dim #f))))
+  (define (fx-bind-cube-face! t i)
+    (cmd-bind-target! (+ ($fx-target-fb t) i))
+    (cmd-viewport! 0 0 (fx-target-width t) (fx-target-height t)))
+
+  ;; a multisampled target: render as usual, call (fx-resolve! t)
+  ;; when the passes into it are done, then sample its texture
+  (define (fx-target-msaa! w h samples)
+    (let* ((fb (fx-slot!))
+           (rfb (fx-slot!))
+           (tex (fx-slot!)))
+      (gl-target-msaa! fb rfb tex w h samples)
+      ($make-fx-target fb tex w h rfb)))
+
+  (define (fx-resolve! t)
+    (unless ($fx-target-rfb t)
+      (error 'fx-resolve! "not a multisampled target"))
+    (cmd-resolve! ($fx-target-fb t) ($fx-target-rfb t)
+                  (fx-target-width t) (fx-target-height t)))
+
+  ;; the whole image of a target, back in the staging memory: w*h*4
+  ;; RGBA8 bytes at `base` (allocate it with fx-alloc!), readable with
+  ;; %mem-u8-ref as soon as the frame's cmd-flush! returns.  Rows
+  ;; arrive bottom-up, GL's own order.
+  ;;
+  ;; Like fx-bind-target!, this CHANGES the framebuffer binding and
+  ;; leaves it changed -- the read has to happen with the target bound,
+  ;; and restoring would have to guess what to restore to.  Unlike
+  ;; fx-bind-target! it does not touch the viewport, so anything drawn
+  ;; after it must rebind (fx-bind-target! / fx-bind-canvas!) first.
+  ;;
+  ;; A multisampled target reads through its RESOLVE framebuffer,
+  ;; which only holds the passes that (fx-resolve! t) has already
+  ;; blitted into it: resolve first, or read a stale image.
+  (define (fx-read-target! t base)
+    (cmd-bind-target! (or ($fx-target-rfb t) ($fx-target-fb t)))
+    (cmd-read-pixels! 0 0 (fx-target-width t) (fx-target-height t) base))
+
+  ;; binding also sets the viewport to match
+  (define (fx-bind-target! t)
+    (cmd-bind-target! ($fx-target-fb t))
+    (cmd-viewport! 0 0 (fx-target-width t) (fx-target-height t)))
+  (define (fx-bind-canvas!)
+    (cmd-bind-canvas!)
+    (cmd-viewport! 0 0 (fx-width) (fx-height)))
+
+  (define (fx-width) (js->number (js-get $fx-canvas "width")))
+  (define (fx-height) (js->number (js-get $fx-canvas "height")))
+
+  ;; ---- programs wired from their own glsl forms ----
+  ;; attributes named i_* are PER-INSTANCE: they get their own buffer,
+  ;; stride and divisor through fx-use-instanced!
+  (define-record-type (fx-program $make-fx-program fx-program?)
+    (fields (immutable slot fx-program-slot)
+            (immutable stride fx-program-stride)      ; per-vertex bytes
+            (immutable attribs $fx-program-attribs)   ; ((loc size offset) ...)
+            (immutable istride fx-program-istride)    ; per-instance bytes
+            (immutable iattribs $fx-program-iattribs)
+            (immutable uniforms $fx-program-uniforms)  ; name -> (slot . type)
+            ;; name -> last encoded value: same value, no command.
+            ;; GL uniform state is per-program and persistent, so a
+            ;; skipped re-send is exactly free
+            (immutable ucache $fx-program-ucache)
+            ;; vertex attributes in declaration order as
+            ;; (name . components) -- strides collide (tangent and
+            ;; color are both vec4) and so do wrong widths that
+            ;; cancel out (vec2+vec4 spans the same 24 bytes as
+            ;; vec3+vec3), so the contract is per-attribute
+            (immutable aschema fx-program-attribute-schema)
+            ;; the uniform BLOCK names the shaders declare, in
+            ;; order.  Block members never reach the uniform table
+            ;; (they have no location of their own), so a renderer
+            ;; asking "does this program carry X?" has to ask this
+            ;; when X lives in a block -- and the two questions stay
+            ;; mutually exclusive, which is what lets a caller pick
+            ;; an upload path without consulting declaration order
+            (immutable blocks fx-program-blocks)))
+
+  ;; just the names, in order
+  (define (fx-program-attribute-names prog)
+    (map car (fx-program-attribute-schema prog)))
+
+  (define ($fx-instance-name? n)        ; i_offset, i_tint, ...
+    (let ((s (symbol->string n)))
+      (and (>= (string-length s) 2)
+           (char=? (string-ref s 0) #\i)
+           (char=? (string-ref s 1) #\_))))
+
+  (define ($fx-attr-names as)           ; "a_pos,a_uv,..." for binding
+    (if (null? as)
+        ""
+        (fold-left (lambda (acc a)
+                     (string-append acc "," (symbol->string (car a))))
+                   (symbol->string (caar as))
+                   (cdr as))))
+
+  (define (fx-program! vs-forms fs-forms)
+    ($fx-program-src! vs-forms fs-forms
+                      (glsl->string vs-forms) (glsl->string fs-forms)))
+  ;; the same wiring from the same forms, rendered as ESSL 3.00 --
+  ;; for shaders that need uniform blocks or transform feedback
+  (define (fx-program3! vs-forms fs-forms)
+    ($fx-program-src! vs-forms fs-forms
+                      (glsl300-vs->string vs-forms)
+                      (glsl300-fs->string fs-forms)))
+
+  ;; a transform-feedback program: ESSL 3.00, and every varying the
+  ;; vertex shader declares is captured, interleaved, into the bound
+  ;; buffer -- the GPU-side particle update step
+  (define (fx-tf-program! vs-forms fs-forms)
+    ($fx-program-mk! vs-forms fs-forms
+                     (glsl300-vs->string vs-forms)
+                     (glsl300-fs->string fs-forms)
+                     (fold-left (lambda (acc v)
+                                  (if (string=? acc "")
+                                      (symbol->string v)
+                                      (string-append
+                                       acc "," (symbol->string v))))
+                                "" (glsl-varyings vs-forms))))
+
+  (define ($fx-program-src! vs-forms fs-forms vs-src fs-src)
+    ($fx-program-mk! vs-forms fs-forms vs-src fs-src #f))
+
+  (define ($fx-program-mk! vs-forms fs-forms vs-src fs-src tf)
+    (let* ((pslot (fx-slot!))
+           (as (glsl-attributes vs-forms)))
+      (if tf
+          (gl-tf-program! pslot vs-src fs-src ($fx-attr-names as) tf)
+          (gl-program! pslot vs-src fs-src ($fx-attr-names as)))
+      (let ((uniforms (make-eq-hashtable)))
+        (for-each (lambda (u)
+                    (unless (hashtable-contains? uniforms (car u))
+                      (let ((s (fx-slot!)))
+                        (gl-uniform! s pslot (symbol->string (car u)))
+                        (hashtable-set! uniforms (car u)
+                                        (cons s (cadr u))))))
+                  (append (glsl-uniforms vs-forms) (glsl-uniforms fs-forms)))
+        ;; locations follow declaration order; vertex and instance
+        ;; attributes each get their own interleaved layout
+        (let ((as0 as))
+        (let loop ((as as) (loc 0) (voff 0) (ioff 0) (vacc '()) (iacc '()))
+          (if (null? as)
+              ($make-fx-program pslot voff (reverse vacc)
+                                ioff (reverse iacc) uniforms
+                                (make-eq-hashtable)
+                                (map (lambda (a)
+                                       (cons (car a) (caddr a)))
+                                     (filter (lambda (a)
+                                               (not ($fx-instance-name?
+                                                     (car a))))
+                                             as0))
+                                (map car
+                                     (append
+                                      (glsl-uniform-blocks vs-forms)
+                                      (glsl-uniform-blocks fs-forms))))
+              (let ((n (caar as)) (size (caddr (car as))))
+                (if ($fx-instance-name? n)
+                    (loop (cdr as) (+ loc 1) voff (+ ioff (* 4 size))
+                          vacc (cons (list loc size ioff) iacc))
+                    (loop (cdr as) (+ loc 1) (+ voff (* 4 size)) ioff
+                          (cons (list loc size voff) vacc) iacc)))))))))
+
+  ;; use-program, then the attributes -- through a vertex array
+  ;; object: the first use of a (program, buffer[, instance buffer])
+  ;; trio binds the buffer and records every pointer into a fresh
+  ;; VAO; each later use rebinds the VAO in one word.  The array
+  ;; buffer is still bound every time because VAOs do not capture
+  ;; that binding, and dynamic streams upload right after fx-use!.
+  ;; The index binding IS VAO state: a caller's cmd-bind-index!
+  ;; lands in the open VAO and is restored with it.
+  ;; Keys pack three slot numbers into one fixnum, so slots must
+  ;; stay under 1024 -- far past any real scene
+  (define ($fx-vao-key pslot buf inst)
+    (+ (* pslot 1048576) (* buf 1024) (+ inst 1)))
+
+  (define (fx-use! prog buf-slot)
+    ($fx-use-vao! prog buf-slot -1))
+
+  ;; the instanced variant: vertex attributes from one buffer,
+  ;; i_* attributes from another with divisor 1 (webgl2); draw with
+  ;; cmd-draw-elements-instanced!
+  (define (fx-use-instanced! prog buf-slot inst-slot)
+    ($fx-use-vao! prog buf-slot inst-slot))
+
+  (define ($fx-use-vao! prog buf-slot inst-slot)
+    (cmd-use-program! (fx-program-slot prog))
+    (let* ((key ($fx-vao-key (fx-program-slot prog) buf-slot inst-slot))
+           (vao (hashtable-ref $fx-vaos key #f)))
+      (if vao
+          (begin
+            (cmd-bind-vao! vao)
+            (cmd-bind-buffer! buf-slot))
+          (let ((v (fx-slot!)))
+            (gl-vao! v)
+            (hashtable-set! $fx-vaos key v)
+            (cmd-bind-vao! v)
+            (cmd-bind-buffer! buf-slot)
+            (for-each (lambda (a)
+                        (cmd-vertex-attrib! (car a) (cadr a)
+                                            (fx-program-stride prog)
+                                            (caddr a)))
+                      ($fx-program-attribs prog))
+            (when (>= inst-slot 0)
+              (cmd-bind-buffer! inst-slot)
+              (for-each (lambda (a)
+                          (cmd-vertex-attrib! (car a) (cadr a)
+                                              (fx-program-istride prog)
+                                              (caddr a))
+                          (cmd-attrib-divisor! (car a) 1))
+                        ($fx-program-iattribs prog)))))))
+
+  ;; scalar/vector cache: #t = unchanged since last send.  The cell
+  ;; vector is reused, so a steady uniform allocates once, ever
+  (define ($fx-same? cache name n v0 v1 v2 v3)
+    (let ((prev (hashtable-ref cache name #f)))
+      (if prev
+          (if (and (fl=? (vector-ref prev 0) v0)
+                   (or (< n 2) (fl=? (vector-ref prev 1) v1))
+                   (or (< n 3) (fl=? (vector-ref prev 2) v2))
+                   (or (< n 4) (fl=? (vector-ref prev 3) v3)))
+              #t
+              (begin (vector-set! prev 0 v0) (vector-set! prev 1 v1)
+                     (vector-set! prev 2 v2) (vector-set! prev 3 v3)
+                     #f))
+          (begin (hashtable-set! cache name (vector v0 v1 v2 v3))
+                 #f))))
+
+  ;; dispatch on the declared type; sampler values are texture units.
+  ;; Scalar and vector uniforms remember their last value and skip
+  ;; the re-send (matrices change every frame; they don't bother).
+  ;; Don't mix raw cmd-uniform*! writes with fx-uniform! on the same
+  ;; uniform -- the cache cannot see them
+  ;; does the program declare this uniform?  Lets a renderer bind
+  ;; optional resources (extra material textures, u_model) only when
+  ;; the shader asks for them.
+  (define (fx-uniform? prog name)
+    (and (hashtable-ref ($fx-program-uniforms prog) name #f) #t))
+
+  (define (fx-uniform! prog name . vs)
+    (let ((u (hashtable-ref ($fx-program-uniforms prog) name #f))
+          (cache ($fx-program-ucache prog)))
+      (unless u (error 'fx-uniform! "undeclared uniform" name))
+      (let ((slot (car u)) (ty (cdr u)))
+        (if (pair? ty)                  ; (array mat4 N): joint matrices
+            ;; a vector of m4s streams through the buffer; a staging
+            ;; ADDRESS plus a count uploads in place, three words
+            (if (fixnum? (car vs))
+                (cmd-uniform-matrices4s! slot (car vs) (cadr vs))
+                (cmd-uniform-matrices! slot (car vs)))
+            (case ty
+          ((float)
+           (let ((x ($fx-fl (car vs))))
+             (unless ($fx-same? cache name 1 x 0.0 0.0 0.0)
+               (cmd-uniform1f! slot x))))
+          ((vec2)
+           (let ((x ($fx-fl (car vs))) (y ($fx-fl (cadr vs))))
+             (unless ($fx-same? cache name 2 x y 0.0 0.0)
+               (cmd-uniform2f! slot x y))))
+          ((vec3)
+           (let ((x ($fx-fl (car vs))) (y ($fx-fl (cadr vs)))
+                 (z ($fx-fl (caddr vs))))
+             (unless ($fx-same? cache name 3 x y z 0.0)
+               (cmd-uniform3f! slot x y z))))
+          ((vec4)
+           (let ((x ($fx-fl (car vs))) (y ($fx-fl (cadr vs)))
+                 (z ($fx-fl (caddr vs))) (w ($fx-fl (cadddr vs))))
+             (unless ($fx-same? cache name 4 x y z w)
+               (cmd-uniform4f! slot x y z w))))
+          ((sampler2D samplerCube sampler2DArray int)
+           (let ((x (fixnum->flonum (car vs))))
+             (unless ($fx-same? cache name 1 x 0.0 0.0 0.0)
+               (cmd-uniform1i! slot (car vs)))))
+          ((mat4)                       ; a (gfx mat) m4 vector, or an
+           (if (fixnum? (car vs))       ; m4s staging address
+               (cmd-uniform-matrix4s! slot (car vs))
+               (cmd-uniform-matrix4! slot (car vs))))
+          (else (error 'fx-uniform! "unsupported uniform type" ty)))))))
+
+  ;; ---- the timing pump and the frame loop ----
+  ;; proc gets (t dt) in seconds; no GL side effects, so a Three.js
+  ;; render loop can use it directly
+  (define (fx-ticks! proc)
+    (let ((t0 -1.0) (last 0.0)
+          (owner $fx-owner) (gen ($fx-gen $fx-owner)))
+      (letrec ((tick (lambda args
+                       (when (= gen ($fx-gen owner))
+                         (let ((s (fl/ ($fx-fl (js->number (car args)))
+                                       1000.0)))
+                           (when (fl<? t0 0.0)
+                             (set! t0 s)
+                             (set! last s))
+                           (proc (fl- s t0) (fl- s last))
+                           (set! last s))
+                         (js-method (js-global) "requestAnimationFrame"
+                                    tick)))))
+        (js-method (js-global) "requestAnimationFrame" tick))))
+
+  ;; ticks plus the GL frame plumbing: begin, viewport, user commands,
+  ;; overflow check, one flush
+  (define (fx-loop! proc)
+    (fx-ticks!
+     (lambda (t dt)
+       (cmd-begin!)
+       (cmd-viewport! 0 0 (fx-width) (fx-height))
+       (proc t dt)
+       (when (> (cmd-pos) $fx-cmd-limit)
+         (error 'fx-loop! "command region overflow" (cmd-pos)))
+       (cmd-flush!))))
+
+  ;; the fixed-timestep variant: physics that must not depend on the
+  ;; frame rate.  sim runs zero or more times per frame, always with
+  ;; exactly `step` seconds; render runs once with alpha = how far
+  ;; into the next step the frame landed (blend previous/current
+  ;; states by it for perfectly smooth motion).  The accumulator is
+  ;; clamped to 4 steps so a background tab does not spiral
+  (define (fx-loop-fixed! step sim render)
+    (let ((acc 0.0)
+          (cap (fl* ($fx-fl step) 4.0)))
+      (fx-ticks!
+       (lambda (t dt)
+         (set! acc (fl+ acc dt))
+         (when (fl<? cap acc) (set! acc cap))
+         (let pump ()
+           (when (fl<? ($fx-fl step) acc)
+             (set! acc (fl- acc ($fx-fl step)))
+             (sim ($fx-fl step))
+             (pump)))
+         (cmd-begin!)
+         (cmd-viewport! 0 0 (fx-width) (fx-height))
+         (render (fl/ acc ($fx-fl step)) t dt)
+         (when (> (cmd-pos) $fx-cmd-limit)
+           (error 'fx-loop-fixed! "command region overflow" (cmd-pos)))
+         (cmd-flush!)))))
+
+  ;; ---- polled input ----
+  (define $fx-keys (make-hashtable string-hash string=?))
+  (define $fx-px 0.0)
+  (define $fx-py 0.0)
+  (define $fx-pdown #f)
+
+  ;; keys on the window, pointer on the element (default: fx-init!'s
+  ;; canvas; pass a Three.js renderer's domElement to use it there)
+  (define (fx-init-input! . el)
+    (let ((target (if (null? el) $fx-canvas (car el))))
+      (unless target
+        (error 'fx-init-input! "no element: pass one or call fx-init! first"))
+      (js-method (js-global) "addEventListener" "keydown"
+                 (lambda (e)
+                   (hashtable-set! $fx-keys (js->string (js-get e "key")) #t)
+                   (js-undefined)))
+      (js-method (js-global) "addEventListener" "keyup"
+                 (lambda (e)
+                   (hashtable-set! $fx-keys (js->string (js-get e "key")) #f)
+                   (js-undefined)))
+      (js-method target "addEventListener" "pointermove"
+                 (lambda (e)
+                   (set! $fx-px ($fx-fl (js->number (js-get e "offsetX"))))
+                   (set! $fx-py ($fx-fl (js->number (js-get e "offsetY"))))
+                   (js-undefined)))
+      (js-method target "addEventListener" "pointerdown"
+                 (lambda (e) (set! $fx-pdown #t) (js-undefined)))
+      (js-method target "addEventListener" "pointerup"
+                 (lambda (e) (set! $fx-pdown #f) (js-undefined)))))
+
+  (define (key-down? k) (hashtable-ref $fx-keys k #f))
+  (define (pointer-x) $fx-px)
+  (define (pointer-y) $fx-py)
+  (define (pointer-down?) $fx-pdown)
+
+  ;; ---- pointer lock: relative mouse for first-person cameras ----
+  (define $fx-dx 0.0)
+  (define $fx-dy 0.0)
+  (define $fx-locked #f)
+
+  ;; call once; clicking the element captures the pointer (browsers
+  ;; require the gesture), Esc releases it.  While captured, mouse
+  ;; motion accumulates as movementX/Y deltas.
+  (define (pointer-lock! . el)
+    (let ((target (if (null? el) $fx-canvas (car el)))
+          (doc (js-get (js-global) "document")))
+      (unless target
+        (error 'pointer-lock! "no element: pass one or call fx-init! first"))
+      (js-method target "addEventListener" "click"
+                 (lambda (e)
+                   (unless $fx-locked
+                     (js-method target "requestPointerLock"))
+                   (js-undefined)))
+      (js-method doc "addEventListener" "pointerlockchange"
+                 (lambda (e)
+                   (set! $fx-locked
+                         (js-truthy? (js-get doc "pointerLockElement")))
+                   (js-undefined)))
+      (js-method doc "addEventListener" "mousemove"
+                 (lambda (e)
+                   (when $fx-locked
+                     (set! $fx-dx
+                           (fl+ $fx-dx
+                                ($fx-fl (js->number (js-get e "movementX")))))
+                     (set! $fx-dy
+                           (fl+ $fx-dy
+                                ($fx-fl (js->number (js-get e "movementY"))))))
+                   (js-undefined)))))
+
+  (define (pointer-locked?) $fx-locked)
+
+  ;; the motion since the last call, as (dx . dy); consuming resets,
+  ;; so poll it once per frame
+  (define (pointer-motion!)
+    (let ((d (cons $fx-dx $fx-dy)))
+      (set! $fx-dx 0.0)
+      (set! $fx-dy 0.0)
+      d))
+
+  ;; ---- the fullscreen quad: fragment-shader effects ----
+  (define-record-type (fx-quad $make-fx-quad fx-quad?)
+    (fields (immutable prog fx-quad-program)
+            (immutable buf $fx-quad-buf)
+            (immutable base $fx-quad-base)))
+
+  (define $fx-quad-vs
+    '((attribute vec2 a_pos)
+      (define (main) void
+        (set! gl_Position (vec4 a_pos (fl 0) (fl 1))))))
+
+  (define (fx-fullscreen! fs-forms)
+    (let* ((prog (fx-program! $fx-quad-vs fs-forms))
+           (buf (fx-buffer!))
+           (base (fx-alloc! 32)))       ; one static triangle strip
+      (%mem-f32-set! base -1.0)         (%mem-f32-set! (+ base 4) -1.0)
+      (%mem-f32-set! (+ base 8) 1.0)    (%mem-f32-set! (+ base 12) -1.0)
+      (%mem-f32-set! (+ base 16) -1.0)  (%mem-f32-set! (+ base 20) 1.0)
+      (%mem-f32-set! (+ base 24) 1.0)   (%mem-f32-set! (+ base 28) 1.0)
+      ($make-fx-quad prog buf base)))
+
+  ;; u_time and u_resolution are set iff the fragment declares them;
+  ;; set anything else with fx-uniform! on (fx-quad-program q)
+  (define (fx-fullscreen-use! q t)
+    (let ((prog (fx-quad-program q)))
+      (fx-use! prog ($fx-quad-buf q))
+      (cmd-buffer-data! ($fx-quad-base q) 32)
+      (when (hashtable-contains? ($fx-program-uniforms prog) 'u_time)
+        (fx-uniform! prog 'u_time t))
+      (when (hashtable-contains? ($fx-program-uniforms prog) 'u_resolution)
+        (fx-uniform! prog 'u_resolution (fx-width) (fx-height)))))
+
+  (define (fx-fullscreen-draw! q)
+    (cmd-draw-arrays! GL-TRIANGLE-STRIP 0 4)))

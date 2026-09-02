@@ -1,0 +1,2609 @@
+;; goeteia prelude: the runtime library, written in goeteia's own
+;; Scheme and compiled into every module.
+;; Copyright (c) 2026 guenchi. MIT license; see LICENSE.
+
+(define (newline . p)
+  (if (null? p) ($wb 10) ($write-byte-port (car p) 10)))
+
+(define (display x . p)
+  (if (null? p) ($display x) ($with-out (car p) (lambda () ($display x)))))
+(define ($display x)
+  (cond
+   ((number? x) (%display-number x))
+   ((char? x) ($wb (char->integer x)))
+   ((string? x) (%display-string x 0))
+   ((symbol? x) (%display-string (symbol->string x) 0))
+   ((null? x) ($wb 40) ($wb 41))
+   ((eq? x #t) ($wb 35) ($wb 116))
+   ((eq? x #f) ($wb 35) ($wb 102))
+   ((pair? x)
+    ($wb 40)
+    (display (car x))
+    (%display-tail (cdr x)))
+   ((vector? x)
+    ($wb 35) ($wb 40)                    ; #(
+    (let loop ((i 0))
+      (when (< i (vector-length x))
+        (unless (zero? i) ($wb 32))
+        ($display (vector-ref x i))
+        (loop (+ i 1))))
+    ($wb 41))
+   ((bytevector? x)
+    (%display-string "#vu8(" 0)
+    (let loop ((i 0))
+      (when (< i (bytevector-length x))
+        (unless (zero? i) ($wb 32))
+        ($display (bytevector-u8-ref x i))
+        (loop (+ i 1))))
+    ($wb 41))
+   ((%recbase? x)
+    (%display-string "#<" 0)
+    ($display (car (%record-rtd x)))
+    ($wb 62))
+   ((procedure? x) (%display-string "#<procedure>" 0))
+   (else (%display-string "#<unknown>" 0))))
+
+(define (%display-tail x)
+  (cond
+   ((null? x) ($wb 41))
+   ((pair? x)
+    ($wb 32)
+    (display (car x))
+    (%display-tail (cdr x)))
+   (else
+    ($wb 32) ($wb 46) ($wb 32)
+    (display x)
+    ($wb 41))))
+
+(define (%display-string s i)
+  (when (< i (string-length s))
+    ($wb (char->integer (string-ref s i)))
+    (%display-string s (+ i 1))))
+
+(define (%display-number n)
+  (cond
+   ((flonum? n) ($display-flonum n))
+   ((%bignum? n) ($display-bignum n))
+   ((%ratio? n)
+    (%display-number (%ratio-num n))
+    ($wb 47)
+    (%display-number (%ratio-den n)))
+   ((%complex? n)
+    (%display-number (%cx-re n))
+    (let ((im (%cx-im n)))
+      (unless (or (< im 0) (and (flonum? im) (fl<? im (fixnum->flonum 0))))
+        ($wb 43))
+      (%display-number im))
+    ($wb 105))
+   ((< n 0) ($wb 45) (%display-digits (- 0 n)))
+   (else (%display-digits n))))
+(%target-case
+ (js
+  ;; the host prints an arbitrary-precision integer directly
+  (define ($display-bignum b) (%display-string (%big->str b) 0)))
+ (wasm
+  (define ($display-bignum b)
+    (when ($bn-neg? b) ($wb 45))
+    ($display-mag (%bignum-limbs b)))
+  (define ($display-mag m)
+    (if (and (= ($mag-len m) 1) (< (vector-ref m 0) 10))
+        ($wb (+ 48 (vector-ref m 0)))
+        (let ((qr ($mag-divmod-small m 10)))
+          ($display-mag (car qr))
+          ($wb (+ 48 (cdr qr))))))))
+(define ($display-flonum x)
+  (if (not (fl=? x x))
+      (%display-string "+nan.0" 0)
+      ($display-flonum* x)))
+(define ($display-flonum* x)
+  ;; Negative zero has to be asked for separately: (fl<? -0.0 0.0) is
+  ;; false, so a plain sign test prints it as "0.0" and the text loses
+  ;; a distinction the bits keep -- (fl/ 1.0 -0.0) is -inf.  Division
+  ;; tells the two zeros apart, but ONLY zeros may be asked that way:
+  ;; 1/-inf is -0.0, which is not less than zero, so negative infinity
+  ;; would come back positive.  Hence the ordinary test first and the
+  ;; division only for values that compare equal to zero.
+  (let* ((zero (fixnum->flonum 0))
+         (neg (or (fl<? x zero)
+                  (and (fl=? x zero)
+                       (fl<? (fl/ (fixnum->flonum 1) x) zero))))
+         (mag (if neg (fl- zero x) x)))
+    (when neg ($wb 45))
+    (cond
+     ;; Infinity has no digits, and keeps the placeholder it has always
+     ;; had.  It is recognised by being its own double: nothing finite
+     ;; and non-zero satisfies that.
+     ((and (not (fl=? mag zero)) (fl=? mag (fl* mag (fixnum->flonum 2))))
+      (%display-string "<big-flonum>" 0))
+     ;; Past the FIXNUM cap, not past what a double can say.  %fl->fx
+     ;; below is an i31 and stops at 2^29-1, so everything above that
+     ;; used to print "<big-flonum>" -- and print it SUCCESSFULLY, which
+     ;; is how {"t":<big-flonum>} left (web json) for a millisecond
+     ;; timestamp with nothing raised anywhere.
+     ;;
+     ;; The integer part goes through the exact path instead: flfloor
+     ;; is exact, `exact` on an integral flonum is exact, and
+     ;; %display-digits reaches the bignum operations through the same
+     ;; generic quotient/remainder it already used.  No rounding is
+     ;; invented here and none should be: what comes out is the double's
+     ;; own value.  1.7e12 IS an exact integer as a double, so it prints
+     ;; as 1700000000000.0 and reads back as itself.
+     ;;
+     ;; This is not a shortest-representation printer.  0.1 still prints
+     ;; its true expansion, and making it print "0.1" is a separate
+     ;; piece of work (dtoa) that this deliberately does not start.
+     ((fl<? (fixnum->flonum 536870911) mag)
+      (let* ((ipf (flfloor mag))
+             (frac (fl- mag ipf)))
+        (%display-digits (exact ipf))
+        ($wb 46)
+        ($display-frac frac 0)))
+     (else
+      (let* ((ip (%fl->fx mag))
+             (frac (fl- mag (fixnum->flonum ip))))
+        (%display-digits ip)
+        ($wb 46)
+        ($display-frac frac 0))))))
+(define ($display-frac f i)
+  ;; up to 12 digits, trimmed via lookahead: stop when the rest is 0
+  (if (or (= i 12) (fl=? f (fixnum->flonum 0)))
+      (when (zero? i) ($wb 48))
+      (let* ((scaled (fl* f (fixnum->flonum 10)))
+             (d (%fl->fx scaled)))
+        ($wb (+ 48 d))
+        ($display-frac (fl- scaled (fixnum->flonum d)) (+ i 1)))))
+
+(define (%display-digits n)
+  (if (< n 10)
+      ($wb (+ 48 n))
+      (begin
+        (%display-digits (quotient n 10))
+        ($wb (+ 48 (remainder n 10))))))
+
+(define (string=? a b)
+  (and (= (string-length a) (string-length b))
+       (%string-eq-from a b 0)))
+
+(define (%string-eq-from a b i)
+  (or (= i (string-length a))
+      (and (eq? (string-ref a i) (string-ref b i))
+           (%string-eq-from a b (+ i 1)))))
+
+(define (list . args) args)
+
+(define (length ls)
+  (%length ls 0))
+(define (%length ls n)
+  (if (null? ls) n (%length (cdr ls) (+ n 1))))
+
+(define (append . ls)
+  (cond
+   ((null? ls) '())
+   ((null? (cdr ls)) (car ls))
+   (else ($append2 (car ls) (apply append (cdr ls))))))
+(define ($append2 a b)
+  ($rev-onto (reverse a) b))
+(define ($rev-onto rev tail)
+  (if (null? rev)
+      tail
+      ($rev-onto (cdr rev) (cons (car rev) tail))))
+
+(define (filter pred ls) ($filter-acc pred ls '()))
+(define ($filter-acc pred ls acc)
+  (cond
+   ((null? ls) (reverse acc))
+   ((pred (car ls)) ($filter-acc pred (cdr ls) (cons (car ls) acc)))
+   (else ($filter-acc pred (cdr ls) acc))))
+
+(define (reverse ls)
+  (%reverse ls '()))
+(define (%reverse ls acc)
+  (if (null? ls) acc (%reverse (cdr ls) (cons (car ls) acc))))
+
+(define (memq x ls)
+  (cond
+   ((null? ls) #f)
+   ((eq? (car ls) x) ls)
+   (else (memq x (cdr ls)))))
+
+(define (assq x ls)
+  (cond
+   ((null? ls) #f)
+   ((eq? (caar ls) x) (car ls))
+   (else (assq x (cdr ls)))))
+
+(define (remq x ls)
+  (cond
+   ((null? ls) '())
+   ((eq? (car ls) x) (remq x (cdr ls)))
+   (else (cons (car ls) (remq x (cdr ls))))))
+
+(define (caar p) (car (car p)))
+(define (cadr p) (car (cdr p)))
+(define (cdar p) (cdr (car p)))
+(define (cddr p) (cdr (cdr p)))
+
+(define (equal? a b)
+  (cond
+   ((pair? a) (and (pair? b)
+                   (equal? (car a) (car b))
+                   (equal? (cdr a) (cdr b))))
+   ((string? a) (and (string? b) (string=? a b)))
+   ((vector? a)
+    (and (vector? b)
+         (= (vector-length a) (vector-length b))
+         (let loop ((i 0))
+           (or (= i (vector-length a))
+               (and (equal? (vector-ref a i) (vector-ref b i))
+                    (loop (+ i 1)))))))
+   ;; Bytevectors compare by content, like the other aggregates.  They
+   ;; used to fall through to eqv?, so two bytevectors with identical
+   ;; bytes were not equal? -- and the failure direction is the quiet
+   ;; one: an assertion that two differ was satisfied for free, by
+   ;; every pair of bytevectors in existence.
+   ((bytevector? a)
+    (and (bytevector? b) (bytevector=? a b)))
+   (else (eqv? a b))))
+
+;; Multiple values: a list tagged with a unique pair, collapsing to
+;; the value itself in the single-value case.
+(define $values-tag (cons 0 0))
+
+(define (values . args)
+  (if (and (pair? args) (null? (cdr args)))
+      (car args)
+      (cons $values-tag args)))
+
+(define (call-with-values producer consumer)
+  (let ((v (producer)))
+    (if (and (pair? v) (eq? (car v) $values-tag))
+        (apply consumer (cdr v))
+        (consumer v))))
+
+;; ---- strings <-> lists ----
+
+(define (list->string ls)
+  (let ((s (%make-string (length ls))))
+    (%fill-string s ls 0)
+    s))
+(define (%fill-string s ls i)
+  (unless (null? ls)
+    (string-set! s i (car ls))
+    (%fill-string s (cdr ls) (+ i 1))))
+
+(define (string->list s)
+  (%string->list s (- (string-length s) 1) '()))
+(define (%string->list s i acc)
+  (if (< i 0)
+      acc
+      (%string->list s (- i 1) (cons (string-ref s i) acc))))
+
+;; ---- runtime symbol interning ----
+;;
+;; The table starts as the compile-time interned symbols (pulled
+;; lazily from the module), so read and string->symbol agree with
+;; symbol literals under eq?.
+
+(define $symtab #f)
+
+(define (string->symbol s)
+  (when (eq? $symtab #f)
+    (set! $symtab (%interned-symbols)))
+  (%intern s $symtab))
+(define (%intern s tab)
+  (cond
+   ((null? tab)
+    (let ((sym (%make-symbol s)))
+      (set! $symtab (cons sym $symtab))
+      sym))
+   ((string=? (symbol->string (car tab)) s) (car tab))
+   (else (%intern s (cdr tab)))))
+
+;; ---- ports ----
+;;
+;; Console I/O rides the two host imports; string ports are plain
+;; records.  The reader and the printers dispatch through the current
+;; ports, so with-output-to-string and friends need no host support.
+
+(define-record-type ($port $make-port port?)
+  (fields (immutable kind $port-kind)
+          (mutable a $port-a $port-a!)
+          (mutable b $port-b $port-b!)
+          ;; where the reader stands in this port: line (from 1) and
+          ;; bytes consumed on that line.  Live counting happens in
+          ;; globals (see %next-byte); these fields are the parking
+          ;; place $with-in uses, so a port that is read from twice
+          ;; keeps counting where it left off.
+          (mutable line $port-line $port-line!)
+          (mutable col $port-col $port-col!)))
+;; kinds: console-in (a = one-byte pushback), console-out,
+;;        string-in (a = string, b = position),
+;;        string-out (a = reversed char list)
+
+(define $console-in ($make-port 'console-in -2 0 1 0))
+(define $console-out ($make-port 'console-out 0 0 1 0))
+(define $cip $console-in)
+(define $cop $console-out)
+(define (current-input-port) $cip)
+(define (current-output-port) $cop)
+(define (input-port? p)
+  (and (port? p) (memq ($port-kind p) '(console-in string-in file-in))))
+(define (output-port? p)
+  (and (port? p) (memq ($port-kind p) '(console-out string-out file-out))))
+
+(define (open-input-string s) ($make-port 'string-in s 0 1 0))
+(define (open-output-string) ($make-port 'string-out '() 0 1 0))
+(define (get-output-string p) (list->string (reverse ($port-a p))))
+
+(define ($peek-byte-port p)
+  (let ((k ($port-kind p)))
+    (cond
+     ((eq? k 'console-in)
+      (when (= ($port-a p) -2) ($port-a! p (%read-byte)))
+      ($port-a p))
+     ((eq? k 'string-in)
+      (let ((s ($port-a p)) (i ($port-b p)))
+        (if (< i (string-length s))
+            (char->integer (string-ref s i))
+            -1)))
+     ((eq? k 'file-in)
+      (when (= ($port-b p) -2) ($port-b! p (%fread ($port-a p))))
+      ($port-b p))
+     (else (errorf 'read "not an input port")))))
+;; Where the reader stands in the current input port.  The compiler
+;; reads its source through this counter and error context wants
+;; file:line; the reader's own diagnostics want a column too.
+;;
+;; Lines count from 1.  $reader-column counts BYTES consumed on the
+;; current line, so after consuming a byte it is that byte's 1-based
+;; column -- and a multi-byte UTF-8 character spans as many columns as
+;; it has bytes, matching the latin-1 view the reader takes of source.
+(define $reader-line 1)
+(define $reader-column 0)
+(define $reader-datum-line 1)
+
+;; A driver that splices many files into one stream can say which
+;; file the stream is currently in, and where its line 1 fell: set
+;; $reader-file to the name and $reader-line-origin so that
+;; (stream line - origin) is the line in that file.  The reader's
+;; diagnostics then name the file the author wrote rather than the
+;; stream nobody sees.  Left alone -- which is the case for every
+;; program that merely calls read -- positions are the stream's own.
+(define $reader-file "")
+(define $reader-line-origin 0)
+
+(define ($next-byte-port p)
+  (let ((b ($peek-byte-port p)))
+    (let ((k ($port-kind p)))
+      (cond
+       ((eq? k 'console-in) ($port-a! p -2))
+       ((eq? k 'file-in) ($port-b! p -2))
+       ((eq? k 'string-in)
+        (when (< -1 b) ($port-b! p (+ ($port-b p) 1))))))
+    b))
+(define ($write-byte-port p byte)
+  (let ((k ($port-kind p)))
+    (cond
+     ((eq? k 'console-out) (%write-byte byte))
+     ((eq? k 'string-out)
+      ($port-a! p (cons (integer->char byte) ($port-a p))))
+     ((eq? k 'file-out) (%fwrite ($port-a p) byte))
+     (else (errorf 'write "not an output port")))))
+
+;; One byte of pushback.  The line-ending forms are multi-byte -- NEL is
+;; C2 85 and LS is E2 80 A8 -- so recognising one means looking past a
+;; byte that may turn out to be data.  Without somewhere to put it back
+;; every caller had to be told what was speculatively eaten, and the
+;; three callers handled it three ways; with it the recogniser is one
+;; procedure that consumes exactly what it matched.
+(define $pushed -1)
+(define (%push-back b)
+  (set! $pushed b)
+  (when (< 0 $reader-column) (set! $reader-column (- $reader-column 1))))
+(define (%peek-byte) (if (< -1 $pushed) $pushed ($peek-byte-port $cip)))
+;; the reader's byte source, and the one place the position advances:
+;; two integer updates, no allocation, on the hottest path there is
+(define (%next-byte)
+  (let ((b (if (< -1 $pushed)
+               (let ((p $pushed)) (set! $pushed -1) p)
+               ($next-byte-port $cip))))
+    (cond
+     ((= b 10) (set! $reader-line (+ $reader-line 1))
+               (set! $reader-column 0))
+     ((< -1 b) (set! $reader-column (+ $reader-column 1))))
+    b))
+(define ($wb byte) ($write-byte-port $cop byte))
+
+(define ($with-out p thunk)
+  (let ((old $cop))
+    (dynamic-wind
+      (lambda () (set! $cop p))
+      thunk
+      (lambda () (set! $cop old)))))
+(define ($with-in p thunk)
+  ;; park the live position in the port being left and pick up the
+  ;; one belonging to the port being entered, so every port keeps its
+  ;; own place across separate reads (and a nested read cannot move
+  ;; the outer stream's line number)
+  (let ((old $cip))
+    (dynamic-wind
+      (lambda () ($set-in! old p))
+      thunk
+      (lambda () ($set-in! p old)))))
+(define ($set-in! from to)
+  ($port-line! from $reader-line)
+  ($port-col! from $reader-column)
+  (set! $cip to)
+  (set! $reader-line ($port-line to))
+  (set! $reader-column ($port-col to)))
+(define (with-output-to-string thunk)
+  (let ((p (open-output-string)))
+    ($with-out p thunk)
+    (get-output-string p)))
+(define (with-input-from-string s thunk)
+  ($with-in (open-input-string s) thunk))
+
+;; Bytes taken from the CURRENT input port move the reader position;
+;; a read-char naming some other port does not (that port's parked
+;; position, and any later read from it, is off by what was taken).
+(define (read-char . p)
+  (let ((b (if (or (null? p) (eq? (car p) $cip))
+               (%next-byte)
+               ($next-byte-port (car p)))))
+    (if (< b 0) (eof-object) (integer->char b))))
+(define (peek-char . p)
+  (let ((b ($peek-byte-port (if (null? p) $cip (car p)))))
+    (if (< b 0) (eof-object) (integer->char b))))
+(define (write-char c . p)
+  ($write-byte-port (if (null? p) $cop (car p)) (char->integer c)))
+
+;; ---- the reader ----
+
+;; "line L column C", the one place a reader diagnostic spells a
+;; position.  Callers pass the position they captured, not the live
+;; counter: the mistake a reader reports is nearly always where a
+;; construct was OPENED, and by the time it is detected the counter
+;; has run on to the end of the input.
+;;
+;; The line is mapped back through $reader-line-origin, so a driver
+;; that concatenates files reports the author's line, and the file
+;; name leads when one is known.
+(define (%at-line line col)
+  (string-append $reader-file
+                 (if (string=? $reader-file "") "" " ")
+                 "line " (number->string (- line $reader-line-origin))
+                 " column " (number->string col)))
+
+(define (read . p)
+  (if (null? p)
+      ;; console = the compile stream: remember where this datum
+      ;; starts, for error context
+      (begin (%skip-blanks)
+             (set! $reader-datum-line $reader-line)
+             ($read))
+      ($with-in (car p) (lambda () ($read)))))
+(define ($read)
+  (%skip-blanks)
+  (let ((b (%peek-byte)))
+    (cond
+     ((< b 0) (eof-object))
+     ((= b 40) (%next-byte) (%read-list))          ; (
+     ((= b 41)                                     ; ) with nothing open
+      (%next-byte)
+      (errorf 'read (string-append "unexpected ) at "
+                                   (%at-line $reader-line $reader-column))))
+     ((= b 39) (%next-byte) (list 'quote ($read)))  ; '
+     ((= b 96) (%next-byte) (list 'quasiquote ($read))) ; `
+     ((= b 44)                                     ; , or ,@
+      (%next-byte)
+      (if (= (%peek-byte) 64)
+          (begin (%next-byte) (list 'unquote-splicing ($read)))
+          (list 'unquote ($read))))
+     ((= b 34)                                     ; "
+      (%next-byte)
+      (%read-string $reader-line $reader-column '()))
+     ((= b 35)                                     ; #
+      (%next-byte)
+      ;; Neither comment form is a datum, so neither can be the value of
+      ;; a read: both consume text and then ask for the next datum.
+      ;; That is why they are handled here and not in %read-hash, which
+      ;; has to answer with something.
+      (if (%skip-hash-comment) ($read) (%read-hash)))
+     (else (let ((r (%read-atom '() #f)))
+             (%finish-atom (cdr r) (car r)))))))
+
+;; An atom's bytes, with the two escape forms understood.
+;;
+;; This could not live in %read-token: that stops at the first
+;; delimiter, and `;` IS one, so `a\x20;b` tokenised as `a\x20`
+;; followed by a comment -- the escape's own terminator ended the
+;; token.  Every name the writer escapes would have come back wrong,
+;; and quietly, because the truncated name is still a symbol.
+;;
+;; Answers (escaped? . bytes).  The flag matters: `\x31;` denotes the
+;; SYMBOL 1, and without it %finish-atom would classify the decoded
+;; bytes as the number.  An escape is how a name says it is a name.
+(define (%read-atom acc esc)
+  (let ((b (%peek-byte)))
+    (cond
+     ((%delimiter? b) (cons esc (reverse acc)))
+     ((= b 124)                                    ; | ... |
+      (%next-byte)
+      (let bar ((acc acc))
+        (let ((c (%next-byte)))
+          (cond
+           ((< c 0)
+            (errorf 'read
+                    (string-append "a |...| symbol reaches end of input at "
+                                   (%at-line $reader-line $reader-column))))
+           ((= c 124) (%read-atom acc #t))
+           (else (bar (cons c acc)))))))
+     ((= b 92)                                     ; backslash
+      (%next-byte)
+      (let ((c (%next-byte)))
+        (if (= c 120)                              ; x
+            (%read-atom (%push-utf8
+                         (%read-hex-escape $reader-line $reader-column) acc)
+                        #t)
+            (errorf 'read
+                    (string-append "a backslash in a symbol must begin \\x, not \\"
+                                   (if (< c 0) "<end of input>"
+                                       (string (integer->char c)))
+                                   " at "
+                                   (%at-line $reader-line $reader-column))))))
+     (else (%next-byte) (%read-atom (cons b acc) esc)))))
+
+(define (%delimiter? b)
+  (or (< b 0) (= b 32) (= b 10) (= b 9) (= b 13)
+      (= b 40) (= b 41) (= b 59) (= b 34)))
+
+(define (%skip-blanks)
+  (let ((b (%peek-byte)))
+    (cond
+     ((or (= b 32) (= b 10) (= b 9) (= b 13))
+      (%next-byte)
+      (%skip-blanks))
+     ((= b 59)                                     ; ;
+      (%skip-line)
+      (%skip-blanks))
+     (else #f))))
+(define (%skip-line)
+  ;; ends on ANY line ending, which is one of the three callers of
+  ;; %line-ending? -- it used to end only on LF, so a comment closed by
+  ;; a CR ran on and swallowed the next form on this host while the
+  ;; reference read it
+  (let ((b (%next-byte)))
+    (unless (or (< b 0) (%line-ending? b))
+      (%skip-line))))
+
+(define (%read-token acc)
+  (if (%delimiter? (%peek-byte))
+      (reverse acc)
+      (%read-token (cons (%next-byte) acc))))
+
+(define (%finish-atom bs escaped?)
+  (cond
+   ;; An escaped name is a NAME.  `\x31;` is the symbol 1, not the
+   ;; number; `||` is the empty symbol, not an empty token.  Deciding
+   ;; that from the decoded bytes alone is impossible -- they are the
+   ;; same bytes either way -- so the tokenizer carries the flag.
+   (escaped? (string->symbol (%bytes->string bs)))
+   ;; A lone dot is not a symbol.  Inside a list it is the dotted-tail
+   ;; marker and never reaches here; standing alone it is the one
+   ;; spelling in this whole face that Chez refuses outright, and
+   ;; letting it become a symbol would make `(read ".")` answer a datum
+   ;; where the reference answers an error.
+   ((and (pair? bs) (null? (cdr bs)) (= (car bs) 46))
+    (errorf 'read (string-append "a lone . is not a datum at "
+                                 (%at-line $reader-line $reader-column))))
+   ((%special-number bs) => (lambda (v) v))
+   ((%number-token? bs) (%parse-int bs))
+   ((%decimal-token? bs) (%parse-decimal bs))
+   ((%ratio-token? bs) (%parse-ratio bs))
+   ((%complex-token? bs) (%parse-complex bs))
+   (else (string->symbol (%bytes->string bs)))))
+(define (%split-at bs byte)
+  ;; -> (before . after) at the first occurrence, or #f
+  (let loop ((pre '()) (bs bs))
+    (cond
+     ((null? bs) #f)
+     ((= (car bs) byte) (cons (reverse pre) (cdr bs)))
+     (else (loop (cons (car bs) pre) (cdr bs))))))
+(define (%ratio-token? bs)
+  (let ((halves (%split-at bs 47)))                ; /
+    (and halves
+         (%number-token? (car halves))
+         (pair? (cdr halves))
+         (%all-digits? (cdr halves)))))
+(define (%parse-ratio bs)
+  (let ((halves (%split-at bs 47)))
+    ($make-rat (%parse-int (car halves))
+               (%digits->int (cdr halves) 0))))
+(define (%real-token? bs)
+  (or (%number-token? bs) (%decimal-token? bs) (%ratio-token? bs)))
+(define (%parse-real bs)
+  (cond
+   ((%number-token? bs) (%parse-int bs))
+   ((%decimal-token? bs) (%parse-decimal bs))
+   (else (%parse-ratio bs))))
+(define (%complex-token? bs)
+  ;; [real](+|-)[real]i  or  (+|-)[real]i  or  [real]i
+  (and (pair? bs)
+       (let ((rev (reverse bs)))
+         (and (= (car rev) 105)                    ; trailing i
+              (let ((body (reverse (cdr rev))))
+                (let ((split (%split-imag body)))
+                  (and split
+                       (or (null? (car split)) (%real-token? (car split)))
+                       (let ((im (cdr split)))
+                         (or (equal? im '(43)) (equal? im '(45))
+                             (%real-token?
+                              (if (= (car im) 43) (cdr im) im)))))))))))
+(define (%split-imag body)
+  ;; split at the last +/- that isn't the leading sign; the imaginary
+  ;; part must carry a sign (R6RS: +2i, -i, 3+4i -- never bare 2i)
+  (let loop ((i (- (length body) 1)))
+    (cond
+     ((< i 1)
+      (if (and (pair? body) (memv (car body) '(43 45)))
+          (cons '() body)
+          #f))
+     ((memv (list-ref body i) '(43 45))
+      (cons ($take-n body i) (list-tail body i)))
+     (else (loop (- i 1))))))
+(define ($take-n ls n)
+  (if (zero? n) '() (cons (car ls) ($take-n (cdr ls) (- n 1)))))
+(define (%parse-complex bs)
+  (let* ((body (reverse (cdr (reverse bs))))       ; strip the i
+         (split (%split-imag body))
+         (re (if (null? (car split)) 0 (%parse-real (car split))))
+         (imbs (cdr split))
+         (im (cond
+              ((null? imbs) 1)
+              ((equal? imbs '(43)) 1)              ; +
+              ((equal? imbs '(45)) -1)             ; -
+              (else (%parse-real
+                     (if (= (car imbs) 43) (cdr imbs) imbs))))))
+    ($cx re im)))
+(define (%parse-decimal bs) (%decimal->flonum bs))
+
+(define (%sign-byte? b) (or (= b 45) (= b 43)))   ; - +
+
+(define (%number-token? bs)
+  ;; Both signs.  This took only `-` for its whole life, so `+42` was a
+  ;; symbol and `-42` a number -- a sign has two spellings and a face
+  ;; that accepts one of them is a half-fix that reads as a whole one.
+  (if (and (pair? bs) (%sign-byte? (car bs)))
+      (and (pair? (cdr bs)) (%all-digits? (cdr bs)))
+      (and (pair? bs) (%all-digits? bs))))
+
+;; The decimal face is ONE procedure that both recognises and builds,
+;; and the predicate below is defined in terms of it.  It used to be a
+;; scanner and a parser walking the same bytes by separate rules, which
+;; is two statements of one grammar: whichever one is edited alone
+;; becomes a token the other side answers differently.
+;;
+;; The digits are assembled as an EXACT RATIONAL and converted once.
+;; Accumulating in floating point on the way in, or dividing by a power
+;; of ten afterwards, rounds more than once and lands on a different
+;; double -- and lands there differently on the two targets, which is
+;; what the exact integer layer exists to prevent.
+(define (%decimal->flonum bs)                     ; -> flonum, or #f
+  ;; The base-ten face, which is the one an unprefixed token reaches.
+  ;; It is the general body parser at radix 10 with the answer forced
+  ;; inexact, so the two cannot describe different grammars: a number
+  ;; face stated twice is a number face that will be edited once.
+  (let ((r (%body->number bs 10)))
+    (and r (cadr r) (%apply-exactness r 'inexact))))
+
+;; ---- the number body, in any radix -------------------------------
+;; A body is  sign? ( digits / digits | digits? . digits? exp? ) and
+;; the SAME procedure reads it in base 2, 8, 10 and 16.  Writing a
+;; separate digit loop per radix is how `#x` came to have no sign, no
+;; length check and no digit validation while base ten had all three:
+;; four copies of one grammar, and only the copy anyone used got
+;; fixed.
+;;
+;; Answers (magnitude inexact? negative?) with the magnitude an EXACT
+;; rational, or #f.  The sign travels separately all the way to the
+;; conversion, because the exact number 0 has no sign and applying it
+;; early is exactly how a negative zero is lost.
+;;
+;; An exponent exists only at radix ten.  Anywhere else `e` is a digit
+;; or it is nothing: `#x1e3` is 483, and `#x1.8e2` is a hex fraction
+;; whose last three digits are `8`, `e` and `2`.
+(define (%digit-val b radix)
+  (let ((v (cond
+            ((and (< 47 b) (< b 58)) (- b 48))      ; 0-9
+            ((and (< 96 b) (< b 123)) (+ 10 (- b 97)))  ; a-z
+            ((and (< 64 b) (< b 91)) (+ 10 (- b 65)))   ; A-Z
+            (else 99))))
+    (and (< v radix) v)))
+
+(define (%digits-of bs radix)           ; -> (value count rest)
+  (let loop ((bs bs) (v 0) (n 0))
+    (if (and (pair? bs) (%digit-val (car bs) radix))
+        (loop (cdr bs) (+ (* v radix) (%digit-val (car bs) radix)) (+ n 1))
+        (list v n bs))))
+
+(define (%body->number bs radix)        ; -> (magnitude inexact? neg) or #f
+  (and
+   (pair? bs)
+   (let* ((neg (= (car bs) 45))
+          (bs (if (%sign-byte? (car bs)) (cdr bs) bs)))
+     (let* ((ip (%digits-of bs radix))
+            (int-v (car ip)) (int-n (cadr ip)) (rest (caddr ip)))
+       (cond
+        ;; ratio: no decimal point, no exponent, both halves required
+        ((and (pair? rest) (= (car rest) 47))       ; /
+         (let* ((dp (%digits-of (cdr rest) radix))
+                (den-v (car dp)) (den-n (cadr dp)) (tail (caddr dp)))
+           (and (< 0 int-n) (< 0 den-n) (null? tail)
+                (begin
+                  ;; A zero denominator is refused, and the message
+                  ;; names the spellings that work.  Chez answers
+                  ;; +inf.0 for "#i1/0", which would need the division
+                  ;; deferred past the exactness prefix plus a separate
+                  ;; 0/0-is-NaN case: a second shape in the parser for
+                  ;; a spelling nobody writes.
+                  (when (= den-v 0)
+                    (errorf 'read
+                            (string-append
+                             "division by zero in a numeral -- write "
+                             "+inf.0, -inf.0 or +nan.0 at "
+                             (%at-line $reader-line $reader-column))))
+                  (list ($make-rat int-v den-v) #f neg)))))
+        ;; a decimal point, an exponent, or neither
+        (else
+         (let* ((dotted (and (pair? rest) (= (car rest) 46)))
+                (fp (if dotted (%digits-of (cdr rest) radix) (list 0 0 rest)))
+                (frac-v (car fp)) (frac-n (cadr fp)) (tail (caddr fp))
+                (e (%exponent-of tail radix)))
+           (and (< 0 (+ int-n frac-n)) e
+                (let* (;; Both scales follow the RADIX: the fraction
+                       ;; digits are a power of it ("#x.8" is 8/16, not
+                       ;; 8/10) and so is the exponent ("#o1e3" is
+                       ;; 8^3).  They collapse into a single power,
+                       ;; which is why this is shorter than the version
+                       ;; that treated ten specially.
+                       (whole (+ (* int-v (%expt-int radix frac-n)) frac-v))
+                       (scale (- (if (eq? e 'none) 0 e) frac-n))
+                       (mag (if (< scale 0)
+                                ($make-rat whole (%expt-int radix (- 0 scale)))
+                                (* whole (%expt-int radix scale)))))
+                  ;; R6RS: a decimal point or an exponent makes it
+                  ;; inexact unless a prefix says otherwise
+                  (list mag (or dotted (not (eq? e 'none))) neg)))))))))) 
+
+(define (%expt-int b n) (let loop ((i n) (a 1)) (if (= i 0) a (loop (- i 1) (* a b)))))
+
+;; Turn (magnitude inexact? neg) into the number, under an exactness
+;; that is 'exact, 'inexact, or #f for "whatever the spelling said".
+(define (%apply-exactness r want)
+  (let* ((mag (car r)) (neg (caddr r))
+         (inexact? (if want (eq? want 'inexact) (cadr r))))
+    (if inexact?
+        (let ((v ($exact->fl (numerator mag) (denominator mag))))
+          ;; sign applied after the conversion -- see %decimal->flonum
+          (if neg (fl* v (fixnum->flonum -1)) v))
+        (if neg (- 0 mag) mag))))
+
+;; ---- #b #o #d #x and #e #i ---------------------------------------
+;; Entered with the byte after `#` already read.  The rest of the
+;; token is gathered and the prefixes are peeled off the front, at
+;; most one radix and at most one exactness, in either order --
+;; `#e#x1f` and `#x#e1f` are both 31, and `#x#x1f` and `#e#i1.5` are
+;; both refused.
+(define (%read-prefixed first)
+  (let ((token (cons 35 (cons first (%read-token '())))))
+    (let peel ((bs token) (radix #f) (exactness #f))
+      (if (and (pair? bs) (= (car bs) 35) (pair? (cdr bs)))
+          (let* ((c (cadr bs))
+                 (radix! (lambda (r)
+                           (when radix (%prefix-twice "radix"))
+                           (peel (cddr bs) r exactness)))
+                 (exact! (lambda (x)
+                           (when exactness (%prefix-twice "exactness"))
+                           (peel (cddr bs) radix x))))
+            (cond
+             ((memv c '(98 66)) (radix! 2))
+             ((memv c '(111 79)) (radix! 8))
+             ((memv c '(100 68)) (radix! 10))
+             ((memv c '(120 88)) (radix! 16))
+             ((memv c '(101 69)) (exact! 'exact))
+             ((memv c '(105 73)) (exact! 'inexact))
+             ;; A `#` inside a number token that is not a prefix is an
+             ;; error, not a datum.  Answering #f here would make the
+             ;; reader hand back the boolean false for "#x#q1" -- a
+             ;; value, from a token that has no value.
+             (else
+              (errorf 'read
+                      (string-append "unrecognised number prefix #"
+                                     (string (integer->char c)) " at "
+                                     (%at-line $reader-line $reader-column))))))
+          (let* ((base (or radix 10))
+                 (r (%body->number bs base)))
+            (if r
+                (%apply-exactness r exactness)
+                (%bad-prefixed bs base)))))))
+
+;; Say WHY, naming the byte and the base.  A reader that only reports
+;; "that is not a number" sends the writer looking at the wrong end of
+;; the token; #bad and #b101 differ by two bytes and by nothing else
+;; the message would show.
+(define (%prefix-twice what)
+  (errorf 'read
+          (string-append "a number carries at most one " what
+                         " prefix at "
+                         (%at-line $reader-line $reader-column))))
+
+(define (%bad-prefixed bs base)
+  (let ((offender
+         (let find ((bs bs))
+           (cond
+            ((null? bs) #f)
+            ((or (%digit-val (car bs) base) (%sign-byte? (car bs))
+                 (= (car bs) 46) (= (car bs) 47))
+             (find (cdr bs)))
+            (else (car bs))))))
+    (errorf 'read
+            (if offender
+                (string-append (string (integer->char offender))
+                               " is not a base-" (number->string base)
+                               " digit at "
+                               (%at-line $reader-line $reader-column))
+                (string-append "a #-prefixed number needs at least one base-"
+                               (number->string base) " digit at "
+                               (%at-line $reader-line $reader-column))))))
+
+(define (%pow10 k) (let loop ((i k) (a 1)) (if (= i 0) a (loop (- i 1) (* a 10)))))
+
+
+;; What follows the digits: nothing, or an exponent.  Answers the
+;; exponent as an integer, `none` when the token simply ended, and #f
+;; when the rest is not an exponent -- which is how "1e" and "1e+"
+;; stay symbols, as they are in R6RS and in Chez.
+;;
+;; ONE rule covers every radix: a marker is a letter of `e s f d l`
+;; (either case) that is NOT a digit in the current radix, its digits
+;; are read in that radix, and it scales by a power of that radix.
+;; So `#x1e3` is 483 -- `e` is a hex digit there, so no exponent
+;; exists -- while `#o1e3` is 8^3 and `#o1e8` is refused because `8`
+;; is not an octal digit.
+;;
+;; The alternative was to honour markers only at radix ten.  That is
+;; MORE code: it needs a guard whose only purpose is to reject input
+;; this rule already handles.  The general rule is the smaller
+;; program, and it agrees with Chez.  It does go beyond R6RS, which
+;; defines decimals for radix ten alone, and docs/limits.md carries
+;; that declaration -- an undeclared extension is an accident, a
+;; declared one is a feature.
+;;
+;; Four of the five markers were missing when this was decimal-only.
+;; docs/sexpr.md had already recorded s/f/d/l as a dimension a
+;; hand-written list missed, in a different corpus, with "assume it is
+;; still incomplete" attached.
+(define (%exp-marker? b radix)
+  (and (memv b '(101 69 115 83 102 70 100 68 108 76))   ; e E s S f F d D l L
+       (not (%digit-val b radix))))
+
+(define (%exponent-of bs radix)
+  (cond
+   ((null? bs) 'none)
+   ((%exp-marker? (car bs) radix)
+    (let* ((rest (cdr bs))
+           (neg (and (pair? rest) (= (car rest) 45)))
+           (rest (if (and (pair? rest) (%sign-byte? (car rest))) (cdr rest) rest))
+           (d (%digits-of rest radix)))
+      (and (< 0 (cadr d)) (null? (caddr d))
+           (if neg (- 0 (car d)) (car d)))))
+   (else #f)))
+
+(define (%decimal-token? bs) (if (%decimal->flonum bs) #t #f))
+
+;; +inf.0 -inf.0 +nan.0 -nan.0, built by arithmetic: this file cannot
+;; write a literal for any of them, and would not want to -- a literal
+;; would be read by the very reader being defined.
+(define (%special-number bs)                      ; -> flonum, or #f
+  ;; Every atom in every source file reaches this, so it costs a byte
+  ;; comparison before it costs a string: all four spellings are six
+  ;; bytes beginning with a sign.
+  (if (not (and (pair? bs) (%sign-byte? (car bs)) (= 6 (length bs))))
+      #f
+      (%special-number* bs)))
+(define (%special-number* bs)
+  (let ((s (%bytes->string bs))
+        (zero (fixnum->flonum 0)))
+    (cond
+     ((string=? s "+inf.0") (fl/ (fixnum->flonum 1) zero))
+     ((string=? s "-inf.0") (fl/ (fixnum->flonum -1) zero))
+     ((or (string=? s "+nan.0") (string=? s "-nan.0")) (fl/ zero zero))
+     (else #f))))
+(define (%all-digits? bs)
+  (if (null? bs)
+      #t
+      (and (< 47 (car bs)) (< (car bs) 58)
+           (%all-digits? (cdr bs)))))
+(define (%parse-int bs)
+  (cond
+   ((= (car bs) 45) (- 0 (%digits->int (cdr bs) 0)))
+   ((= (car bs) 43) (%digits->int (cdr bs) 0))
+   (else (%digits->int bs 0))))
+(define (%digits->int bs acc)
+  (if (null? bs)
+      acc
+      (%digits->int (cdr bs) (+ (* acc 10) (- (car bs) 48)))))
+
+(define (%bytes->string bs)
+  (let ((s (%make-string (length bs))))
+    (%fill-bytes s bs 0)
+    s))
+(define (%fill-bytes s bs i)
+  (unless (null? bs)
+    (string-set! s i (integer->char (car bs)))
+    (%fill-bytes s (cdr bs) (+ i 1))))
+
+;; Entered with the open paren already consumed, so the live counter
+;; still names it: carry that position down the whole list, and an
+;; end of input reports where the list was OPENED.  A file whose
+;; parens do not balance otherwise reports at its very end, which is
+;; the least useful place it could name.
+(define (%read-list)
+  (%read-list-from $reader-line $reader-column))
+(define (%read-list-from line col)
+  (%skip-blanks)
+  (let ((b (%peek-byte)))
+    (cond
+     ((< b 0) (%unclosed-list line col))
+     ((= b 41) (%next-byte) '())                   ; )
+     ;; A comment inside a list has to be skipped HERE, not by $read.
+     ;; $read answers with a datum, so "#;2 . 3" made it read the dot
+     ;; as the next datum -- and a lone dot is not one.  The list is
+     ;; the only place that knows a dot is a tail marker.
+     ((= b 35)                                     ; #
+      (%next-byte)
+      (if (%skip-hash-comment)
+          (%read-list-from line col)
+          (cons (%read-hash) (%read-list-from line col))))
+     ((= b 46)                                     ; . -- dotted tail
+      (%next-byte)                                 ;      or dot-initial
+      (if (%delimiter? (%peek-byte))               ;      symbol
+          (let ((d ($read)))
+            (%skip-blanks)
+            (if (< (%peek-byte) 0)
+                (%unclosed-list line col)
+                (%next-byte))                      ; consume )
+            d)
+          (cons (let ((r (%read-atom (list 46) #f)))
+                  (%finish-atom (cdr r) (car r)))
+                (%read-list-from line col))))
+     (else
+      (let ((x ($read)))
+        (cons x (%read-list-from line col)))))))
+(define (%unclosed-list line col)
+  (errorf 'read (string-append "list opened at " (%at-line line col)
+                               " never closed")))
+
+(define (%read-string line col acc)
+  (let ((b (%next-byte)))
+    (cond
+     ((= b 34) (%bytes->string (reverse acc)))
+     ((< b 0)
+      (errorf 'read (string-append "string opened at " (%at-line line col)
+                                   " never closed")))
+     ((= b 92)                                     ; backslash
+      ;; A LINE CONTINUATION is not an escape: R6RS 4.2.5 says a
+      ;; backslash followed by intraline whitespace, a line ending and
+      ;; more intraline whitespace stands for NOTHING -- it is how a
+      ;; long string literal is broken across source lines.  Without
+      ;; this the pair fell through to %read-escape's `else` and became
+      ;; a newline character, so the same source read as two different
+      ;; strings depending on whose reader saw it: Chez elides it, this
+      ;; one did not, and a file using the escape compiled to different
+      ;; bytes on the two hosts.
+      ;; %line-ending? consumes what it matches, so the byte has to be
+      ;; taken before it is asked about, and handed on when it turns out
+      ;; to be an ordinary escape.
+      (let ((n (%peek-byte)))
+        (if (%intraline-ws? n)
+            (begin (%skip-string-continuation line col)
+                   (%read-string line col acc))
+            (let ((c (%next-byte)))
+              (if (and (< -1 c) (%line-ending? c))
+                  (begin (%skip-intraline-ws)
+                         (%read-string line col acc))
+                  (%escape-after-backslash c line col acc))))))
+     ;; A LINE ENDING inside a literal is one newline, whatever it was
+     ;; spelled as -- the third caller of the one predicate, alongside
+     ;; %skip-line and the continuation test above.
+     ((%line-ending? b) (%read-string line col (cons 10 acc)))
+     (else (%read-string line col (cons b acc))))))
+
+;; A string in this runtime is a sequence of UTF-8 BYTES: the reader
+;; takes source bytes one at a time, so a literal lambda is the two
+;; characters 206 and 187, and the compiler encodes what its host read
+;; the same way.  So a hex escape has to encode too, or "\x3bb;" and
+;; "lambda spelled literally" would be different strings -- and the
+;; escape is the spelling a source file uses precisely when it cannot
+;; carry the character itself.  That equality is the property, and the
+;; cells assert it directly rather than asserting a byte count.
+;;
+;; `acc` is built in reverse, so the bytes are consed in order.
+(define (%push-utf8 v acc)
+  (cond
+   ((< v 128) (cons v acc))
+   ((< v 2048)
+    (cons (+ 128 (bitwise-and v 63))
+          (cons (+ 192 (bitwise-arithmetic-shift-right v 6)) acc)))
+   ((< v 65536)
+    (cons (+ 128 (bitwise-and v 63))
+          (cons (+ 128 (bitwise-and (bitwise-arithmetic-shift-right v 6) 63))
+                (cons (+ 224 (bitwise-arithmetic-shift-right v 12)) acc))))
+   (else
+    (cons (+ 128 (bitwise-and v 63))
+          (cons (+ 128 (bitwise-and (bitwise-arithmetic-shift-right v 6) 63))
+                (cons (+ 128 (bitwise-and (bitwise-arithmetic-shift-right v 12) 63))
+                      (cons (+ 240 (bitwise-arithmetic-shift-right v 18))
+                            acc)))))))
+
+(define (%intraline-ws? b) (or (= b 32) (= b 9)))
+;; THE single answer to "does a line ending start here".  Call it with
+;; the byte already consumed; it answers #t having consumed the rest of
+;; the ending, or #f having consumed nothing (anything it looked at and
+;; did not want is pushed back).
+;;
+;; The reference treats LF, CR, CRLF, NEL (U+0085), CR+NEL and LS
+;; (U+2028) alike and does NOT treat PS (U+2029) as one -- measured.
+;; Three places need this answer: skipping a line comment, normalising
+;; the body of a string literal, and deciding whether a backslash
+;; begins a continuation.  They used to disagree: the body knew the
+;; whole set, the continuation knew LF and CR, and the comment knew
+;; only LF, so the same file read as different programs on the two
+;; hosts.  One supplier, three callers -- removing NEL from here turns
+;; all three suites red, which is what says they share it.
+(define (%line-ending? b)
+  (cond
+   ((= b 10) #t)                                 ; LF
+   ((= b 13)                                     ; CR, CRLF, CR+NEL
+    (let ((n (%peek-byte)))
+      (cond
+       ((= n 10) (%next-byte) #t)
+       ((= n 194)
+        (%next-byte)
+        (if (= (%peek-byte) 133)
+            (begin (%next-byte) #t)
+            (begin (%push-back 194) #t)))        ; a lone CR is still one
+       (else #t))))
+   ((= b 194) (if (= (%peek-byte) 133)           ; NEL
+                  (begin (%next-byte) #t)
+                  #f))
+   ((= b 226)                                    ; LS, and only LS
+    (if (= (%peek-byte) 128)
+        (begin (%next-byte)
+               (if (= (%peek-byte) 168)
+                   (begin (%next-byte) #t)
+                   (begin (%push-back 128) #f)))
+        #f))
+   (else #f)))
+
+;; the backslash is already consumed; take the rest of the continuation
+;; and produce nothing
+(define (%skip-string-continuation line col)
+  (let skip ()
+    (when (%intraline-ws? (%peek-byte)) (%next-byte) (skip)))
+  (let ((b (%next-byte)))
+    (unless (%line-ending? b)
+      (errorf 'read
+              (string-append "a backslash in the string opened at "
+                             (%at-line line col)
+                             " is followed by whitespace and then no line "
+                             "ending, which is not an escape")))
+    ;; CR LF is ONE line ending
+    (when (and (= b 13) (= (%peek-byte) 10)) (%next-byte)))
+  (let skip ()
+    (when (%intraline-ws? (%peek-byte)) (%next-byte) (skip))))
+;; The byte after a backslash, once it is known not to begin a line
+;; ending.  Split out so the continuation test above reads as one
+;; question rather than as a cond with an unrelated tail.
+(define (%escape-after-backslash c line col acc)
+  (cond
+   ;; End of input after the backslash: the fault is the unclosed
+   ;; string, not an unknown escape.  Before the escape table refused
+   ;; anything this fell through and the loop reported the missing
+   ;; quote by itself; the refusal would now get there first and name a
+   ;; character that does not exist.  test/read-errors.ss was already
+   ;; holding this case -- "a trailing backslash cannot swallow the end
+   ;; of input" -- and it is what caught that regression.
+   ((< c 0)
+    (errorf 'read (string-append "string opened at " (%at-line line col)
+                                 " never closed")))
+   ((= c 120)                                    ; x -- hex escape
+    (%read-string line col (%push-utf8 (%read-hex-escape line col) acc)))
+   (else (%read-string line col (cons (%read-escape c) acc)))))
+
+(define (%skip-intraline-ws)
+  (when (%intraline-ws? (%peek-byte)) (%next-byte) (%skip-intraline-ws)))
+
+(define (%read-escape b)
+  ;; The byte after a backslash.  This table had three entries and an
+  ;; `else` that answered the byte itself, so "\a" was the letter a and
+  ;; "\q" was the letter q: not a refusal, not a diagnostic, a
+  ;; different string from the one the source says.  An unknown escape
+  ;; is a typo, and a reader that invents a meaning for it can never
+  ;; report one.
+  (cond
+   ((= b 97) 7)        ; \a -> alarm
+   ((= b 98) 8)        ; \b -> backspace
+   ((= b 116) 9)       ; \t -> tab
+   ((= b 110) 10)      ; \n -> newline
+   ((= b 118) 11)      ; \v -> vertical tab
+   ((= b 102) 12)      ; \f -> form feed
+   ((= b 114) 13)      ; \r -> return
+   ((= b 34) 34)       ; \" -> quote
+   ((= b 92) 92)       ; \\ -> backslash
+   (else
+    (errorf 'read
+            (string-append "\\" (string (integer->char b))
+                           " is not a string escape at "
+                           (%at-line $reader-line $reader-column))))))
+
+;; \xHHHH; -- the `x` is already consumed.  The semicolon is required
+;; and it TERMINATES: "\x41;f" is A followed by the letter f, so a
+;; reader that swallowed the terminator or stopped at the wrong byte
+;; only shows itself when something follows the escape.
+(define (%read-hex-escape line col)
+  (let loop ((v 0))
+    (let ((b (%next-byte)))
+      (cond
+       ((< b 0)
+        (errorf 'read
+                (string-append "a \\x escape in the string opened at "
+                               (%at-line line col)
+                               " reaches end of input with no ;")))
+       ((= b 59)                                   ; ;
+        ;; No digits at all is accepted, as code point zero, which is
+        ;; what the reference implementation does; refusing it would
+        ;; cost a check that buys nothing.  What must be refused is a
+        ;; value that is not a character: past the last code point, or
+        ;; inside the surrogate range, which UTF-16 reserves and which
+        ;; integer->char would have to invent a meaning for.
+        (when (< 1114111 v)
+          (errorf 'read
+                  (string-append "a \\x escape in the string opened at "
+                                 (%at-line line col)
+                                 " is past the last code point")))
+        (when (and (<= 55296 v) (<= v 57343))
+          (errorf 'read
+                  (string-append "a \\x escape in the string opened at "
+                                 (%at-line line col)
+                                 " names a surrogate, which is not a character")))
+        v)
+       ((%digit-val b 16) => (lambda (d) (loop (+ (* v 16) d))))
+       (else
+        (errorf 'read
+                (string-append (string (integer->char b))
+                               " is not a hexadecimal digit in the \\x escape"
+                               " in the string opened at "
+                               (%at-line line col))))))))
+
+(define (%read-hash)
+  (let ((b (%next-byte)))
+    (cond
+     ((= b 116) #t)                                ; t
+     ((= b 102) #f)                                ; f
+     ((= b 39) (list 'syntax ($read)))              ; ' -- #'x
+     ((= b 40) (list->vector (%read-list)))        ; ( -- #(...) vector
+     ((memv b '(98 66 111 79 100 68 120 88 101 69 105 73))
+      (%read-prefixed b))                          ; b B o O d D x X e E i I
+     ((= b 118) (%read-bytevector))                ; v -- #vu8(...)
+     ((= b 92)                                     ; \ -- character
+      (let ((first (%next-byte)))
+        (if (%delimiter? (%peek-byte))
+            (integer->char first)
+            (%named-char (%bytes->string
+                          (cons first (%read-token '())))))))
+     ;; Anything else is an error, and it has to be: this branch used
+     ;; to answer (eof-object), which is not a weak error but the wrong
+     ;; KIND of value.  End-of-input is a control signal, so a form the
+     ;; reader did not implement did not fail -- it ended the datum,
+     ;; and a consumer's correct response to that is to stop and treat
+     ;; what it has as complete.  `(read "(1 #b101 3)")` answered
+     ;; `(1 #<eof> 101 3)`: three elements became four, with different
+     ;; contents, silently.  A failure encoded as a legal protocol
+     ;; signal is worse than a crash, because the caller handles it.
+     (else
+      (errorf 'read
+              (string-append "unrecognised # syntax: #"
+                             (if (< b 0) "<end of input>"
+                                 (string (integer->char b)))
+                             " at " (%at-line $reader-line $reader-column)))))))
+
+;; #| ... |# and it NESTS.  Scanning to the last |# accepts
+;; "#| a |# b |#" as one comment and swallows `b`; stopping at the
+;; first accepts "#| outer #| inner |# still-outer |#" too early and
+;; leaves `still-outer |#` as data.  Both pass a single-level test, so
+;; the depth is carried and test/reader-comments.ss reads what comes
+;; AFTER the comment rather than the comment itself.
+;; The `#` is consumed; if what follows begins a comment, consume the
+;; whole comment and answer #t.  Otherwise consume nothing more and
+;; answer #f, leaving the caller to read the hash form.
+;;
+;; One procedure because there are two callers -- a comment can begin a
+;; datum or sit between two elements of a list -- and they had the same
+;; three-way cond written out twice.  Two statements of one grammar is
+;; how "#;2 . 3" came to be read as a dot: the list's copy was added
+;; later, and the two were only accidentally the same.
+(define (%skip-hash-comment)
+  (let ((c (%peek-byte)))
+    (cond
+     ((= c 124) (%next-byte) (%skip-block-comment 1) #t)
+     ((= c 59) (%next-byte) (%skip-datum) #t)
+     (else #f))))
+
+(define (%skip-block-comment depth)
+  (let ((b (%next-byte)))
+    (cond
+     ((< b 0)
+      (errorf 'read
+              (string-append "a #| block comment reaches end of input with "
+                             "no |# at "
+                             (%at-line $reader-line $reader-column))))
+     ((and (= b 35) (= (%peek-byte) 124))         ; #|
+      (%next-byte) (%skip-block-comment (+ depth 1)))
+     ((and (= b 124) (= (%peek-byte) 35))         ; |#
+      (%next-byte)
+      (unless (= depth 1) (%skip-block-comment (- depth 1))))
+     (else (%skip-block-comment depth)))))
+
+;; #; comments out the next DATUM, not the next token: "#;(1 2) 3"
+;; drops the whole list.  Reading it is what finds its end, so this
+;; reads and discards -- and refuses when there is nothing to discard,
+;; which is what "#;" alone and "(#;)" are.
+(define (%skip-datum)
+  (let ((d ($read)))
+    (when (eof-object? d)
+      (errorf 'read
+              (string-append "a #; datum comment has no datum after it at "
+                             (%at-line $reader-line $reader-column))))))
+
+(define (%read-bytevector)
+  ;; #vu8( ... ) -- the spelling the writer emits for a bytevector, so
+  ;; the reader owes it an entry: without one this library could not
+  ;; read back its own output.
+  (let ((u (%next-byte)) (eight (%next-byte)) (open (%next-byte)))
+    (unless (and (= u 117) (= eight 56) (= open 40))   ; u 8 (
+      (errorf 'read
+              (string-append "unrecognised # syntax: #v (only #vu8( is a "
+                             "bytevector) at "
+                             (%at-line $reader-line $reader-column))))
+    (let ((elements (%read-list)))
+      ;; Check every element rather than letting bytevector-u8-set!
+      ;; take what it is given: an out-of-range value would be
+      ;; truncated or wrapped, and a wrapped byte is a wrong value that
+      ;; looks like a right one.
+      (let ((bv (make-bytevector (length elements))))
+        (let loop ((i 0) (es elements))
+          (if (null? es)
+              bv
+              (let ((e (car es)))
+                (unless (and (integer? e) (exact? e)
+                             (<= 0 e) (<= e 255))
+                  (errorf 'read
+                          (string-append
+                           "a bytevector element is an exact integer in "
+                           "0..255 at "
+                           (%at-line $reader-line $reader-column))))
+                (bytevector-u8-set! bv i e)
+                (loop (+ i 1) (cdr es)))))))))
+
+(define (%named-char name)
+  ;; the full R6RS set; an unknown name is an error, not a silent
+  ;; first-character guess (#\return once read as #\r that way)
+  (cond
+   ((string=? name "space") #\space)
+   ((string=? name "newline") #\newline)
+   ((string=? name "tab") (integer->char 9))
+   ((string=? name "return") (integer->char 13))
+   ((string=? name "linefeed") (integer->char 10))
+   ((string=? name "nul") (integer->char 0))
+   ((string=? name "alarm") (integer->char 7))
+   ((string=? name "backspace") (integer->char 8))
+   ((string=? name "vtab") (integer->char 11))
+   ((string=? name "page") (integer->char 12))
+   ((string=? name "esc") (integer->char 27))
+   ((string=? name "delete") (integer->char 127))
+   ((= (string-length name) 1) (string-ref name 0))
+   (else (error 'read (string-append "unknown character name ending at "
+                                     (%at-line $reader-line $reader-column))
+                name))))
+
+;; ---- write ----
+
+(define (write x . p)
+  (if (null? p) ($write x) ($with-out (car p) (lambda () ($write x)))))
+(define ($write x)
+  (cond
+   ((string? x)
+    ($wb 34)
+    (%write-escaped x 0)
+    ($wb 34))
+   ((char? x)
+    ($wb 35) ($wb 92)
+    (%write-char-name x))
+   ((pair? x)
+    ($wb 40)
+    (write (car x))
+    (%write-tail (cdr x)))
+   ((vector? x)
+    ($wb 35) ($wb 40)
+    (let loop ((i 0))
+      (when (< i (vector-length x))
+        (unless (zero? i) ($wb 32))
+        (write (vector-ref x i))
+        (loop (+ i 1))))
+    ($wb 41))
+   ((symbol? x) (%write-symbol (symbol->string x)))
+   (else (display x))))
+
+;; A symbol name that cannot be spelled bare has to be escaped, or the
+;; writer emits something that is not the datum it was handed: the name
+;; "a b" went out as `a b` and came back as `a` with `b` left over, and
+;; the empty name went out as nothing at all.
+;;
+;; The escape set is MEASURED, not reasoned about -- every byte from 1
+;; to 126 was written as a symbol under the reference implementation
+;; and the ones it escaped are the ones escaped here.  Two positions
+;; differ, so there are two predicates: `+`, `-`, `.`, a digit and `@`
+;; are fine inside a name and not at the front of one.
+;;
+;; Two different exemptions, and conflating them was a defect.
+;;
+;; `+`, `-` and `...` are WHOLE names that need no escaping at all.
+;; `->` is not one of those: it exempts only the LEADING byte from the
+;; leading rule, and every byte after it is judged normally.  Treating
+;; `->` as a whole-name exemption meant "->a b" went out unescaped and
+;; read back as `->a` with `b` left over -- the exact failure this
+;; change exists to remove, reintroduced by the exemption meant to
+;; spell `->x` correctly.  Measured against the reference:
+;;   "->a b" => ->a\x20;b      "->|" => ->\x7C;      "->#" => ->\x23;
+(define (%sym-whole-name-safe? s)
+  (or (string=? s "+") (string=? s "-") (string=? s "...")))
+
+(define (%sym-arrow? s)                 ; leading byte exempt, rest normal
+  (and (>= (string-length s) 2)
+       (char=? #\- (string-ref s 0))
+       (char=? #\> (string-ref s 1))))
+
+(define (%sym-escape-mid? b)
+  (or (< b 33)                                     ; controls and space
+      (memv b '(34 35 39 40 41 44 59 91 92 93 96 123 124 125))))
+
+(define (%sym-escape-lead? b)
+  (or (%sym-escape-mid? b)
+      (memv b '(43 45 46 64))                      ; + - . @
+      (and (>= b 48) (<= b 57))))                  ; a digit
+
+(define $hex-upper "0123456789ABCDEF")
+(define (%write-sym-escape b)                      ; \xHH; upper case, no padding
+  ($wb 92) ($wb 120)
+  (when (< 15 b) ($wb (char->integer (string-ref $hex-upper (quotient b 16)))))
+  ($wb (char->integer (string-ref $hex-upper (remainder b 16))))
+  ($wb 59))
+
+(define (%write-symbol s)
+  (let ((n (string-length s)))
+    (cond
+     ;; the one name with no inline spelling: there is no escape for
+     ;; nothing, so the bars carry it
+     ((= n 0) ($wb 124) ($wb 124))
+     ((%sym-whole-name-safe? s) (%display-string s 0))
+     (else
+      (let ((arrow (%sym-arrow? s)))
+        (let loop ((i 0))
+          (when (< i n)
+            (let ((b (char->integer (string-ref s i))))
+              (if (if (and (= i 0) (not arrow))
+                      (%sym-escape-lead? b)
+                      (%sym-escape-mid? b))
+                  (%write-sym-escape b)
+                  ($wb b)))
+            (loop (+ i 1)))))))))
+
+(define (%write-tail x)
+  (cond
+   ((null? x) ($wb 41))
+   ((pair? x)
+    ($wb 32)
+    (write (car x))
+    (%write-tail (cdr x)))
+   (else
+    ($wb 32) ($wb 46) ($wb 32)
+    (write x)
+    ($wb 41))))
+
+(define (%write-escaped s i)
+  (when (< i (string-length s))
+    (let ((c (char->integer (string-ref s i))))
+      (when (or (= c 34) (= c 92))
+        ($wb 92))
+      ($wb c))
+    (%write-escaped s (+ i 1))))
+
+(define (%write-char-name c)
+  (let ((n (char->integer c)))
+    (cond
+     ((= n 32) (%display-string "space" 0))
+     ((= n 10) (%display-string "newline" 0))
+     ((= n 9) (%display-string "tab" 0))
+     (else ($wb n)))))
+
+;; ---- additions for self-hosting ----
+
+(define (void) (begin))
+
+(define (> a b) (< b a))
+(define (<= a b) (if (< b a) #f #t))
+(define (>= a b) (if (< a b) #f #t))
+(define (max a b) (if (< a b) b a))
+(define (min a b) (if (< a b) a b))
+
+;; A list has FINITE length by definition, so a chain that cycles is
+;; not one and #f is the only answer -- but the answer has to ARRIVE.
+;; The body used to be
+;;     (if (null? x) #t (and (pair? x) (list? (cdr x))))
+;; and `and` expands to `if`, which puts that call in tail position:
+;; on a circular list it did not overflow the stack, it span forever.
+;; No exception, no output, no return.  Of the ways this can go wrong
+;; -- wrong answer, crash, hang -- the hang is the only one that does
+;; not even say that something went wrong, and in a browser it takes
+;; the tab with it.
+;;
+;; Two cursors, one stepping twice: they meet if and only if the chain
+;; cycles, and neither outruns a proper list's end.
+(define (list? x)
+  (let loop ((slow x) (fast x))
+    (cond ((null? fast) #t)
+          ((not (pair? fast)) #f)
+          ((null? (cdr fast)) #t)
+          ((not (pair? (cdr fast))) #f)
+          (else (let ((fast (cdr (cdr fast))) (slow (cdr slow)))
+                  (and (not (eq? fast slow)) (loop slow fast)))))))
+
+(define (memv x ls) (memq x ls))
+(define (assv x ls) (assq x ls))
+(define (member x ls)
+  (cond
+   ((null? ls) #f)
+   ((equal? (car ls) x) ls)
+   (else (member x (cdr ls)))))
+(define (assoc x ls)
+  (cond
+   ((null? ls) #f)
+   ((equal? (caar ls) x) (car ls))
+   (else (assoc x (cdr ls)))))
+
+(define (list-tail ls n)
+  (if (zero? n) ls (list-tail (cdr ls) (- n 1))))
+(define (list-ref ls n)
+  (car (list-tail ls n)))
+
+(define (fold-left f init ls)
+  (if (null? ls)
+      init
+      (fold-left f (f init (car ls)) (cdr ls))))
+(define (fold-right f init ls)
+  (if (null? ls)
+      init
+      (f (car ls) (fold-right f init (cdr ls)))))
+
+(define (caddr p) (car (cddr p)))
+(define (cdddr p) (cdr (cddr p)))
+(define (cadddr p) (car (cdddr p)))
+(define (cdadr p) (cdr (cadr p)))
+(define (caadr p) (car (cadr p)))
+
+(define (make-list n x)
+  (if (zero? n) '() (cons x (make-list (- n 1) x))))
+
+(define (number->string n)
+  (with-output-to-string (lambda () (display n))))
+(define (string->number s)
+  (let ((bs (map (lambda (c) (char->integer c)) (string->list s))))
+    (cond
+     ((%number-token? bs) (%parse-int bs))
+     ((%decimal-token? bs) (%parse-decimal bs))
+     (else #f))))
+
+;; gensyms: fresh uninterned symbol structs; identity comes from the
+;; struct allocation, so even same-named gensyms are distinct
+(define $gensym-count 0)
+(define (gensym prefix)
+  (set! $gensym-count (+ $gensym-count 1))
+  (%make-symbol (string-append prefix (number->string $gensym-count))))
+
+
+(define (%abort) (%unreachable))
+
+;; compatible with the host Chez errorf; format directives print as-is
+(define (errorf who msg . irritants)
+  (raise ($make-error who msg irritants)))
+
+(define (eqv? a b)
+  (or (eq? a b)
+      (and (flonum? a) (flonum? b) (fl=? a b))
+      (and (%bignum? a) (%bignum? b) ($eq2 a b))
+      (and (%ratio? a) (%ratio? b) ($eq2 a b))
+      (and (%complex? a) (%complex? b)
+           (eqv? (%cx-re a) (%cx-re b))
+           (eqv? (%cx-im a) (%cx-im b)))))
+(define (number? x)
+  (or (fixnum? x) (flonum? x) (%bignum? x) (%ratio? x) (%complex? x)))
+(define (integer? x)
+  (or (fixnum? x) (%bignum? x)
+      (and (flonum? x) (fl=? x (flfloor x)))))
+(define (exact? x)
+  (or (fixnum? x) (%bignum? x) (%ratio? x)
+      (and (%complex? x) (exact? (%cx-re x)) (exact? (%cx-im x)))))
+(define (inexact? x) (and (number? x) (not (exact? x))))
+(define (cadar p) (car (cdar p)))
+
+;; ---- derived binding forms (macros live in the prelude too) ----
+
+;; both bind sequentially
+(define-syntax let-values
+  (syntax-rules ()
+    ((_ () body1 body2 ...) (let () body1 body2 ...))
+    ((_ ((formals expr) rest ...) body1 body2 ...)
+     (call-with-values (lambda () expr)
+       (lambda formals (let-values (rest ...) body1 body2 ...))))))
+(define-syntax let*-values
+  (syntax-rules ()
+    ((_ bindings body1 body2 ...) (let-values bindings body1 body2 ...))))
+
+(define-syntax assert
+  (syntax-rules ()
+    ((_ e) (let ((t e)) (if t t (errorf 'assert "assertion failed"))))))
+
+(define (cons* a . rest) ($cons* a rest))
+(define ($cons* a rest)
+  (if (null? rest) a (cons a ($cons* (car rest) (cdr rest)))))
+
+;; n-ary map and for-each
+(define (map f ls . more)
+  (if (null? more) ($map1 f ls) ($mapn f (cons ls more))))
+(define ($map1 f ls) ($map1-acc f ls '()))
+(define ($map1-acc f ls acc)
+  (if (null? ls)
+      (reverse acc)
+      ($map1-acc f (cdr ls) (cons (f (car ls)) acc))))
+(define ($mapn f lists)
+  (if ($any-null? lists)
+      '()
+      (cons (apply f ($heads lists)) ($mapn f ($tails lists)))))
+(define ($any-null? ls)
+  (and (pair? ls) (or (null? (car ls)) ($any-null? (cdr ls)))))
+(define ($heads ls) (if (null? ls) '() (cons (caar ls) ($heads (cdr ls)))))
+(define ($tails ls) (if (null? ls) '() (cons (cdar ls) ($tails (cdr ls)))))
+(define (for-each f ls . more)
+  (if (null? more) ($for-each1 f ls) ($for-eachn f (cons ls more))))
+(define ($for-each1 f ls)
+  (unless (null? ls)
+    (f (car ls))
+    ($for-each1 f (cdr ls))))
+(define ($for-eachn f lists)
+  (unless ($any-null? lists)
+    (apply f ($heads lists))
+    ($for-eachn f ($tails lists))))
+
+;; ---- dynamic-wind ----
+;;
+;; $winders holds (before . after) frames.  Escaping continuations
+;; capture the winder stack; $escape runs the after thunks of every
+;; frame being exited, then throws to the matching call/cc.
+
+(define $winders '())
+
+(define (dynamic-wind before thunk after)
+  (before)
+  (set! $winders (cons (cons before after) $winders))
+  (let ((r (thunk)))
+    (set! $winders (cdr $winders))
+    (after)
+    r))
+
+(define ($escape tok saved v)
+  ($unwind-to saved)
+  (%throw-k tok v))
+(define ($unwind-to saved)
+  (unless (eq? $winders saved)
+    (let ((w (car $winders)))
+      (set! $winders (cdr $winders))
+      ((cdr w))
+      ($unwind-to saved))))
+
+;; ---- vectors ----
+
+(define (make-vector n . fill)
+  (%make-vector n (if (null? fill) 0 (car fill))))
+(define (vector . els) (list->vector els))
+(define (list->vector ls)
+  (let ((v (%make-vector (length ls) 0)))
+    ($vfill! v ls 0)
+    v))
+(define ($vfill! v ls i)
+  (unless (null? ls)
+    (vector-set! v i (car ls))
+    ($vfill! v (cdr ls) (+ i 1))))
+(define (vector->list v)
+  ($v->l v (- (vector-length v) 1) '()))
+(define ($v->l v i acc)
+  (if (< i 0) acc ($v->l v (- i 1) (cons (vector-ref v i) acc))))
+(define (vector-fill! v x)
+  ($vf! v x 0))
+(define ($vf! v x i)
+  (when (< i (vector-length v))
+    (vector-set! v i x)
+    ($vf! v x (+ i 1))))
+(define (vector-map f v) (list->vector (map f (vector->list v))))
+(define (vector-for-each f v) (for-each f (vector->list v)))
+
+;; ---- bytevectors ----
+
+(define (make-bytevector n . fill)
+  (%make-bytevector n (if (null? fill) 0 (car fill))))
+(define (bytevector . bytes)
+  (let ((bv (%make-bytevector (length bytes) 0)))
+    ($bvfill! bv bytes 0)
+    bv))
+(define ($bvfill! bv ls i)
+  (unless (null? ls)
+    (bytevector-u8-set! bv i (car ls))
+    ($bvfill! bv (cdr ls) (+ i 1))))
+(define (bytevector=? a b)
+  (and (= (bytevector-length a) (bytevector-length b))
+       ($bv= a b 0)))
+(define ($bv= a b i)
+  (or (= i (bytevector-length a))
+      (and (= (bytevector-u8-ref a i) (bytevector-u8-ref b i))
+           ($bv= a b (+ i 1)))))
+(define (utf8->string bv)
+  (let ((s (%make-string (bytevector-length bv))))
+    ($bv->s bv s 0)
+    s))
+(define ($bv->s bv s i)
+  (when (< i (bytevector-length bv))
+    (string-set! s i (integer->char (bytevector-u8-ref bv i)))
+    ($bv->s bv s (+ i 1))))
+(define (string->utf8 str)
+  (let ((bv (%make-bytevector (string-length str) 0)))
+    ($s->bv str bv 0)
+    bv))
+(define ($s->bv str bv i)
+  (when (< i (string-length str))
+    (bytevector-u8-set! bv i (char->integer (string-ref str i)))
+    ($s->bv str bv (+ i 1))))
+
+;; ---- hashtables (buckets of alists over vectors) ----
+
+(define-record-type (hashtable $make-ht hashtable?)
+  (fields (immutable hash $ht-hash)
+          (immutable equiv $ht-equiv)
+          (mutable size $ht-size $ht-size-set!)
+          (mutable buckets $ht-buckets $ht-buckets-set!)))
+
+(define (make-eq-hashtable . _) ($new-ht $eqv-hash eq?))
+(define (make-eqv-hashtable . _) ($new-ht $eqv-hash eqv?))
+(define (make-hashtable hash equiv . _) ($new-ht hash equiv))
+(define ($new-ht h e) ($make-ht h e 0 (make-vector 8 '())))
+
+(define (abs n) (if (< n 0) (- 0 n) n))
+(define (string-hash s) ($sh s 0 7))
+(define ($sh s i h)
+  (if (< i (string-length s))
+      ($sh s (+ i 1)
+           (remainder (+ (* h 31) (char->integer (string-ref s i)))
+                      536870911))
+      h))
+(define ($eqv-hash k)
+  (cond
+   ((fixnum? k) (abs k))
+   ((number? k) 0)
+   ((char? k) (char->integer k))
+   ((symbol? k) (string-hash (symbol->string k)))
+   ((eq? k #t) 1)
+   ((eq? k #f) 2)
+   ((null? k) 3)
+   (else 0)))
+(define (equal-hash k)
+  (cond
+   ((string? k) (string-hash k))
+   ((pair? k) (remainder (+ (* 31 (equal-hash (car k)))
+                            (equal-hash (cdr k)))
+                         536870911))
+   (else ($eqv-hash k))))
+
+(define ($ht-index ht k)
+  (remainder (abs (($ht-hash ht) k))
+             (vector-length ($ht-buckets ht))))
+(define ($bucket-find equiv k bucket)
+  (cond
+   ((null? bucket) #f)
+   ((equiv (caar bucket) k) (car bucket))
+   (else ($bucket-find equiv k (cdr bucket)))))
+
+(define (hashtable-ref ht k default)
+  (let ((hit ($bucket-find ($ht-equiv ht) k
+                           (vector-ref ($ht-buckets ht) ($ht-index ht k)))))
+    (if hit (cdr hit) default)))
+(define (hashtable-contains? ht k)
+  (if ($bucket-find ($ht-equiv ht) k
+                    (vector-ref ($ht-buckets ht) ($ht-index ht k)))
+      #t
+      #f))
+(define (hashtable-set! ht k v)
+  (let* ((i ($ht-index ht k))
+         (bucket (vector-ref ($ht-buckets ht) i))
+         (hit ($bucket-find ($ht-equiv ht) k bucket)))
+    (if hit
+        (set-cdr! hit v)
+        (begin
+          (vector-set! ($ht-buckets ht) i (cons (cons k v) bucket))
+          ($ht-size-set! ht (+ ($ht-size ht) 1))
+          (when (< (* 2 (vector-length ($ht-buckets ht))) ($ht-size ht))
+            ($ht-grow! ht))))))
+(define (hashtable-delete! ht k)
+  (let* ((i ($ht-index ht k))
+         (bucket (vector-ref ($ht-buckets ht) i)))
+    (vector-set! ($ht-buckets ht) i
+                 ($bucket-remove ($ht-equiv ht) k bucket
+                                 (lambda () ($ht-size-set! ht (- ($ht-size ht) 1)))))))
+(define ($bucket-remove equiv k bucket shrink!)
+  (cond
+   ((null? bucket) '())
+   ((equiv (caar bucket) k) (shrink!) (cdr bucket))
+   (else (cons (car bucket)
+               ($bucket-remove equiv k (cdr bucket) shrink!)))))
+(define (hashtable-size ht) ($ht-size ht))
+(define (hashtable-update! ht k proc default)
+  (hashtable-set! ht k (proc (hashtable-ref ht k default))))
+(define (hashtable-keys ht)
+  (list->vector ($ht-fold ht (lambda (k v acc) (cons k acc)) '())))
+(define ($ht-fold ht f acc)
+  (let ((buckets ($ht-buckets ht)))
+    (let loop ((i 0) (acc acc))
+      (if (= i (vector-length buckets))
+          acc
+          (loop (+ i 1)
+                (let scan ((b (vector-ref buckets i)) (acc acc))
+                  (if (null? b)
+                      acc
+                      (scan (cdr b) (f (caar b) (cdar b) acc)))))))))
+(define ($ht-grow! ht)
+  (let ((old ($ht-buckets ht)))
+    ($ht-buckets-set! ht (make-vector (* 2 (vector-length old)) '()))
+    ($ht-size-set! ht 0)
+    (let loop ((i 0))
+      (when (< i (vector-length old))
+        (let scan ((b (vector-ref old i)))
+          (unless (null? b)
+            (hashtable-set! ht (caar b) (cdar b))
+            (scan (cdr b))))
+        (loop (+ i 1))))))
+
+;; ---- the numeric tower: bignums and flonum contagion ----
+;;
+;; Bignums: sign flag plus a vector of 15-bit limbs, little-endian.
+;; The compiler's inline fixnum paths call $add2/$sub2/$mul2/$quot2/
+;; $rem2/$lt2/$eq2 on overflow or non-fixnum operands.
+
+(define ($bn-limbs-of n)                ; fixnum magnitude -> limb vector
+  (let count ((m n) (k 0))
+    (if (zero? m)
+        (let ((v (make-vector (if (< 0 k) k 1) 0)))
+          (let fill ((m n) (i 0))
+            (if (zero? m)
+                v
+                (begin (vector-set! v i (remainder m 16384))
+                       (fill (quotient m 16384) (+ i 1))))))
+        (count (quotient m 16384) (+ k 1)))))
+(define ($fx->bn n)
+  (cond
+   ((< n 0)
+    ;; negating -2^29 overflows back into the slow path; its limbs
+    ;; are known
+    (if (= n (* -2 268435456))
+        (%make-bignum 1 (vector 0 0 2))
+        (%make-bignum 1 ($bn-limbs-of (- 0 n)))))
+   (else (%make-bignum 0 ($bn-limbs-of n)))))
+(%target-case
+ (js
+  ;; the integer layer rides the host's arbitrary-precision integers;
+  ;; the limb machinery above is never referenced on this target and
+  ;; DCE removes it
+  (define ($->bn x) (if (fixnum? x) (%fx->big x) x))
+  (define ($bn-add a b) (%big-norm (%big-add a b)))
+  (define ($bn-negate b) (%big-neg b))
+  (define ($bn-mul2 a b) (%big-norm (%big-mul ($->bn a) ($->bn b))))
+  (define ($bn-quot2 a b) (%big-norm (%big-quot ($->bn a) ($->bn b))))
+  (define ($bn-rem2 a b) (%big-norm (%big-rem ($->bn a) ($->bn b))))
+  (define ($bn-lt2 a b) (%big-lt ($->bn a) ($->bn b)))
+  (define ($bn-eq2 a b) (%big-eq ($->bn a) ($->bn b)))
+  (define ($bn->fl x) (%big->fl x)))
+ (wasm
+  (define ($->bn x) (if (fixnum? x) ($fx->bn x) x))))
+(define ($bn-neg? b) (= (%bignum-sign b) 1))
+
+(define ($bn-norm sign limbs)
+  ;; strip leading zeroes; collapse to a fixnum when the value fits
+  ;; (three limbs still fit when the top one is 0 or 1)
+  (let strip ((n (vector-length limbs)))
+    (cond
+     ((and (< 1 n) (zero? (vector-ref limbs (- n 1)))) (strip (- n 1)))
+     ;; the asymmetric fixnum boundary: -2^29 fits, +2^29 does not
+     ;; (the product below stays on the inline fast path)
+     ((and (= n 3) (= sign 1)
+           (= (vector-ref limbs 2) 2)
+           (zero? (vector-ref limbs 1))
+           (zero? (vector-ref limbs 0)))
+      (* -2 268435456))
+     ((or (< n 3) (and (= n 3) (< (vector-ref limbs 2) 2)))
+      (let ((v (+ (vector-ref limbs 0)
+                  (if (< 1 n) (* (vector-ref limbs 1) 16384) 0)
+                  (if (< 2 n) (* (vector-ref limbs 2) 268435456) 0))))
+        (if (= sign 1) (- 0 v) v)))
+     (else
+      (%make-bignum sign
+                    (if (= n (vector-length limbs))
+                        limbs
+                        (let ((w (make-vector n 0)))
+                          (let copy ((i 0))
+                            (if (= i n)
+                                w
+                                (begin (vector-set! w i (vector-ref limbs i))
+                                       (copy (+ i 1))))))))))))
+
+(define ($mag-cmp a b)                  ; limb vectors -> -1 0 1
+  (let ((la ($mag-len a)) (lb ($mag-len b)))
+    (cond
+     ((< la lb) -1)
+     ((< lb la) 1)
+     (else
+      (let loop ((i (- la 1)))
+        (cond
+         ((< i 0) 0)
+         ((< (vector-ref a i) (vector-ref b i)) -1)
+         ((< (vector-ref b i) (vector-ref a i)) 1)
+         (else (loop (- i 1)))))))))
+(define ($mag-len v)                    ; length ignoring leading zeroes
+  (let loop ((n (vector-length v)))
+    (if (and (< 1 n) (zero? (vector-ref v (- n 1))))
+        (loop (- n 1))
+        n)))
+
+(define ($mag-add a b)
+  (let* ((la ($mag-len a)) (lb ($mag-len b))
+         (n (+ (if (< la lb) lb la) 1))
+         (r (make-vector n 0)))
+    (let loop ((i 0) (carry 0))
+      (if (= i n)
+          r
+          (let ((s (+ carry
+                      (+ (if (< i la) (vector-ref a i) 0)
+                         (if (< i lb) (vector-ref b i) 0)))))
+            (vector-set! r i (remainder s 16384))
+            (loop (+ i 1) (quotient s 16384)))))))
+(define ($mag-sub a b)                  ; assumes a >= b
+  (let* ((la ($mag-len a))
+         (r (make-vector la 0)))
+    (let loop ((i 0) (borrow 0))
+      (if (= i la)
+          r
+          (let ((d (- (- (vector-ref a i) borrow)
+                      (if (< i ($mag-len b)) (vector-ref b i) 0))))
+            (if (< d 0)
+                (begin (vector-set! r i (+ d 16384)) (loop (+ i 1) 1))
+                (begin (vector-set! r i d) (loop (+ i 1) 0))))))))
+(define ($mag-mul a b)
+  (let* ((la ($mag-len a)) (lb ($mag-len b))
+         (r (make-vector (+ la lb) 0)))
+    (let outer ((i 0))
+      (if (= i la)
+          r
+          (begin
+            (let inner ((j 0) (carry 0))
+              (if (= j lb)
+                  (vector-set! r (+ i j)
+                               (+ (vector-ref r (+ i j)) carry))
+                  (let ((t (+ (+ (vector-ref r (+ i j)) carry)
+                              (* (vector-ref a i) (vector-ref b j)))))
+                    (vector-set! r (+ i j) (remainder t 16384))
+                    (inner (+ j 1) (quotient t 16384)))))
+            (outer (+ i 1)))))))
+(define ($mag-divmod-small v d)         ; -> (quotient-vec . rem-fixnum)
+  (let* ((n ($mag-len v))
+         (q (make-vector n 0)))
+    (let loop ((i (- n 1)) (rem 0))
+      (if (< i 0)
+          (cons q rem)
+          (let ((cur (+ (* rem 16384) (vector-ref v i))))
+            (vector-set! q i (quotient cur d))
+            (loop (- i 1) (remainder cur d)))))))
+
+(%target-case
+ (js)
+ (wasm
+  (define ($bn-add a b)                 ; bignum x bignum
+    (let ((sa (%bignum-sign a)) (sb (%bignum-sign b))
+          (ma (%bignum-limbs a)) (mb (%bignum-limbs b)))
+      (cond
+       ((= sa sb) ($bn-norm sa ($mag-add ma mb)))
+       ((< ($mag-cmp ma mb) 0) ($bn-norm sb ($mag-sub mb ma)))
+       (else ($bn-norm sa ($mag-sub ma mb))))))
+  (define ($bn-negate b)
+    (%make-bignum (- 1 (%bignum-sign b)) (%bignum-limbs b)))))
+
+;; ---- exact -> inexact, in ONE rounding ----
+;; An exact value wider than 53 bits has to be rounded, and rounding
+;; more than once is not the same as rounding once: two conversions
+;; and a division land up to two ulp from the nearest double, and land
+;; there differently on the two targets.  So the scaling and the
+;; rounding decision are made in the EXACT integer layer -- where both
+;; targets are forced to agree, every operation in it being exact --
+;; and only a 53-bit significand and a power of two ever cross into
+;; f64, both of which f64 represents exactly.
+;;
+;; $exact->fl is the single entry point: bignum -> flonum, ratio ->
+;; flonum and the reader's decimal literals all round here, once.
+(define ($int-bitlen n)                 ; n >= 0, exact
+  (let coarse ((m n) (b 0))
+    (if (< m 16777216)                  ; 2^24, a fixnum-safe stride
+        (let fine ((m m) (b b))
+          (if (= m 0) b (fine (quotient m 2) (+ b 1))))
+        (coarse (quotient m 16777216) (+ b 24)))))
+
+(define ($pow2 k)                       ; 2^k, exact, by squaring
+  (if (= k 0)
+      1
+      (let* ((h ($pow2 (quotient k 2)))
+             (hh (* h h)))
+        (if (= 0 (- k (* 2 (quotient k 2)))) hh (* hh 2)))))
+
+(define ($small->fl m)                  ; exact 0 <= m < 2^53, exactly
+  (let* ((hi (quotient m 67108864))     ; 2^26: both halves are fixnums
+         (lo (- m (* hi 67108864))))
+    (fl+ (fl* (fixnum->flonum hi) 67108864.0) (fixnum->flonum lo))))
+
+(define ($fl-scale2 v k)                ; v * 2^k, exact until it can
+  (cond                                 ; no longer be (overflow, or
+   ((= k 0) v)                          ; the subnormal floor)
+   ((< k 0) ($fl-scale2 (fl* v 0.5) (+ k 1)))
+   (else ($fl-scale2 (fl* v 2.0) (- k 1)))))
+
+(define ($nonneg->fl num den)           ; num >= 0, den > 0
+  (if (= num 0)
+      0.0
+      ;; scale num/den into [2^53, 2^54) so the quotient carries the
+      ;; 53 bits that survive plus one guard bit, and the division
+      ;; remainder is the sticky bit
+      (let* ((k (- 54 (- ($int-bitlen num) ($int-bitlen den))))
+             (n (if (< 0 k) (* num ($pow2 k)) num))
+             (d (if (< k 0) (* den ($pow2 (- 0 k))) den)))
+        (let norm ((n n) (d d) (e (- 0 k)))
+          (let ((q (quotient n d)))     ; value = (n/d) * 2^e
+            (cond
+             ((< q 9007199254740992) (norm (* n 2) d (- e 1)))     ; 2^53
+             ((< 18014398509481983 q) (norm n (* d 2) (+ e 1)))    ; 2^54
+             (else
+              ;; q holds 53 significant bits and one guard bit, and the
+              ;; division remainder is the sticky bit.  Rounding here
+              ;; is right only when the RESULT has 53 bits to keep.
+              ;;
+              ;; Below the normal floor it does not.  The value is
+              ;; about half * 2^(e+1), so its binade exponent is
+              ;; e + 53, and a result under 2^-1022 has
+              ;;     deficit = -1075 - e
+              ;; bits fewer than 53 to store.  Rounding at 53 and then
+              ;; letting $fl-scale2 halve into place rounds a SECOND
+              ;; time, and the first rounding has already absorbed the
+              ;; evidence the second one needs: "strictly above the
+              ;; halfway point" becomes "exactly at it", and ties-to-
+              ;; even sends it the other way.  That is one ulp, on the
+              ;; values that sit just above a halfway point -- which is
+              ;; why most subnormals were right and a few were not.
+              ;;
+              ;; So drop the bits in ONE step, at the width the result
+              ;; actually has.  `drop` is 1 in the normal case, which
+              ;; is the old behaviour: one formula, not a special case
+              ;; bolted beside it.
+              ;;
+              ;; The unit works out to exactly 2^-1074 whenever the
+              ;; result is subnormal (2^(e+drop) with drop = 1+deficit),
+              ;; so `keep` counts smallest-subnormals and the scaling
+              ;; afterwards is exact by construction rather than by
+              ;; hope.  A carry out of the top -- keep reaching 2^52 --
+              ;; needs no special handling: that value times 2^-1074 IS
+              ;; the smallest normal, which is the correct answer, and
+              ;; the transition cells in test/exact-to-flonum.ss are
+              ;; the ones that would notice if it were dropped.
+              (let* ((deficit (- (- 0 1075) e))
+                     ;; Past 55 the answer is zero and the width stops
+                     ;; mattering: q is under 2^54, so it cannot reach
+                     ;; half of the unit, and building a power of two
+                     ;; with thousands of bits to divide by would only
+                     ;; slow down the way there.  1e-4000 takes this
+                     ;; path.
+                     (drop (cond ((< deficit 1) 1)
+                                 ((< 54 deficit) 55)
+                                 (else (+ 1 deficit))))
+                     (unit ($pow2 drop))
+                     (keep (quotient q unit))
+                     (rest (- q (* keep unit)))
+                     (halfway (quotient unit 2))
+                     ;; sticky = some bit BELOW the guard is set.  The
+                     ;; guard is the top bit of `rest`, so that is
+                     ;; exactly rest > halfway -- and the division
+                     ;; remainder carries the bits that never reached
+                     ;; the quotient at all.
+                     (sticky (or (not (= (- n (* q d)) 0))
+                                 (< halfway rest)))
+                     (guard (if (< rest halfway) 0 1))
+                     (odd (- keep (* (quotient keep 2) 2)))
+                     (rounded                     ; nearest, ties to even
+                      (if (and (= guard 1) (or sticky (= odd 1)))
+                          (+ keep 1)
+                          keep)))
+                ($fl-scale2 ($small->fl rounded) (+ e drop))))))))))
+
+(define ($exact->fl num den)            ; den > 0
+  (if (< num 0)
+      ;; multiply, don't subtract: an exact negative small enough to
+      ;; round to zero must come out as -0.0, and 0.0 - 0.0 is +0.0
+      (fl* (fixnum->flonum -1) ($nonneg->fl (- 0 num) den))
+      ($nonneg->fl num den)))
+
+(define ($->fl x)
+  (cond
+   ((flonum? x) x)
+   ((fixnum? x) (fixnum->flonum x))
+   ((%ratio? x) ($exact->fl (%ratio-num x) (%ratio-den x)))
+   (else ($bn->fl x))))
+(%target-case
+ (js)
+ (wasm
+  ;; The limb layer's one rounding operation, and so the one place it
+  ;; could disagree with the JS target's exact BigInt layer: a Horner
+  ;; accumulation over base-16384 limbs rounds ONCE PER LIMB.  Round
+  ;; once instead, in the exact layer both targets share.  (The JS
+  ;; branch stays on the host's Number(bigint), already one correctly
+  ;; rounded step -- two mechanisms, one answer, pinned against each
+  ;; other by test/determinism-battery.ss.)
+  (define ($bn->fl x)
+    (if ($bn-neg? x)
+        (fl- 0.0 ($nonneg->fl ($bn-negate x) 1))
+        ($nonneg->fl x 1)))))
+
+(define ($add2 a b)
+  (cond
+   ((or (%complex? a) (%complex? b))
+    ($cx ($add2 (real-part a) (real-part b))
+         ($add2 (imag-part a) (imag-part b))))
+   ((or (flonum? a) (flonum? b))
+    (fl+ ($->fl a) ($->fl b)))
+   ((or (%ratio? a) (%ratio? b))
+    ($make-rat ($add2 ($mul2 (numerator a) (denominator b))
+                      ($mul2 (numerator b) (denominator a)))
+               ($mul2 (denominator a) (denominator b))))
+   (else ($bn-add ($->bn a) ($->bn b)))))
+(define ($sub2 a b)
+  (cond
+   ((or (%complex? a) (%complex? b))
+    ($cx ($sub2 (real-part a) (real-part b))
+         ($sub2 (imag-part a) (imag-part b))))
+   ((or (flonum? a) (flonum? b))
+    (fl- ($->fl a) ($->fl b)))
+   ((or (%ratio? a) (%ratio? b))
+    ($make-rat ($sub2 ($mul2 (numerator a) (denominator b))
+                      ($mul2 (numerator b) (denominator a)))
+               ($mul2 (denominator a) (denominator b))))
+   (else ($bn-add ($->bn a) ($bn-negate ($->bn b))))))
+(define ($mul2 a b)
+  (cond
+   ((or (%complex? a) (%complex? b))
+    (let ((ar (real-part a)) (ai (imag-part a))
+          (br (real-part b)) (bi (imag-part b)))
+      ($cx ($sub2 ($mul2 ar br) ($mul2 ai bi))
+           ($add2 ($mul2 ar bi) ($mul2 ai br)))))
+   ((or (flonum? a) (flonum? b))
+    (fl* ($->fl a) ($->fl b)))
+   ((or (%ratio? a) (%ratio? b))
+    ($make-rat ($mul2 (numerator a) (numerator b))
+               ($mul2 (denominator a) (denominator b))))
+   (else ($bn-mul2 a b))))
+(%target-case
+ (js)
+ (wasm
+  (define ($bn-mul2 a b)
+    (let ((ba ($->bn a)) (bb ($->bn b)))
+      ($bn-norm (if (= (%bignum-sign ba) (%bignum-sign bb)) 0 1)
+                ($mag-mul (%bignum-limbs ba) (%bignum-limbs bb)))))))
+(define ($quot2 a b)
+  (cond
+   ((or (flonum? a) (flonum? b))
+    (fltruncate (fl/ ($->fl a) ($->fl b))))
+   ((and (integer? a) (integer? b))
+    (when ($eq2 b 0) (errorf 'quotient "division by zero"))
+    ($bn-quot2 a b))
+   (else (errorf 'quotient "unsupported operand combination"))))
+(%target-case
+ (js)
+ (wasm
+  (define ($bn-quot2 a b)
+    (if (and (%bignum? a) (fixnum? b) (< 0 b) (< b 16385))
+        (let ((qr ($mag-divmod-small (%bignum-limbs a) b)))
+          ($bn-norm (%bignum-sign a) (car qr)))
+        (let* ((ba ($->bn a)) (bb ($->bn b))
+               (qr ($mag-divmod (%bignum-limbs ba) (%bignum-limbs bb))))
+          ($bn-norm (if (= (%bignum-sign ba) (%bignum-sign bb)) 0 1)
+                    (car qr)))))))
+(define ($rem2 a b)
+  (cond
+   ((or (flonum? a) (flonum? b))
+    (let ((q (fltruncate (fl/ ($->fl a) ($->fl b)))))
+      (fl- ($->fl a) (fl* q ($->fl b)))))
+   ((and (integer? a) (integer? b))
+    (when ($eq2 b 0) (errorf 'remainder "division by zero"))
+    ($bn-rem2 a b))
+   (else (errorf 'remainder "unsupported operand combination"))))
+(%target-case
+ (js)
+ (wasm
+  (define ($bn-rem2 a b)
+    (if (and (%bignum? a) (fixnum? b) (< 0 b) (< b 16385))
+        (let ((r (cdr ($mag-divmod-small (%bignum-limbs a) b))))
+          (if ($bn-neg? a) (- 0 r) r))
+        (let* ((ba ($->bn a)) (bb ($->bn b))
+               (qr ($mag-divmod (%bignum-limbs ba) (%bignum-limbs bb)))
+               (r ($bn-norm 0 (cdr qr))))
+          (if ($bn-neg? ba) (- 0 r) r))))))
+(define ($lt2 a b)
+  (cond
+   ((or (%complex? a) (%complex? b))
+    (errorf '< "complex numbers are not ordered"))
+   ((or (flonum? a) (flonum? b))
+    (fl<? ($->fl a) ($->fl b)))
+   ((or (%ratio? a) (%ratio? b))
+    ;; denominators are positive, so cross-multiplication is safe
+    ($lt2 ($mul2 (numerator a) (denominator b))
+          ($mul2 (numerator b) (denominator a))))
+   (else ($bn-lt2 a b))))
+(%target-case
+ (js)
+ (wasm
+  (define ($bn-lt2 a b)
+    (let* ((ba ($->bn a)) (bb ($->bn b))
+           (sa (%bignum-sign ba)) (sb (%bignum-sign bb)))
+      (cond
+       ((< sa sb) #f)
+       ((< sb sa) #t)
+       ((= sa 1) (< 0 ($mag-cmp (%bignum-limbs ba) (%bignum-limbs bb))))
+       (else (< ($mag-cmp (%bignum-limbs ba) (%bignum-limbs bb)) 0)))))))
+(define ($eq2 a b)
+  (cond
+   ((or (%complex? a) (%complex? b))
+    (and ($eq2 (real-part a) (real-part b))
+         ($eq2 (imag-part a) (imag-part b))))
+   ((or (flonum? a) (flonum? b))
+    (fl=? ($->fl a) ($->fl b)))
+   ((or (%ratio? a) (%ratio? b))
+    (and ($eq2 (numerator a) (numerator b))
+         ($eq2 (denominator a) (denominator b))))
+   (else ($bn-eq2 a b))))
+(%target-case
+ (js)
+ (wasm
+  (define ($bn-eq2 a b)
+    (let ((ba ($->bn a)) (bb ($->bn b)))
+      (and (= (%bignum-sign ba) (%bignum-sign bb))
+           (zero? ($mag-cmp (%bignum-limbs ba) (%bignum-limbs bb))))))))
+
+;; division and conversions
+(define (/ a . rest)
+  (if (null? rest)
+      ($div2 1 a)
+      (fold-left $div2 a rest)))
+(define ($div2 a b)
+  (cond
+   ((or (%complex? a) (%complex? b))
+    (let* ((ar (real-part a)) (ai (imag-part a))
+           (br (real-part b)) (bi (imag-part b))
+           (den ($add2 ($mul2 br br) ($mul2 bi bi))))
+      ($cx ($div2 ($add2 ($mul2 ar br) ($mul2 ai bi)) den)
+           ($div2 ($sub2 ($mul2 ai br) ($mul2 ar bi)) den))))
+   ((or (flonum? a) (flonum? b))
+    (fl/ ($->fl a) ($->fl b)))
+   (else
+    ($make-rat ($mul2 (numerator a) (denominator b))
+               ($mul2 (denominator a) (numerator b))))))
+(define (exact->inexact x) ($->fl x))
+(define (inexact x) ($->fl x))
+(define ($fl->exact-integer m)
+  ;; integral non-negative flonum -> exact, in 2^24 chunks
+  (let ((two24 (fixnum->flonum 16777216)))
+    (let loop ((m m) (acc 0) (scale 1))
+      (if (fl<? m (fixnum->flonum 1))
+          acc
+          (let* ((q (flfloor (fl/ m two24)))
+                 (digit (%fl->fx (fl- m (fl* q two24)))))
+            (loop q (+ acc (* digit scale)) (* scale 16777216)))))))
+(define (inexact->exact x)
+  (if (flonum? x)
+      (let* ((zero (fixnum->flonum 0))
+             (neg (fl<? x zero))
+             (mag (if neg (fl- zero x) x)))
+        (let loop ((m mag) (k 1))
+          (if (fl=? m (flfloor m))
+              (let ((v ($make-rat ($fl->exact-integer m) k)))
+                (if neg (- 0 v) v))
+              (loop (fl* m (fixnum->flonum 2)) (* k 2)))))
+      x))
+(define (exact x) (inexact->exact x))
+(define (floor x) (if (flonum? x) (flfloor x) x))
+(define (truncate x) (if (flonum? x) (fltruncate x) x))
+(define (sqrt x)
+  (if (and (real? x) (< x 0))
+      ($cx 0 (flsqrt ($->fl (- 0 x))))
+      (flsqrt ($->fl x))))
+
+;; ---- R6RS division: div/mod floor the remainder into [0, |d|),
+;; div0/mod0 center it in [-|d|/2, |d|/2).  Exact integers only --
+;; deliberately narrower than R6RS's real contract -- so the answers
+;; are always exact and the sign corrections are total.  Built on
+;; the truncating quotient/remainder generics, so fixnums and
+;; bignums route the same.
+(define ($div-check who n d)
+  (unless (and (or (fixnum? n) (%bignum? n))
+               (or (fixnum? d) (%bignum? d)))
+    (errorf who "operands must be exact integers"))
+  (when (= d 0) (errorf who "division by zero")))
+(define ($div n d)
+  (let ((q (quotient n d)) (r (remainder n d)))
+    (if (< r 0) (if (< d 0) (+ q 1) (- q 1)) q)))
+(define ($mod n d)
+  (let ((r (remainder n d)))
+    (if (< r 0) (if (< d 0) (- r d) (+ r d)) r)))
+(define (div n d) ($div-check 'div n d) ($div n d))
+(define (mod n d) ($div-check 'mod n d) ($mod n d))
+(define (div0 n d)
+  ($div-check 'div0 n d)
+  (let ((q ($div n d)) (r ($mod n d)))
+    (if (< (+ r r) (abs d))
+        q
+        (if (< d 0) (- q 1) (+ q 1)))))
+(define (mod0 n d)
+  ($div-check 'mod0 n d)
+  (let ((r ($mod n d)))
+    (if (< (+ r r) (abs d))
+        r
+        (- r (abs d)))))
+
+;; ---- trigonometry: reduce to [-pi/2, pi/2], one odd polynomial ----
+;; The single supply of sin/cos/tan, in two layers.  $sin-fl and
+;; friends take a FLONUM and are the whole implementation; sin/cos/tan
+;; are the R6RS entries and only widen their argument.  The split
+;; exists so the flonum layer can qualify for the compiler's f64
+;; parameter specialization, which a generic $->fl on the way in
+;; would disqualify.
+;;
+;; Measured, so nobody has to re-derive it: 40M calls, user time.
+;; Calling $sin-fl directly costs 0.36 -- the same as the old
+;; arrangement where the implementation lived in (gfx mat).  But
+;; qualification is WHOLE-PROGRAM: one retained call site that cannot
+;; be proved to pass a flonum demotes the function for every caller,
+;; so merely linking a wrapper that forwards a boxed parameter puts it
+;; back to 0.45.  That is why (gfx mat)'s wrappers hand over an
+;; explicitly flonum expression rather than the bare parameter.
+;;
+;; Accuracy: error < 1e-9 measured up to |x| ~ 1e6.  Past that the
+;; single-step 2pi reduction degrades with amplitude (measured ~2.4e-8
+;; at 2^29), because k*2pi is itself rounded once.
+(define $trig-pi 3.141592653589793)
+(define $trig-2pi 6.283185307179586)
+(define $trig-pi/2 1.5707963267948966)
+
+(define ($sin-poly x)                   ; |x| <= pi/2, error < 1e-9
+  (let ((x2 (fl* x x)))
+    (fl* x
+         (fl- 1.0 (fl* (fl/ x2 6.0)
+              (fl- 1.0 (fl* (fl/ x2 20.0)
+                   (fl- 1.0 (fl* (fl/ x2 42.0)
+                        (fl- 1.0 (fl* (fl/ x2 72.0)
+                             (fl- 1.0 (fl* (fl/ x2 110.0)
+                                  (fl- 1.0 (fl* (fl/ x2 156.0)
+                                       (fl- 1.0 (fl/ x2 210.0)))))))))))))))))
+
+;; the flonum layer: what the per-frame paths call
+(define ($sin-fl x)
+  (let* ((k (flfloor (fl+ (fl/ x $trig-2pi) 0.5)))
+         (r (fl- x (fl* k $trig-2pi))))     ; r in [-pi, pi]
+    ($sin-poly
+     (cond ((fl<? $trig-pi/2 r) (fl- $trig-pi r))
+           ((fl<? r (fl- 0.0 $trig-pi/2)) (fl- (fl- 0.0 $trig-pi) r))
+           (else r)))))
+(define ($cos-fl x) ($sin-fl (fl+ x $trig-pi/2)))
+(define ($tan-fl x) (fl/ ($sin-fl x) ($cos-fl x)))
+
+;; the R6RS entries: widen, then hand over
+(define (sin v) ($sin-fl ($->fl v)))
+(define (cos v) ($cos-fl ($->fl v)))
+(define (tan v) ($tan-fl ($->fl v)))
+
+;; ---- the string library ----
+
+(define (make-string n . fill)
+  (let ((s (%make-string n)))
+    (unless (null? fill) (string-fill! s (car fill)))
+    s))
+(define (string-fill! s c)
+  (let loop ((i 0))
+    (when (< i (string-length s))
+      (string-set! s i c)
+      (loop (+ i 1)))))
+(define (string . chars) (list->string chars))
+(define (substring s start end)
+  (let ((r (%make-string (- end start))))
+    (let loop ((i start))
+      (when (< i end)
+        (string-set! r (- i start) (string-ref s i))
+        (loop (+ i 1))))
+    r))
+(define (string-copy s) (substring s 0 (string-length s)))
+(define (string-append . ss)
+  ($strings-join ss))
+(define ($strings-join ss)
+  (let* ((total (fold-left (lambda (n s) (+ n (string-length s))) 0 ss))
+         (r (%make-string total)))
+    (let outer ((ss ss) (at 0))
+      (if (null? ss)
+          r
+          (let ((s (car ss)))
+            (let inner ((i 0))
+              (when (< i (string-length s))
+                (string-set! r (+ at i) (string-ref s i))
+                (inner (+ i 1))))
+            (outer (cdr ss) (+ at (string-length s))))))))
+
+(define ($string-cmp a b)               ; lexicographic: -1 0 1
+  (let ((la (string-length a)) (lb (string-length b)))
+    (let loop ((i 0))
+      (cond
+       ((and (= i la) (= i lb)) 0)
+       ((= i la) -1)
+       ((= i lb) 1)
+       ((< (char->integer (string-ref a i)) (char->integer (string-ref b i))) -1)
+       ((< (char->integer (string-ref b i)) (char->integer (string-ref a i))) 1)
+       (else (loop (+ i 1)))))))
+(define (string<? a b) (< ($string-cmp a b) 0))
+(define (string>? a b) (< 0 ($string-cmp a b)))
+(define (string<=? a b) (< ($string-cmp a b) 1))
+(define (string>=? a b) (< -1 ($string-cmp a b)))
+
+(define (char=? a b) (eq? a b))
+(define (char<? a b) (< (char->integer a) (char->integer b)))
+(define (char>? a b) (< (char->integer b) (char->integer a)))
+(define (char<=? a b) (not (char>? a b)))
+(define (char>=? a b) (not (char<? a b)))
+(define (char-upcase c)
+  (let ((n (char->integer c)))
+    (if (and (< 96 n) (< n 123)) (integer->char (- n 32)) c)))
+(define (char-downcase c)
+  (let ((n (char->integer c)))
+    (if (and (< 64 n) (< n 91)) (integer->char (+ n 32)) c)))
+(define (char-alphabetic? c)
+  (let ((n (char->integer c)))
+    (or (and (< 64 n) (< n 91)) (and (< 96 n) (< n 123)))))
+(define (char-numeric? c)
+  (let ((n (char->integer c)))
+    (and (< 47 n) (< n 58))))
+(define (char-whitespace? c)
+  (memv (char->integer c) '(32 9 10 13 12)))
+
+(define (string-upcase s) (string-map (lambda (c) (char-upcase c)) s))
+(define (string-downcase s) (string-map (lambda (c) (char-downcase c)) s))
+(define (string-map f s) (list->string (map f (string->list s))))
+(define (string-for-each f s) (for-each f (string->list s)))
+
+;; ---- exceptions: raise and guard over escape continuations ----
+;;
+;; A guard pushes its escape continuation on a handler stack; raise
+;; pops the nearest one and escapes to it (running dynamic-wind after
+;; thunks on the way).  An unmatched guard clause re-raises outward.
+
+(define $handlers '())
+(define $exn-mark (cons 0 0))
+
+(define (raise obj)
+  (if (null? $handlers)
+      ($unhandled obj)
+      (let ((k (car $handlers)))
+        (set! $handlers (cdr $handlers))
+        (k (cons $exn-mark obj)))))
+(define (raise-continuable obj) (raise obj))
+
+(define ($try thunk)
+  ;; -> result, or ($exn-mark . obj) if something raised
+  (call/cc
+   (lambda (k)
+     (set! $handlers (cons k $handlers))
+     (let ((v (thunk)))
+       (set! $handlers (cdr $handlers))
+       v))))
+(define ($guard-hit? r)
+  (and (pair? r) (eq? (car r) $exn-mark)))
+
+(define-syntax guard
+  (syntax-rules ()
+    ((_ (var clause ...) body ...)
+     (let ((r ($try (lambda () body ...))))
+       (if ($guard-hit? r)
+           (let ((var (cdr r)))
+             (cond clause ... (else (raise var))))
+           r)))))
+
+;; error conditions
+(define-record-type ($error-object $make-error error?)
+  (fields (immutable who condition-who)
+          (immutable msg condition-message)
+          (immutable irritants condition-irritants)))
+(define (error who msg . irritants)
+  (raise ($make-error who msg irritants)))
+(define ($unhandled obj)
+  (display "unhandled exception: ")
+  (if (error? obj)
+      (begin
+        (display (condition-who obj)) (display ": ")
+        (display (condition-message obj))
+        (for-each (lambda (x) (display " ") (write x))
+                  (condition-irritants obj)))
+      (write obj))
+  (newline)
+  (%abort))
+
+;; ---- full bignum division (shift-subtract, bit at a time) ----
+
+(define ($mag-shl1! v)                  ; v <<= 1 in place, returns carry-out
+  (let loop ((i 0) (carry 0))
+    (if (= i (vector-length v))
+        carry
+        (let ((t (+ (* (vector-ref v i) 2) carry)))
+          (vector-set! v i (remainder t 16384))
+          (loop (+ i 1) (quotient t 16384))))))
+(define ($mag-copy v n)
+  (let ((r (make-vector n 0)))
+    (let loop ((i 0))
+      (when (and (< i n) (< i (vector-length v)))
+        (vector-set! r i (vector-ref v i))
+        (loop (+ i 1))))
+    r))
+(define $powers2 (vector 1 2 4 8 16 32 64 128 256 512 1024 2048 4096 8192))
+(define ($mag-bit v p)                  ; bit p, lsb-indexed
+  (remainder (quotient (vector-ref v (quotient p 14))
+                       (vector-ref $powers2 (remainder p 14)))
+             2))
+(define ($mag-divmod a b)               ; -> (quotient-vec . remainder-vec)
+  (let* ((la ($mag-len a))
+         (bits (* la 14))
+         (q (make-vector la 0))
+         (r (make-vector (+ ($mag-len b) 1) 0)))
+    (let loop ((p (- bits 1)))
+      (if (< p 0)
+          (cons q r)
+          (begin
+            ($mag-shl1! r)
+            (when (= 1 ($mag-bit a p))
+              (vector-set! r 0 (+ (vector-ref r 0) 1)))
+            (when (< -1 ($mag-cmp r b))
+              (let ((d ($mag-sub r b)))
+                (let copy ((j 0))
+                  (when (< j (vector-length r))
+                    (vector-set! r j (if (< j (vector-length d))
+                                         (vector-ref d j)
+                                         0))
+                    (copy (+ j 1)))))
+              (vector-set! q (quotient p 14)
+                           (+ (vector-ref q (quotient p 14))
+                              (vector-ref $powers2 (remainder p 14)))))
+            (loop (- p 1)))))))
+
+;; ---- rationals ----
+
+(define (gcd a b)
+  (let loop ((a (abs a)) (b (abs b)))
+    (if ($eq2 b 0) a (loop b (remainder a b)))))
+(define (lcm a b)
+  (if (or ($eq2 a 0) ($eq2 b 0))
+      0
+      (abs (* (quotient a (gcd a b)) b))))
+
+(define ($make-rat n d)
+  (when ($eq2 d 0) (errorf '/ "division by zero"))
+  (let* ((neg (if (< d 0) (not (< n 0)) (< n 0)))
+         (n (abs n))
+         (d (abs d))
+         (g (gcd n d))
+         (n (quotient n g))
+         (d (quotient d g))
+         (n (if neg (- 0 n) n)))
+    (if ($eq2 d 1) n (%make-ratio n d))))
+(define (numerator x) (if (%ratio? x) (%ratio-num x) x))
+(define (denominator x) (if (%ratio? x) (%ratio-den x) 1))
+(define (rational? x)
+  (or (integer? x) (%ratio? x) (flonum? x)))
+(define (real? x) (and (number? x) (not (%complex? x))))
+(define (complex? x) (number? x))
+
+;; ---- complex numbers ----
+
+(define ($cx re im)                     ; collapse an exact zero imaginary
+  (cond
+   ((and (exact? im) ($eq2 im 0)) re)
+   ;; inexactness is contagious across the parts (r6rs), so mixed
+   ;; literals read the same as under a host reader: 1.0+2i = 1.0+2.0i
+   ((and (flonum? re) (not (flonum? im))) (%make-complex re ($->fl im)))
+   ((and (flonum? im) (not (flonum? re))) (%make-complex ($->fl re) im))
+   (else (%make-complex re im))))
+(define (make-rectangular re im) ($cx re im))
+(define (real-part x) (if (%complex? x) (%cx-re x) x))
+(define (imag-part x) (if (%complex? x) (%cx-im x) 0))
+(define (magnitude x)
+  (let ((re (real-part x)) (im (imag-part x)))
+    (flsqrt ($->fl (+ (* re re) (* im im))))))
+
+;; ---- file ports ----
+;;
+;; The host accumulates a path pushed byte by byte, then opens it;
+;; reads and writes move single bytes through the fd imports.
+
+(define ($send-path s)
+  (string-for-each (lambda (c) (%path-byte (char->integer c))) s))
+(define (open-input-file path)
+  ($send-path path)
+  (let ((fd (%open-read)))
+    (when (< fd 0) (errorf 'open-input-file "cannot open" path))
+    ($make-port 'file-in fd -2 1 0)))
+(define (open-output-file path)
+  ($send-path path)
+  (let ((fd (%open-write)))
+    (when (< fd 0) (errorf 'open-output-file "cannot open" path))
+    ($make-port 'file-out fd 0 1 0)))
+(define (close-port p)
+  (let ((k ($port-kind p)))
+    (when (memq k '(file-in file-out))
+      (%fclose ($port-a p)))))
+(define (close-input-port p) (close-port p))
+(define (close-output-port p) (close-port p))
+(define (file-exists? path)
+  ($send-path path)
+  (let ((fd (%open-read)))
+    (if (< fd 0)
+        #f
+        (begin (%fclose fd) #t))))
+(define (call-with-input-file path proc)
+  (let* ((p (open-input-file path))
+         (r (proc p)))
+    (close-port p)
+    r))
+(define (call-with-output-file path proc)
+  (let* ((p (open-output-file path))
+         (r (proc p)))
+    (close-port p)
+    r))
+(define (with-input-from-file path thunk)
+  (let ((p (open-input-file path)))
+    (let ((r ($with-in p thunk)))
+      (close-port p)
+      r)))
+(define (with-output-to-file path thunk)
+  (let ((p (open-output-file path)))
+    (let ((r ($with-out p thunk)))
+      (close-port p)
+      r)))
