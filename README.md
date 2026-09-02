@@ -2,7 +2,7 @@
 
 *Γοητεία — the black ars of commanding what lies beneath.*
 
-**[goeteia.dev](https://goeteia.dev)**
+**[goeteia.dev](https://goeteia.dev)** · **[Manual](https://goeteia.dev/manual.html)** · **[Changelog](https://goeteia.dev/changelog.html)**
 
 A graphics-optimized Scheme-to-WASM compiler and pure-Scheme web programming toolkit.
 
