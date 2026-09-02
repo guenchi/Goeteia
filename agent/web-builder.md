@@ -72,8 +72,9 @@ properties. **The traps, learned the hard way:**
   (Before 1.6.0 the second operand was hundredths; do not copy old
   sites.) Write delicate values as strings if in doubt: `"0.125em"`
   is always itself.
-- Bare integer literals above 10000 are rejected in rules -- use a
-  string.
+- Bare integers of any size pass through `num->css` verbatim; only
+  exact integers, unit forms and strings are accepted (a flonum is an
+  error -- write `(dec ...)` or a string).
 - `(palette->root '((ink "#14203a") ...))` turns one alist into the
   `:root` custom-property rule, so Scheme and CSS share one palette
   binding.
@@ -198,9 +199,10 @@ harness over a command buffer:
 ```
 
 Heavy scenes: compile that mount as `define-wasm` (URL form -- these
-modules are large), put `(%opt 2)` at the top of the body (the init
-loops and per-frame math need full optimization), and gate it with a
-capability mount as above. GLSL uses the same digits-as-written rule:
+modules are large) and gate it with a capability mount as above. Do
+not write `(%opt ...)` inside a mount body -- it is a driver-level
+stream directive, not a callable form (it compiles to "cannot call
+%opt"); mount bodies are fully optimized by default. GLSL uses the same digits-as-written rule:
 `(fl 0 5)` is `0.5`, `(fl 0 625)` is `0.625`. The wasm module's linear memory is reachable as
 `(js-get (js-global) "__goeteia_mem")` when a library needs typed
 views over it -- (gfx gl) does this itself.
