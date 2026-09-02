@@ -38,7 +38,16 @@ meshes, and the entry points `render-frame!`, `render-mask!`,
 **Added to the prelude**, as top-level bindings: `sin`, `cos`, `tan`, and the
 R6RS division operators `div`, `mod`, `div0`, `mod0`.
 
-**176 library exports and 7 prelude bindings added; none removed.**
+**New runtime modules**, shipped in the package and importable from a page.
+`rt/sexpr.mjs` — a dependency-free s-expression codec, so a page running the
+**JS fallback** speaks the same wire as the Wasm build: `read`, `write`,
+`toJSON`, `fromJSON`, `rpc`, `rpcJSON`, the `Sym` / `Ratio` / `Vec` /
+`DottedList` value types, `base64Encode` / `base64Decode`, and the `MAX_TOKEN`
+/ `MAX_SPINE` / `MAX_DEPTH` limits it enforces. `rt/verify.mjs` and
+`rt/pack.mjs` back the two new CLI verbs.
+
+**176 library exports, 56 runtime-module exports and 7 prelude bindings added;
+none removed.**
 
 ### Breaking
 
@@ -179,6 +188,9 @@ changed; the new surface is at the compiler and CLI level.
   `define-js` takes a URL form. `goeteia-mount` assembles the two-artifact
   section.
 - **`compileGoeteiaFrom`** makes compile-in-the-browser a runtime primitive.
+  `rt/web.mjs` also gains `compileGoeteia`, `runGoeteiaBytes`,
+  `runGoeteiaInline`, `loadGoeteiaAuto` and `hasWasmGC`, and the new
+  `rt/runjs.mjs` runs a JS-target module. **8 runtime exports added.**
 - `%target-case` selects code per target.
 
 ### Fixed — the JS target
@@ -367,10 +379,12 @@ from the spec (11 exports). `(gfx gpu)` gains `gpu-draw-indirect!`,
 `gpu-gpu-timer!`, `gpu-gpu-ms`; `(gfx gl)` gains `gl-texture-compressed!`,
 `gl-compressed-level!`, `gl-compressed-family`. **20 added, none removed.**
 
+`rt/web.mjs` gains `loadGoeteiaWorker`, with the new `rt/worker.mjs`.
+
 ### Added
 
 GPU-driven culling with compute-compacted instances and indirect draws; the
-render loop leaves the main thread (`loadGoeteiaWorker` + `rt/worker.mjs`);
+render loop leaves the main thread;
 WebGPU frame time through timestamp queries.
 
 ### Changed
@@ -547,6 +561,8 @@ and input — `(web mat)` (23), `(web mesh)` (15), `(web sprite)` (22),
 `(web typeset canvas)`. `(web gl)` gains 12 command entries; `(web glsl)` gains
 `glsl-attributes` and `glsl-uniforms`. **122 added, none removed.**
 
+`rt/compile.mjs` gains `compileSource`, and `rt/repl.mjs` adds `startRepl`.
+
 ### Added
 
 The graphics, text and 3D web stack, plus compiler ergonomics.
@@ -588,4 +604,8 @@ test fusion.
 
 ### The toolchain
 
-`rt/dev.mjs`; the browser playground; the npm package and CLI.
+**Six runtime modules, 10 exports:** `rt/compile.mjs` (`compileFile`,
+`compileToBytes`), `rt/run.mjs` (`runModule`, `decode`), `rt/web.mjs`
+(`loadGoeteia`), `rt/jsbridge.mjs` (`makeJsBridge`, `callMain`,
+`jsBridgeStubs`), `rt/react.mjs` (`goeteiaComponent`) and `rt/dev.mjs`
+(`startDevServer`). The browser playground; the npm package and CLI.
