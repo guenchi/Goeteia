@@ -183,13 +183,16 @@ but use them as translation hints.
 
 CSS goes to `(web css)` data (a rule list) or `(web component)`'s
 `style` form -- `.rule { prop: val }` becomes `(".rule" (prop val))`.
-**The unit/decimal forms take the fraction in HUNDREDTHS, not tenths**:
-`(rem 1 5)` is `1.05rem`, NOT `1.5rem` -- for `1.5rem` you must write
-`(rem 1 50)` (`(em 0 92)` -> `0.92em`, `(px 13 50)` -> `13.5px`). The
-second argument is padded to two digits then trailing zeros are dropped,
-so a single significant digit that you meant as tenths silently becomes
-hundredths. Negative lengths (`-0.02em`) have no numeric form -- write
-them as strings; gradients, transforms, `calc()`, font stacks and data
+**The unit/decimal forms take the fraction's digits AS WRITTEN**
+(Goeteia >= 1.6.0, the same rule as `fl`): `(rem 1 5)` is `1.5rem`,
+`(em 0 92)` -> `0.92em`, `(px 13 5)` -> `13.5px`, `(dec 0 8)` -> `0.8`.
+Trailing zeros are dropped (`(rem 1 50)` is still `1.5rem`). A leading
+zero is not a padding hint -- Scheme reads `05` as `5` -- so a value
+with leading zeros after the point takes the width as a THIRD operand:
+`0.05em` is `(em 0 5 2)`. (Before 1.6.0 the second operand was
+hundredths and `(rem 1 5)` meant `1.05rem`; do not copy that from old
+sites.) Negative lengths below one (`-0.02em`) have no numeric form --
+`-0` reads as `0` -- write them as strings; gradients, transforms, `calc()`, font stacks and data
 URIs are string literals too. Verify a CSS port the same way you verify
 code: normalize both stylesheets to `selector -> sorted decls` and diff
 (ignore whitespace inside `()`), not by eyeballing -- this fraction slip

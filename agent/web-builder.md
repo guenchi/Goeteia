@@ -63,10 +63,15 @@ Rules are data: `((selector (prop val ...) ...) ...)`, compiled by
 `(pct 100)`, `(rgba 16 20 42 (dec 0 8))`, `(var name)` for custom
 properties. **The traps, learned the hard way:**
 
-- A unit's SECOND argument is the fraction in HUNDREDTHS:
-  `(em 0 90)` is `0.9em`, `(dec 1 65)` is `1.65`. `(fl 0 013)` in
-  shader land is `0.13`. Write delicate values as strings if in
-  doubt: `"0.125em"` is always itself.
+- A unit's SECOND argument is the fraction's digits AS WRITTEN
+  (Goeteia >= 1.6.0, the same rule as `fl`): `(em 0 9)` is `0.9em`,
+  `(dec 1 65)` is `1.65`, `(dec 0 8)` is `0.8`, `(fl 0 013)` in shader
+  land is `0.013`. Trailing zeros are dropped (`(em 1 20)` is `1.2em`).
+  A leading zero is not a padding hint -- Scheme reads `05` as `5` --
+  so `0.05em` takes the width as a THIRD operand: `(em 0 5 2)`.
+  (Before 1.6.0 the second operand was hundredths; do not copy old
+  sites.) Write delicate values as strings if in doubt: `"0.125em"`
+  is always itself.
 - Bare integer literals above 10000 are rejected in rules -- use a
   string.
 - `(palette->root '((ink "#14203a") ...))` turns one alist into the
@@ -195,8 +200,8 @@ harness over a command buffer:
 Heavy scenes: compile that mount as `define-wasm` (URL form -- these
 modules are large), put `(%opt 2)` at the top of the body (the init
 loops and per-frame math need full optimization), and gate it with a
-capability mount as above. GLSL shares the hundredths convention:
-`(fl 0 5)` is `0.5`. The wasm module's linear memory is reachable as
+capability mount as above. GLSL uses the same digits-as-written rule:
+`(fl 0 5)` is `0.5`, `(fl 0 625)` is `0.625`. The wasm module's linear memory is reachable as
 `(js-get (js-global) "__goeteia_mem")` when a library needs typed
 views over it -- (gfx gl) does this itself.
 
