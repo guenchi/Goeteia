@@ -12,10 +12,23 @@
 ;;
 ;; The host publishes the list at `__goeteia_argv'.  That is the same
 ;; way a host hands a worker its canvas (`__goeteia_canvas') and the
-;; module its memory (`__goeteia_mem'): the bridge resolves the
-;; `__goeteia_*' names per instance, so the channel needs no new wasm
-;; import, no compiler change and no rebuild -- adding it was adding
-;; this file and six lines of runner.
+;; module its memory (`__goeteia_mem'), and it needs no new wasm
+;; import: the bridge resolves the `__goeteia_*' names per instance.
+;;
+;; Per instance only for names published THROUGH that instance's
+;; proxy, though -- the proxy's set trap is what files a name under
+;; the instance.  A host that writes the real `globalThis' instead
+;; publishes into a single process-wide slot, and two programs started
+;; together in one process then both read whichever list was written
+;; last.  So a host publishes through the instance: the wasm runner
+;; through the bridge's `global()', the JS runner through the emitted
+;; module's `rt.global'.
+;;
+;; ONE EXCEPTION, on the JS target: ES modules are cached per file, so
+;; starting the SAME file twice in one process gives both starts one
+;; module instance and therefore one argv -- the second start's list
+;; wins, and the first program reads it too.  Two different files, or
+;; two processes, are unaffected.  See docs/limits.md.
 ;;
 ;; HOST BODY.  A host that publishes nothing gives a program zero
 ;; arguments: `args-count' answers 0 and `args-list' answers (), on a

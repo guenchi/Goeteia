@@ -451,3 +451,38 @@ survives to the output byte-for-byte, so writing it is fine — but
 (`string-ref`, `substring` at an arbitrary index) can split a
 multibyte sequence.  Treat non-ASCII literals as opaque; never
 index into them.
+
+## Program arguments when one process starts several programs
+
+**Symptom**: two Goeteia programs started together in one process —
+by a build script, a test harness, a server embedding `runModule` or
+`runJsModule` — both read the *same* argv, and it is the one belonging
+to whichever started last.  Starting them one after another, the way
+the CLI does, never shows it.
+
+**Cause**: `__goeteia_*` names resolve per module instance, but only
+when they are published *through* that instance's proxy — the proxy's
+`set` trap is what files a name under the instance.  A host that
+assigns to the real `globalThis` writes one slot shared by the whole
+process, and the last write wins for everyone.
+
+**Workaround**: none needed in the shipped runners — `rt/run.mjs`
+publishes through the bridge's `global()` and `rt/runjs.mjs` through
+the emitted module's `rt.global`.  A host of your own must do the
+same; assigning `globalThis.__goeteia_argv` directly reintroduces
+exactly this bug.
+
+Two edges remain, both narrower than the bug above:
+
+- **The same JS file twice in one process still shares one argv.**  ES
+  modules are cached per file, so two starts of one path get one module
+  instance and therefore one proxy.  The second start's list wins and
+  the first program reads it too.  Two *different* files are fine, and
+  so are two processes.  The wasm target has no such cache: each
+  `runModule` instantiates its own module.
+- **A JS module emitted before `rt.global` existed cannot be given
+  arguments.**  `runjs.mjs` throws (`… was emitted before the module
+  exported rt.global …`) rather than fall back to the real global,
+  because that fallback is the bug.  It throws only when there is an
+  argument to publish, so argv-less runs of old artifacts are
+  unaffected; recompile the module to pass arguments.

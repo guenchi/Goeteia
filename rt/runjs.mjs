@@ -7,13 +7,35 @@ import fs from 'fs';
 import path from 'path';
 import { pathToFileURL } from 'url';
 
-// `args` is published the way run.mjs publishes it: the JS target's
-// instance global resolves __goeteia_* through its own map and falls
-// through to the real global, so (web args) reads the same list from
-// either target.
+// `args` is published the way run.mjs publishes it, and for the same
+// reason: __goeteia_* resolves per instance only for names published
+// THROUGH that instance's proxy, so the list goes in through the
+// emitted module's own proxy (`rt.global`) and never through the real
+// globalThis -- which is one slot for the whole process and hands the
+// earlier-started module the later one's arguments.
+//
+// The proxy exists once the module has been imported, so this
+// publishes after the import and before main -- every time, an empty
+// list included.  ES modules are cached per file, so a second start
+// of the same file inherits the first one's proxy: skip the write and
+// the first start's arguments are still standing there to be read.
+//
+// A module emitted before rt.global existed has no seam to publish
+// through; rather than fall back to the real global and leave the
+// race in place, this refuses -- but only when there is an argument
+// to publish, so an argv-less run of an older artifact behaves
+// exactly as it did.  See docs/limits.md.
 export async function runJsModule(file, input = [], args = []) {
-    globalThis.__goeteia_argv = args.map(String);
     const m = await import(pathToFileURL(path.resolve(file)).href);
+    const argv = args.map(String);
+    if (m.rt && m.rt.global) {
+        m.rt.global.__goeteia_argv = argv;
+    } else if (argv.length) {
+        throw new Error(
+            `${file} was emitted before the module exported rt.global, ` +
+            'so its arguments cannot be published to that instance ' +
+            'alone; recompile it to pass arguments');
+    }
     const out = [];
     let pos = 0;
 

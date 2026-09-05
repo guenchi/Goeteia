@@ -145,5 +145,105 @@ both_targets('arguments arrive with no input file', both,
              ['--', 'x'],
              '1|');
 
+// ---- two programs in ONE process, started together ----
+//
+// The CLI cases above each get a fresh process.  A host that embeds
+// the runner (a build script, a test harness, a server) starts
+// modules in the same process and often at the same time, and each
+// must still read ITS OWN argv.  A runner that published the list on
+// the real global before its first await handed the earlier-started
+// program the later one's arguments; sequential starts never showed
+// it.  The wasm case starts the same bytes twice; the JS case starts
+// two distinct files, because ESM caches a module per file and two
+// starts of one file share one instance by construction.
+import { runModule } from '../rt/run.mjs';
+import { runJsModule } from '../rt/runjs.mjs';
+
+const echoJs2 = path.join(dir, 'echo2.js');
+fs.copyFileSync(echo.js, echoJs2);
+const echoWasm = fs.readFileSync(echo.wasm);
+
+function pairs(label, got) {
+    const want = ['1 [first]', '1 [second]'];
+    require_(got[0] === want[0] && got[1] === want[1],
+             `${label}: each program reads its own argv`,
+             `wanted ${JSON.stringify(want)}, got ${JSON.stringify(got)}`);
+}
+{
+    const rs = await Promise.all([runModule(echoWasm, [], ['first']),
+                                  runModule(echoWasm, [], ['second'])]);
+    pairs('two wasm programs started together (wasm)',
+          rs.map(r => r.text.trim()));
+}
+{
+    const rs = await Promise.all([runJsModule(echo.js, [], ['first']),
+                                  runJsModule(echoJs2, [], ['second'])]);
+    pairs('two js programs started together (js)',
+          rs.map(r => r.text.trim()));
+}
+// a program that never got an argv still sees none, and one started
+// after the pair is untouched by them
+{
+    const r = await runModule(echoWasm, [], []);
+    require_(r.text.trim() === '0',
+             'a program started with no argv reads none (wasm)',
+             `got ${JSON.stringify(r.text.trim())}`);
+}
+
+// ---- the same JS file, one start after another ----
+//
+// ESM caches one module instance per file, so a runner that publishes
+// only when it has something to publish leaves the previous start's
+// list in place: a run with arguments followed by a run without reads
+// the stale list.  The runner must publish on every start, an empty
+// list included.
+{
+    await runJsModule(echo.js, [], ['stale']);
+    const r = await runJsModule(echo.js, [], []);
+    require_(r.text.trim() === '0',
+             'a later start of the same js file with no argv reads none (js)',
+             `got ${JSON.stringify(r.text.trim())}`);
+}
+
+// ---- artifacts without the seam ----
+//
+// A JS module emitted before `rt.global` existed has nowhere to
+// publish to but the real global, and that is the bug; so the runner
+// refuses -- only when there is an argument to publish, so an
+// argv-less run of an old artifact is untouched.  The old shape is
+// made from a current artifact by removing the export, which is
+// exactly what an older compiler did not emit.
+const SEAM = /,global:\(typeof GPROX!=='undefined'\?GPROX:void 0\)/;
+{
+    const cur = fs.readFileSync(echo.js, 'utf8');
+    require_(SEAM.test(cur), 'the emitted module exports rt.global',
+             'the seam regex matched nothing -- the export changed shape');
+    const oldJs = path.join(dir, 'echo-old.js');
+    fs.writeFileSync(oldJs, cur.replace(SEAM, ''));
+    const r = await runJsModule(oldJs, [], []);
+    require_(r.text.trim() === '0',
+             'an old artifact still runs with no argv (js)',
+             `got ${JSON.stringify(r.text.trim())}`);
+    let threw = null;
+    try { await runJsModule(oldJs, [], ['x']); } catch (e) { threw = e; }
+    require_(threw && /rt\.global/.test(String(threw)),
+             'an old artifact given argv is refused by name (js)',
+             `got ${threw ? String(threw) : 'no error'}`);
+}
+// a module that reaches no JS kernel has no proxy at all: it must
+// load and run, and be refused arguments the same way
+{
+    const plain = build('plain', '(import (rnrs)) (display 42)');
+    const r = await runJsModule(plain.js, [], []);
+    require_(r.text.trim() === '42',
+             'a module without the JS kernel runs with no argv (js)',
+             `got ${JSON.stringify(r.text.trim())}`);
+    let threw = null;
+    try { await runJsModule(plain.js, [], ['x']); } catch (e) { threw = e; }
+    require_(threw && /rt\.global/.test(String(threw)),
+             'a module without the JS kernel given argv is refused by name (js)',
+             `got ${threw ? String(threw) : 'no error'}`);
+}
+
 if (!failed) console.log('args: ok');
 process.exit(failed ? 1 : 0);

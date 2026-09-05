@@ -1403,8 +1403,15 @@
         const-texts
         glue-texts
         rsyms-text
+        ;; `global' is this module instance's proxy -- the seam a host
+        ;; publishes __goeteia_* through.  Writing the real globalThis
+        ;; instead would be one slot for the whole process, so two
+        ;; modules started together would share it.  Absent (like
+        ;; `mem') when the module reached no kernel that defines it,
+        ;; which is exactly when nothing inside can read the name.
         "export const rt={\"false\":FALSE,\"true\":TRUE,\"null\":NIL,"
-        "\"void\":VOID,mem:(typeof MEMOBJ!=='undefined'?MEMOBJ:void 0)};\n"
+        "\"void\":VOID,mem:(typeof MEMOBJ!=='undefined'?MEMOBJ:void 0),"
+        "global:(typeof GPROX!=='undefined'?GPROX:void 0)};\n"
         "export const xports={" (jsep "," export-name-texts) "};\n"
         "export function main(io){if(io)IO=io;"
         "return TR((()=>{" main-text "})());}\n")))))

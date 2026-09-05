@@ -8,12 +8,19 @@ import { pathToFileURL } from 'url';
 import { makeJsBridge, callMain } from './jsbridge.mjs';
 
 // `args` is the program's own argv, which (web args) reads back at
-// __goeteia_argv.  The bridge's instance global resolves __goeteia_*
-// through its own map first and falls through to the real global, so
-// publishing here is enough -- no new wasm import, and a module that
-// never imports (web args) is unaffected.
+// __goeteia_argv.  The bridge resolves __goeteia_* per instance, but
+// only for names published THROUGH the instance proxy: the proxy's
+// set trap is what files a name under this instance.  A write to the
+// real globalThis lands in one process-wide slot instead, and two
+// modules started together in one process then share it -- the one
+// started first reads the other's arguments, which sequential starts
+// never show.  So the bridge is built before anything is published
+// and the list goes in through js.global().  Still no new wasm
+// import, and a module that never imports (web args) is unaffected.
 export async function runModule(bytes, input = [], args = []) {
-    globalThis.__goeteia_argv = args.map(String);
+    let exportsRef = null;
+    const js = makeJsBridge(() => exportsRef);
+    js.global().__goeteia_argv = args.map(String);
     const out = [];
     let pos = 0;
 
@@ -50,14 +57,13 @@ export async function runModule(bytes, input = [], args = []) {
         },
     };
 
-    let exportsRef = null;
     const { instance } = await WebAssembly.instantiate(bytes, {
         io: {
             write_byte: b => out.push(b),
             read_byte: () => (pos < input.length ? input[pos++] : -1),
             ...fileIO,
         },
-        js: makeJsBridge(() => exportsRef),
+        js,
     });
     exportsRef = instance.exports;
     const ex = instance.exports;
