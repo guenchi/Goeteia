@@ -156,6 +156,36 @@
 
 (fx-init! (js-get (js-global) "__mockcanvas"))
 
+;; ---- U: a textured triangle with a second UV set (stride 40) ----
+(define u-loc
+  (glb!
+   (string-append
+    "{\"asset\":{\"version\":\"2.0\"},\"scene\":0,"
+    "\"scenes\":[{\"nodes\":[0]}],"
+    "\"nodes\":[{\"mesh\":0}],"
+    "\"meshes\":[{\"primitives\":[{\"attributes\":"
+    "{\"POSITION\":0,\"TEXCOORD_0\":1,\"TEXCOORD_1\":2},"
+    "\"indices\":3}]}],"
+    "\"buffers\":[{\"byteLength\":92}],"
+    "\"bufferViews\":["
+    "{\"buffer\":0,\"byteOffset\":0,\"byteLength\":36},"
+    "{\"buffer\":0,\"byteOffset\":36,\"byteLength\":24},"
+    "{\"buffer\":0,\"byteOffset\":60,\"byteLength\":24},"
+    "{\"buffer\":0,\"byteOffset\":84,\"byteLength\":6}],"
+    "\"accessors\":["
+    "{\"bufferView\":0,\"componentType\":5126,\"count\":3,\"type\":\"VEC3\"},"
+    "{\"bufferView\":1,\"componentType\":5126,\"count\":3,\"type\":\"VEC2\"},"
+    "{\"bufferView\":2,\"componentType\":5126,\"count\":3,\"type\":\"VEC2\"},"
+    "{\"bufferView\":3,\"componentType\":5123,\"count\":3,\"type\":\"SCALAR\"}]}")
+   92
+   (lambda ()
+     (v3! 0.0 0.0 0.0) (v3! 1.0 0.0 0.0) (v3! 0.0 1.0 0.0)
+     (f32! 0.0) (f32! 0.0) (f32! 1.0) (f32! 0.0) (f32! 0.0) (f32! 1.0)
+     (f32! 0.5) (f32! 0.5) (f32! 0.25) (f32! 0.75) (f32! 0.125) (f32! 0.875)
+     (u16! 0) (u16! 1) (u16! 2) (u16! 0))))
+(define gu (gltf-parse (car u-loc) (cdr u-loc)))
+(define pu (car (gltf-prims gu)))
+
 (define skin-prog (fx-program! gltf-skin-vs mesh-tex-fs))
 
 ;; K through the matching skinned program: draws
@@ -661,7 +691,65 @@
          (m16-near? (last-mat "__last_U:u_mvp") expect)
          (m16-near? (last-mat "__last_U:u_model") expect))))
 
+;; ---- a trailing uv1 slot: drawable by a program that ignores it,
+;; bound at the PRIMITIVE's stride ----
+;; mesh-tex-vs reads position/normal/uv (32 bytes); the primitive is
+;; 40 wide.  The draw goes through, and every attribute pointer is
+;; set up with 40, not the program's 32 -- 32 would read vertex 1
+;; from the middle of vertex 0.
+(define tex-prog (fx-program! mesh-tex-vs mesh-tex-fs))
+(define base-u (log-len))
+(cmd-begin!)
+(gltf-draw! gu tex-prog (m4-identity))
+(cmd-flush!)
+(define uv1-draw-ok
+  (and (equal? (gprim-layout pu) '(position normal uv uv1))
+       (= (gprim-stride pu) 40)
+       (= (count-log-from "drawElements:TRI:3:US" base-u) 1)
+       (= (count-log-from "attrib:0,3,F,false,40,0" base-u) 1)
+       (= (count-log-from "attrib:1,3,F,false,40,12" base-u) 1)
+       (= (count-log-from "attrib:2,2,F,false,40,24" base-u) 1)
+       (= (count-log-from "attrib:2,2,F,false,32,24" base-u) 0)
+       (= (count-log-from "bufferData:30" base-u) 1)))   ; 3 verts x 10 f32: the whole 40-byte stride uploaded
+
+;; a program that itself declares the second UV set draws it too
+(define uv1-vs
+  '((attribute vec3 a_pos)
+    (attribute vec3 a_normal)
+    (attribute vec2 a_uv)
+    (attribute vec2 a_uv1)
+    (uniform mat4 u_mvp)
+    (varying vec2 v_uv)
+    (define (main) void
+      (set! gl_Position (* u_mvp (vec4 a_pos (fl 1))))
+      (set! v_uv a_uv1))))
+(define uv1-prog (fx-program! uv1-vs mesh-tex-fs))
+(define base-u2 (log-len))
+(cmd-begin!)
+(gltf-draw! gu uv1-prog (m4-identity))
+(cmd-flush!)
+(define uv1-consumed-ok
+  (and (= (count-log-from "drawElements:TRI:3:US" base-u2) 1)
+       (= (count-log-from "attrib:3,2,F,false,40,32" base-u2) 1)))
+
+;; only a TRAILING uv1 may go unread: a program short of anything
+;; else is refused as before
+(define pos-only-vs
+  '((attribute vec3 a_pos)
+    (attribute vec3 a_normal)
+    (uniform mat4 u_mvp)
+    (define (main) void
+      (set! gl_Position (* u_mvp (vec4 a_pos (fl 1)))))))
+(define pos-only-prog (fx-program! pos-only-vs mesh-tex-fs))
+(define uv1-not-a-licence-ok
+  (guard (e (#t #t))
+    (cmd-begin!)
+    (gltf-draw! gu pos-only-prog (m4-identity))
+    (cmd-flush!)
+    #f))
+
 (and stride-collision k-draw-ok s-mismatch-ok defaults-ok
+     uv1-draw-ok uv1-consumed-ok uv1-not-a-licence-ok
      nmap-bound-ok combinator-layout-ok base-tex-optional-ok
      animated-world-ok matrix-node-ok matrix-reset-ok
      prim-world-split-ok skinned-prim-world-ok

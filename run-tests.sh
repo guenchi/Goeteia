@@ -133,6 +133,11 @@ if ${NODE-node} test/run-errors.mjs; then
 else
     echo "FAIL test/run-errors.mjs"; fail=1
 fi
+if ${NODE-node} test/gltf-p1.mjs; then
+    echo "ok   test/gltf-p1.mjs"
+else
+    echo "FAIL test/gltf-p1.mjs"; fail=1
+fi
 if ${NODE-node} test/js-backend-arity.mjs; then
     echo "ok   test/js-backend-arity.mjs"
 else

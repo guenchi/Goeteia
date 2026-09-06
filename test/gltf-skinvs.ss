@@ -10,6 +10,12 @@
 (import (rnrs) (web js) (gfx gl) (gfx glsl) (gfx fx) (gfx mat)
         (gfx mesh) (gfx gltf))
 
+(define (sub-at s sub)   ; position of the first occurrence, or #f
+  (let ((n (string-length s)) (m (string-length sub)))
+    (let loop ((i 0))
+      (cond ((> (+ i m) n) #f)
+            ((string=? (substring s i (+ i m)) sub) i)
+            (else (loop (+ i 1)))))))
 (define (contains? s sub)
   (let ((sl (string-length s)) (bl (string-length sub)))
     (let loop ((i 0))
@@ -373,6 +379,126 @@
                         (define (main) void
                           (set! gl_Position (vec4 a_pos (fl 1))))))))
                '(a_pos a_normal a_uv a_custom a_joints a_weights))
+       ;; the second UV set is the interleave's TRAILING slot, after the
+       ;; skin inputs: a static shader that reads a_uv1 must compose to
+       ;; that order, or gltf-draw! refuses the program against the
+       ;; layout `... joints weights uv1` the reader builds
+       (equal? (map car
+                    (glsl-attributes
+                     (gltf-skin-shader
+                      '((attribute vec3 a_pos)
+                        (attribute vec2 a_uv1)
+                        (define (main) void
+                          (set! gl_Position (vec4 a_pos (fl 1))))))))
+               '(a_pos a_normal a_uv a_joints a_weights a_uv1))
+       ;; ...and moving it must not move it out of sight: a helper
+       ;; declared between a_uv1 and a later attribute reads a_uv1, so
+       ;; the composed source has to declare a_uv1 BEFORE that helper.
+       ;; Attribute declarations may be hoisted; a helper may not be
+       ;; read before its inputs exist.
+       (let* ((src (glsl->string
+                    (gltf-skin-shader
+                     '((attribute vec3 a_pos)
+                       (attribute vec2 a_uv1)
+                       (define (second_uv) vec2 (return a_uv1))
+                       (attribute vec3 a_custom)
+                       (define (main) void
+                         (set! gl_Position (vec4 a_pos (fl 1))))))))
+              (decl (sub-at src "attribute vec2 a_uv1"))
+              (use (sub-at src "second_uv")))
+         (and decl use (< decl use)))
+       ;; ...but never across a default-precision statement: an
+       ;; attribute keeps the precision in effect where it was written.
+       ;; Hoisting is per precision segment.
+       (let* ((src (glsl->string
+                    (gltf-skin-shader
+                     '((precision lowp float)
+                       (attribute vec3 a_pos)
+                       (precision highp float)
+                       (attribute vec3 a_normal)
+                       (attribute vec2 a_uv)
+                       (define (main) void
+                         (set! gl_Position (vec4 a_pos (fl 1))))))))
+              (lowp (sub-at src "precision lowp float"))
+              (pos (sub-at src "a_pos"))
+              (highp (sub-at src "precision highp float"))
+              (nrm (sub-at src "a_normal"))
+              (joints (sub-at src "attribute vec4 a_joints")))
+         (and lowp pos highp nrm joints
+              (< lowp pos) (< pos highp) (< highp nrm) (< nrm joints)))
+       ;; a_uv1's own move must not change ITS precision either: moved
+       ;; from under highp to a tail that sits under lowp, it is
+       ;; re-declared under its original precision, and the tail's
+       ;; precision is restored after it for whatever follows
+       (let* ((src (glsl->string
+                    (gltf-skin-shader
+                     '((precision highp float)
+                       (attribute vec3 a_pos)
+                       (attribute vec2 a_uv1)
+                       (precision lowp float)
+                       (attribute vec3 a_custom)
+                       (define (main) void
+                         (set! gl_Position (vec4 a_pos (fl 1))))))))
+              (uv1 (sub-at src "attribute vec2 a_uv1"))
+              (main (sub-at src "void main"))
+              ;; the last precision statement before a position
+              (last-before (lambda (pos word)
+                             (let loop ((i 0) (last #f))
+                               (let ((k (sub-at (substring src i (string-length src)) word)))
+                                 (if (or (not k) (>= (+ i k) pos)) last
+                                     (loop (+ i k 1) (+ i k))))))))
+         (and uv1 main
+              (let ((hp (last-before uv1 "precision highp float"))
+                    (lp (last-before uv1 "precision lowp float")))
+                (and hp (or (not lp) (< lp hp))))          ; a_uv1 sits under highp
+              (let ((lp2 (last-before main "precision lowp float")))
+                (and lp2 (> lp2 uv1)))))                     ; and lowp is back before main
+       ;; an a_uv1 declared after main is an attribute after main like
+       ;; any other: refused, not relocated into a precision it cannot
+       ;; name
+       (errors? (lambda ()
+                  (gltf-skin-shader
+                   '((attribute vec3 a_pos)
+                     (define (main) void
+                       (set! gl_Position (vec4 a_pos (fl 1))))
+                     (precision mediump float)
+                     (attribute vec2 a_uv1)))))
+       ;; no precision statement at all means highp in a vertex shader,
+       ;; so moving a_uv1 from "none" to an explicit highp adds nothing:
+       ;; the composed source carries exactly the one statement written
+       (let* ((src (glsl->string
+                    (gltf-skin-shader
+                     '((attribute vec3 a_pos)
+                       (attribute vec2 a_uv1)
+                       (precision highp float)
+                       (attribute vec3 a_custom)
+                       (define (main) void
+                         (set! gl_Position (vec4 a_pos (fl 1))))))))
+              (count (lambda (word)
+                       (let loop ((i 0) (n 0))
+                         (let ((k (sub-at (substring src i (string-length src)) word)))
+                           (if k (loop (+ i k 1) (+ n 1)) n))))))
+         (= (count "precision") 1))
+       ;; a_uv1 has one width, vec2, and the combinator checks it at
+       ;; compose time like the other seven names it knows
+       (errors? (lambda ()
+                  (gltf-skin-shader
+                   '((attribute vec3 a_pos)
+                     (attribute vec3 a_uv1)
+                     (define (main) void
+                       (set! gl_Position (vec4 a_pos (fl 1))))))))
+       ;; the corner neither rule can serve -- a_uv1 read by a helper
+       ;; that a precision statement pins ahead of a later attribute --
+       ;; is refused by name at compose time, not composed wrong
+       (errors? (lambda ()
+                  (gltf-skin-shader
+                   '((attribute vec3 a_pos)
+                     (attribute vec2 a_uv1)
+                     (define (second_uv) vec2 (return a_uv1))
+                     (precision highp float)
+                     (attribute vec3 a_custom)
+                     (define (main) void
+                       (set! gl_Position (vec4 a_pos (fl 1))))))))
        ;; ... while the canonical order composes fine
        (equal? (map car
                     (glsl-attributes

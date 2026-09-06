@@ -402,31 +402,45 @@
   (define ($fx-vao-key pslot buf inst)
     (+ (* pslot 1048576) (* buf 1024) (+ inst 1)))
 
-  (define (fx-use! prog buf-slot)
-    ($fx-use-vao! prog buf-slot -1))
+  ;; The optional third operand is the buffer's per-vertex stride,
+  ;; for a buffer wider than the program declares -- a primitive
+  ;; carrying an attribute this shader does not read.  Omitted, it
+  ;; is the program's own stride, which is what every caller before
+  ;; this meant, so their bytes are unchanged.
+  (define (fx-use! prog buf-slot . stride)
+    ($fx-use-vao! prog buf-slot -1
+                  (if (null? stride)
+                      (fx-program-stride prog)
+                      (car stride))))
 
   ;; the instanced variant: vertex attributes from one buffer,
   ;; i_* attributes from another with divisor 1 (webgl2); draw with
   ;; cmd-draw-elements-instanced!
   (define (fx-use-instanced! prog buf-slot inst-slot)
-    ($fx-use-vao! prog buf-slot inst-slot))
+    ($fx-use-vao! prog buf-slot inst-slot (fx-program-stride prog)))
 
-  (define ($fx-use-vao! prog buf-slot inst-slot)
+  ;; The stride belongs to the VAO, not to the (program, buffer)
+  ;; pair: the same program drawing the same buffer at two strides
+  ;; needs two of them.  The fixnum key already packs three slot
+  ;; numbers to its ceiling, so the stride rides in the VALUE -- a
+  ;; short alist, length 1 for every caller that does not pass one.
+  (define ($fx-use-vao! prog buf-slot inst-slot stride)
     (cmd-use-program! (fx-program-slot prog))
     (let* ((key ($fx-vao-key (fx-program-slot prog) buf-slot inst-slot))
-           (vao (hashtable-ref $fx-vaos key #f)))
-      (if vao
+           (bucket (hashtable-ref $fx-vaos key '()))
+           (hit (assv stride bucket)))
+      (if hit
           (begin
-            (cmd-bind-vao! vao)
+            (cmd-bind-vao! (cdr hit))
             (cmd-bind-buffer! buf-slot))
           (let ((v (fx-slot!)))
             (gl-vao! v)
-            (hashtable-set! $fx-vaos key v)
+            (hashtable-set! $fx-vaos key (cons (cons stride v) bucket))
             (cmd-bind-vao! v)
             (cmd-bind-buffer! buf-slot)
             (for-each (lambda (a)
                         (cmd-vertex-attrib! (car a) (cadr a)
-                                            (fx-program-stride prog)
+                                            stride
                                             (caddr a)))
                       ($fx-program-attribs prog))
             (when (>= inst-slot 0)

@@ -575,11 +575,17 @@ debugging time:
   (`test/meshopt.ss`)
 - `(gfx gltf)` — real 3D assets: GLB files parse with the binary
   chunk in staging memory (the wasm f32 loads are the float decoder).
-  Geometry (POSITION/NORMAL plus `TEXCOORD_0`, `TANGENT`, `COLOR_0`
-  and the skin inputs, interleaved in the order the asset carries
-  them), node transforms, base colors, metallic/roughness
-  factors, embedded base-color/normal/emissive/occlusion textures
-  (`gltf-load-textures!`), morph targets (`gltf-weights!`),
+  Geometry (POSITION/NORMAL plus `TEXCOORD_0`, `TANGENT`, `COLOR_0`,
+  the skin inputs and `TEXCOORD_1`, interleaved in ONE canonical
+  order — that list, whatever order the file declares them in),
+  node transforms, base colors,
+  metallic/roughness factors, the material's five texture slots as
+  references that name the texture, its image, its sampler, the UV
+  set it reads and its scale/strength (`gprim-base-tex` and friends,
+  with `gltf-textures`/`gltf-samplers` handing back the file's own
+  arrays), embedded image data (`gltf-load-textures!`, one GL
+  texture per distinct image-and-sampler pair), cameras
+  (`gltf-cameras`), morph targets (`gltf-weights!`),
   skins and animations all load:
   `gltf-animate!` poses a clip completely each frame (looping,
   nlerp rotations, and the nodes it touches reset to bind so a

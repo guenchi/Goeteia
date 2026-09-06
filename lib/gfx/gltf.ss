@@ -14,20 +14,31 @@
 ;; What loads: every primitive's POSITION (+ NORMAL when present),
 ;; u8/u16/u32 indices (past 65536 vertices the stream stays 32-bit),
 ;; node TRS or matrix transforms accumulated through the scene
-;; graph, baseColorFactor and the metallic/roughness factors,
-;; embedded textures (gltf-load-textures!), skins with their joint
-;; matrices, animations (sampled, blended, morph targets), and a
-;; missing NORMAL becomes +y.  The interleave derives from the
-;; attributes present, in one canonical order --
-;;   position normal uv tangent color joints weights
+;; graph, baseColorFactor and the metallic/roughness factors, the
+;; material's five texture slots as REFERENCES (gprim-base-tex and
+;; friends: the texture, its image, its sampler, which UV set it
+;; reads and its scale/strength), the file's own textures[] and
+;; samplers[] arrays (gltf-textures, gltf-samplers), cameras
+;; (gltf-cameras, gltf-node-camera), embedded image data
+;; (gltf-load-textures!), skins with their joint matrices,
+;; animations (sampled, blended, morph targets, with NORMAL deltas
+;; kept alongside the POSITION ones), and a missing NORMAL becomes
+;; +y.  The interleave derives from the attributes present, in one
+;; canonical order --
+;;   position normal uv tangent color joints weights uv1
 ;; -- so untextured primitives come out in mesh-lit-vs's 24-byte
 ;; layout, textured ones at 32 bytes for mesh-tex-vs, skinned ones
 ;; at 64 for gltf-skin-vs, and TANGENT/COLOR_0 extend the stride by
-;; 16 each.  gprim-layout names the attributes present; gltf-draw!
-;; matches them against the program's attribute names and refuses a
-;; mismatch (an asset whose TANGENT/COLOR_0 was silently dropped
-;; before now needs a shader that declares them -- compose one with
-;; gltf-skin-shader or declare a_tangent/a_color yourself).
+;; 16 each.  A second UV set (TEXCOORD_1) rides at the very END, so
+;; adding it moves no other attribute; it also implies the first uv
+;; slot, zeroed if the asset gave only TEXCOORD_1.  gprim-layout
+;; names the attributes present; gltf-draw! matches them against the
+;; program's attribute names and refuses a mismatch (an asset whose
+;; TANGENT/COLOR_0 was silently dropped before now needs a shader
+;; that declares them -- compose one with gltf-skin-shader or
+;; declare a_tangent/a_color yourself).  A trailing uv1 is the ONE
+;; slot a program may leave undeclared: it changes no other offset,
+;; and the binding uses the primitive's stride, not the shader's.
 ;;
 ;; Skinning also runs on the CPU: gltf-skin-positions! and
 ;; gltf-skin-normals! apply the current pose's joint palette to a
@@ -62,12 +73,23 @@
 ;;     here: it spends a transcendental pair per rotating joint per
 ;;     frame to buy a difference nothing downstream can see.
 ;;     test/gltf-anim.ss locks the choice down.
-;;   * A material's texture references collapse to an image index:
-;;     texCoord (only TEXCOORD_0 loads), normal scale, occlusion
-;;     strength and sampler identity are dropped, and there is no
-;;     metallicRoughnessTexture slot -- the factors are per
-;;     primitive.  Two textures over one image with different
-;;     samplers therefore read as one.
+;;   * A texture with no sampler keeps the parameters every GL
+;;     texture is created with -- CLAMP_TO_EDGE wrap -- where the
+;;     glTF default for an absent sampler is REPEAT.  Deliberate:
+;;     an asset with no samplers[] array must render exactly as it
+;;     did before samplers were read at all, and changing the wrap
+;;     under it would be a silent difference in every such asset.
+;;     A texture that names a sampler gets that sampler's values,
+;;     with REPEAT filled in for a wrap the sampler omits.
+;;   * A material's texture slots are read but not all of them are
+;;     USED here.  gprim-mr-tex, a reference's texcoord, and the
+;;     morph NORMAL deltas are carried for a re-export and for a
+;;     renderer of your own; the shaders in this library still
+;;     sample base/normal/emissive/occlusion from TEXCOORD_0 and
+;;     take metallic-roughness from the per-primitive factors.
+;;     alphaMode, alphaCutoff, doubleSided, the KHR_materials_*
+;;     extensions, and images behind a uri rather than a bufferView
+;;     are not read at all.
 ;;   * Skinning transforms normals by the skin matrix itself, not by
 ;;     its inverse transpose, and keeps a_tangent.w regardless of
 ;;     determinant sign: joints with non-uniform scale or mirroring
@@ -90,6 +112,15 @@
 (library (gfx gltf)
   (export gltf? gltf-prims gltf-images gltf-parse gltf-fetch!
           gltf-load-textures! gltf-draw!
+          gltf-textures gltf-samplers gltf-cameras gltf-node-camera
+          gsampler? gsampler-mag gsampler-min
+          gsampler-wrap-s gsampler-wrap-t
+          gtexref? gtexref-texture gtexref-image gtexref-sampler
+          gtexref-texcoord gtexref-factor
+          gprim-base-tex gprim-mr-tex gprim-normal-tex
+          gprim-emissive-tex gprim-occlusion-tex
+          gprim-mrtex gprim-morph-normals gprim-morph-tangents
+          gprim-node gprim-skin
           gltf-anims gltf-nodes gltf-skins
           gltf-node-translation gltf-node-rotation gltf-node-scale
           gltf-node-translation-set! gltf-node-rotation-set!
@@ -117,10 +148,47 @@
 
   (define ($gltf-fl v) (if (flonum? v) v (exact->inexact v)))
 
+  ;; A glTF sampler, verbatim.  mag and min are #f when the file
+  ;; omits them -- that is not the same as a default value, it means
+  ;; "whatever the runtime does", and a re-export has to omit them
+  ;; again.  The wrap modes do have a spec default (10497, REPEAT)
+  ;; and it is filled in, because the file leaving them out and the
+  ;; file writing REPEAT mean the same thing.
+  (define-record-type (gsampler $make-gsampler gsampler?)
+    (fields (immutable mag gsampler-mag)
+            (immutable min gsampler-min)
+            (immutable wrap-s gsampler-wrap-s)
+            (immutable wrap-t gsampler-wrap-t)))
+
+  ;; One material texture slot.  It names the glTF TEXTURE, not just
+  ;; the image: two textures may share one image and differ only in
+  ;; sampler, and collapsing them to the image is exactly what this
+  ;; reader used to do.  The image index rides along because every
+  ;; existing caller wants it and resolving it needs the file.
+  ;; factor is normalTexture.scale, occlusionTexture.strength, or
+  ;; 1.0 for the slots that have no scalar -- one field rather than
+  ;; three, because no slot has two of them.
+  (define-record-type (gtexref $make-gtexref gtexref?)
+    (fields (immutable texture gtexref-texture)
+            (immutable image gtexref-image)
+            (immutable sampler gtexref-sampler)   ; sampler index | #f
+            (immutable texcoord gtexref-texcoord) ; 0 or 1
+            (immutable factor gtexref-factor)))
+
   (define-record-type (gltf $make-gltf gltf?)
     (fields (immutable prims gltf-prims)
             ;; per image: (abs-offset byte-length mime), in staging
             (immutable images gltf-images)
+            ;; the file's textures[] and samplers[] arrays as they
+            ;; stand, duplicates and unreferenced entries included --
+            ;; a re-export has to reproduce the arrays, not a set
+            ;; rebuilt from what the materials happened to use
+            (immutable textures gltf-textures)  ; #((image . sampler|#f) ...)
+            (immutable samplers gltf-samplers)  ; #(gsampler ...)
+            ;; #(kind p0 p1 p2 p3): perspective yfov aspect znear
+            ;; zfar, orthographic xmag ymag znear zfar, #f per key
+            ;; the file omits
+            (immutable cameras gltf-cameras)
             (immutable nodes gltf-nodes)      ; runtime TRS, animatable
             (immutable skins gltf-skins)      ; #(joint-nodes ibms)
             ;; #(name channels duration touched-nodes)
@@ -162,20 +230,56 @@
             ;; the attributes present, in interleave order -- the
             ;; exact contract a matching shader must declare
             (immutable layout gprim-layout)
-            (immutable tex-img $gprim-tex-img); image index | #f
-            (immutable nrm-img gprim-normal-img)   ; image index | #f
-            (immutable emi-img gprim-emissive-img) ; image index | #f
-            (immutable occ-img gprim-occlusion-img); image index | #f
+            ;; the five material texture slots, each a gtexref or
+            ;; #f.  They used to hold bare image indices; the older
+            ;; gprim-*-img accessors below are now projections of
+            ;; these, so the image an asset names is written down
+            ;; once
+            (immutable base-ref gprim-base-tex)
+            (immutable mr-ref gprim-mr-tex)
+            (immutable nrm-ref gprim-normal-tex)
+            (immutable emi-ref gprim-emissive-tex)
+            (immutable occ-ref gprim-occlusion-tex)
             (immutable emissive gprim-emissive)    ; r g b factor
             (immutable skin $gprim-skin)      ; skin index | #f
-            ;; #(base-positions target-deltas weights dirty node) | #f
+            ;; #(base-positions target-deltas weights dirty node
+            ;;   bind-weights normal-deltas|#f tangent-deltas|#f) | #f
             (mutable morph gprim-morph $gprim-morph!)
             (mutable tex gprim-tex $gprim-tex!)  ; texture slot | #f
             (mutable ntex gprim-ntex $gprim-ntex!)
             (mutable etex gprim-etex $gprim-etex!)
             (mutable otex gprim-otex $gprim-otex!)
+            (mutable mrtex gprim-mrtex $gprim-mrtex!)
             (mutable vbuf $gprim-vbuf $gprim-vbuf!)
             (mutable ibuf $gprim-ibuf $gprim-ibuf!)))
+
+  ;; The image-index accessors that predate the references.  They
+  ;; are projections now, not fields: an asset naming an image in
+  ;; two places cannot disagree with itself.
+  (define ($ref-image r) (and r (gtexref-image r)))
+  (define ($gprim-tex-img p) ($ref-image (gprim-base-tex p)))
+  (define (gprim-normal-img p) ($ref-image (gprim-normal-tex p)))
+  (define (gprim-emissive-img p) ($ref-image (gprim-emissive-tex p)))
+  (define (gprim-occlusion-img p) ($ref-image (gprim-occlusion-tex p)))
+
+  ;; the source node and skin a primitive came from.  Both were
+  ;; private; a re-export needs to say which node carried the mesh.
+  (define (gprim-node p) ($gprim-node p))
+  (define (gprim-skin p) ($gprim-skin p))
+
+  ;; per-target NORMAL and TANGENT deltas (3 floats per vertex per
+  ;; target), or #f where the file gave none.  Inside the vector a
+  ;; target that carried none of that attribute is a #f hole, so the
+  ;; per-target indices still line up with gprim-morph's own.  The
+  ;; POSITION deltas drive the blend; these are carried so a
+  ;; re-export keeps them.
+  (define (gprim-morph-normals p)
+    (let ((mo (gprim-morph p)))
+      (and mo (vector-ref mo 6))))
+
+  (define (gprim-morph-tangents p)
+    (let ((mo (gprim-morph p)))
+      (and mo (vector-ref mo 7))))
 
   ;; ---- raw reads from the staging memory (alignment-safe) ----
   (define ($glb-u16 at)
@@ -295,28 +399,42 @@
   (define (gprim-roughness p) (cdr ($gprim-mr p)))
 
   ;; material -> baseColorTexture -> texture -> source image index
-  (define ($prim-tex-image json prim)
+  ;; One material texture slot, as a reference rather than an image
+  ;; index.  `get' pulls the slot object out of the material (the pbr
+  ;; ones are nested a level deeper than the rest) and `fkey' names
+  ;; the slot's scalar, #f for the slots that have none.
+  (define ($tex-ref json prim get fkey)
     (let ((mi (json-ref prim "material")))
       (and mi
            (let* ((mat (vector-ref (json-ref json "materials") mi))
-                  (bct (json-ref mat "pbrMetallicRoughness"
-                                 "baseColorTexture")))
-             (and bct
-                  (let ((ti (json-ref bct "index")))
-                    (json-ref (vector-ref (json-ref json "textures") ti)
-                              "source")))))))
+                  (t (get mat)))
+             (and t
+                  (let* ((ti (json-ref t "index"))
+                         (tex (vector-ref (json-ref json "textures") ti))
+                         (f (and fkey (json-ref t fkey))))
+                    ($make-gtexref ti
+                                   (json-ref tex "source")
+                                   (json-ref tex "sampler")
+                                   ($or0 (json-ref t "texCoord"))
+                                   (if f ($gltf-fl f) 1.0))))))))
+
+  (define ($prim-base-ref json prim)
+    ($tex-ref json prim
+              (lambda (mat)
+                (json-ref mat "pbrMetallicRoughness" "baseColorTexture"))
+              #f))
+
+  (define ($prim-mr-ref json prim)
+    ($tex-ref json prim
+              (lambda (mat)
+                (json-ref mat "pbrMetallicRoughness"
+                          "metallicRoughnessTexture"))
+              #f))
 
   ;; a material's root-level texture slot (normalTexture,
-  ;; emissiveTexture, occlusionTexture), as an image index
-  (define ($prim-mat-tex json prim key)
-    (let ((mi (json-ref prim "material")))
-      (and mi
-           (let* ((mat (vector-ref (json-ref json "materials") mi))
-                  (t (json-ref mat key)))
-             (and t
-                  (let ((ti (json-ref t "index")))
-                    (json-ref (vector-ref (json-ref json "textures") ti)
-                              "source")))))))
+  ;; emissiveTexture, occlusionTexture), as a reference
+  (define ($prim-mat-ref json prim key fkey)
+    ($tex-ref json prim (lambda (mat) (json-ref mat key)) fkey))
 
   ;; emissiveFactor, spec default (0,0,0)
   (define ($material-emissive json mi)
@@ -377,9 +495,77 @@
                         (m4-identity))))
             (m4-mul t (m4-mul r s))))))
 
+  ;; ---- the file's own texture, sampler and camera arrays ----
+  ;; Kept as they stand rather than rebuilt from what the materials
+  ;; reference: a re-export has to reproduce the arrays, and an
+  ;; unused or duplicated entry is part of them.
+  (define ($gltf-sampler-table json)
+    (let ((ss (json-ref json "samplers")))
+      (if (not ss)
+          (vector)
+          (let* ((n (vector-length ss))
+                 (out (make-vector n #f)))
+            (let loop ((i 0))
+              (when (< i n)
+                (let ((sm (vector-ref ss i)))
+                  ;; the filters stay #f when omitted (no default to
+                  ;; fill in); the wrap modes take the spec's REPEAT
+                  (vector-set! out i
+                               ($make-gsampler
+                                (json-ref sm "magFilter")
+                                (json-ref sm "minFilter")
+                                (or (json-ref sm "wrapS") 10497)
+                                (or (json-ref sm "wrapT") 10497))))
+                (loop (+ i 1))))
+            out))))
+
+  (define ($gltf-texture-table json)
+    (let ((ts (json-ref json "textures")))
+      (if (not ts)
+          (vector)
+          (let* ((n (vector-length ts))
+                 (out (make-vector n #f)))
+            (let loop ((i 0))
+              (when (< i n)
+                (let ((t (vector-ref ts i)))
+                  (vector-set! out i (cons (json-ref t "source")
+                                           (json-ref t "sampler"))))
+                (loop (+ i 1))))
+            out))))
+
+  (define ($gltf-camera-table json)
+    (let ((cs (json-ref json "cameras")))
+      (if (not cs)
+          (vector)
+          (let* ((n (vector-length cs))
+                 (out (make-vector n #f))
+                 (fl (lambda (v) (and v ($gltf-fl v)))))
+            (let loop ((i 0))
+              (when (< i n)
+                (let* ((c (vector-ref cs i))
+                       (kind (json-ref c "type"))
+                       (ortho? (and kind (string=? kind "orthographic")))
+                       (sub (json-ref c (if ortho?
+                                            "orthographic"
+                                            "perspective")))
+                       (key (lambda (k)
+                              (fl (and sub (json-ref sub k))))))
+                  (vector-set! out i
+                               (if ortho?
+                                   (vector 'orthographic
+                                           (key "xmag") (key "ymag")
+                                           (key "znear") (key "zfar"))
+                                   (vector 'perspective
+                                           (key "yfov")
+                                           (key "aspectRatio")
+                                           (key "znear") (key "zfar")))))
+                (loop (+ i 1))))
+            out))))
+
   ;; ---- the runtime node tree (what animations drive) ----
-  ;; a node is a 12-slot vector: tx ty tz  qx qy qz qw  sx sy sz
-  ;; matrix|#f parent
+  ;; a node is a 13-slot vector: tx ty tz  qx qy qz qw  sx sy sz
+  ;; matrix|#f parent camera|#f.  The camera index rides at the end
+  ;; so every existing read of slots 0-11 is unchanged.
   (define ($gltf-node-table json)
     (let* ((ns (json-ref json "nodes"))
            (n (if ns (vector-length ns) 0))
@@ -391,7 +577,7 @@
                  (rq (json-ref nd "rotation"))
                  (sc (json-ref nd "scale"))
                  (mx (json-ref nd "matrix"))
-                 (v (make-vector 12 0.0)))
+                 (v (make-vector 13 0.0)))
             (when tr
               (vector-set! v 0 ($gltf-fl (vector-ref tr 0)))
               (vector-set! v 1 ($gltf-fl (vector-ref tr 1)))
@@ -421,6 +607,7 @@
                                     (cp (+ i 1))))
                                 m)))
             (vector-set! v 11 -1)
+            (vector-set! v 12 (json-ref nd "camera"))
             (vector-set! out k v))
           (loop (+ k 1))))
       ;; children point back at their parents
@@ -434,6 +621,12 @@
                   (kid (+ i 1))))))
           (loop (+ k 1))))
       out))
+
+  ;; which camera a node carries, or #f.  Cameras are data here, not
+  ;; a view: (gfx mat) builds the matrix from the parameters and the
+  ;; node's global transform is its pose.
+  (define (gltf-node-camera g i)
+    (vector-ref (vector-ref (gltf-nodes g) i) 12))
 
   (define ($node-local v)
     (let ((mx (vector-ref v 10)))
@@ -1506,7 +1699,11 @@
   ;; Skinning is one orthogonal dimension, not a family of
   ;; hand-written variants: (gltf-skin-shader vs) appends
   ;; a_joints/a_weights AFTER the static attributes -- exactly where
-  ;; the loader's canonical interleave puts them -- adds the u_joints
+  ;; the loader's canonical interleave puts them, a_uv1 excepted:
+  ;; that one slot rides at the very end of the interleave, so a
+  ;; static shader declaring it has its declaration MOVED to after
+  ;; a_weights rather than left in place, which would compose an
+  ;; attribute order no primitive has -- adds the u_joints
   ;; palette, and rewrites every reference to a_pos / a_normal /
   ;; a_tangent (swizzles included) inside the shader's defines to
   ;; read the skin-transformed locals.  Varyings and uniforms are
@@ -1587,8 +1784,71 @@
                          gltf-skin-binding)
       p))
 
-  (define ($skin-shader vs palette block-name)
-    (let* ((names (map car (glsl-attributes vs)))
+  (define ($concat ls)
+    (let loop ((l (reverse ls)) (acc '()))
+      (if (null? l) acc (loop (cdr l) (append (car l) acc)))))
+
+  ;; the attribute declarations of one precision segment, gathered
+  ;; into a contiguous run at the place the first of them stood
+  (define ($gather-attrs seg)
+    (let* ((attr? (lambda (f) (and (pair? f) (eq? (car f) 'attribute))))
+           (before (let take ((l seg) (acc '()))
+                     (cond ((null? l) (reverse acc))
+                           ((attr? (car l)) (reverse acc))
+                           (else (take (cdr l) (cons (car l) acc))))))
+           (rest (list-tail seg (length before)))
+           (attrs (let pick ((l rest) (acc '()))
+                    (cond ((null? l) (reverse acc))
+                          ((attr? (car l))
+                           (pick (cdr l) (cons (car l) acc)))
+                          (else (pick (cdr l) acc)))))
+           (others (let pick ((l rest) (acc '()))
+                     (cond ((null? l) (reverse acc))
+                           ((attr? (car l)) (pick (cdr l) acc))
+                           (else (pick (cdr l) (cons (car l) acc)))))))
+      (append before attrs others)))
+
+  ;; GLSL wants a declaration before its use, and this combinator
+  ;; moves a_uv1 to the end of the attribute run.  A helper declared
+  ;; BETWEEN two attributes and reading a_uv1 would then see the
+  ;; declaration move below it -- an undeclared identifier in the
+  ;; composed source.  Gathering the attribute declarations into a
+  ;; contiguous run, in their original relative order and starting
+  ;; where the first one stood, puts every helper after all of them.
+  ;;
+  ;; A `precision` statement bounds that gathering.  It sets the
+  ;; default precision for everything AFTER it, so an attribute that
+  ;; crossed one would silently change type -- lowp where the author
+  ;; wrote highp -- with no uv1 involved at all.  Each precision
+  ;; segment is therefore gathered on its own, and a shader whose
+  ;; attributes are already contiguous comes through unchanged.
+  (define ($hoist-attrs fs)
+    ;; only what precedes main moves; an attribute after main is
+    ;; refused further down, with its own diagnostic
+    (let* ((split (let cut ((l fs) (acc '()))
+                    (cond ((null? l) (cons (reverse acc) '()))
+                          ((and (pair? (car l))
+                                (eq? (caar l) 'define)
+                                (equal? (cadr (car l)) '(main)))
+                           (cons (reverse acc) l))
+                          (else (cut (cdr l) (cons (car l) acc))))))
+           (head (car split))
+           (tail (cdr split)))
+      (let seg ((l head) (cur '()) (out '()))
+        (cond
+         ((null? l)
+          (append ($concat (reverse (cons ($gather-attrs (reverse cur))
+                                          out)))
+                  tail))
+         ;; a precision statement opens a new segment and heads it
+         ((and (pair? (car l)) (eq? (caar l) 'precision))
+          (seg (cdr l) (list (car l))
+               (cons ($gather-attrs (reverse cur)) out)))
+         (else (seg (cdr l) (cons (car l) cur) out))))))
+
+  (define ($skin-shader vs0 palette block-name)
+    (let* ((vs ($hoist-attrs vs0))
+           (names (map car (glsl-attributes vs)))
            (has? (lambda (n) (and (memq n names) #t)))
            (subst
             (append '((a_pos . g_pos))
@@ -1674,6 +1934,14 @@
       ;; declares the recognized attributes in another one can never
       ;; match a primitive.  Say so here rather than handing back a
       ;; program that only fails when something tries to draw.
+      ;; a_uv1 is deliberately NOT in this table: its place in the
+      ;; interleave is decided by this combinator, which moves the
+      ;; declaration to the end, not by where the author wrote it.
+      ;; Listing it here would refuse legal input -- a shader that
+      ;; declares a_uv1 first is fine, and comes out with a_uv1 last
+      ;; either way.  It IS in the width table above and in the
+      ;; after-main refusal, because those two ask questions that
+      ;; relocation does not answer.
       (let* ((canon '(a_pos a_normal a_uv a_tangent a_color
                       a_joints a_weights))
              ;; attributes outside the canonical set are the
@@ -1731,6 +1999,21 @@
                             (equal? (cadr (car fs)) '(main)))
                        i)
                       (else (scan (cdr fs) (+ i 1))))))
+             ;; a_uv1 is the ONE attribute whose declared position
+             ;; must move: the loader's interleave puts uv1 LAST, so
+             ;; a static shader that declares it before the skin
+             ;; inputs would compose to (... uv1 joints weights) and
+             ;; gltf-draw! would refuse the primitive it was made
+             ;; for.  It is lifted out of its place below and put
+             ;; back after a_weights.
+             (uv1-form
+              (let scan ((fs vs))
+                (cond ((null? fs) #f)
+                      ((and (pair? (car fs))
+                            (eq? (caar fs) 'attribute)
+                            (eq? (caddr (car fs)) 'a_uv1))
+                       (car fs))
+                      (else (scan (cdr fs))))))
              (last-attr
               (let scan ((fs vs) (i 0) (last -1))
                 (if (null? fs)
@@ -1745,7 +2028,46 @@
              ;; of it the input omits gets padded in, right after
              ;; the last piece it does declare
              (pad-after (let ((n (attr-at 'a_normal)))
-                          (if (< n 0) (attr-at 'a_pos) n))))
+                          (if (< n 0) (attr-at 'a_pos) n)))
+             ;; the default float precision in effect just BEFORE
+             ;; position k.  Only `float` statements count: a_uv1 is
+             ;; a vec2, and a `precision mediump int` between the two
+             ;; positions says nothing about it (and stays where it
+             ;; is either way -- nothing here MOVES a precision
+             ;; statement, it only adds).
+             (prec-before
+              (lambda (k)
+                (let scan ((l vs) (i 0) (p #f))
+                  (cond ((or (null? l) (>= i k)) p)
+                        ((and (pair? (car l))
+                              (eq? (caar l) 'precision)
+                              (eq? (caddr (car l)) 'float))
+                         (scan (cdr l) (+ i 1) (cadr (car l))))
+                        (else (scan (cdr l) (+ i 1) p))))))
+             ;; Moving a_uv1 to the injection point moves it under
+             ;; whatever precision rules THERE.  When that differs
+             ;; from the precision it was written under, the move
+             ;; would silently retype it, so the qualifier travels
+             ;; with it: re-state its own precision ahead of it, and
+             ;; put the injection point's back afterwards for main
+             ;; and everything past it.
+             ;;
+             ;; "No statement" is not a third value: a vertex shader
+             ;; with no `precision float` of its own is highp in both
+             ;; ESSL 1.00 and 3.00, so #f normalizes to highp BEFORE
+             ;; the comparison.  Comparing the raw #f against an
+             ;; explicit highp would call two equivalent states
+             ;; different and emit a pair of statements that change
+             ;; nothing.  Equal precisions add no form at all, which
+             ;; is why every shader that existed before this composes
+             ;; byte for byte as it did.
+             (uv1-wrap
+              (and uv1-form
+                   (let ((here (or (prec-before (attr-at 'a_uv1)) 'highp))
+                         (there (or (prec-before last-attr) 'highp)))
+                     (and (not (eq? here there))
+                          (cons (list 'precision here 'float)
+                                (list 'precision there 'float)))))))
         ;; A CANONICAL attribute has to precede main: main's injected
         ;; body reads a_pos/a_normal/a_tangent, and the padding lands
         ;; beside whichever of them the input declares -- so one
@@ -1757,9 +2079,13 @@
           (cond ((null? fs) #t)
                 ((and (pair? (car fs))
                       (eq? (caar fs) 'attribute)
+                      ;; a_uv1 belongs here too: this combinator
+                      ;; RELOCATES it, so one declared after main
+                      ;; would be moved out from under whatever
+                      ;; follows main rather than left alone
                       (memq (caddr (car fs))
                             '(a_pos a_normal a_uv a_tangent a_color
-                              a_joints a_weights))
+                              a_joints a_weights a_uv1))
                       (> i main-at))
                  (error 'gltf-skin-shader
                         "attribute declared after main"
@@ -1773,7 +2099,8 @@
         ;; alone would never catch it.
         (let ((want '((a_pos . vec3) (a_normal . vec3) (a_uv . vec2)
                       (a_tangent . vec4) (a_color . vec4)
-                      (a_joints . vec4) (a_weights . vec4))))
+                      (a_joints . vec4) (a_weights . vec4)
+                      (a_uv1 . vec2))))
           (for-each
            (lambda (a)
              (let ((spec (assq (car a) want)))
@@ -1785,6 +2112,24 @@
         (when (< last-attr 0)
           (error 'gltf-skin-shader
                  "attributes must be declared before main"))
+        ;; a_uv1 has to end up after a_weights -- the interleave puts
+        ;; it last -- and gathering only reorders DECLARATIONS: a
+        ;; form that reads a_uv1 stays where the author wrote it.
+        ;; When such a form sits before the injection point (a helper
+        ;; a precision statement pins into an earlier segment), no
+        ;; ordering serves both.  Name the form and say what to do,
+        ;; rather than compose a shader whose a_uv1 is declared after
+        ;; its use.
+        (when uv1-form
+          (let scan ((l vs) (i 0))
+            (when (< i last-attr)
+              (let ((f (car l)))
+                (when (and (not (and (pair? f) (eq? (car f) 'attribute)))
+                           ($skin-refs? f '((a_uv1 . a_uv1))))
+                  (error 'gltf-skin-shader
+                         "a_uv1 is read before the interleave's last attribute; declare a_uv1 after that form"
+                         f))
+                (scan (cdr l) (+ i 1))))))
         (let loop ((fs vs) (i 0) (out '()))
           (if (null? fs)
               (reverse out)
@@ -1810,6 +2155,8 @@
                                        "attribute referenced outside main; pass the skinned value as a parameter"
                                        (cadr f)))
                               (cons f out))))
+                       ;; lifted: it goes back after a_weights
+                       ((and uv1-form (eq? f uv1-form)) out)
                        (else (cons f out))))
                      ;; the loader writes a +y normal even for an
                      ;; asset with none, and carries a uv slot once
@@ -1832,10 +2179,13 @@
                               out))
                      (out (if (= i last-attr)
                               (append
-                               (list
-                                palette
-                                '(attribute vec4 a_weights)
-                                '(attribute vec4 a_joints))
+                               (append
+                                (list palette)
+                                (if uv1-wrap (list (cdr uv1-wrap)) '())
+                                (if uv1-form (list uv1-form) '())
+                                (if uv1-wrap (list (car uv1-wrap)) '())
+                                (list '(attribute vec4 a_weights)
+                                      '(attribute vec4 a_joints)))
                                out)
                               out)))
                 (loop (cdr fs) (+ i 1) out)))))))
@@ -1881,10 +2231,11 @@
             (caddr inf) (cadddr inf) (list-ref inf 4))))
 
   ;; one primitive: interleave the attributes present in canonical
-  ;; order -- position normal uv tangent color joints weights -- and
-  ;; pack u16 index pairs into fresh staging memory.  The uv slot
+  ;; order -- position normal uv tangent color joints weights uv1 --
+  ;; and pack u16 index pairs into fresh staging memory.  The uv slot
   ;; rides along (zeroed) whenever anything beyond position+normal
-  ;; is present, so every layout past 24 bytes starts pos/nrm/uv.
+  ;; is present, so every layout past 24 bytes starts pos/nrm/uv --
+  ;; TEXCOORD_1 without TEXCOORD_0 included.
   (define ($build-prim json bin prim world skin nidx mw)
     (let* ((attrs (json-ref prim "attributes"))
            ;; every attribute's tight stride follows its component
@@ -1895,6 +2246,8 @@
                   (and i ($attr-info json bin i 3))))
            (uv (let ((i (json-ref attrs "TEXCOORD_0")))
                  (and i ($attr-info json bin i 2))))
+           (uv1 (let ((i (json-ref attrs "TEXCOORD_1")))
+                  (and i ($attr-info json bin i 2))))
            (jn0 (let ((i (json-ref attrs "JOINTS_0")))
                   (and i skin ($attr-info json bin i 4))))
            (wt (and jn0
@@ -1910,24 +2263,34 @@
            (col (let ((i (json-ref attrs "COLOR_0")))
                   (and i ($attr-info json bin i col-n))))
            (count (caddr pos))
-           (uv-slot (and (or uv tan col jn) #t))
+           ;; a second UV set implies the first slot as well: the
+           ;; layout contract is that anything past position+normal
+           ;; starts pos/nrm/uv, so TEXCOORD_1 without TEXCOORD_0
+           ;; still gets a zeroed uv slot ahead of it
+           (uv-slot (and (or uv uv1 tan col jn) #t))
            (o-tan (and tan 32))
            (o-col (and col (+ 32 (if tan 16 0))))
            (o-jn (and jn (+ 32 (if tan 16 0) (if col 16 0))))
+           ;; uv1 rides at the very end, so adding it moves nothing
+           (o-uv1 (and uv1 (+ 32 (if tan 16 0) (if col 16 0)
+                             (if jn 32 0))))
            (stride (+ 24 (if uv-slot 8 0) (if tan 16 0)
-                      (if col 16 0) (if jn 32 0)))
+                      (if col 16 0) (if jn 32 0) (if uv1 8 0)))
            (layout (append '(position normal)
                            (if uv-slot '(uv) '())
                            (if tan '(tangent) '())
                            (if col '(color) '())
-                           (if jn '(joints weights) '())))
+                           (if jn '(joints weights) '())
+                           (if uv1 '(uv1) '())))
            (vbytes (* stride count))
            (vbase (fx-alloc! vbytes))
            ;; componentType + normalized per attribute (5126 float =
            ;; the plain path; anything else is KHR_mesh_quantization)
            (pct (cadddr pos)) (pn (list-ref pos 4))
            (nct (and nrm (cadddr nrm))) (nn (and nrm (list-ref nrm 4)))
-           (uct (and uv (cadddr uv))) (un (and uv (list-ref uv 4))))
+           (uct (and uv (cadddr uv))) (un (and uv (list-ref uv 4)))
+           (u1ct (and uv1 (cadddr uv1)))
+           (u1n (and uv1 (list-ref uv1 4))))
       (let copy ((v 0))
         (when (< v count)
           (let ((src (+ (car pos) (* v (cadr pos))))
@@ -1951,6 +2314,10 @@
                 (when uv-slot            ; slot present, no data: zeros
                   (%mem-f32-set! (+ dst 24) 0.0)
                   (%mem-f32-set! (+ dst 28) 0.0)))
+            (when uv1
+              (let ((us (+ (car uv1) (* v (cadr uv1)))))
+                (%mem-f32-set! (+ dst o-uv1) ($deq us 0 u1ct u1n))
+                (%mem-f32-set! (+ dst o-uv1 4) ($deq us 1 u1ct u1n))))
             (when tan
               (let ((ts (+ (car tan) (* v (cadr tan))))
                     (tct (cadddr tan)) (tn (list-ref tan 4)))
@@ -2031,10 +2398,12 @@
                      ($material-color json (json-ref prim "material"))
                      ($material-mr json (json-ref prim "material"))
                      world nidx stride layout
-                     ($prim-tex-image json prim)
-                     ($prim-mat-tex json prim "normalTexture")
-                     ($prim-mat-tex json prim "emissiveTexture")
-                     ($prim-mat-tex json prim "occlusionTexture")
+                     ($prim-base-ref json prim)
+                     ($prim-mr-ref json prim)
+                     ($prim-mat-ref json prim "normalTexture" "scale")
+                     ($prim-mat-ref json prim "emissiveTexture" #f)
+                     ($prim-mat-ref json prim "occlusionTexture"
+                                    "strength")
                      ($material-emissive json (json-ref prim "material"))
                      (and jn skin)
                      ;; morph targets: POSITION deltas, CPU-blended
@@ -2043,6 +2412,16 @@
                             (let* ((nt (vector-length tg))
                                    (b (make-vector (* count 3) 0.0))
                                    (ds (make-vector nt #f))
+                                   ;; NORMAL and TANGENT deltas, per
+                                   ;; target, #f where a target has
+                                   ;; none.  The blend still runs on
+                                   ;; POSITION alone; these are kept
+                                   ;; so a re-export does not lose
+                                   ;; them.  A morph TANGENT delta is
+                                   ;; VEC3 in glTF -- it displaces the
+                                   ;; xyz, never the handedness w.
+                                   (nds (make-vector nt #f))
+                                   (tds (make-vector nt #f))
                                    (w (make-vector nt 0.0)))
                               ;; the base comes from the canonical
                               ;; interleave, already dequantized --
@@ -2058,30 +2437,56 @@
                                          (%mem-f32-ref (+ src (* 4 j))))
                                         (c2 (+ j 1)))))
                                   (bv (+ v 1))))
-                              (let tgt ((k 0))
-                                (when (< k nt)
-                                  (let* ((acc ($attr-info
-                                               json bin
-                                               (json-ref
-                                                (vector-ref tg k)
-                                                "POSITION") 3))
-                                         (act (cadddr acc))
-                                         (an (list-ref acc 4))
-                                         (d (make-vector (* count 3)
-                                                         0.0)))
-                                    (let dv ((v 0))
-                                      (when (< v count)
-                                        (let ((src (+ (car acc)
-                                                      (* v (cadr acc)))))
-                                          (let c3 ((j 0))
-                                            (when (< j 3)
-                                              (vector-set!
-                                               d (+ (* v 3) j)
-                                               ($deq src j act an))
-                                              (c3 (+ j 1)))))
-                                        (dv (+ v 1))))
-                                    (vector-set! ds k d))
-                                  (tgt (+ k 1))))
+                              ;; one target attribute's deltas, read
+                              ;; the same way for POSITION and for
+                              ;; NORMAL -- both are VEC3 per vertex
+                              (let ((read-delta
+                                     (lambda (ai)
+                                       (and
+                                        ai
+                                        (let* ((acc ($attr-info
+                                                     json bin ai 3))
+                                              (act (cadddr acc))
+                                               (an (list-ref acc 4))
+                                               (d (make-vector
+                                                   (* count 3) 0.0)))
+                                          (let dv ((v 0))
+                                            (when (< v count)
+                                              (let ((src (+ (car acc)
+                                                            (* v (cadr acc)))))
+                                                (let c3 ((j 0))
+                                                  (when (< j 3)
+                                                    (vector-set!
+                                                     d (+ (* v 3) j)
+                                                     ($deq src j act an))
+                                                    (c3 (+ j 1)))))
+                                              (dv (+ v 1))))
+                                          d)))))
+                                (let tgt ((k 0))
+                                  (when (< k nt)
+                                    ;; a target need not carry
+                                    ;; POSITION: glTF lets one
+                                    ;; displace only the normals or
+                                    ;; only the tangents, and the
+                                    ;; blend then has to leave the
+                                    ;; base positions where they are
+                                    (vector-set!
+                                     ds k
+                                     (or (read-delta
+                                          (json-ref (vector-ref tg k)
+                                                    "POSITION"))
+                                         (make-vector (* count 3) 0.0)))
+                                    (vector-set!
+                                     nds k
+                                     (read-delta
+                                      (json-ref (vector-ref tg k)
+                                                "NORMAL")))
+                                    (vector-set!
+                                     tds k
+                                     (read-delta
+                                      (json-ref (vector-ref tg k)
+                                                "TANGENT")))
+                                    (tgt (+ k 1)))))
                               (when mw
                                 (let iw ((k 0))
                                   (when (and (< k nt)
@@ -2093,13 +2498,26 @@
                               ;; that does not drive them can return
                               ;; here instead of keeping the last
                               ;; clip's pose
-                              (let ((bw (make-vector nt 0.0)))
+                              (let ((bw (make-vector nt 0.0))
+                                    ;; a per-target table is kept only
+                                    ;; when some target filled it in;
+                                    ;; all-#f means the file had none
+                                    (some (lambda (v)
+                                            (let any ((k 0))
+                                              (cond ((= k nt) #f)
+                                                    ((vector-ref v k) v)
+                                                    (else
+                                                     (any (+ k 1))))))))
                                 (let cw ((k 0))
                                   (when (< k nt)
                                     (vector-set! bw k (vector-ref w k))
                                     (cw (+ k 1))))
-                                (vector b ds w #t nidx bw)))))
-                     #f #f #f #f #f #f))))
+                                ;; slots 6 and 7: the NORMAL and
+                                ;; TANGENT deltas, each #f when no
+                                ;; target carried any
+                                (vector b ds w #t nidx bw
+                                        (some nds) (some tds))))))
+                     #f #f #f #f #f #f #f))))
 
   ;; ---- the GLB container, then the scene walk ----
   (define (gltf-parse base len)
@@ -2159,6 +2577,9 @@
                    (skins ($gltf-skin-table json bin)))
               ($make-gltf (reverse prims)
                           ($gltf-image-table json bin)
+                          ($gltf-texture-table json)
+                          ($gltf-sampler-table json)
+                          ($gltf-camera-table json)
                           nodes skins
                           ($gltf-anim-table json bin)
                           ($gltf-pose-arena nodes)
@@ -2213,7 +2634,11 @@
     (js-eval "globalThis.__goeteia_img = (base, len, mime) => createImageBitmap(new Blob([new Uint8Array(globalThis.__goeteia_mem.buffer, base, len)], {type: mime}))")
     (let* ((imgs (gltf-images g))
            (n (vector-length imgs))
-           (slots (make-vector (if (= n 0) 1 n) #f))
+           ;; the decoded bitmaps, one per image.  A GL texture is
+           ;; NOT one per image: it is one per distinct
+           ;; (image . sampler) pair, because two textures over one
+           ;; image with different sampler state are two textures.
+           (bmps (make-vector (if (= n 0) 1 n) #f))
            (pending n)
            (resolve!
             (lambda ()
@@ -2231,20 +2656,63 @@
                              (gl-texture-data! t px 1 1)
                              t)))
                      (flat (mk 128 128 255))   ; tangent-space +z
-                     (white (mk 255 255 255))) ; base/emissive, AO 1
+                     (white (mk 255 255 255))  ; base/emissive, AO 1
+                     (texs (gltf-textures g))
+                     (smps (gltf-samplers g))
+                     (nt (vector-length texs))
+                     ;; one GL slot per texture entry, shared between
+                     ;; entries naming the same image AND sampler
+                     (tslots (make-vector (if (= nt 0) 1 nt) #f)))
+                (let build ((i 0))
+                  (when (< i nt)
+                    (let* ((pr (vector-ref texs i))
+                           (img (car pr))
+                           (sm (cdr pr))
+                           (dup (let scan ((j 0))
+                                  (cond ((= j i) #f)
+                                        ((equal? (vector-ref texs j) pr)
+                                         (vector-ref tslots j))
+                                        (else (scan (+ j 1)))))))
+                      (vector-set!
+                       tslots i
+                       (or dup
+                           (and img (< img n) (vector-ref bmps img)
+                                (let ((t (fx-texture!)))
+                                  (gl-texture-upload!
+                                   t (vector-ref bmps img))
+                                  ;; a texture with no sampler keeps
+                                  ;; the parameters fx-texture! set,
+                                  ;; so an asset without samplers[]
+                                  ;; behaves exactly as it did
+                                  (when sm
+                                    (let ((s (vector-ref smps sm)))
+                                      (gl-texture-sampler!
+                                       t
+                                       (gsampler-mag s)
+                                       (gsampler-min s)
+                                       (gsampler-wrap-s s)
+                                       (gsampler-wrap-t s))))
+                                  t)))))
+                    (build (+ i 1))))
                 (for-each
                  (lambda (p)
-                   (let ((set (lambda (img put! dflt)
-                                (put! p (if img
-                                            (vector-ref slots img)
-                                            dflt)))))
+                   (let ((set (lambda (ref put! dflt)
+                                (put! p
+                                      (or (and ref
+                                               (let ((ti (gtexref-texture
+                                                          ref)))
+                                                 (and (< ti nt)
+                                                      (vector-ref tslots
+                                                                  ti))))
+                                          dflt)))))
                      ;; base color too: an untextured primitive must
                      ;; not inherit unit 0 from the textured one
                      ;; drawn before it
-                     (set ($gprim-tex-img p) $gprim-tex! white)
-                     (set (gprim-normal-img p) $gprim-ntex! flat)
-                     (set (gprim-emissive-img p) $gprim-etex! white)
-                     (set (gprim-occlusion-img p) $gprim-otex!
+                     (set (gprim-base-tex p) $gprim-tex! white)
+                     (set (gprim-mr-tex p) $gprim-mrtex! white)
+                     (set (gprim-normal-tex p) $gprim-ntex! flat)
+                     (set (gprim-emissive-tex p) $gprim-etex! white)
+                     (set (gprim-occlusion-tex p) $gprim-otex!
                           white)))
                  (gltf-prims g)))
               (k g))))
@@ -2259,9 +2727,7 @@
                           (car info) (cadr info) (caddr info))
                  "then"
                  (lambda (bmp)
-                   (let ((t (fx-texture!)))
-                     (gl-texture-upload! t bmp)
-                     (vector-set! slots i t))
+                   (vector-set! bmps i bmp)
                    (set! pending (- pending 1))
                    (when (= pending 0) (resolve!))
                    (js-undefined))))
@@ -2273,10 +2739,11 @@
   ;; gprim-tex answers "what do I bind", not "what does the asset
   ;; have"; this answers the latter.
   ;;
-  ;; It is NOT the way to choose a program: the uv slot follows
-  ;; TEXCOORD_0, not the material, so a material with a base color
-  ;; image on a mesh without uvs reads #t while gprim-layout carries
-  ;; no uv (and the reverse happens too).  gprim-layout is the
+  ;; It is NOT the way to choose a program: the uv slot follows the
+  ;; ATTRIBUTES, not the material -- TEXCOORD_0, or anything past
+  ;; position+normal including a lone TEXCOORD_1 -- so a material
+  ;; with a base color image on a mesh without uvs reads #t while
+  ;; gprim-layout carries no uv (and the reverse happens too).  gprim-layout is the
   ;; contract a program must match; use this to decide whether the
   ;; sample is worth taking.
   (define (gprim-textured? p) (and ($gprim-tex-img p) #t))
@@ -2307,6 +2774,7 @@
       ((position) '(a_pos . 3))
       ((normal) '(a_normal . 3))
       ((uv) '(a_uv . 2))
+      ((uv1) '(a_uv1 . 2))
       ((tangent) '(a_tangent . 4))
       ((color) '(a_color . 4))
       ((joints) '(a_joints . 4))
@@ -2314,6 +2782,17 @@
       (else (cons a 0))))
 
   (define ($layout-attr-schema layout) (map $layout-attr layout))
+
+  ;; the layout with a trailing uv1 removed.  uv1 is the one slot a
+  ;; program is allowed to leave unread: it sits at the very end, so
+  ;; dropping it moves no other attribute's offset, and a shader that
+  ;; does not sample the second UV set is otherwise a exact match.
+  ;; Anything else missing is still a refusal.
+  (define ($layout-drop-uv1 layout)
+    (let scan ((l layout) (acc '()))
+      (cond ((null? l) (reverse acc))
+            ((and (eq? (car l) 'uv1) (null? (cdr l))) (reverse acc))
+            (else (scan (cdr l) (cons (car l) acc))))))
 
   ;; where one attribute starts inside a vertex, or #f when the
   ;; layout does not carry it: the canonical order IS the byte
@@ -2420,9 +2899,11 @@
        ;; contract is per attribute: name AND component count.  A
        ;; mismatch would silently feed one attribute's bytes to
        ;; another -- refuse it instead.
-       (let ((want ($layout-attr-schema (gprim-layout p)))
-             (have (fx-program-attribute-schema prog)))
-         (unless (equal? want have)
+       (let* ((layout (gprim-layout p))
+              (want ($layout-attr-schema layout))
+              (thin ($layout-attr-schema ($layout-drop-uv1 layout)))
+              (have (fx-program-attribute-schema prog)))
+         (unless (or (equal? want have) (equal? thin have))
            (error 'gltf-draw!
                   "program attributes do not match the primitive layout"
                   have want)))
@@ -2437,7 +2918,11 @@
          (when fresh
            ($gprim-vbuf! p (fx-buffer!))
            ($gprim-ibuf! p (fx-buffer!)))
-         (fx-use! prog ($gprim-vbuf p))
+         ;; the buffer's stride, not the program's: a primitive
+         ;; carrying uv1 for a shader that does not read it is wider
+         ;; than the shader declares, and binding at the program's
+         ;; stride would walk off by 8 bytes from the second vertex on
+         (fx-use! prog ($gprim-vbuf p) (gprim-stride p))
          (cmd-bind-index! ($gprim-ibuf p))
          (let ((tx (gprim-tex p)))
            (when (and tx (fx-uniform? prog 'u_tex))

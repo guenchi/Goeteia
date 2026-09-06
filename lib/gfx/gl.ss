@@ -48,6 +48,7 @@
           gl-gpu-timer! gl-gpu-ms
           gl-compressed-family gl-texture-compressed!
           gl-compressed-level! gl-texture-base-level!
+          gl-texture-sampler!
           cmd-depth! cmd-depth-write!
           gl-vao! cmd-bind-vao! cmd-unbind-vao!
           gl-ubo! gl-uniform-block! cmd-bind-ubo! cmd-ubo-data!
@@ -112,6 +113,17 @@
      "    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);"
      "    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);"
      "    slots[slot] = t; },"
+     ;; a glTF sampler's four parameters.  A filter of 0 means the
+     ;; file omitted it, and the creation default above stands; the
+     ;; wrap modes always carry a value (the spec's default is
+     ;; REPEAT, which is NOT the CLAMP_TO_EDGE set at creation, so
+     ;; they cannot be left alone the way the filters can)
+     "  textureSampler(slot, mag, min, ws, wt) {"
+     "    gl.bindTexture(gl.TEXTURE_2D, slots[slot]);"
+     "    if (mag) gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, mag);"
+     "    if (min) gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, min);"
+     "    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, ws);"
+     "    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, wt); },"
      "  compressedFamily() {"
      "    if (gl.getExtension('WEBGL_compressed_texture_etc')"
      "        || gl.getExtension('WEBGL_compressed_texture_etc1'))"
@@ -577,6 +589,11 @@
   ;; mips land
   (define (gl-texture-base-level! slot l)
     (js-method $gl "baseLevel" slot l))
+
+  ;; apply a glTF sampler to a texture slot: #f for a filter the
+  ;; file omitted, leaving the creation default in place
+  (define (gl-texture-sampler! slot mag min ws wt)
+    (js-method $gl "textureSampler" slot (or mag 0) (or min 0) ws wt))
 
   ;; GPU frame time (webgl2 + EXT_disjoint_timer_query_webgl2): turn
   ;; the timer on once and every replay wraps itself in a TIME_ELAPSED

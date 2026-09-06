@@ -19,8 +19,10 @@
 ;;   (layout vbase vcount ibase icount . options)
 ;;
 ;; layout names the attributes present, in the order they occupy the
-;; interleave: position normal uv tangent color joints weights, each
-;; float32 (12/12/8/16/16/16/16 bytes).  vbase points at vertex 0;
+;; interleave: position normal uv tangent color joints weights uv1,
+;; each float32 (12/12/8/16/16/16/16/8 bytes).  A second UV set sits
+;; at the END, so a layout that gains one moves nothing before it.
+;; vbase points at vertex 0;
 ;; the stride is the sum of the layout's attribute sizes unless an
 ;; option overrides it.  ibase points at a tight u16 (or u32) index
 ;; array; icount 0 -- or ibase #f -- writes a non-indexed primitive.
@@ -89,7 +91,8 @@
 ;;
 ;; Round trip: for a layout in the canonical interleave order
 ;; (position normal, then uv, then tangent, then color, then joints
-;; and weights) gltf-parse reproduces the vertex bytes exactly.
+;; and weights, then uv1) gltf-parse reproduces the vertex bytes
+;; exactly.
 ;; Other layouts are written faithfully but come back canonicalized
 ;; -- the loader always gives a primitive a normal (+y when the file
 ;; has none) and always carries a uv slot once anything past normal
@@ -115,6 +118,7 @@
     '((position "POSITION"   3 12 "VEC3")
       (normal   "NORMAL"     3 12 "VEC3")
       (uv       "TEXCOORD_0" 2  8 "VEC2")
+      (uv1      "TEXCOORD_1" 2  8 "VEC2")
       (tangent  "TANGENT"    4 16 "VEC4")
       (color    "COLOR_0"    4 16 "VEC4")
       (joints   "JOINTS_0"   4 16 "VEC4")

@@ -426,6 +426,35 @@
                    '("useProgram:P1" "bindVAO:V1" "bindBuffer:B1"
                      "bufferData:5.00,6.00,7.00,8.00"))))
 
-(and alloc-ok prog-ok use-ok reuse-ok ucache-ok ticks-ok loop-ok quad-ok mat-ok
+;; ---- an explicit stride is part of the VAO's identity ----
+;; A primitive may be wider than the program's attributes (a trailing
+;; slot the shader does not read); binding it with the program's own
+;; stride would read the second vertex from the middle of the first.
+;; fx-use! takes the stride as an optional third operand; the same
+;; (program, buffer) pair used at two strides owns two VAOs, each set
+;; up once, and alternating between them only rebinds.
+(define base-s (log-len))
+(cmd-begin!)
+(fx-use! p buf 40)                        ; wider than the program's 24
+(fx-use! p buf 24)                        ; the program's own width
+(fx-use! p buf 40)
+(fx-use! p buf 24)
+(cmd-flush!)
+(define (vao-at i) (entry (+ base-s i)))   ; the fresh VAO's id is whatever the mock hands out next
+(define stride-ok
+  (let ((fresh (vao-at 1)))
+    (and (not (string=? fresh "bindVAO:V1"))
+         (string=? (substring fresh 0 8) "bindVAO:")
+         (check-from base-s
+                     (list "useProgram:P1" fresh "bindBuffer:B1"
+                           "enable:0" "attrib:0,2,F,false,40,0"
+                           "enable:1" "attrib:1,4,F,false,40,8"
+                           "useProgram:P1" "bindVAO:V1" "bindBuffer:B1"
+                           "useProgram:P1" fresh "bindBuffer:B1"
+                           "useProgram:P1" "bindVAO:V1" "bindBuffer:B1"))
+         ;; and nothing else happened: no third VAO, no re-setup
+         (= (log-len) (+ base-s 16)))))
+
+(and alloc-ok prog-ok use-ok reuse-ok ucache-ok ticks-ok loop-ok quad-ok mat-ok stride-ok
      input-ok input2-ok inst-ok target-ok lock-ok fixed-ok texarr-ok
      mark-ok cycle-ok guard-ok align-ok region-ok)

@@ -495,12 +495,39 @@ pass.
 
 What loads: every primitive's POSITION (+ NORMAL, or +y when absent),
 u8/u16/u32 indices, node TRS/matrix transforms accumulated through the
-scene graph, `baseColorFactor` and metallic/roughness factors, embedded
-textures (`gltf-load-textures!`), skins, and animations. Untextured
+scene graph, `baseColorFactor` and metallic/roughness factors, the
+material's texture slots as references (below), embedded image data
+(`gltf-load-textures!`), cameras, skins, and animations. Untextured
 the stride follows the ATTRIBUTES the asset carries, never the
 material: position+normal alone is 24 bytes, a `TEXCOORD_0` (or
-anything past it) adds the 8-byte uv slot, and `TANGENT`, `COLOR_0`
-and the skin inputs add 16, 16 and 32. `gprim-layout` names what is
+anything past it) adds the 8-byte uv slot, `TANGENT`, `COLOR_0`
+and the skin inputs add 16, 16 and 32, and a `TEXCOORD_1` adds a
+further 8 at the very END of the vertex.
+
+### A material's texture slots are references, not image indices
+
+`gprim-base-tex`, `gprim-mr-tex`, `gprim-normal-tex`,
+`gprim-emissive-tex` and `gprim-occlusion-tex` each answer a `gtexref`
+or `#f`. A reference names five things: `gtexref-texture` (the index
+into the file's `textures[]`), `gtexref-image`, `gtexref-sampler`,
+`gtexref-texcoord` (0 or 1 — which UV set the slot reads) and
+`gtexref-factor` (`normalTexture.scale`, `occlusionTexture.strength`,
+or 1.0 for the slots that carry no scalar).
+
+The distinction that matters is texture versus image: two textures may
+share one image and differ only in sampler, and naming the image alone
+collapses them into one. `gltf-textures` hands back the file's array as
+`(image . sampler)` pairs and `gltf-samplers` the sampler records
+(`gsampler-mag`, `-min`, `-wrap-s`, `-wrap-t`; the filters stay `#f`
+when the file omits them, the wrap modes default to `10497`/REPEAT).
+`gltf-load-textures!` builds one GL texture per distinct
+`(image . sampler)` pair and applies the sampler state; a texture with
+no sampler keeps the parameters every texture is created with, so an
+asset without a `samplers[]` array behaves exactly as it did.
+
+The older `gprim-normal-img` / `-emissive-img` / `-occlusion-img`
+accessors still answer an image index. They are projections of the
+references now rather than separate fields, so the two cannot disagree. `gprim-layout` names what is
 present, in interleave order — that, not `gprim-textured?`, is the
 contract `gltf-draw!` matches a program against: it compares name AND
 component count per attribute, because wrong widths can cancel out in
@@ -636,8 +663,9 @@ A primitive is a plain list — `(layout vbase vcount ibase icount
 generator, a decoder or a parsed asset can all feed it. `layout` names
 the attributes present in the order they occupy the interleave, from
 the same vocabulary `gprim-layout` reports: `position` `normal` `uv`
-`tangent` `color` `joints` `weights`, each float32 at
-12/12/8/16/16/16/16 bytes. `glb-stride`
+`tangent` `color` `joints` `weights` `uv1`, each float32 at
+12/12/8/16/16/16/16/8 bytes. A second UV set sits at the END, so a
+layout that gains one moves nothing before it. `glb-stride`
 and `glb-offset` give a layout's byte stride and an attribute's place
 inside it, which is what a generator writing the vertices needs anyway.
 The options are a key/value tail: `color` for a `baseColorFactor`
@@ -671,7 +699,7 @@ skin binding is a primitive no reader can pose.
 
 Round trip: for a layout in the canonical interleave order (`position
 normal`, then `uv`, then `tangent`, then `color`, then `joints` and
-`weights`) `gltf-parse`
+`weights`, then `uv1`) `gltf-parse`
 reproduces the vertex bytes exactly — `test/glb.ss` compares them byte
 for byte. Other layouts are written faithfully but come back
 canonicalized, because the loader always gives a primitive a normal
