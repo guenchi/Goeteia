@@ -174,7 +174,7 @@
     },
     {
       "path": "t5-animated.md",
-      "bytes": 4846,
+      "bytes": 4967,
       "budget": 6144,
       "layer": 5,
       "name": "animated",
@@ -259,7 +259,7 @@
         "t3-mesh3d.md",
         "t5-animated.md"
       ],
-      "bytes": 22427
+      "bytes": 22548
     },
     {
       "task": "unknown, or a page mixing several of the above",
@@ -271,7 +271,7 @@
         "t4-shader.md",
         "t5-animated.md"
       ],
-      "bytes": 31345
+      "bytes": 31466
     }
   ],
   "verification": {

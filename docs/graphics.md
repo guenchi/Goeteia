@@ -677,7 +677,8 @@ padded interleave, and `joints-u16?` for the `JOINTS_0` element width.
 
 What comes out is one buffer, a bufferView per vertex block (with a
 `byteStride`), per index block and per joint block, one accessor per
-attribute plus one per index array, one mesh holding every primitive,
+attribute plus one per index array, a mesh per node that carries
+primitives (one mesh holding all of them when none names a node),
 the node array and one scene — with the JSON chunk space-padded and the
 BIN chunk zero-padded
 to the 4-byte alignment the container specification requires, and with
@@ -785,12 +786,20 @@ rebuilding is `CUBICSPLINE`: the parser splits the triples into three
 vectors and the writer wants them whole again.
 
 ```scheme
-(define (node->desc v)                     ; a runtime node -> a descriptor
-  (list #f (vector-ref v 11)
-        (vector (vector-ref v 0) (vector-ref v 1) (vector-ref v 2))
-        (vector (vector-ref v 3) (vector-ref v 4)
-                (vector-ref v 5) (vector-ref v 6))
-        (vector (vector-ref v 7) (vector-ref v 8) (vector-ref v 9))))
+(define (node->desc i v)                   ; a runtime node -> a descriptor
+  (append (list #f (vector-ref v 11)
+                (vector (vector-ref v 0) (vector-ref v 1) (vector-ref v 2))
+                (vector (vector-ref v 3) (vector-ref v 4)
+                        (vector-ref v 5) (vector-ref v 6))
+                (vector (vector-ref v 7) (vector-ref v 8) (vector-ref v 9)))
+          ;; the camera a node carries rides in the option tail after
+          ;; the three transforms
+          (let ((c (gltf-node-camera g i)))
+            (if c (list 'camera c) '()))))
+
+;; a camera comes back as #(kind p0 p1 p2 p3), which is the writer's
+;; own shape as a list
+(define (camera->desc c) (vector->list c))
 
 (define (chan->desc ch)
   (let* ((times (vector-ref ch 2)) (vals (vector-ref ch 3))
@@ -813,10 +822,21 @@ vectors and the writer wants them whole again.
 
 (glb-write!
  (map (lambda (p) ...) (gltf-prims g))     ; as above
- 'nodes (map node->desc (vector->list (gltf-nodes g)))
+ ;; node->desc needs the index as well as the node, for the camera
+ 'nodes (let loop ((i 0) (acc '()))
+          (if (= i (gltf-node-count g))
+              (reverse acc)
+              (loop (+ i 1)
+                    (cons (node->desc i (vector-ref (gltf-nodes g) i))
+                          acc))))
  'mesh-node 0
- 'skin (list (vector-ref (vector-ref (gltf-skins g) 0) 0)
-             (vector-ref (vector-ref (gltf-skins g) 0) 1))
+ ;; a primitive re-exported from a parsed asset names the node and
+ ;; skin it came from -- pass 'node (gprim-node p) and 'skin
+ ;; (gprim-skin p) in its option tail and the meshes come back split
+ ;; the way they were read
+ 'cameras (map camera->desc (vector->list (gltf-cameras g)))
+ 'skins (map (lambda (sk) (list (vector-ref sk 0) (vector-ref sk 1)))
+             (vector->list (gltf-skins g)))
  'anims (map (lambda (a)
                (list (vector-ref a 0)
                      (map chan->desc (vector->list (vector-ref a 1)))))
@@ -829,8 +849,48 @@ accessor by accessor and pose by pose. Read the skeleton back *before*
 posing it, though: `gltf-nodes` is the runtime table, which
 `gltf-animate!` writes into.
 
-Not written yet: morph targets, textures, cameras, materials beyond a
-base colour, and more than one skin per file.
+Materials, textures, samplers, embedded images, cameras, several skins
+and morph targets all go out through options of their own — the shapes
+`(gfx gltf)` reads back, so a parsed asset feeds the writer directly:
+
+```scheme
+(glb-write! (list (list layout vbase vcount ibase icount 'material 0
+                        'node 0 'skin 0
+                        'targets (list (list dpos dnrm #f))
+                        'weights '(0.5)))
+            'nodes ns
+            'images   (list (list png-bytes "image/png"))
+            'samplers '((9729 9987 10497 10497))   ; #f = key omitted
+            'textures '((0 . 0))                   ; (image . sampler)
+            'materials (list (list base-color (cons metallic roughness)
+                                   emissive
+                                   '(0 0 1.0) #f '(0 0 0.6) #f #f))
+            'cameras  '((perspective 0.8 #f 0.1 #f))
+            'skins    (list (list joints ibms)))
+```
+
+Each material texture slot is `(texture texcoord factor)` or `#f`, where
+`factor` is the normal scale or the occlusion strength; `texCoord` 0 and
+a factor of 1 are the spec's defaults and are left out of the file. A
+material's base colour may be `#f`, which omits `baseColorFactor`
+entirely — use `gprim-base-color-factor` rather than `gprim-color` when
+re-exporting, because the latter substitutes a neutral grey for a
+material that never wrote one, and an omitted key and an explicit grey
+are the same value there.
+
+A primitive naming a `node` puts its mesh on that node; primitives
+sharing a node share one mesh, and a file where none names a node is one
+mesh on `mesh-node`, exactly as before. `skin` and `skins` are the same
+option — a one-element `skins` writes the bytes the old `skin` wrote.
+
+Not written: images behind a `uri` (this writer embeds); names on
+materials, meshes, skins and cameras — nodes and animation clips do
+carry theirs; `alphaMode` / `alphaCutoff` / `doubleSided` and the
+`KHR_materials_*` extensions (the reader does not read them either);
+`extras` of any kind, which is where a tool keeps morph target names;
+and one mesh instanced by several nodes — the reader flattens that
+sharing away, so two nodes on one mesh come back as two meshes with the
+same contents.
 
 ### `(gfx ktx)` — KTX2 decode/transcode
 

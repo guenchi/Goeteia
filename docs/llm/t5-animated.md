@@ -95,11 +95,12 @@ under the user's hand.
 
 **Skinned assets, in brief.** When a rig arrives as a file instead of as
 matrices you compose yourself, `(gfx glb)`'s `glb-write!` takes plain
-lists — `nodes`, `mesh-node`, `skin`, `anims` — and returns
-`(base . len)`, the pair `gltf-parse` consumes, so an asset round-trips
-with no browser at all. The loader's vertex layout is law and its order
-canonical (position · normal · uv · tangent · color · joints ·
-weights); `JOINTS_0` must hold whole numbers the skin owns; skinning is
+lists — `nodes`, `mesh-node`, `skins`, `anims`, and `images` /
+`samplers` / `textures` / `materials` / `cameras` for the material
+model `(gfx gltf)` reads back — and returns `(base . len)`, the pair `gltf-parse` consumes, so
+an asset round-trips with no browser at all. The loader's vertex layout
+is law and its order canonical (position · normal · uv · tangent ·
+color · joints · weights · uv1); `JOINTS_0` must hold whole numbers the skin owns; skinning is
 a *dimension*, so you author the static vertex shader and let
 `gltf-skin-program3!` add the palette (256 matrices through the std140
 block on WebGL 2, 32 on the ESSL 1.00 path). `gltf-draw!` matches

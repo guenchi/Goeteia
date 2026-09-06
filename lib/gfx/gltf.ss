@@ -120,6 +120,7 @@
           gprim-base-tex gprim-mr-tex gprim-normal-tex
           gprim-emissive-tex gprim-occlusion-tex
           gprim-mrtex gprim-morph-normals gprim-morph-tangents
+          gprim-base-color-factor
           gprim-node gprim-skin
           gltf-anims gltf-nodes gltf-skins
           gltf-node-translation gltf-node-rotation gltf-node-scale
@@ -223,6 +224,13 @@
             (immutable icount gprim-icount)
             (immutable iu32 gprim-index-u32?) ; 32-bit indices?
             (immutable color gprim-color)     ; r g b a flonum vector
+            ;; what the FILE said, or #f where the material omits
+            ;; baseColorFactor.  gprim-color always answers with a
+            ;; colour, falling back to a neutral grey, which is what
+            ;; a renderer wants and what a RE-EXPORT cannot use: an
+            ;; omitted key and an explicit grey are one value there
+            ;; and two different files here.
+            (immutable base-factor gprim-base-color-factor)
             (immutable mr $gprim-mr)          ; (metallic . roughness)
             (immutable world gprim-world)     ; m4, the bind pose
             (immutable node $gprim-node)      ; source node index
@@ -370,6 +378,19 @@
             (json-ref acc "count")
             (json-ref acc "componentType")
             (and (json-ref acc "normalized") #t))))
+
+  ;; the baseColorFactor as written, #f when the key is absent --
+  ;; deliberately without $material-color's fallback
+  (define ($material-base-factor json mi)
+    (and mi
+         (let* ((mat (vector-ref (json-ref json "materials") mi))
+                (f (json-ref mat "pbrMetallicRoughness"
+                             "baseColorFactor")))
+           (and f
+                (vector ($gltf-fl (vector-ref f 0))
+                        ($gltf-fl (vector-ref f 1))
+                        ($gltf-fl (vector-ref f 2))
+                        ($gltf-fl (vector-ref f 3)))))))
 
   (define ($material-color json mi)
     (let ((fallback (vector 0.8 0.8 0.8 1.0)))
@@ -2396,6 +2417,8 @@
                 (pack (+ k 2) (+ at 4)))))
         ($make-gprim vbase vbytes ibase ibytes icount u32?
                      ($material-color json (json-ref prim "material"))
+                     ($material-base-factor json
+                                            (json-ref prim "material"))
                      ($material-mr json (json-ref prim "material"))
                      world nidx stride layout
                      ($prim-base-ref json prim)
