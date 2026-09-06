@@ -57,8 +57,10 @@
 ;; Known deviations, each deliberate:
 ;;   * LINEAR rotation interpolates by shortest-path NLERP where the
 ;;     spec SHOULDs slerp.  Same great arc, different angular rate,
-;;     unobservable at keyframe spacing -- and the language runtime
-;;     has no inverse trigonometry to do slerp exactly.
+;;     unobservable at keyframe spacing.  Exact slerp is available --
+;;     (gfx mat) exports q-slerp -- and is deliberately not used
+;;     here: it spends a transcendental pair per rotating joint per
+;;     frame to buy a difference nothing downstream can see.
 ;;     test/gltf-anim.ss locks the choice down.
 ;;   * A material's texture references collapse to an image index:
 ;;     texCoord (only TEXCOORD_0 loads), normal scale, occlusion
