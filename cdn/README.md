@@ -17,7 +17,7 @@ from a tagged source tree; a directory here is never rebuilt in place.
 Usage, from any page:
 
     <script type="module">
-      import { loadGoeteiaAuto } from 'https://cdn.goeteia.dev/1.6.1/rt/web.mjs';
+      import { loadGoeteiaAuto } from 'https://cdn.goeteia.dev/1.6.2/rt/web.mjs';
       loadGoeteiaAuto('./app.wasm', './app.js');   // wasm on WasmGC engines, else the --js build
     </script>
 
@@ -32,6 +32,7 @@ CORS headers declared for `/cdn/*` apply to both.
 
 ## Versions
 
+    1.6.2   glTF material model, second UV set, cameras, morph deltas; GLB writer writes them back; cofactor skinned normals; continuous crossfade interrupt; host sees why a program died; diagnostics name the right line
     1.6.1   runners publish argv per module instance; the emitted JS module exports rt.global; goeteia.wasm rebuilt
     1.6.0   (web css) unit fractions are digits as written, with an optional minimum width -- the (fl W F [width]) model; breaking for single-digit fractions
     1.5.8   first published version
