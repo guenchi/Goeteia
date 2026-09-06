@@ -75,28 +75,64 @@
   ;; itself; the port's own position says where it got to.  So the only
   ;; thing to skip is NOISE, and nothing inside a datum -- no strings,
   ;; no character literals, no bars, no depth -- which is why the five
-  ;; failures cannot recur here.  The line counter advances with the
-  ;; scan and never rescans, so this stays linear.
+  ;; failures cannot recur here.
+  ;;
+  ;; The newlines INSIDE a form count too.  Skipping noise only walks
+  ;; the gaps BETWEEN forms, so a multi-line form used to advance the
+  ;; counter by nothing and every form after it was reported early --
+  ;; by one line per newline the earlier forms spanned, which reads
+  ;; as an off-by-one on a small file and as dozens on a real one.
+  ;; The span is walked once, after `read` says where the form ended,
+  ;; so each character is looked at a bounded number of times.
   (let* ((src (decode-source path))
          (n (string-length src))
          (port (open-string-input-port src)))
     (let loop ((pos 0) (line 1) (acc '()))
       (let* ((start (skip-noise src pos n))
              (line (+ line (count-newlines src pos start))))
-        (if (>= start n)
-            (reverse acc)
-            (begin
-              (set-port-position! port start)
-              (let ((form (read port)))
-                (if (eof-object? form)
-                    (reverse acc)
-                    (loop (port-position port) line
-                          (cons (cons line (host-bytes form)) acc))))))))))
+        (cond
+         ((>= start n) (reverse acc))
+         ;; `#;' comments out the DATUM after it, and only a reader can
+         ;; say where that datum ends.  Skipping it here -- and counting
+         ;; the newlines it spans -- is what puts the next form on its
+         ;; own line; attributing that form to the `#;' instead reads as
+         ;; a right line, which is worse than none.
+         ((and (< (+ start 1) n)
+               (char=? (string-ref src start) #\#)
+               (char=? (string-ref src (+ start 1)) #\;))
+          (set-port-position! port (+ start 2))
+          ;; a `#;` with nothing after it is an error, not a comment:
+          ;; the self-hosted reader refuses it by name, and a host
+          ;; that accepted it would compile a file the other rejects.
+          ;; Reading the datum is also what FINDS the error, so the
+          ;; result has to be looked at rather than discarded.
+          (when (eof-object? (read port))
+            (errorf 'goeteia
+                    (string-append
+                     "a #; datum comment has no datum after it at "
+                     path " line "
+                     (number->string
+                      (+ line (count-newlines src start
+                                              (min (+ start 2) n)))))))
+          (let ((end (port-position port)))
+            (loop end (+ line (count-newlines src start end)) acc)))
+         (else
+          (set-port-position! port start)
+          (let ((form (read port)))
+            (if (eof-object? form)
+                (reverse acc)
+                ;; `line' is where this form STARTS, which is what
+                ;; it is attributed to; the next form starts after
+                ;; the newlines this one spans
+                (let ((end (port-position port)))
+                  (loop end
+                        (+ line (count-newlines src start end))
+                        (cons (cons line (host-bytes form)) acc)))))))))))
 
 ;; Whitespace, `;` to end of line, and nested `#| ... |#`.  A `#;` is
-;; NOT skipped: `read` handles it and answers the datum after it, and
-;; stopping here means the form is attributed to the line the comment
-;; starts on, which is where a reader would look for it.
+;; left for the caller: the datum it discards can span lines, and only
+;; a reader can find its end, so the loop above consumes it through the
+;; port and counts what it spanned.
 (define (skip-noise src i n)
   (cond
    ((>= i n) n)
@@ -431,4 +467,15 @@
    ((or (null? args) (null? (cdr args)))
     (display "usage: goeteiac [--js] <input.ss> <output.wasm|.js>\n")
     (exit 1))
-   (else (compile-file (car args) (cadr args)))))
+   (else
+    ;; The compiler reports where a form came from with a plain
+    ;; `display' -- a diagnostic, not output.  The wasm host's runner
+    ;; already routes a program's writes to stderr; here `display'
+    ;; would land on stdout, and the two hosts would disagree about
+    ;; which stream a diagnostic belongs on.  (The compiled bytes go
+    ;; to an explicit file port either way, so nothing reads the
+    ;; artifact off stdout.)  Binding the output port for the
+    ;; duration of the compile puts both hosts on the same stream
+    ;; without the compiler having to know which host it runs on.
+    (parameterize ((current-output-port (current-error-port)))
+      (compile-file (car args) (cadr args))))))

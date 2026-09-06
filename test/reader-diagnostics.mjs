@@ -48,9 +48,9 @@ function compileHosted(name, source) {
         execFileSync(path.join(here, '../bin/goeteiac'), [src, out],
                      { stdio: ['ignore', 'pipe', 'pipe'] });
     } catch (e) {
-        return { status: e.status, stderr: String(e.stderr) };
+        return { status: e.status, stderr: String(e.stderr), stdout: String(e.stdout) };
     }
-    return { status: 0, stderr: '' };
+    return { status: 0, stderr: '', stdout: '' };
 }
 
 // Each host wraps the diagnostic in its own prefix -- the driver says
@@ -210,8 +210,13 @@ test('a source file that is not valid UTF-8 is refused by name', () => {
 for (const [what, source, want] of [
         ['a form after a line comment',
          ';; c\n(define a 1)\n; comment\n(define b 2)\n', ['2', '4']],
+        // counted from the source: line 1 `;; c`, lines 2-3 the display
+        // form whose string holds the newline, line 4 the define.  The
+        // earlier expectation of '3' was the scanner's own reading --
+        // it never counted newlines inside a form -- pinned as if it
+        // were the truth (2026-09-06).
         ['a form after a string holding a newline',
-         ';; c\n(display "a\nb")\n(define b 2)\n', ['2', '3']],
+         ';; c\n(display "a\nb")\n(define b 2)\n', ['2', '4']],
         ['a form after a block comment holding a paren',
          ';; c\n#| ( |#\n(define b 2)\n', ['3']],
         ['a form after a bar symbol holding a paren',
@@ -341,3 +346,69 @@ test('the mapped line tracks a mistake further down the file', () => {
     assert.notEqual(status, 0);
     assert.match(stderr, /list opened at \S*deep\.ss line 6 column 10 never closed/);
 });
+
+// ---- the "at FILE:LINE (name)" line must be the same line on both hosts ----
+//
+// Both hosts print where an error was raised.  The self-hosted driver
+// tracks lines while it reads; the Chez-hosted driver rescans the file
+// with a noise-only scanner to attribute forms to lines.  A scanner
+// that does not know string escapes loses its place at the first \"
+// and reports every later form dozens of lines early -- a wrong line
+// is worse than none, because it is read as a right one.  The
+// expected line is counted here from the source text itself, not
+// taken from either host.
+function atLine(stderr) {
+    const m = String(stderr).match(/^at .*?:(\d+) \((\S+)\)/m);
+    return m ? [Number(m[1]), m[2]] : null;
+}
+const G = '(define (g y)\n  (nosuch y))\n(display (g 1))\n';
+const strings = Array.from({ length: 20 }, (_, i) => `   "{\\"k${i}\\":1,\\"s\\":\\"a;b\\"}"\n`).join('');
+for (const [what, source] of [
+    ['a plain file', '(import (rnrs))\n(define (f x)\n  (+ x 1))\n' + G],
+    ['strings with escaped quotes before the form', '(import (rnrs))\n(define s\n  (string-append\n' + strings + '   ""))\n;; a comment line\n' + G],
+    ['a semicolon inside a string and a block comment', '(import (rnrs))\n(define t "a ; not a comment")\n#| block\n   comment |#\n(define u "\\\\")\n' + G],
+    // a discarded datum spanning lines: the form AFTER it is on its own
+    // line, not on the line where the `#;` began
+    ['a multi-line datum comment before the form', '(import (rnrs))\n#;(ignored\n   datum\n   here)\n' + G],
+    // a multi-line block comment before the form: the same family as the
+    // datum comment (the line is recorded before the comment is eaten)
+    ['a multi-line block comment before the form', '(import (rnrs))\n#| one\n   two\n   three |#\n' + G],
+    // the reader accepts CR and CRLF line endings; the line count must too
+    ['CRLF line endings', '(import (rnrs))\r\n(define (f x)\r\n  (+ x 1))\r\n' + G.replace(/\n/g, '\r\n')],
+]) {
+    test(`the at-line agrees with the source and across hosts: ${what}`, () => {
+        const expected = source.split(/\r\n|\r|\n/).indexOf('(define (g y)') + 1;
+        const a = compileHosted(`atline-a-${what.replace(/ /g, '-')}.ss`, source);
+        const b = compile(`atline-b-${what.replace(/ /g, '-')}.ss`, source);
+        // a diagnostic belongs on stderr on both hosts -- a host that
+        // printed it on stdout would hand a build script's output a line
+        // that is not output
+        assert.ok(!atLine(a.stdout || ''), `the Chez-hosted at-line is not on stdout: ${JSON.stringify(a.stdout)}`);
+        const la = atLine(a.stderr), lb = atLine(b.stderr);
+        assert.ok(la && lb, `both hosts print an at-line on stderr: hosted=${JSON.stringify(a.stderr)} self=${JSON.stringify(b.stderr)}`);
+        assert.strictEqual(la[1], 'g'); assert.strictEqual(lb[1], 'g');
+        assert.strictEqual(lb[0], expected, 'self-hosted line');
+        assert.strictEqual(la[0], expected, 'Chez-hosted line');
+    });
+}
+
+// ---- a datum comment with nothing to discard is an error on both hosts ----
+//
+// `#;` must be followed by a datum.  A driver that reads the discarded
+// datum itself and does not look at what came back would accept a
+// trailing `#;` (EOF), `#; #| c |#` (a comment, not a datum) and
+// `#; #;` -- all of which both readers refuse.  Both hosts must fail
+// the compile, and neither may write an artifact.
+for (const [what, tail] of [
+    ['a trailing datum comment', '#;'],
+    ['a datum comment followed only by a block comment', '#; #| c |#'],
+    ['two datum comments and nothing after', '#; #;'],
+]) {
+    test(`${what} is refused by both hosts`, () => {
+        const source = '(import (rnrs))\n(display 1)\n' + tail + '\n';
+        const a = compileHosted(`dc-eof-a-${what.replace(/ /g, '-')}.ss`, source);
+        const b = compile(`dc-eof-b-${what.replace(/ /g, '-')}.ss`, source);
+        assert.notStrictEqual(a.status, 0, `Chez-hosted refuses: ${JSON.stringify(a.stderr)}`);
+        assert.notStrictEqual(b.status, 0, `self-hosted refuses: ${JSON.stringify(b.stderr)}`);
+    });
+}

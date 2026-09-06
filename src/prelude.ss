@@ -477,10 +477,27 @@
 (define (read . p)
   (if (null? p)
       ;; console = the compile stream: remember where this datum
-      ;; starts, for error context
-      (begin (%skip-blanks)
-             (set! $reader-datum-line $reader-line)
-             ($read))
+      ;; starts, for error context.
+      ;;
+      ;; Comments come first, and a comment can span lines: `#;`
+      ;; discards a datum that may be several lines long, `#| |#` the
+      ;; same.  The line to remember is where the SURVIVING datum
+      ;; starts, not where the comment before it did -- a form
+      ;; attributed to the comment above it reads as a right line,
+      ;; which is worse than no line at all.
+      (let skip ()
+        (%skip-blanks)
+        (if (= (%peek-byte) 35)                    ; #
+            (begin
+              (%next-byte)
+              (if (%skip-hash-comment)
+                  (skip)
+                  ;; not a comment: the `#` opens the datum itself,
+                  ;; and this is its line
+                  (begin (set! $reader-datum-line $reader-line)
+                         (%read-hash))))
+            (begin (set! $reader-datum-line $reader-line)
+                   ($read))))
       ($with-in (car p) (lambda () ($read)))))
 (define ($read)
   (%skip-blanks)
