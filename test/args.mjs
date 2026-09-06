@@ -252,14 +252,21 @@ const SEAM = /,global:\(typeof GPROX!=='undefined'\?GPROX:void 0\)/;
 // would let a `__goeteia_argv` some other code left on the real
 // global show through to a program started with none; publishing on
 // every start, an empty list included, masks it on both targets.
+// The JS start uses a file never started before, so its instance has
+// no list of its own that could stand in for the stray one, and the
+// stray is re-set before each runner so neither can clear it for the
+// other.
+const echoJs3 = path.join(dir, 'echo3.js');
+fs.copyFileSync(echo.js, echoJs3);
 {
-    globalThis.__goeteia_argv = ['leaked'];
     try {
+        globalThis.__goeteia_argv = ['leaked'];
         const w = await runModule(echoWasm, [], []);
         require_(w.text.trim() === '0',
                  'a stray real-global argv does not show through (wasm)',
                  `got ${JSON.stringify(w.text.trim())}`);
-        const j = await runJsModule(echoJs2, [], []);
+        globalThis.__goeteia_argv = ['leaked'];
+        const j = await runJsModule(echoJs3, [], []);
         require_(j.text.trim() === '0',
                  'a stray real-global argv does not show through (js)',
                  `got ${JSON.stringify(j.text.trim())}`);
@@ -277,14 +284,16 @@ const SEAM = /,global:\(typeof GPROX!=='undefined'\?GPROX:void 0\)/;
     require_(r.text.trim() === '42',
              'a wasm module without (web js) runs with argv given (wasm)',
              `got ${JSON.stringify(r.text.trim())}`);
-    // the API takes any values and publishes their string forms
+    // the API takes any values; a program reads them back as strings.
+    // (Where the conversion happens is not pinned here: the runner
+    // maps through String and (web args) does too.)
     const w = await runModule(echoWasm, [], [42]);
     require_(w.text.trim() === '1 [42]',
-             'a non-string argument is published as its string (wasm)',
+             'a non-string argument is accepted and read as its string (wasm)',
              `got ${JSON.stringify(w.text.trim())}`);
     const j = await runJsModule(echoJs2, [], [42]);
     require_(j.text.trim() === '1 [42]',
-             'a non-string argument is published as its string (js)',
+             'a non-string argument is accepted and read as its string (js)',
              `got ${JSON.stringify(j.text.trim())}`);
 }
 
@@ -301,16 +310,37 @@ const SEAM = /,global:\(typeof GPROX!=='undefined'\?GPROX:void 0\)/;
 
 // ---- no runner writes the real global, in any spelling ----
 //
-// The behavioural cells above read argv at program start.  A runner
-// that also wrote the real global -- before, after or alongside the
-// proxy -- would pass them and still hand a program that reads argv
-// later (after a yield) another instance's list.  That family is
-// closed textually: the shipped runners must not contain the write.
-for (const f of ['rt/run.mjs', 'rt/runjs.mjs']) {
-    const src = fs.readFileSync(path.join(root, f), 'utf8');
-    require_(!/globalThis\s*\.\s*__goeteia_argv\s*=[^=]/.test(src) &&
-             !/globalThis\s*\[\s*['"]__goeteia_argv['"]\s*\]\s*=[^=]/.test(src),
-             `${f} does not assign the real globalThis.__goeteia_argv`);
+// The cells above read argv at program start, so a runner that wrote
+// the real global as well as the proxy -- under any alias or spelling
+// -- would pass them.  Here the real global's slot refuses every write
+// while both runners start programs with and without arguments; a
+// single assignment to it, however spelled, throws and fails the
+// start.  The slot is restored in `finally`.
+{
+    const before = Object.getOwnPropertyDescriptor(globalThis, '__goeteia_argv');
+    Object.defineProperty(globalThis, '__goeteia_argv', {
+        configurable: true,
+        get: () => undefined,
+        set: () => { throw new Error('a runner assigned the real globalThis.__goeteia_argv'); },
+    });
+    const echoJs4 = path.join(dir, 'echo4.js');
+    fs.copyFileSync(echo.js, echoJs4);
+    try {
+        const w1 = await runModule(echoWasm, [], ['x']);
+        const w0 = await runModule(echoWasm, [], []);
+        const j1 = await runJsModule(echoJs4, [], ['x']);
+        const j0 = await runJsModule(echoJs4, [], []);
+        require_(w1.text.trim() === '1 [x]' && w0.text.trim() === '0' &&
+                 j1.text.trim() === '1 [x]' && j0.text.trim() === '0',
+                 'both runners start programs without touching the real global',
+                 `got ${JSON.stringify([w1, w0, j1, j0].map(r => r.text.trim()))}`);
+    } catch (e) {
+        require_(false, 'both runners start programs without touching the real global',
+                 String(e));
+    } finally {
+        delete globalThis.__goeteia_argv;
+        if (before) Object.defineProperty(globalThis, '__goeteia_argv', before);
+    }
 }
 
 if (!failed) console.log('args: ok');
