@@ -251,7 +251,7 @@ The `fl` operations are the raw f64 float primitives. Built into an
 expression tree they stay **unboxed**: the f64 lives on the wasm stack,
 so `(fl+ (fl* a b) (fl* c d))` allocates only for its final result — zero
 allocation inside the tree. This is the compute-then-store idiom the
-staging memory and `(web gl)` command buffers rely on.
+staging memory and `(gfx gl)` command buffers rely on.
 
 ```
 procedure: (fixnum->flonum n)
@@ -1523,7 +1523,7 @@ export default function App() {
 
 ## 3D and WebGL
 
-A layered graphics stack. At the base, `(web gl)` speaks WebGL 2 through a command buffer and `(web glsl)` writes shaders as s-expressions; `(web mat)` and `(web mesh)` add math and geometry; `(web fx)` ties them into a self-wiring harness (the practical entry point); `(web scene)` makes scenes declarative; `(web gltf)` loads assets and `(web collide)` handles game collision. Throughout, the frame is described as data, built once, and the rendering surface is write-only — bridge traffic is O(changes), never O(frames).
+A layered graphics stack, and it lives under `gfx`, not `web`. At the base, `(gfx gl)` speaks WebGL 2 through a command buffer and `(gfx glsl)` writes shaders as s-expressions; `(gfx mat)` and `(gfx mesh)` add math and geometry; `(gfx fx)` ties them into a self-wiring harness (the practical entry point); `(gfx scene)` makes scenes declarative; `(gfx gltf)` loads assets and `(gfx glb)` writes them back out; `(gfx collide)` handles game collision. Throughout, the frame is described as data, built once, and the rendering surface is write-only — bridge traffic is O(changes), never O(frames).
 
 ### Linear Staging Memory
 
@@ -1533,15 +1533,15 @@ writes a frame's worth of numeric data (vertices, particles) into it, and
 the host reads the *same bytes* zero-copy as a typed array (a
 `Float32Array` over `exports.memory.buffer`) — collapsing tens of
 thousands of bridge calls into one. It is an export, not an import, so
-older hosts still instantiate newer modules. `(web gl)` below is built on
+older hosts still instantiate newer modules. `(gfx gl)` below is built on
 it; the byte-level accessors are internal primitives.
 
-### `(web gl)`: Raw WebGL via a Command Buffer
+### `(gfx gl)`: Raw WebGL via a Command Buffer
 
-For full control with no Three.js, `(web gl)` speaks WebGL through a *command buffer*: Scheme encodes a frame's GL commands as words in the shared linear memory (the staging-memory primitives, `%mem-*`) and one bridge call replays them all. Vertex data uploads zero-copy from the same memory. Resources—programs, buffers, uniform locations—are JS objects, so they live in a slot table set up once at init; commands refer to slot numbers.
+For full control with no Three.js, `(gfx gl)` speaks WebGL through a *command buffer*: Scheme encodes a frame's GL commands as words in the shared linear memory (the staging-memory primitives, `%mem-*`) and one bridge call replays them all. Vertex data uploads zero-copy from the same memory. Resources—programs, buffers, uniform locations—are JS objects, so they live in a slot table set up once at init; commands refer to slot numbers.
 
 ```scheme
-(import (web gl) (web glsl))
+(import (gfx gl) (gfx glsl))
 
 (gl-attach! (get-element-by-id "c"))
 (gl-program! 0 vertex-shader fragment-shader)   ; slot 0
@@ -1793,7 +1793,7 @@ procedure: (cmd-uniform-matrix4! slot m)
 func -> int -> vector -> void
 ```
 Encode `uniformMatrix4fv` writing the 16-element column-major mat4 `m`
-(from `(web mat)`) to the location in `slot`.
+(from `(gfx mat)`) to the location in `slot`.
 
 ```
 procedure: (cmd-uniform-matrices! slot ms)
@@ -1865,10 +1865,10 @@ below). A **transform-feedback program** captures a vertex shader's
 outputs back into a buffer (`gl-tf-program!`, `cmd-tf-buffer!`,
 `cmd-tf-begin!`, `cmd-tf-end!`): the GPU updates particle state with no
 CPU in the loop (`examples/fx-gpu-particles.html`, 100,000 particles). All
-three are wrapped by `(web fx)` below — most code never calls them
+three are wrapped by `(gfx fx)` below — most code never calls them
 directly.
 
-### `(web glsl)`: Shaders as S-Expressions
+### `(gfx glsl)`: Shaders as S-Expressions
 
 `glsl->string` renders a form list to GLSL source—the `(web css)` of shaders. Shaders are lists, so they compose with `append` and abstract with functions.
 
@@ -1914,7 +1914,7 @@ func -> list -> alist
 ```
 Extract the `attribute` / `uniform` / `varying` declarations in order —
 `glsl-attributes` returns `(name type component-count)` triples,
-`glsl-uniforms` `(name type)` pairs, `glsl-varyings` names. `(web fx)`
+`glsl-uniforms` `(name type)` pairs, `glsl-varyings` names. `(gfx fx)`
 uses these to wire attribute locations, uniform slots, and
 transform-feedback capture lists automatically.
 
@@ -1929,7 +1929,7 @@ The form language is dialect-neutral. `glsl->string` renders ESSL 1.00
 the syntax uniform buffers require, which 1.00 lacks. `fx-program3!` and
 `fx-tf-program!` (below) compile through these.
 
-### `(web mat)`: 3D Math
+### `(gfx mat)`: 3D Math
 
 `vec3` and column-major `mat4` over plain flonum vectors — pure Scheme,
 verified headlessly, its own range-reduced trig so both compiler hosts
@@ -1996,7 +1996,7 @@ func -> vector -> vector
 ```
 General 4×4 inverse (or `#f` if singular). With `m4-unproject inv-vp x y
 z` it turns a cursor into a world-space ray — the basis of picking, with
-`(web collide)`.
+`(gfx collide)`.
 
 ```
 procedure: (m4-frustum-planes vp)   (sphere-in-frustum? planes c r)
@@ -2007,7 +2007,7 @@ Extract the six view-frustum planes from a view-projection, and test a
 bounding sphere against them — conservative frustum culling. Pair with
 `mesh-bounds`.
 
-### `(web mesh)`: Parametric Geometry
+### `(gfx mesh)`: Parametric Geometry
 
 Positions, normals, indices generated in pure Scheme — a framework's
 geometry classes without the framework. A mesh holds interleaved
@@ -2041,11 +2041,11 @@ directional light plus an ambient floor (uniforms `u_mvp`, `u_model`,
 Cook-Torrance PBR with the sky as an image-based light probe. They are
 just data — compose or replace them.
 
-### `(web fx)`: The Effects Harness
+### `(gfx fx)`: The Effects Harness
 
-The practical entry point. A shader authored as `(web glsl)` forms
+The practical entry point. A shader authored as `(gfx glsl)` forms
 already declares its interface, so `fx` reads it back and does the
-bookkeeping raw `(web gl)` leaves to you — attribute locations,
+bookkeeping raw `(gfx gl)` leaves to you — attribute locations,
 interleaved offsets, uniform slots, resource slot numbers,
 staging-memory layout, the render loop. Slot numbers and staging memory
 are owned by `fx` from `fx-init!` on.
@@ -2097,7 +2097,7 @@ func -> *fx-program -> symbol -> number … -> void
 ```
 Set a uniform by name, dispatched on its declared type — `float`,
 `vec2`/`3`/`4`, `sampler2D`/`samplerCube` (an integer unit), `mat4` (a
-`(web mat)` matrix), or `(array mat4 N)` (a vector of matrices). Floats
+`(gfx mat)` matrix), or `(array mat4 N)` (a vector of matrices). Floats
 may be fixnums; they are coerced.
 
 ```
@@ -2105,7 +2105,7 @@ procedure: (fx-mesh! m)
 
 func -> *mesh -> *fx-mesh
 ```
-Take a `(web mesh)` mesh, allocate its vertex and index buffers, and stage
+Take a `(gfx mesh)` mesh, allocate its vertex and index buffers, and stage
 its data — the upload dance every demo used to repeat by hand. Returns a
 handle; the actual GPU upload is deferred to the first draw.
 
@@ -2154,10 +2154,10 @@ func -> *domElement -> void   /   func -> string -> boolean   /   func -> number
 Polled input, with no GL dependency (usable from any renderer): held keys,
 pointer position and buttons, and pointer-lock for first-person cameras.
 
-### `(web scene)`: Reactive GL Scenes
+### `(gfx scene)`: Reactive GL Scenes
 
 `sgl` is to the GL stack what `sx` is to the DOM. The template splits at
-expansion time: geometry (from `(web mesh)`) builds and uploads once, and
+expansion time: geometry (from `(gfx mesh)`) builds and uploads once, and
 each unquoted attribute becomes a signal-driven hole, so a frame is pure
 arithmetic over current fields and only changed values move.
 
@@ -2178,11 +2178,11 @@ arithmetic over current fields and only changed values move.
 
 Tags: `camera` (`fov`, `near`, `far`, `position`, `look-at`), `light`
 (`direction`, `ambient`), `mesh` (`geometry`, `position`, `rotation`,
-`color`). Geometry specs mirror `(web mesh)` — `(plane w d)`, `(box …)`,
+`color`). Geometry specs mirror `(gfx mesh)` — `(plane w d)`, `(box …)`,
 `(sphere r …)`, `(cylinder …)`, `(torus …)`, or an unquoted mesh injected
 once. Everything renders through `mesh-lit-vs`/`-fs`.
 
-### `(web gltf)`: Loading 3D Assets
+### `(gfx gltf)`: Loading 3D Assets
 
 GLB (binary glTF 2.0): the JSON chunk parses through `(web json)`, the
 binary chunk sits in staging memory and accessors read f32/u16 straight
@@ -2205,9 +2205,25 @@ func -> *gltf -> *fx-program -> vector -> void
 ```
 Draw every primitive with `prog` and the view-projection `vp` — lit,
 textured, or skinned depending on the program's stride. Loads: positions,
-normals, uvs, node transforms, `baseColorFactor`, metallic/roughness
-(`gprim-metallic`/`-roughness`), embedded textures, skins, animations, and
-morph targets.
+normals, both UV sets, node transforms, the full material model (below),
+embedded images, cameras, skins, animations, and morph targets.
+
+A material's texture slots come back as *references*, not image indices:
+`gprim-base-tex`, `gprim-mr-tex`, `gprim-normal-tex`, `gprim-emissive-tex`
+and `gprim-occlusion-tex` each answer a `gtexref` or `#f`, and a reference
+names the glTF texture (`gtexref-texture`), the image it resolves to
+(`gtexref-image`), its sampler (`gtexref-sampler`), which UV set it reads
+(`gtexref-texcoord`) and its scalar (`gtexref-factor` — normal scale or
+occlusion strength). The distinction that matters is texture versus
+image: two textures may share one image and differ only in sampler.
+`gltf-textures` and `gltf-samplers` hand back the file's own arrays, and
+`gprim-base-color-factor` answers what the file wrote — `#f` when it
+omitted `baseColorFactor` — where `gprim-color` always answers with a
+colour. `gltf-cameras` and `gltf-node-camera` carry the cameras;
+`gprim-morph-normals` and `gprim-morph-tangents` the morph deltas beyond
+position. A second UV set rides at the *end* of the interleave, so an
+asset that gains one moves nothing before it. Full detail, including the
+byte layout, is in `docs/graphics.md`.
 
 ```
 procedure: (gltf-animate! g i t)   (gltf-animate-blend! g a ta b tb k)
@@ -2218,12 +2234,69 @@ Sample animation `i` at time `t` (looping), writing every channel's node
 TRS. `gltf-animate-blend!` crossfades two clips by weight `k`.
 `gltf-animation-names` lists them; `gltf-weights!` sets morph weights by
 hand; `gltf-skin-vs` is the four-bone skinning vertex shader (pairs with
-`mesh-tex-fs`). See `examples/fx-fox.html`: a rigged Fox, Survey / Walk /
-Run crossfading on keys 1–3.
+`mesh-tex-fs`). `anim-machine` / `anim-goto!` / `anim-update!` package
+named states over clips with per-transition fades; interrupting a live
+fade is continuous — the machine freezes the pose on screen and fades
+from there, easing any node the incoming clip does not drive back to
+bind over the same transition. What it still cannot do is layer: two
+clips over one node blend by a single weight, never per path. Skinned
+normals move by the blended matrix's cofactor with the determinant's
+sign folded in, so a joint that scales unevenly or mirrors lights
+correctly, and `gltf-skin-normals!` computes the same expression on the
+CPU. See `examples/fx-fox.html`: a rigged Fox, Survey / Walk / Run
+crossfading on keys 1–3.
 
-### `(web collide)`: Collision and Raycasts
+### `(gfx glb)`: Writing GLB
 
-Overlap tests and raycasts over `(web mat)`'s `v3` — pure arithmetic,
+The inverse of `(gfx gltf)`. A mesh built or edited in staging memory
+leaves as a file any glTF tool reads: the writer takes the interleaved
+vertex block and index block *already there* and wraps them in a
+container, so nothing is repacked.
+
+```
+procedure: (glb-write! prims . options)
+
+func -> list -> ... -> pair
+```
+Return `(base . length)` — the same pair `gltf-parse` takes, so a round
+trip is one expression. A primitive is a plain list, not a record only
+this library can build:
+
+```
+(layout vbase vcount ibase icount . options)
+```
+`layout` names the attributes present in the interleave's canonical
+order, from the vocabulary `gprim-layout` reports: `position` `normal`
+`uv` `tangent` `color` `joints` `weights` `uv1`. `glb-stride` and
+`glb-offset` give a layout's byte stride and an attribute's place inside
+it. A primitive's own options are `color`, `material`, `node`, `skin`,
+`targets`, `weights`, `index-u32?`, `stride` and `joints-u16?`; `color`
+asks for a material and `material` names one, so giving both is refused.
+
+`glb-write!`'s own key/value tail carries everything that is not one
+primitive's vertices: `nodes`, `mesh-node`, `skins` (or the older
+singular `skin` — a one-element `skins` writes the same bytes), `anims`,
+`images`, `samplers`, `textures`, `materials` and `cameras`. Each
+material texture slot is `(texture texcoord factor)` or `#f`; a sampler
+key given as `#f` is left out of the file rather than written as a
+value; a material's base colour may be `#f`, which omits
+`baseColorFactor` entirely.
+
+Because the option shapes are the ones `(gfx gltf)` reads back, a parsed
+asset feeds the writer directly — use `gprim-base-color-factor` rather
+than `gprim-color` when re-exporting, since the latter substitutes a
+neutral grey for a material that never wrote one. `docs/graphics.md`
+carries the full re-export recipe.
+
+Not written: images behind a `uri` (this writer embeds), names on
+anything but nodes and animation clips, `alphaMode` / `doubleSided` and
+the `KHR_materials_*` extensions, `extras` of any kind, and one mesh
+instanced by several nodes — the reader flattens that sharing away, so
+two nodes on one mesh come back as two meshes with the same contents.
+
+### `(gfx collide)`: Collision and Raycasts
+
+Overlap tests and raycasts over `(gfx mat)`'s `v3` — pure arithmetic,
 verified headlessly, enough for the classic game loop.
 
 ```
@@ -2233,7 +2306,7 @@ procedure: (ray-aabb origin dir bmin bmax)   (ray-sphere …)   (ray-plane …)
 func -> vector -> vector -> … -> number
 ```
 Cast a ray (direction must be a unit vector); return the hit distance in
-world units, or `#f`. `ray-mesh` walks a `(web mesh)`'s triangles — with
+world units, or `#f`. `ray-mesh` walks a `(gfx mesh)`'s triangles — with
 `m4-unproject` it turns a click into a picked object.
 
 ```
@@ -2337,9 +2410,9 @@ how the homepage hero drives its subtitle from its GL loop:
 (glyphs-step! sub-glyphs)
 ```
 
-### `(web sprite)`: 2D Sprites and GL Text
+### `(gfx sprite)`: 2D Sprites and GL Text
 
-A glyph atlas over `(web fx)` and `(web typeset)`. Each distinct code
+A glyph atlas over `(gfx fx)` and `(web typeset)`. Each distinct code
 point rasterizes once (hidden 2d canvas), uploads as one texture, and its
 measurer doubles as typeset's `measure` — so layout and rendering agree
 exactly.
@@ -2387,7 +2460,7 @@ A scroller inside `parent`. `vscroll-append!` adds an item (sticking to
 the bottom when the user is already there); `vscroll-render!` re-renders
 the visible window. See `examples/chat.html`: an endless streaming feed.
 
-### `(web audio)`: Game Sound
+### `(aud sfx)`: Game Sound
 
 Procedural beeps (no asset files), decoded samples, looping music, over a
 WebAudio bridge.
