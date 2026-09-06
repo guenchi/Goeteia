@@ -28,12 +28,6 @@ file twice in one process still shares one module instance and so one
 argv; two different files, two processes, or the wasm target are
 unaffected.
 
-### Changed
-
-- The README links the manual and this changelog beside the site link.
-- `(web css)` header comments follow the 1.6.0 fraction rule
-  (`(dec 0 6)` is `0.6`).
-
 ## 1.6.0 — 2026-09-02
 
 *3 commits.* One notation change, made deliberately.
