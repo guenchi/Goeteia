@@ -1,11 +1,20 @@
 // goeteia host runner: instantiate a compiled module, call main,
 // print whatever the program wrote followed by its decoded result.
+//
+// A program that dies takes its output with it: an unhandled Scheme
+// error reaches the host as a rejection carrying BOTH the text the
+// program wrote before dying (`output`) and the program's own
+// exception line (the message), not the bare trap.  That line is
+// recognized in the program's own output and the LAST match wins, so
+// the prelude's line always beats one the program printed itself.
+// The rule lives in ./failure.mjs, shared with the JS runner.
 // Copyright (c) 2026 guenchi. MIT license; see LICENSE.
 
 import fs from 'fs';
 import path from 'path';
 import { pathToFileURL } from 'url';
 import { makeJsBridge, callMain } from './jsbridge.mjs';
+import { programFailure } from './failure.mjs';
 
 // `args` is the program's own argv, which (web args) reads back at
 // __goeteia_argv.  The bridge resolves __goeteia_* per instance, but
@@ -67,7 +76,13 @@ export async function runModule(bytes, input = [], args = []) {
     });
     exportsRef = instance.exports;
     const ex = instance.exports;
-    const result = decode(await callMain(ex), ex);
+    let raw;
+    try {
+        raw = await callMain(ex);
+    } catch (e) {
+        throw programFailure(e, Buffer.from(out).toString('utf8'));
+    }
+    const result = decode(raw, ex);
     // drain microtasks so promise callbacks into wasm (fetch .then
     // chains from (web rpc)) run before we report the output
     await new Promise(r => setImmediate(r));
@@ -108,5 +123,9 @@ if (process.argv[1] &&
             if (result) console.log(result);
             if (text && !result && !text.endsWith('\n')) process.stdout.write('\n');
         })
-        .catch(e => { console.error(e.message); process.exit(1); });
+        .catch(e => {
+            if (e.output) process.stdout.write(e.output);
+            console.error(e.message);
+            process.exit(1);
+        });
 }

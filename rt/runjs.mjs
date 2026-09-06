@@ -1,11 +1,18 @@
 // goeteia JS-target runner: import an emitted ES module, call main
 // with the same io hooks run.mjs gives the wasm target, print the
 // output and the decoded result.
+//
+// A program that dies takes its output with it, on this target as on
+// the wasm one: an unhandled Scheme error reaches the host as a
+// rejection carrying BOTH the text the program wrote before dying
+// (`output`) and the program's own exception line (the message), not
+// the bare trap.  The rule itself lives once, in ./failure.mjs.
 // Copyright (c) 2026 guenchi. MIT license; see LICENSE.
 
 import fs from 'fs';
 import path from 'path';
 import { pathToFileURL } from 'url';
+import { programFailure } from './failure.mjs';
 
 // `args` is published the way run.mjs publishes it, and for the same
 // reason: __goeteia_* resolves per instance only for names published
@@ -73,7 +80,13 @@ export async function runJsModule(file, input = [], args = []) {
         },
     };
 
-    const result = decode(m.main(io), m.rt);
+    let raw;
+    try {
+        raw = m.main(io);
+    } catch (e) {
+        throw programFailure(e, Buffer.from(out).toString('utf8'));
+    }
+    const result = decode(raw, m.rt);
     // drain microtasks, mirroring the wasm runner
     await new Promise(r => setImmediate(r));
     return { text: Buffer.from(out).toString('utf8'), result };
@@ -109,5 +122,9 @@ if (process.argv[1] &&
             if (result) console.log(result);
             if (text && !result && !text.endsWith('\n')) process.stdout.write('\n');
         })
-        .catch(e => { console.error(e.message); process.exit(1); });
+        .catch(e => {
+            if (e.output) process.stdout.write(e.output);
+            console.error(e.message);
+            process.exit(1);
+        });
 }
