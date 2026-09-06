@@ -119,6 +119,12 @@
           (string-append "(" ($wgsl-expr (cadr e)) " "
                          (symbol->string op) " "
                          ($wgsl-expr (caddr e)) ")"))
+         ;; the conditional expression: WGSL spells it as a call, and
+         ;; puts the FALSE value first
+         ((eq? op '?:)
+          (string-append "select(" ($wgsl-expr (cadddr e)) ", "
+                         ($wgsl-expr (caddr e)) ", "
+                         ($wgsl-expr (cadr e)) ")"))
          ((eq? op 'texture2D)
           ;; (texture2D u_tex uv): the sampler2D uniform splits into
           ;; a texture + sampler pair at declaration time

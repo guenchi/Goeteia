@@ -90,10 +90,17 @@
 ;;     alphaMode, alphaCutoff, doubleSided, the KHR_materials_*
 ;;     extensions, and images behind a uri rather than a bufferView
 ;;     are not read at all.
-;;   * Skinning transforms normals by the skin matrix itself, not by
-;;     its inverse transpose, and keeps a_tangent.w regardless of
-;;     determinant sign: joints with non-uniform scale or mirroring
-;;     light incorrectly.
+;;   * Skinned normals are normalized on the way out of the vertex
+;;     shader, which the static path in (gfx mesh) does not do.
+;;     Under a rotation or a uniform scale that is the identity on
+;;     a unit normal; under a non-uniform one it changes the value
+;;     a fragment shader reads -- a tangent-space (0,1,1) that used
+;;     to arrive as (0,2,1)/sqrt5 under a uniform scale of 2 now
+;;     arrives as (0,1,1)/sqrt2.  Deliberate: the cofactor's
+;;     magnitude grows as the square of a scale, and lighting reads
+;;     these as directions.  The static path still hands the
+;;     fragment stage an unnormalized normal through u_model --
+;;     a residual, not a decision.
 ;;   * A clip poses the nodes it touches (wholesale, at bind for the
 ;;     paths it does not drive); nodes outside the clip keep their
 ;;     values, so clips over disjoint body parts compose.
@@ -1556,10 +1563,10 @@
   ;; renormalize; renormalizing here would put the two paths on
   ;; different geometry for precisely the assets where it mattered.
   ;;
-  ;; Normals get the blended matrix, not its inverse transpose --
-  ;; the same deliberate deviation the shader makes, for the same
-  ;; reason, so a non-uniformly scaled joint is wrong identically on
-  ;; both sides instead of wrong in two different ways.
+  ;; Normals get the blended matrix's COFACTOR, with the sign of its
+  ;; determinant folded in -- the same expression the shader
+  ;; computes, so a joint that scales unevenly or mirrors comes out
+  ;; the same on both sides, and comes out right.
 
   ;; how many vertices a primitive's interleave carries.  Callers
   ;; size their own destination with it, so it is part of the API
@@ -1578,9 +1585,12 @@
 
   ;; the shared kernel.  `src' names the interleaved attribute to
   ;; transform, `point?' says whether the homogeneous coordinate is
-  ;; 1 (a position, translation applies) or 0 (a direction), and
-  ;; `unit?' asks for the result to come back renormalized.
-  (define ($skin-blend! g p dst who src point? unit?)
+  ;; 1 (a position, translation applies) or 0 (a direction),
+  ;; `unit?' asks for the result to come back renormalized, and
+  ;; `covector?' says the attribute transforms by the blended
+  ;; matrix's COFACTOR rather than by the matrix -- see the normal
+  ;; rule below.
+  (define ($skin-blend! g p dst who src point? unit? covector?)
     (let ((si ($gprim-skin p)))
       (unless si
         (error who "primitive is not skinned" (gprim-layout p)))
@@ -1631,19 +1641,67 @@
               (let ((x (%mem-f32-ref (+ s so)))
                     (y (%mem-f32-ref (+ s so 4)))
                     (z (%mem-f32-ref (+ s so 8))))
-                (%f32x4-scale! rv sk x)
-                (%f32x4-axpy! rv rv (+ sk 16) y)
-                (%f32x4-axpy! rv rv (+ sk 32) z)
-                (when point?
-                  (%f32x4-axpy! rv rv (+ sk 48) 1.0)))
+                (if covector?
+                    ;; A normal is a covector: it moves by the
+                    ;; COFACTOR of the blended matrix's 3x3, whose
+                    ;; columns are cross(c1,c2), cross(c2,c0),
+                    ;; cross(c0,c1).  That is det times the inverse
+                    ;; transpose, so it points the same way without
+                    ;; an inversion -- and it stays finite when the
+                    ;; joint is singular, where an inverse does not
+                    ;; exist at all.  The determinant's SIGN is
+                    ;; folded in so a mirroring joint turns the
+                    ;; normal round with the surface; det = 0 counts
+                    ;; as positive, because the alternative (sign())
+                    ;; answers zero there and erases the result.
+                    ;; The shader computes the identical expression.
+                    (let* ((a (%mem-f32-ref sk))
+                           (b (%mem-f32-ref (+ sk 4)))
+                           (c (%mem-f32-ref (+ sk 8)))
+                           (d (%mem-f32-ref (+ sk 16)))
+                           (e (%mem-f32-ref (+ sk 20)))
+                           (f (%mem-f32-ref (+ sk 24)))
+                           (g0 (%mem-f32-ref (+ sk 32)))
+                           (h (%mem-f32-ref (+ sk 36)))
+                           (i (%mem-f32-ref (+ sk 40)))
+                           (k0x (fl- (fl* e i) (fl* f h)))
+                           (k0y (fl- (fl* f g0) (fl* d i)))
+                           (k0z (fl- (fl* d h) (fl* e g0)))
+                           (k1x (fl- (fl* h c) (fl* i b)))
+                           (k1y (fl- (fl* i a) (fl* g0 c)))
+                           (k1z (fl- (fl* g0 b) (fl* h a)))
+                           (k2x (fl- (fl* b f) (fl* c e)))
+                           (k2y (fl- (fl* c d) (fl* a f)))
+                           (k2z (fl- (fl* a e) (fl* b d)))
+                           (det (fl+ (fl+ (fl* a k0x) (fl* b k0y))
+                                     (fl* c k0z)))
+                           (sg (if (fl<? det 0.0) -1.0 1.0)))
+                      (%mem-f32-set!
+                       rv (fl* sg (fl+ (fl+ (fl* x k0x) (fl* y k1x))
+                                       (fl* z k2x))))
+                      (%mem-f32-set!
+                       (+ rv 4) (fl* sg (fl+ (fl+ (fl* x k0y) (fl* y k1y))
+                                             (fl* z k2y))))
+                      (%mem-f32-set!
+                       (+ rv 8) (fl* sg (fl+ (fl+ (fl* x k0z) (fl* y k1z))
+                                             (fl* z k2z)))))
+                    (begin
+                      (%f32x4-scale! rv sk x)
+                      (%f32x4-axpy! rv rv (+ sk 16) y)
+                      (%f32x4-axpy! rv rv (+ sk 32) z)
+                      (when point?
+                        (%f32x4-axpy! rv rv (+ sk 48) 1.0)))))
               (let ((ox (%mem-f32-ref rv))
                     (oy (%mem-f32-ref (+ rv 4)))
                     (oz (%mem-f32-ref (+ rv 8))))
                 (if unit?
                     ;; a degenerate result (every influence weighted
-                    ;; zero, or a collapsed joint) has no direction
-                    ;; to report -- it goes out as it came rather
-                    ;; than becoming a division by zero
+                    ;; zero, or a joint that collapses the normal's
+                    ;; direction) has no direction to report, so the
+                    ;; TRANSFORMED vector goes out unnormalized --
+                    ;; which for a zero-length result is the zero
+                    ;; vector, not the input.  Anything else would be
+                    ;; a division by zero.
                     (let ((n (flsqrt (fl+ (fl+ (fl* ox ox) (fl* oy oy))
                                           (fl* oz oz)))))
                       (if (fl<? 0.0 n)
@@ -1665,13 +1723,13 @@
   ;; pose one skinned primitive's positions into `dst' (12 bytes a
   ;; vertex, tightly packed); returns the vertex count
   (define (gltf-skin-positions! g p dst)
-    ($skin-blend! g p dst 'gltf-skin-positions! 'position #t #f))
+    ($skin-blend! g p dst 'gltf-skin-positions! 'position #t #f #f))
 
   ;; the same for normals, renormalized.  A separate pass by design:
   ;; a silhouette fit wants positions alone and should not pay for
   ;; normals it throws away.
   (define (gltf-skin-normals! g p dst)
-    ($skin-blend! g p dst 'gltf-skin-normals! 'normal #f #t))
+    ($skin-blend! g p dst 'gltf-skin-normals! 'normal #f #t #t))
 
   ;; the skinning vertex shader: 4 joints x 4 weights per vertex,
   ;; pair with mesh-tex-fs (or mesh-lit-fs won't match the varyings)
@@ -1890,17 +1948,53 @@
                                  (at u_joints (int a_joints.w)))))
                    '(local vec3 g_pos
                            (vec3 (* g_skin (vec4 a_pos (fl 1))))))
-             (if (has? 'a_normal)
-                 (list '(local vec3 g_normal
-                               (vec3 (* g_skin
-                                        (vec4 a_normal (fl 0))))))
+             ;; the cofactor of the blended matrix's 3x3, and the
+             ;; sign of its determinant.  A normal is a covector: it
+             ;; moves by the cofactor (det times the inverse
+             ;; transpose -- the same direction, with no inversion,
+             ;; and finite where a singular joint has no inverse at
+             ;; all), and the sign turns it round when a joint
+             ;; mirrors.  det = 0 counts as positive: sign() answers
+             ;; zero there and would erase both the normal and the
+             ;; tangent's handedness.  The CPU path computes the
+             ;; identical expression.
+             (if (or (has? 'a_normal) (has? 'a_tangent))
+                 (list '(local vec3 g_c0 (vec3 (at g_skin 0)))
+                       '(local vec3 g_c1 (vec3 (at g_skin 1)))
+                       '(local vec3 g_c2 (vec3 (at g_skin 2)))
+                       '(local vec3 g_k0 (cross g_c1 g_c2))
+                       '(local vec3 g_k1 (cross g_c2 g_c0))
+                       '(local vec3 g_k2 (cross g_c0 g_c1))
+                       '(local float g_sgn
+                               (?: (< (dot g_c0 g_k0) (fl 0))
+                                   (fl -1) (fl 1))))
                  '())
+             ;; normalized on the way out, because the cofactor's
+             ;; magnitude grows as the square of a scale and the
+             ;; fragment stage reads these as directions.  Under a
+             ;; rotation or a uniform scale that is the identity on
+             ;; a unit input, so nothing that worked before moves.
+             (if (has? 'a_normal)
+                 (list '(local vec3 g_nraw
+                               (* g_sgn
+                                  (+ (* a_normal.x g_k0)
+                                     (* a_normal.y g_k1)
+                                     (* a_normal.z g_k2))))
+                       '(local vec3 g_normal
+                               (?: (> (length g_nraw) (fl 0))
+                                   (normalize g_nraw) g_nraw)))
+                 '())
+             ;; the tangent is a real tangent vector, so it still
+             ;; rides the matrix itself; only its handedness w
+             ;; follows the determinant's sign
              (if (has? 'a_tangent)
-                 (list '(local vec4 g_tangent
-                               (vec4 (vec3 (* g_skin
-                                              (vec4 a_tangent.xyz
-                                                    (fl 0))))
-                                     a_tangent.w)))
+                 (list '(local vec3 g_traw
+                               (vec3 (* g_skin
+                                        (vec4 a_tangent.xyz (fl 0)))))
+                       '(local vec4 g_tangent
+                               (vec4 (?: (> (length g_traw) (fl 0))
+                                         (normalize g_traw) g_traw)
+                                     (* a_tangent.w g_sgn))))
                  '()))))
       (unless (memq 'a_pos names)
         (error 'gltf-skin-shader
@@ -1989,7 +2083,11 @@
       ;; a redeclaration in the same scope
       (when ($skin-refs? vs '((g_skin . g_skin) (g_pos . g_pos)
                               (g_normal . g_normal)
-                              (g_tangent . g_tangent)))
+                              (g_tangent . g_tangent)
+                              (g_c0 . g_c0) (g_c1 . g_c1) (g_c2 . g_c2)
+                              (g_k0 . g_k0) (g_k1 . g_k1) (g_k2 . g_k2)
+                              (g_sgn . g_sgn) (g_nraw . g_nraw)
+                              (g_traw . g_traw)))
         (error 'gltf-skin-shader
                "input uses a name reserved for the skin locals (g_*)"))
       ;; the LAST attribute form, wherever it sits -- declarations

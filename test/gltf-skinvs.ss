@@ -43,6 +43,27 @@
 (define sk-nmap (gltf-skin-shader mesh-normal-vs))
 (define nmap-src (glsl->string sk-nmap))
 
+;; ---- normals ride the cofactor matrix, tangents keep their handedness ----
+;; A normal is a covector: under a joint that scales unevenly or
+;; mirrors it must move by the cofactor matrix of the blended joint
+;; matrix (columns cross(c1,c2) cross(c2,c0) cross(c0,c1)), signed by
+;; the determinant, then normalized when it has a length; the tangent
+;; keeps riding the matrix itself and its w flips with the
+;; determinant.  test/gltf-skin-normals.ss pins the CPU numbers; this
+;; pins the shader text that must compute the same thing.
+(define (count-sub s sub)
+  (let loop ((i 0) (n 0))
+    (let ((k (sub-at (substring s i (string-length s)) sub)))
+      (if k (loop (+ i k 1) (+ n 1)) n))))
+(define normal-matrix-ok
+  (and (>= (count-sub nmap-src "cross(") 3)                 ; the three cofactor columns
+       (not (contains? nmap-src "g_skin * vec4(a_normal"))  ; the old, wrong transform
+       (contains? nmap-src "normalize(")                    ; unit length on the way out
+       (contains? nmap-src "> 0.0")                         ; ...only when there is a length
+       (contains? nmap-src "< 0.0 ? -1.0 : 1.0")            ; handedness from the determinant's sign
+       (contains? nmap-src "a_tangent.w")))
+
+
 (define nmap-ok
   (and (equal? (map car (glsl-attributes sk-nmap))
                '(a_pos a_normal a_uv a_tangent a_joints a_weights))
@@ -562,4 +583,4 @@
      cross-class-ok name-space-ok decl-order-ok canonical-order-ok
      width-ok after-main-scope-ok
      helper-first-ok attrs-before-main-ok
-     collision-ok near-ok degenerate-ok)
+     collision-ok near-ok degenerate-ok normal-matrix-ok)

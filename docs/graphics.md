@@ -149,7 +149,10 @@ include `local`, `set!`, `return`, `if` / `if-else`, `for`, and
 is a float literal with the digits after the point as written (`(fl 2)` →
 `"2.0"`, `(fl 0 50)` → `"0.5"`, `(fl 0 5 2)` → `"0.05"`, the third operand
 being the fraction's minimum width) so there are no Scheme flonums and no printer
-noise; `+ - * /` are infix and `< > <= >= ==` compare; anything else is
+noise; `+ - * /` are infix and `< > <= >= ==` compare; `(?: c a b)` is
+the conditional **expression** `c ? a : b` — `if` above is a statement,
+and some choices have to be made inside an expression (a sign that must
+not be `sign()`, whose zero case is wrong); anything else is
 a function call. `glsl300-vs->string` / `glsl300-fs->string` emit
 `#version 300 es`, where `uniform-block` becomes a std140 block and
 `out` forms declare pinned MRT outputs. A block member may itself be an
@@ -538,8 +541,21 @@ entry point binds no instance buffer, so the shader would read zeros.
 Skinning is a dimension rather than a shader variant:
 `(gltf-skin-shader vs)` turns any static vertex shader into its skinned
 form — padding the slots the interleave always carries, rewriting
-`a_pos`/`a_normal`/`a_tangent` through the joint matrix, and leaving the
-varyings alone so the same fragment shader still pairs. The palette it
+`a_pos` and `a_tangent.xyz` through the blended joint matrix and
+`a_normal` through that matrix's **cofactor**, and leaving the varyings
+alone so the same fragment shader still pairs. A normal is a covector:
+the cofactor is the determinant times the inverse transpose, so it
+points where an inverse transpose would without an inversion, and it
+stays finite where a collapsed joint has no inverse at all. The sign of
+the determinant is folded into the normal and into `a_tangent.w`, so a
+mirroring joint turns the surface's normal round and its handedness
+with it; a determinant of exactly zero counts as positive, because
+`sign()` answers zero there and would erase the result. `gltf-skin-
+normals!` computes the identical expression on the CPU, so the two
+sides agree. Skinned normals and tangents come out of the vertex stage
+normalized (guarded, so a zero-length result stays zero) — the static
+path in `(gfx mesh)` does not normalize, which is a residual rather
+than a decision. The palette it
 declares is `uniform mat4 u_joints[32]`, which is all ESSL 1.00 can
 carry; `(gltf-skin-shader3 vs)` is the same combinator with the other
 carrier — a std140 block `Skin { mat4 u_joints[256]; }` — for rigs with
@@ -1430,7 +1446,8 @@ chunk, since parsed node records do not keep them.
 primitive on the CPU: the same one-blended-matrix linear blend the
 skinned shaders run, through the same f32 lane kernels in the same
 order, so the CPU pose is the GPU pose rather than an
-approximation.  Weights are used as stored — the shader does not
+approximation — normals included, which take the blended matrix's
+cofactor and the sign of its determinant on both sides.  Weights are used as stored — the shader does not
 renormalize, so neither does this.  The output is packed vec3 f32
 at a staging base, which is an attribute `(gfx raster)` reads
 as-is: parse an asset, animate it, pose it, and render it, all

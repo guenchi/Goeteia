@@ -38,6 +38,10 @@
 ;;   (fl 0 5 2)="0.05", (fl 0 2037 5)="0.02037".  No Scheme flonums, so
 ;;   no printer noise;
 ;;   (+ - * /) are infix, (- x) negates; (< > <= >= ==) compare;
+;;   (?: c a b) is the conditional EXPRESSION "c ? a : b" -- (if ...)
+;;   above is a statement, and some choices have to be made inside an
+;;   expression (a sign that must not be sign(), whose zero case is
+;;   wrong);
 ;;   anything else (vec4 sin dot mix ...) is a call.
 ;;
 ;; Every position that introduces a name is checked against the GLSL
@@ -99,6 +103,13 @@
       (string-append (number->string (cadr e)) "."
                      (if (string=? digits "") "0" digits))))
 
+  ;; a comparison's text without the outer parentheses -- one
+  ;; implementation, wrapped by the comparison case and used bare by
+  ;; the conditional expression
+  (define ($glsl-infix e)
+    (string-append (expr->glsl (cadr e)) " " (symbol->string (car e))
+                   " " (expr->glsl (caddr e))))
+
   (define (expr->glsl e)
     (cond
      ((symbol? e) (symbol->string e))
@@ -122,8 +133,20 @@
                                    (string-append " " (symbol->string h) " "))
                          ")"))
          ((memq h '(< > <= >= ==))
-          (string-append "(" (expr->glsl (cadr e)) " " (symbol->string h)
-                         " " (expr->glsl (caddr e)) ")"))
+          (string-append "(" ($glsl-infix e) ")"))
+         ;; the conditional expression.  Its condition prints WITHOUT
+         ;; the parentheses a bare comparison gets, because "a < b ?
+         ;; x : y" is how the ternary reads and "(a < b) ? x : y"
+         ;; is the same thing said twice.
+         ((eq? h '?:)
+          (string-append "("
+                         (let ((c (cadr e)))
+                           (if (and (pair? c)
+                                    (memq (car c) '(< > <= >= ==)))
+                               ($glsl-infix c)
+                               (expr->glsl c)))
+                         " ? " (expr->glsl (caddr e))
+                         " : " (expr->glsl (cadddr e)) ")"))
          ;; a call: vec4(...), sin(...), dot(...), user functions
          (else
           (string-append (symbol->string h) "("

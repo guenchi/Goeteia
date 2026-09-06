@@ -399,9 +399,9 @@ Two sharp edges besides the cost:
 The deliberate deviations from the glTF ideal — nlerp instead of
 slerp between rotation keys, wholesale node reset when a clip
 poses, the one-transition animation machine, skinned normals
-without an inverse-transpose, loop-phase precision on
-sub-microsecond clips — are documented where they live, in the
-header of `lib/gfx/gltf.ss`.  That header is the contract; this
+normalized where the static path leaves them unnormalized,
+loop-phase precision on sub-microsecond clips — are documented
+where they live, in the header of `lib/gfx/gltf.ss`.  That header is the contract; this
 file only points at it.
 
 ## Compiler diagnostics are terse
