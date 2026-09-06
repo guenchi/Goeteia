@@ -283,9 +283,17 @@ if ${NODE-node} --test test/sexpr-mjs.mjs >/dev/null 2>&1; then
 else
     echo "FAIL test/sexpr-mjs.mjs"; fail=1
 fi
-if ${NODE-node} --test test/docs.mjs >/dev/null 2>&1; then
+# Its output is kept in a file rather than discarded: a cell that stands
+# down (the website manual checks, when the website checkout is not
+# beside this tree) announces itself with NOT EXERCISED HERE, and that
+# line has to reach the log or the skip is silent -- and a red run's
+# output is the part worth reading.
+DOCS_OUT="$T/docs-mjs.out"
+if ${NODE-node} --test test/docs.mjs > "$DOCS_OUT" 2>&1; then
+    grep 'NOT EXERCISED HERE' "$DOCS_OUT"
     echo "ok   test/docs.mjs"
 else
+    cat "$DOCS_OUT"
     echo "FAIL test/docs.mjs"; fail=1
 fi
 # Output is NOT redirected here, unlike the group just below.  This
