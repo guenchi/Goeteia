@@ -593,7 +593,9 @@ debugging time:
   `gltf-animate-blend!` crossfades two independently posed clips,
   `anim-machine` packages the pattern every character repeats —
   named states over clips, `anim-goto!` transitions that fade over
-  a per-transition time while both clocks keep running — and
+  a per-transition time while both clocks keep running, and an
+  interrupt that freezes the pose on screen and eases out of it
+  instead of jumping — and
   `gltf-skin-vs` blends four weighted joints per
   vertex from one mat4-array upload.  Skinning is a dimension, not a
   shader variant: `(gltf-skin-shader vs)` derives the skinned form of

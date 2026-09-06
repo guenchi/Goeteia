@@ -587,7 +587,13 @@ independently — which is what lets clips with different channel sets
 fade correctly — `gltf-weights!` /
 `gprim-morph` drive morph targets, and `anim-machine` / `anim-goto!` /
 `anim-update!` package named states over clips with per-transition
-fades. `gltf-animation-names` and `gltf-animation-duration` report a
+fades. Interrupting a live fade does not jump: the machine freezes
+the pose on screen — a blend no clip can reproduce, so the blend
+itself is saved — and fades from there to the incoming clip, easing
+any node the incoming clip does not drive from its frozen value to
+bind over the same transition. Interrupting again refreezes whatever
+is displayed at that moment, so the second slot holds either a clip
+or a saved pose and the machine still carries exactly one transition. `gltf-animation-names` and `gltf-animation-duration` report a
 clip's name and its length in seconds — the period `gltf-animate!`
 wraps its clock into.
 

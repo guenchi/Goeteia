@@ -512,10 +512,15 @@
     (anim-update! m 0.25)
     (anim-goto! m 'c)
     (anim-update! m 0.25)
-    ;; n0 leaves node 1 at bind (7); dup at its own t = .25 is 6.0
-    ;; (its keys are 3/5/9 with a duplicated first time).  A quarter
-    ;; of the way is 6.75 -- a carried-over k of .5 would give 6.5.
-    (near? (vector-ref (joint2-m) 12) 6.75)))
+    ;; Under the frozen-pose rule (archive/goeteia-p1-design.md, C
+    ;; and r2-13) the interrupt freezes what is on screen: node 1 was
+    ;; a quarter of the way from ta's 3.75 (t = .75) to n0's bind 7,
+    ;; i.e. 4.5625, and a quarter of a fade later toward dup's 6.0
+    ;; (its keys are 3/5/9 with a duplicated first time) sits at
+    ;; .75*4.5625 + .25*6 = 4.921875.  Before that rule the released
+    ;; ta left node 1 at bind 7 and the answer was 6.75; a carried-
+    ;; over k of .5 would give .5*4.5625 + .5*6 = 5.28125.
+    (near? (vector-ref (joint2-m) 12) 4.921875)))
 
 ;; a legal POSITIVE fade, however short, still interpolates: the
 ;; settle shortcut is for zero and negative only.  At half of a
@@ -553,8 +558,147 @@
       (anim-goto! m 'b)                  ; already there: a no-op
       (near? (vector-ref (joint2-m) 12) mid))))
 
+;; ---- interruption is continuous: what is on screen is where the
+;; next fade starts ----
+;; (iii) mid-fade ta -> n0, interrupt with dup: node 1 must not jump.
+;; Its x just before the goto and one millisecond after differ by
+;; the fade's own motion only.  Releasing ta at the interrupt (the
+;; old rule) snaps node 1 to bind 7 first, a jump of about 2.4.
+(define interrupt-continuous-ok
+  (let ((m (anim-machine g2 '((a . 2) (b . 4) (c . 3)) 1.0)))
+    (anim-update! m 0.5)
+    (anim-goto! m 'b)
+    (anim-update! m 0.25)
+    (let ((before (vector-ref (joint2-m) 12)))   ; 4.5625
+      (anim-goto! m 'c)
+      (anim-update! m 0.001)
+      (let ((after (vector-ref (joint2-m) 12)))
+        (and (near? before 4.5625)
+             (< (abs (- after before)) 0.01))))))
+
+;; (iv) a node the OLD clips touched and the incoming clip does not
+;; eases from its frozen value to bind, and lands there even when a
+;; single update steps past the whole fade.  n0 drives node 0; dup
+;; does not.  Node 0 is first posed by hand away from bind so that
+;; "eases to bind" and "stays where it was" read differently.
+(define interrupt-old-only-ok
+  (let ((m (anim-machine g2 '((a . 2) (b . 4) (c . 3)) 1.0)))
+    (gltf-node-translation-set! g2 0 9.0 0.0 0.0)
+    (anim-update! m 0.5)                 ; ta: node 0 keeps 9
+    (anim-goto! m 'b)                    ; fade toward n0 (node 0 -> 0..5)
+    (anim-update! m 0.25)
+    (let ((x0 (vector-ref (gltf-node-translation g2 0) 0)))
+      (anim-goto! m 'c)                  ; dup: node 0 is old-only
+      (anim-update! m 0.001)
+      (let ((x1 (vector-ref (gltf-node-translation g2 0) 0)))
+        (anim-update! m 5.0)             ; one step past the fade
+        (let ((x2 (vector-ref (gltf-node-translation g2 0) 0)))
+          (gltf-node-translation-set! g2 0 0.0 0.0 0.0)   ; leave node 0 at bind for later cells
+          (and (< (abs (- x1 x0)) 0.05)  ; continuous at the interrupt
+               (near? x2 0.0)))))))       ; and at bind once settled
+
+;; (v) a frozen node the incoming clip does not drive EASES to bind --
+;; halfway through the fade it is halfway there.  Holding it at its
+;; frozen value until the end would pass the continuity and the
+;; completion cells above and still jump at the end.
+(define interrupt-old-only-mid-ok
+  (let ((m (anim-machine g2 '((a . 2) (b . 4) (c . 3)) 1.0)))
+    (anim-update! m 0.5)
+    (anim-goto! m 'b)                    ; n0 drives node 0: 0 -> 5 over 1s
+    (anim-update! m 0.25)
+    (let ((x0 (vector-ref (gltf-node-translation g2 0) 0)))   ; displayed, > 0
+      (anim-goto! m 'c)                  ; dup leaves node 0 alone: it is old-only
+      (anim-update! m 0.5)               ; half the fade
+      (let ((xm (vector-ref (gltf-node-translation g2 0) 0)))
+        (anim-update! m 5.0)
+        (gltf-node-translation-set! g2 0 0.0 0.0 0.0)
+        (and (> x0 0.1)
+             (near? xm (* 0.5 x0)))))))  ; halfway from frozen toward bind 0
+
+;; (vi) a state may be CALLED frozen: the machine's own marker is not
+;; a symbol the caller can spell, so an ordinary fade out of a state
+;; named `frozen' is an ordinary fade
+(define (fade-out-of name)
+  (let ((m (anim-machine g2 (list (cons name 2) (cons 'b 4)) 1.0)))
+    (anim-update! m 0.5)                 ; "ta": node 1 = 2.5
+    (anim-goto! m 'b)
+    (anim-update! m 0.5)                 ; halfway toward n0, which leaves node 1 at bind 7.
+    ;; ta's clock is now 1.0 = its duration, and t = duration wraps to
+    ;; the FIRST key (the header's contract, pinned by nlerp-contract
+    ;; and dup-time): ta reads 0, not 5.  (0 + 7) / 2 = 3.5.  A symbol
+    ;; sentinel would send this fade down the frozen branch with
+    ;; nothing frozen -- a no-op -- and leave node 1 at 2.5.
+    (vector-ref (joint2-m) 12)))
+(define frozen-name-ok
+  (let ((named-frozen (fade-out-of 'frozen)) (named-else (fade-out-of 'zzz)))
+    (and (near? named-frozen 3.5)
+         (near? named-else 3.5))))      ; the name is not a factor
+
+;; (vii) morph weights on a primitive OUTSIDE the frozen set are not
+;; the machine's to blend: set by hand during a frozen fade, they stay.
+;; Fixture g: the morph lives on node 0; lin/stp/cub drive node 1 only.
+(define (clip-index g name)
+  (let loop ((i 0))
+    (if (string=? (vector-ref (vector-ref (gltf-anims g) i) 0) name) i (loop (+ i 1)))))
+(define outside-morph-ok
+  (let ((m (anim-machine g (list (cons 'a (clip-index g "lin")) (cons 'b (clip-index g "stp")) (cons 'c (clip-index g "cub"))) 1.0)))
+    (anim-update! m 0.5)
+    (anim-goto! m 'b)
+    (anim-update! m 0.25)
+    (anim-goto! m 'c)                    ; interrupt: node 1 frozen, node 0 is not in the set
+    (gltf-weights! p1 '(0.7))            ; the caller's own doing, after the snapshot
+    (anim-update! m 0.25)
+    (let ((w (vector-ref (vector-ref (gprim-morph p1) 2) 0)))
+      (anim-update! m 5.0)
+      (gltf-weights! p1 '(0.0))
+      (near? w 0.7))))
+
+;; (viii) morph weights INSIDE the frozen set are continuous too: the
+;; outgoing clip drove them, the incoming does not, so they ease from
+;; the frozen value to bind instead of snapping.  Fixture g: cubw
+;; drives node 0's weights 0 -> 1 over its clip; lin and stp drive
+;; node 1 only.  Discarding the frozen morph snapshot would reset the
+;; weight to bind (0) at the interrupt.
+(define inside-morph-ok
+  (let ((m (anim-machine g (list (cons 'a (clip-index g "cubw")) (cons 'b (clip-index g "lin")) (cons 'c (clip-index g "stp"))) 1.0)))
+    (anim-update! m 0.5)                 ; cubw: weight well above 0
+    (anim-goto! m 'b)
+    (anim-update! m 0.25)
+    (let ((w0 (vector-ref (vector-ref (gprim-morph p1) 2) 0)))
+      (anim-goto! m 'c)                  ; interrupt: node 0 (frozen) is not driven by stp
+      (anim-update! m 0.001)
+      (let ((w1 (vector-ref (vector-ref (gprim-morph p1) 2) 0)))
+        (anim-update! m 5.0)
+        (let ((w2 (vector-ref (vector-ref (gprim-morph p1) 2) 0)))
+          (gltf-weights! p1 '(0.0))
+          (and (> w0 0.05)
+               (< (abs (- w1 w0)) 0.01)   ; continuous across the interrupt
+               (near? w2 0.0)))))))       ; and at bind once settled
+
+;; (ix) a node ONLY the incoming clip drives, posed by hand: its
+;; displayed value is where the new fade starts.  ta and dup drive
+;; node 1; n0 drives node 0, which is set to 9 by hand.  Leaving
+;; incoming-only nodes out of the frozen set would sample n0 into
+;; node 0 directly and jump from 9 to n0's first key.
+(define interrupt-incoming-only-ok
+  (let ((m (anim-machine g2 '((a . 2) (b . 3) (c . 4)) 1.0)))
+    (gltf-node-translation-set! g2 0 9.0 0.0 0.0)
+    (anim-update! m 0.5)                 ; ta
+    (anim-goto! m 'b)                    ; fade toward dup: node 1 only
+    (anim-update! m 0.25)
+    (let ((x0 (vector-ref (gltf-node-translation g2 0) 0)))   ; still 9: nobody drives node 0
+      (anim-goto! m 'c)                  ; n0: node 0 is incoming-only
+      (anim-update! m 0.001)
+      (let ((x1 (vector-ref (gltf-node-translation g2 0) 0)))
+        (anim-update! m 5.0)
+        (gltf-node-translation-set! g2 0 0.0 0.0 0.0)
+        (and (near? x0 9.0)
+             (< (abs (- x1 x0)) 0.05))))))
+
 (and bind-trs-ok instant-fade-ok negative-fade-ok tiny-fade-ok
-     interrupt-clock-ok
+     interrupt-clock-ok interrupt-continuous-ok interrupt-old-only-ok
+     interrupt-old-only-mid-ok frozen-name-ok outside-morph-ok
+     inside-morph-ok interrupt-incoming-only-ok
      same-state-ok interrupt-release-ok
      interrupt-effect-ok union-dedup-ok
      weights-ok lin-ok stp-ok cub-ok cubr-ok cubw-ok

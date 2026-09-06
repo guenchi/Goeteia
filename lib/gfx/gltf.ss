@@ -108,12 +108,16 @@
 ;;     many orders of magnitude below the elapsed time the quotient
 ;;     is huge and the phase loses its significance -- a clip a
 ;;     microsecond long is not usefully playable minutes in.
-;;   * anim-machine carries ONE transition.  Interrupting a live
-;;     fade releases the clip being faded out of (its nodes return
-;;     to bind) and starts the new fade from the incoming clip's own
-;;     pose, so the pose jumps rather than easing from what is on
-;;     screen.  Blending from the displayed pose would need the
-;;     machine to hold an arbitrary number of weighted clips.
+;;   * anim-machine still carries ONE transition, but interrupting
+;;     a live fade no longer jumps: what is on screen is FROZEN and
+;;     the new fade runs from there.  The second slot holds either
+;;     a clip or a saved pose, which is what keeps "one transition"
+;;     true without holding an arbitrary number of weighted clips.
+;;     A node the incoming clip does not drive eases from its frozen
+;;     value to bind over the same fade; interrupting again refreezes
+;;     what is on screen at that moment.  What the machine still
+;;     cannot do is layer or mask: two clips over the SAME node
+;;     blend by one weight, never per path.
 ;;
 ;; Copyright (c) 2026 guenchi. MIT license; see LICENSE.
 (library (gfx gltf)
@@ -1142,6 +1146,11 @@
   ;; touch keep their values, so clips driving disjoint body parts
   ;; still compose.)
   (define ($anim-reset! g anim)
+    ($reset-nodes! g (vector-ref anim 3)))
+
+  ;; the same thing over an explicit list of nodes: a crossfade out
+  ;; of a frozen pose has a node set of its own, not a clip's
+  (define ($reset-nodes! g nis)
     (let ((binds (vector-ref ($gltf-arena g) 0))
           (nodes (gltf-nodes g)))
       (for-each
@@ -1164,7 +1173,7 @@
                       (wi (+ j 1)))))
                 (vector-set! mo 3 #t))))
           (gltf-prims g)))
-       (vector-ref anim 3))))
+       nis)))
 
   ;; every channel of the clip written at ONE already-resolved clock
   ;; reading -- the wrapping and the clamping entry points differ in
@@ -1254,7 +1263,7 @@
                            (when (< j 10)
                              (vector-set! s j (vector-ref node j))
                              (cp (+ j 1)))))))
-      (let ((wa ($morph-save! g a b)))
+      (let ((wa ($morph-save! g (lambda (i) #t))))
         ;; pose B on a clean slate, then blend A back under it
         ($anim-reset! g a) ($anim-reset! g b)
         ($anim-sample! g b tj)
@@ -1287,10 +1296,18 @@
 
   ;; morph weights ride the same two-pose scheme: snapshot A's
   ;; weights per primitive, then lerp them back under B's
-  (define ($morph-save! g a b)
+  ;; `keep?' says which nodes' primitives this snapshot covers.
+  ;; gltf-animate-blend! saves and blends inside ONE call with
+  ;; nothing in between, so a primitive outside the blend is saved
+  ;; and blended at the same value and it may take them all.  A
+  ;; frozen fade cannot: its snapshot lives across many frames, and
+  ;; a primitive outside the frozen set is none of its business --
+  ;; blending it toward a stale snapshot would drag the caller's own
+  ;; gltf-weights! back every frame, and leave it mixed at the end.
+  (define ($morph-save! g keep?)
     (map (lambda (p)
            (let ((mo (gprim-morph p)))
-             (and mo
+             (and mo (keep? (vector-ref mo 4))
                   (let* ((w (vector-ref mo 2))
                          (n (vector-length w))
                          (s (make-vector n 0.0)))
@@ -1344,6 +1361,13 @@
   ;;   (anim-goto! m 'walk 0.1)               ; ... or this one's own fade
   ;;   (anim-update! m dt)                    ; each frame: clocks + pose
   ;;   (anim-state m)                         ; -> the current name
+  ;; The second slot holds a state name or THIS.  It is a fresh pair
+  ;; rather than a symbol on purpose: a readable sentinel lives in
+  ;; the caller's namespace, and a machine with a state actually
+  ;; named `frozen' would take the frozen branch on an ordinary
+  ;; fade.  Nothing outside this library can construct this value.
+  (define $frozen-pose (list 'frozen-pose))
+
   (define-record-type ($anim-machine $am-make anim-machine?)
     (fields (immutable g $am-g)
             (immutable states $am-states)     ; ((name . clip) ...)
@@ -1353,32 +1377,133 @@
             (mutable tcur $am-tcur $am-tcur!)
             (mutable tprev $am-tprev $am-tprev!)
             (mutable k $am-k $am-k!)          ; fade seconds elapsed
-            (mutable len $am-len $am-len!)))  ; this transition's fade
+            (mutable len $am-len $am-len!)    ; this transition's fade
+            ;; what an interrupt froze: the node indices whose
+            ;; displayed pose was saved, the saved TRS (indexed by
+            ;; node), and the saved morph weights.  Live only while
+            ;; prev is the frozen-pose sentinel.
+            (mutable fnodes $am-fnodes $am-fnodes!)
+            (mutable fpose $am-fpose $am-fpose!)
+            (mutable fmorph $am-fmorph $am-fmorph!)))
+
+  ;; the union of several node-index lists, as a set
+  (define ($node-union ls)
+    (let outer ((ls ls) (acc '()))
+      (if (null? ls)
+          acc
+          (outer (cdr ls)
+                 (let add ((l (car ls)) (acc acc))
+                   (cond ((null? l) acc)
+                         ((memv (car l) acc) (add (cdr l) acc))
+                         (else (add (cdr l) (cons (car l) acc)))))))))
+
+  ;; the DISPLAYED TRS of a set of nodes, indexed by node
+  (define ($pose-save! g nis)
+    (let* ((nodes (gltf-nodes g))
+           (out (make-vector (vector-length nodes) #f)))
+      (for-each
+       (lambda (i)
+         (let ((node (vector-ref nodes i))
+               (s (make-vector 10 0.0)))
+           (let cp ((j 0))
+             (when (< j 10)
+               (vector-set! s j (vector-ref node j))
+               (cp (+ j 1))))
+           (vector-set! out i s)))
+       nis)
+      out))
+
+  ;; the crossfade OUT of a frozen pose.  Every frozen node goes back
+  ;; to bind first, then the incoming clip poses the ones it drives,
+  ;; then the frozen values blend back under the result.  So a node
+  ;; the incoming clip does not drive eases from what was on screen
+  ;; to bind -- where releasing the outgoing clip used to put it in
+  ;; one frame.  It is the same two-pose scheme gltf-animate-blend!
+  ;; runs, with a saved pose in place of the first clip: no clip can
+  ;; reproduce a blend, so the blend itself is what gets saved.
+  (define ($anim-blend-frozen! m bi tj k)
+    (let* ((g ($am-g m))
+           (nodes (gltf-nodes g))
+           (fnodes ($am-fnodes m))
+           (fpose ($am-fpose m))
+           (kf (let ((kf ($gltf-fl k)))
+                 (if (fl<? kf 0.0) 0.0 (if (fl<? 1.0 kf) 1.0 kf)))))
+      ($reset-nodes! g fnodes)
+      ($anim-sample! g (vector-ref (gltf-anims g) bi) tj)
+      (for-each
+       (lambda (i)
+         (let ((node (vector-ref nodes i))
+               (s (vector-ref fpose i))
+               (u (fl- 1.0 kf)))
+           (when s
+             (let cp ((j 0))
+               (when (< j 10)
+                 (when (or (< j 3) (>= j 7))
+                   (vector-set! node j
+                                (fl+ (fl* u (vector-ref s j))
+                                     (fl* kf (vector-ref node j)))))
+                 (cp (+ j 1))))
+             (let ((q ($q-nlerp
+                       (vector (vector-ref s 3) (vector-ref s 4)
+                               (vector-ref s 5) (vector-ref s 6))
+                       (vector (vector-ref node 3) (vector-ref node 4)
+                               (vector-ref node 5) (vector-ref node 6))
+                       kf)))
+               (vector-set! node 3 (vector-ref q 0))
+               (vector-set! node 4 (vector-ref q 1))
+               (vector-set! node 5 (vector-ref q 2))
+               (vector-set! node 6 (vector-ref q 3))))))
+       fnodes)
+      ($morph-blend! g ($am-fmorph m) kf)))
 
   (define (anim-machine g states . fade)
     ($am-make g states
               (if (pair? fade) ($gltf-fl (car fade)) 0.25)
-              (car (car states)) #f 0.0 0.0 0.0 0.0))
+              (car (car states)) #f 0.0 0.0 0.0 0.0
+              '() #f '()))
 
   (define (anim-state m) ($am-cur m))
 
-  ;; Interrupting a live transition drops the clip it was fading
-  ;; out of; release that clip's nodes here, or nothing ever touches
-  ;; them again and they hold the last blended value for the rest of
-  ;; the run.  (The pose does jump: the machine carries one
-  ;; transition, so the new fade starts from the incoming clip's own
-  ;; pose rather than from what is on screen.)
+  ;; Interrupting a live transition FREEZES what is on screen and
+  ;; fades from there.  The displayed pose is a blend of two clips
+  ;; and no clip can reproduce it, so the pose itself is saved; the
+  ;; machine still carries one transition, and the second slot holds
+  ;; a saved pose instead of a second clip.
+  ;;
+  ;; The frozen set is every node either side of the interrupted
+  ;; fade touches, plus every node the INCOMING clip touches.  That
+  ;; last part is not symmetry: a node no clip drives keeps its
+  ;; value rather than resting at bind, so a node the incoming clip
+  ;; is about to drive needs its displayed value saved too, or it
+  ;; would jump on the first frame of the new fade.  Interrupting
+  ;; again unions the new incoming clip's nodes into the set already
+  ;; frozen and re-reads the values, so the freeze always describes
+  ;; what is on screen NOW.
   (define (anim-goto! m name . fade)
     (unless (assq name ($am-states m))
       (error 'anim-goto! "unknown state" name))
     (unless (eq? name ($am-cur m))
-      (when ($am-prev m)
-        ($anim-reset! ($am-g m)
-                      (vector-ref (gltf-anims ($am-g m))
-                                  (cdr (assq ($am-prev m)
-                                             ($am-states m))))))
-      ($am-prev! m ($am-cur m))
-      ($am-tprev! m ($am-tcur m))
+      (let* ((g ($am-g m))
+             (touched (lambda (nm)
+                        (vector-ref (vector-ref (gltf-anims g)
+                                                (cdr (assq nm ($am-states m))))
+                                    3))))
+        (if ($am-prev m)
+            (let ((set ($node-union
+                        (list (if (eq? ($am-prev m) $frozen-pose)
+                                  ($am-fnodes m)
+                                  (touched ($am-prev m)))
+                              (touched ($am-cur m))
+                              (touched name)))))
+              ($am-fnodes! m set)
+              ($am-fpose! m ($pose-save! g set))
+              ($am-fmorph! m ($morph-save! g
+                                            (lambda (i) (and (memv i set) #t))))
+              ($am-prev! m $frozen-pose))
+            ;; not an interrupt: the path every settled machine takes,
+            ;; unchanged
+            (begin ($am-prev! m ($am-cur m))
+                   ($am-tprev! m ($am-tcur m)))))
       ($am-cur! m name)
       ($am-tcur! m 0.0)
       ($am-k! m 0.0)
@@ -1398,18 +1523,31 @@
             ($am-k! m (fl+ ($am-k m) dt))
             ;; only a zero or negative fade settles at once; any
             ;; positive length interpolates, however short
-            (let ((w (if (fl<? 0.0 ($am-len m))
-                         (fl/ ($am-k m) ($am-len m))
-                         1.0))
-                  (pi (cdr (assq ($am-prev m) ($am-states m)))))
+            (let* ((w (if (fl<? 0.0 ($am-len m))
+                          (fl/ ($am-k m) ($am-len m))
+                          1.0))
+                   (frozen? (eq? ($am-prev m) $frozen-pose))
+                   (pi (and (not frozen?)
+                            (cdr (assq ($am-prev m) ($am-states m))))))
               (if (fl<? w 1.0)
-                  (gltf-animate-blend! g pi ($am-tprev m) ci ($am-tcur m) w)
-                  ;; the fade is over: the outgoing clip's nodes go
-                  ;; back to bind before the incoming clip poses, or
-                  ;; a node only IT drove keeps the last blended
-                  ;; value for the rest of the run
+                  (if frozen?
+                      ($anim-blend-frozen! m ci ($am-tcur m) w)
+                      (gltf-animate-blend! g pi ($am-tprev m)
+                                           ci ($am-tcur m) w))
+                  ;; the fade is over: whatever the fade came FROM
+                  ;; goes back to bind before the incoming clip
+                  ;; poses, or a node only it drove keeps the last
+                  ;; blended value for the rest of the run.  For a
+                  ;; frozen pose that is the whole frozen set, which
+                  ;; is why a single update stepping past the fade
+                  ;; still lands those nodes at bind.
                   (begin ($am-prev! m #f)
-                         ($anim-reset! g (vector-ref (gltf-anims g) pi))
+                         (if frozen?
+                             (begin ($reset-nodes! g ($am-fnodes m))
+                                    ($am-fnodes! m '())
+                                    ($am-fpose! m #f)
+                                    ($am-fmorph! m '()))
+                             ($anim-reset! g (vector-ref (gltf-anims g) pi)))
                          (gltf-animate! g ci ($am-tcur m))))))
           (gltf-animate! g ci ($am-tcur m)))))
 
