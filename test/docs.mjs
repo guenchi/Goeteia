@@ -125,3 +125,68 @@ test('verify.md documents the spec-key whitelist and the 2d context', () => {
     assert.match(world, /getContext\("2d"\)/);
     assert.match(world, /8 px per code point/);
 });
+
+// ---- the manual on the website names libraries and procedures that exist ----
+//
+// docs/manual.md lives in the website branch (../04-goeteia-website),
+// so nothing in this tree used to open it: it named `(web gl)` for a
+// library that exists only as `(gfx gl)`, thirty-five times, and a
+// `(web audio)` that exists as `(aud sfx)`, and no cell ever red.  Two
+// checks, both derived from the tree rather than from a list kept by
+// hand: every `(ns name)` the manual writes must be a file
+// lib/ns/name.ss, and every `procedure: (name ...)` head must be a
+// name some library exports or the prelude defines.  Where the
+// website checkout is absent the check announces itself and stands
+// down, so a missing sibling reads as "not run", never as "passed".
+const here = path.dirname(fileURLToPath(import.meta.url));
+const manualPath = path.join(here, '..', '..', '04-goeteia-website', 'docs', 'manual.md');
+if (!fs.existsSync(manualPath)) {
+    console.log('NOT EXERCISED HERE (the website checkout ../04-goeteia-website/docs/manual.md is not beside this tree; clone the website branch there to run the manual checks)');
+} else {
+    const manual = fs.readFileSync(manualPath, 'utf8');
+    const libRoot = path.join(here, '..', 'lib');
+    test('every library the manual names is a file under lib/', () => {
+        const seen = new Map();
+        for (const m of manual.matchAll(/\((web|gfx|aud) ([a-z0-9-]+)\)/g)) {
+            const key = `(${m[1]} ${m[2]})`;
+            seen.set(key, (seen.get(key) || 0) + 1);
+        }
+        const missing = [...seen].filter(([k]) => {
+            const [, ns, name] = k.match(/^\((\w+) ([a-z0-9-]+)\)$/);
+            return !fs.existsSync(path.join(libRoot, ns, `${name}.ss`));
+        });
+        assert.deepStrictEqual(missing, [], `libraries the manual names that do not exist: ${missing.map(([k, n]) => `${k} x${n}`).join(', ')}`);
+    });
+    test('every procedure the manual documents is exported by a library or defined by the prelude', () => {
+        const known = new Set();
+        // an export list ends at its matching paren, whatever comments follow
+        const exportsOf = src => {
+            const i = src.indexOf('(export');
+            if (i < 0) return [];
+            let depth = 0, j = i;
+            for (; j < src.length; j++) { if (src[j] === '(') depth++; else if (src[j] === ')' && --depth === 0) break; }
+            return src.slice(i + 7, j).replace(/;[^\n]*/g, ' ').split(/[\s()]+/).filter(n => n && n !== 'rename');
+        };
+        const walk = d => { for (const e of fs.readdirSync(d, { withFileTypes: true })) { const p = path.join(d, e.name); if (e.isDirectory()) walk(p); else if (e.name.endsWith('.ss')) for (const n of exportsOf(fs.readFileSync(p, 'utf8'))) known.add(n); } };
+        walk(libRoot);
+        const prelude = fs.readFileSync(path.join(here, '..', 'src', 'prelude.ss'), 'utf8');
+        for (const m of prelude.matchAll(/^\(define \(?([^\s()]+)/gm)) known.add(m[1]);
+        for (const m of prelude.matchAll(/^\(define-syntax ([^\s()]+)/gm)) known.add(m[1]);
+        // record types define their constructor, predicate and accessors
+        for (const m of prelude.matchAll(/\(define-record-type\s*\(([^)]*)\)([\s\S]*?)\n\(/g)) {
+            for (const n of m[1].split(/\s+/)) if (n) known.add(n);
+            for (const f of m[2].matchAll(/\((?:immutable|mutable)\s+[^\s()]+\s+([^\s()]+)(?:\s+([^\s()]+))?/g)) { known.add(f[1]); if (f[2]) known.add(f[2]); }
+        }
+        // compiler primitives are registered as (name . arity) pairs, special forms as (cons 'name ...)
+        const compiler = fs.readFileSync(path.join(here, '..', 'src', 'compiler.ss'), 'utf8');
+        for (const m of compiler.matchAll(/\(([^\s()]+) \. [0-9]+\)/g)) known.add(m[1]);
+        for (const m of compiler.matchAll(/\(cons '([^\s()]+)/g)) known.add(m[1]);
+        const heads = [];
+        for (const line of manual.split('\n')) {
+            if (!line.startsWith('procedure:')) continue;
+            for (const m of line.matchAll(/\(([^\s()]+)/g)) heads.push(m[1]);
+        }
+        const unknown = [...new Set(heads)].filter(h => !known.has(h) && !/^(quote|lambda|let|define|if|set!|begin)$/.test(h));
+        assert.deepStrictEqual(unknown, [], `procedure heads the manual documents that nothing defines: ${unknown.join(', ')}`);
+    });
+}
