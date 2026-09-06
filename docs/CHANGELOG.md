@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-*12 commits since 1.6.1.* The glTF reader keeps the whole material model, the GLB
+*13 commits since 1.6.1.* The glTF reader keeps the whole material model, the GLB
 writer writes it back, skinned normals light correctly under uneven and
 mirrored joints, an interrupted crossfade no longer jumps, and a program
 that dies tells its host why.
@@ -85,6 +85,11 @@ that dies tells its host why.
   `test/glbcheck.py`, a dependency-free structural checker for written GLBs;
   the writer's re-export of `p1.glb` is compared with the original's JSON and
   re-imported by Blender when Blender is installed.
+- `test/docs.mjs` now checks the website manual against the tree: every
+  library it names must exist under `lib/` and every documented procedure must
+  be exported or defined somewhere. The check found thirty-six library names
+  written `(web …)` for libraries that live under `(gfx …)` and `(aud sfx)`;
+  the manual is corrected.
 
 ## 1.6.1 — 2026-09-06
 
