@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-*11 commits since 1.6.1.* The glTF reader keeps the whole material model, the GLB
+*12 commits since 1.6.1.* The glTF reader keeps the whole material model, the GLB
 writer writes it back, skinned normals light correctly under uneven and
 mirrored joints, an interrupted crossfade no longer jumps, and a program
 that dies tells its host why.
@@ -66,6 +66,13 @@ that dies tells its host why.
   screen and fades from it; frozen nodes the incoming clip does not drive ease
   to bind. Still one transition at a time and no layering or masking.
 - A morph target without `POSITION` no longer fails to load.
+- The `at FILE:LINE (name)` line of a compile-time diagnostic named the wrong
+  line on the Chez-hosted driver (newlines inside a form were never counted,
+  so a twenty-line string made the next form report line 4 instead of 26)
+  and went to stdout; both hosts now agree with the source line, also after
+  multi-line `#;` and `#| |#` comments, and print it on stderr. A `#;` with
+  nothing after it is refused by both hosts. Files whose lines end in a bare
+  CR or NEL are still counted by LF only.
 - A program's argv was published on the real `globalThis`, so two programs
   started together in one process both read the later one's arguments (1.6.1
   shipped this fix; listed here because the test surface around it grew).
