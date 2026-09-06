@@ -245,5 +245,73 @@ const SEAM = /,global:\(typeof GPROX!=='undefined'\?GPROX:void 0\)/;
              `got ${threw ? String(threw) : 'no error'}`);
 }
 
+// ---- the real global must be masked, not merely left alone ----
+//
+// The instance proxy falls through to the real global for names it
+// has not been given.  A runner that publishes only a non-empty list
+// would let a `__goeteia_argv` some other code left on the real
+// global show through to a program started with none; publishing on
+// every start, an empty list included, masks it on both targets.
+{
+    globalThis.__goeteia_argv = ['leaked'];
+    try {
+        const w = await runModule(echoWasm, [], []);
+        require_(w.text.trim() === '0',
+                 'a stray real-global argv does not show through (wasm)',
+                 `got ${JSON.stringify(w.text.trim())}`);
+        const j = await runJsModule(echoJs2, [], []);
+        require_(j.text.trim() === '0',
+                 'a stray real-global argv does not show through (js)',
+                 `got ${JSON.stringify(j.text.trim())}`);
+    } finally {
+        delete globalThis.__goeteia_argv;
+    }
+}
+
+// ---- the runner API's own edges ----
+{
+    // a wasm module that never imports (web js) still gets a bridge,
+    // so publishing through it must be harmless
+    const plainWasm = fs.readFileSync(path.join(dir, 'plain.wasm'));
+    const r = await runModule(plainWasm, [], ['x']);
+    require_(r.text.trim() === '42',
+             'a wasm module without (web js) runs with argv given (wasm)',
+             `got ${JSON.stringify(r.text.trim())}`);
+    // the API takes any values and publishes their string forms
+    const w = await runModule(echoWasm, [], [42]);
+    require_(w.text.trim() === '1 [42]',
+             'a non-string argument is published as its string (wasm)',
+             `got ${JSON.stringify(w.text.trim())}`);
+    const j = await runJsModule(echoJs2, [], [42]);
+    require_(j.text.trim() === '1 [42]',
+             'a non-string argument is published as its string (js)',
+             `got ${JSON.stringify(j.text.trim())}`);
+}
+
+// ---- the refusal names the artifact and says what to do ----
+{
+    const oldJs = path.join(dir, 'echo-old.js');
+    let threw = null;
+    try { await runJsModule(oldJs, [], ['x']); } catch (e) { threw = e; }
+    const msg = threw ? String(threw) : '';
+    require_(msg.includes(oldJs) && /recompile/.test(msg),
+             'the refusal names the file and tells the reader to recompile (js)',
+             `got ${JSON.stringify(msg)}`);
+}
+
+// ---- no runner writes the real global, in any spelling ----
+//
+// The behavioural cells above read argv at program start.  A runner
+// that also wrote the real global -- before, after or alongside the
+// proxy -- would pass them and still hand a program that reads argv
+// later (after a yield) another instance's list.  That family is
+// closed textually: the shipped runners must not contain the write.
+for (const f of ['rt/run.mjs', 'rt/runjs.mjs']) {
+    const src = fs.readFileSync(path.join(root, f), 'utf8');
+    require_(!/globalThis\s*\.\s*__goeteia_argv\s*=[^=]/.test(src) &&
+             !/globalThis\s*\[\s*['"]__goeteia_argv['"]\s*\]\s*=[^=]/.test(src),
+             `${f} does not assign the real globalThis.__goeteia_argv`);
+}
+
 if (!failed) console.log('args: ok');
 process.exit(failed ? 1 : 0);
