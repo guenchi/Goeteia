@@ -1,5 +1,84 @@
 # Changelog
 
+## Unreleased
+
+*11 commits since 1.6.1.* The glTF reader keeps the whole material model, the GLB
+writer writes it back, skinned normals light correctly under uneven and
+mirrored joints, an interrupted crossfade no longer jumps, and a program
+that dies tells its host why.
+
+### API
+
+- `(gfx gltf)`: material texture slots are references — `gprim-base-tex`,
+  `gprim-mr-tex` (new, metallicRoughness), `gprim-normal-tex`,
+  `gprim-emissive-tex`, `gprim-occlusion-tex` return a `gtexref`
+  (`gtexref-texture` / `-image` / `-sampler` / `-texcoord` / `-factor`, the
+  factor being `normalTexture.scale` or `occlusionTexture.strength`). The file's
+  `textures[]` and `samplers[]` arrive verbatim through `gltf-textures` and
+  `gltf-samplers` (`gsampler-mag` / `-min` / `-wrap-s` / `-wrap-t`). The older
+  `gprim-normal-img` / `-emissive-img` / `-occlusion-img` are projections of the
+  references and keep returning image indices.
+- `gltf-cameras` and `gltf-node-camera`; `gprim-node` and `gprim-skin`;
+  `gprim-morph-normals` and `gprim-morph-tangents` (a target may omit any of
+  position / normal / tangent); `gprim-base-color-factor`, the file's own
+  `baseColorFactor` or `#f` when absent — `gprim-color` stays the rendering value
+  with its grey fallback, which is not the spec default and so cannot say
+  whether the key was there.
+- `TEXCOORD_1` loads as a trailing `uv1` interleave slot (the `uv` slot is
+  padded in when only `TEXCOORD_1` is present). `gltf-draw!` accepts a program
+  whose attributes equal the layout or the layout minus that trailing slot, and
+  binds with the primitive's stride: `fx-use!` takes the stride as an optional
+  third operand. A static vertex shader passed to `gltf-skin-shader` may declare
+  `a_uv1`; it composes after the skin inputs.
+- `(gfx glb)`: `glb-write!` gains `images` (bytes + mime), `samplers` (a `#f`
+  leaves the key out), `textures` as `(image . sampler)` pairs, `materials` with
+  the five slots as `(texture texcoord factor)` references and a `#f` colour
+  that omits `baseColorFactor`, `cameras`, and `skins` in the plural (the single
+  `skin` spelling writes the same bytes). Primitives may name a `material`, a
+  `node` (primitives on one node form one mesh, with that node's `skin`) and
+  morph `targets` with `weights`. Options that cannot both hold are refused by
+  name. A file that uses none of the new options is byte-identical to before.
+- `(gfx gl)`: `gl-texture-sampler!`. `(gfx glsl)`: the expression form
+  `(?: c a b)`, printed `(c ? a : b)`; `(gfx wgsl)` renders it as `select`.
+- Host runners: an unhandled Scheme error rejects `runModule` / `runJsModule`
+  with an `Error` whose message is the program's exception line, whose `output`
+  is everything the program wrote before dying and whose `cause` is the trap;
+  the CLIs print the output on stdout and the message on stderr. A silent trap
+  (a stack overflow) keeps the trap's own text.
+
+### Fixed
+
+- Two textures over one image with different samplers were one GL texture and
+  sampler state was never applied; now one GL texture per distinct
+  (image . sampler) pair, with the sampler's filters and wraps. A texture
+  without a sampler keeps the creation parameters (CLAMP_TO_EDGE), a deliberate
+  deviation from the spec's REPEAT so that assets without `samplers[]` render
+  as they did — the header says so.
+- Skinned normals moved by the joint matrix itself and `a_tangent.w` passed
+  through, so a joint that scales unevenly or mirrors lit incorrectly. Both the
+  CPU kernel and the skin shader now move a normal by the cofactor matrix of
+  the blended joint matrix, signed by the determinant; a tangent's `w` flips
+  with the determinant. The shader normalizes `g_normal` and `g_tangent.xyz`,
+  which changes lighting under scaled joints (the header gives before/after
+  values); the static path in `(gfx mesh)` is unchanged.
+- Interrupting a live crossfade released the outgoing clip and started the new
+  fade from the incoming clip's own pose. The machine now freezes the pose on
+  screen and fades from it; frozen nodes the incoming clip does not drive ease
+  to bind. Still one transition at a time and no layering or masking.
+- A morph target without `POSITION` no longer fails to load.
+- A program's argv was published on the real `globalThis`, so two programs
+  started together in one process both read the later one's arguments (1.6.1
+  shipped this fix; listed here because the test surface around it grew).
+
+### Tests and tooling
+
+- `test/assets/p1.glb`, a Blender export carrying every material slot, two
+  samplers, a second UV set, morph targets with normals, two skins, a camera
+  and four clips; `test/probes/` for programs a `.mjs` test drives;
+  `test/glbcheck.py`, a dependency-free structural checker for written GLBs;
+  the writer's re-export of `p1.glb` is compared with the original's JSON and
+  re-imported by Blender when Blender is installed.
+
 ## 1.6.1 — 2026-09-06
 
 *3 commits.* One runner fix; no API change.
