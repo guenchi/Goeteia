@@ -318,10 +318,11 @@ fs.copyFileSync(echo.js, echoJs3);
 // start.  The slot is restored in `finally`.
 {
     const before = Object.getOwnPropertyDescriptor(globalThis, '__goeteia_argv');
+    const refuse = () => { throw new Error('a runner assigned the real globalThis.__goeteia_argv'); };
     Object.defineProperty(globalThis, '__goeteia_argv', {
-        configurable: true,
+        configurable: true,        // so `finally` can restore the slot
         get: () => undefined,
-        set: () => { throw new Error('a runner assigned the real globalThis.__goeteia_argv'); },
+        set: refuse,
     });
     const echoJs4 = path.join(dir, 'echo4.js');
     fs.copyFileSync(echo.js, echoJs4);
@@ -334,6 +335,13 @@ fs.copyFileSync(echo.js, echoJs3);
                  j1.text.trim() === '1 [x]' && j0.text.trim() === '0',
                  'both runners start programs without touching the real global',
                  `got ${JSON.stringify([w1, w0, j1, j0].map(r => r.text.trim()))}`);
+        // the slot had to stay configurable for the restore below, so a
+        // runner could have replaced or deleted it instead of assigning:
+        // the refusing setter must still be the one installed
+        const after = Object.getOwnPropertyDescriptor(globalThis, '__goeteia_argv');
+        require_(after && after.set === refuse,
+                 'the real-global slot was neither replaced nor deleted by a runner',
+                 `descriptor after the runs: ${JSON.stringify(after && Object.keys(after))}`);
     } catch (e) {
         require_(false, 'both runners start programs without touching the real global',
                  String(e));
