@@ -1,5 +1,39 @@
 # Changelog
 
+## 1.6.1 — 2026-09-06
+
+*3 commits.* One runner fix; no API change.
+
+### Fixed — program arguments
+
+**Two programs started together in one process read their own argv.**
+`rt/run.mjs` and `rt/runjs.mjs` published a program's arguments by
+assigning the real `globalThis.__goeteia_argv` before their first
+`await`, and `__goeteia_*` names resolve per module instance only when
+written through that instance's proxy — so two modules started
+concurrently in one process both read the list of whichever started
+last. Sequential starts, which is what the CLI does, never showed it.
+The wasm runner now publishes through the bridge's instance global;
+the JS runner through a new `rt.global` export on the emitted module,
+alongside `rt.mem`, on every start (an empty list included, because ES
+modules are cached per file and a skipped write leaves the previous
+start's list in place).
+
+A JS module emitted before `rt.global` existed is refused by name when
+given arguments rather than fall back to the real global; argv-less
+runs of such a module are unchanged. Recompile it to pass arguments.
+
+Remaining edge, documented in `docs/limits.md`: starting the *same* JS
+file twice in one process still shares one module instance and so one
+argv; two different files, two processes, or the wasm target are
+unaffected.
+
+### Changed
+
+- The README links the manual and this changelog beside the site link.
+- `(web css)` header comments follow the 1.6.0 fraction rule
+  (`(dec 0 6)` is `0.6`).
+
 ## 1.6.0 — 2026-09-02
 
 *3 commits.* One notation change, made deliberately.
