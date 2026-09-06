@@ -66,9 +66,10 @@ for (const [label, start] of [
     let err = null;
     try { await start(); } catch (e) { err = e; }
     require_(err instanceof Error, `${label}: an unhandled error rejects with an Error`);
-    require_(err && String(err.message).includes(LINE),
-             `${label}: the rejection's message carries the exception line`,
-             `message: ${JSON.stringify(err && err.message)}`);
+    require_(err && err.cause instanceof Error &&
+             err.message === `${LINE} (trap: ${err.cause.message})`,
+             `${label}: the message is the exception line, prefix stripped, with the trap appended`,
+             `message: ${JSON.stringify(err && err.message)} cause: ${String(err && err.cause)}`);
     require_(err && err.output === OUTPUT,
              `${label}: the rejection carries the program's output before it died`,
              `output: ${JSON.stringify(err && err.output)}`);
@@ -82,11 +83,11 @@ for (const [label, runner, file] of [
     const r = spawnSync(process.execPath, [path.join(root, 'rt', runner), file],
                         { cwd: root, encoding: 'utf8' });
     require_(r.status === 1, `${label} CLI: exit status 1 on an unhandled error`, `status ${r.status}`);
-    require_(r.stdout.includes('checking joints...'),
-             `${label} CLI: what the program wrote before dying reaches stdout`,
+    require_(r.stdout === OUTPUT,
+             `${label} CLI: stdout is exactly what the program wrote before dying`,
              `stdout: ${JSON.stringify(r.stdout)}`);
-    require_(r.stderr.includes(LINE),
-             `${label} CLI: the exception line reaches stderr`,
+    require_(/^check-skin: joint index out of range 42 \(trap: .+\)\n$/.test(r.stderr),
+             `${label} CLI: stderr is exactly the message line`,
              `stderr: ${JSON.stringify(r.stderr)}`);
 }
 
@@ -113,7 +114,7 @@ for (const [label, start] of [
     require_(err && err.output === 'before the overflow\n',
              `${label}: a silent trap still carries the output before it`,
              `output: ${JSON.stringify(err && err.output)}`);
-    require_(err && err.cause instanceof Error && err.message.includes(err.cause.message),
+    require_(err && err.cause instanceof Error && err.message === err.cause.message,
              `${label}: with no exception line the message is the trap's own text and the cause is attached`,
              `message: ${JSON.stringify(err && err.message)} cause: ${String(err && err.cause)}`);
     require_(err && !err.message.includes('unhandled exception'),
@@ -141,13 +142,37 @@ for (const [label, start] of [
              `message: ${JSON.stringify(err && err.message)}`);
 }
 
+// ---- the prefix counts at the start of a line only ----
+//
+// A program that mentions the prefix mid-line and then dies without
+// announcing anything must be reported with the trap's text, not with
+// the mention: matching the prefix anywhere in a line would pick it.
+const decoy = build('decoy', `
+(import (rnrs))
+(display "note: unhandled exception: decoy is not a report") (newline)
+(define (down n) (+ 1 (down (+ n 1))))
+(display (down 0))
+`);
+for (const [label, start] of [
+    ['wasm', () => runModule(fs.readFileSync(decoy.wasm))],
+    ['js', () => runJsModule(decoy.js)],
+]) {
+    let err = null;
+    try { await start(); } catch (e) { err = e; }
+    require_(err && err.cause instanceof Error && err.message === err.cause.message &&
+             !err.message.includes('decoy'),
+             `${label}: a mid-line mention of the prefix is not an exception line`,
+             `message: ${JSON.stringify(err && err.message)}`);
+}
+
 // ---- the control: a program that finishes is untouched ----
 {
     const w = await runModule(fs.readFileSync(fine.wasm));
     const j = await runJsModule(fine.js);
-    require_(w.text === 'all joints in range\n' && j.text === 'all joints in range\n',
-             'a program that finishes still returns its text on both targets',
-             JSON.stringify([w.text, j.text]));
+    require_(w.text === 'all joints in range\n' && j.text === 'all joints in range\n' &&
+             w.result === '' && j.result === '',
+             'a program that finishes still returns its text and result on both targets',
+             JSON.stringify([w.text, w.result, j.text, j.result]));
 }
 
 if (!failed) console.log('run-errors: ok');
