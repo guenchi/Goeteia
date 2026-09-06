@@ -79,12 +79,18 @@ The loader interleaves whatever attributes an asset has, in ONE
 canonical order with FIXED widths:
 
     position vec3 · normal vec3 · uv vec2 · tangent vec4 ·
-    color vec4 · joints vec4 · weights vec4
+    color vec4 · joints vec4 · weights vec4 · uv1 vec2
 
 Rules you must never re-derive from guesswork:
 
 - The uv slot exists (zeroed) the moment anything past
-  position+normal is present. A missing NORMAL becomes +y.
+  position+normal is present -- including a `TEXCOORD_1` with no
+  `TEXCOORD_0`. A missing NORMAL becomes +y.
+- `uv1` (`TEXCOORD_1`) rides at the END, after the skin inputs, so
+  adding it moves nothing else. It is the ONE slot a program may
+  leave undeclared: `gltf-draw!` accepts a schema equal to the
+  layout or equal to it minus a trailing `uv1`, and binds at the
+  PRIMITIVE's stride. Any other missing attribute is still refused.
 - COLOR_0 always occupies 16 bytes even when the accessor is VEC3
   (alpha fills with 1). Declaring `vec3 a_color` in a shader is a
   refused width error, not a style choice.
@@ -96,6 +102,15 @@ Rules you must never re-derive from guesswork:
   sample". After `gltf-load-textures!` every primitive owns bindable
   slots (1x1 white/flat-normal fallbacks), so `gprim-tex` is "what
   do I bind", never "what does the asset have".
+- A material slot is a REFERENCE, not an image index:
+  `gprim-base-tex` / `-mr-tex` / `-normal-tex` / `-emissive-tex` /
+  `-occlusion-tex` answer a `gtexref` naming the texture, the image,
+  the sampler, the UV set (`gtexref-texcoord`) and the scalar
+  (`gtexref-factor` = normal scale or occlusion strength). Two
+  textures over one image with different samplers are two textures,
+  and `gltf-load-textures!` makes two GL objects. The older
+  `gprim-*-img` accessors still answer image indices -- they are
+  projections of the references, not separate facts.
 
 ## Shaders: compose, print, scan -- then ship
 
