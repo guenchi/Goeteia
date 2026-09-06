@@ -142,9 +142,12 @@ Before any shader reaches a page:
   before sampling. Clips over disjoint nodes compose; per-path
   layering on one node does not exist. There is no additive or
   masked blending -- do not promise it.
-- `anim-machine` carries ONE transition. Interrupting a live fade
-  releases the outgoing clip and the pose JUMPS; that is documented,
-  not a bug you should try to fix in an app.
+- `anim-machine` carries ONE transition, and interrupting a live
+  fade is CONTINUOUS: the pose on screen is frozen and the new fade
+  starts from it, so you do not need to work around a jump. A node
+  the incoming clip does not drive eases from its frozen value to
+  bind over that same fade. What is still absent is layering: two
+  clips over one node blend by a single weight, never per path.
 - LINEAR rotation is shortest-path nlerp, not slerp -- a deliberate
   choice in the glTF animation path, not a missing capability.
   `(gfx mat)` exports `flasin`/`flacos`/`flatan`/`flatan2` and
