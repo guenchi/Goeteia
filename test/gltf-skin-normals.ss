@@ -96,6 +96,14 @@
 (define collapsed-ok
   (and (= (out 1 0) 0.0) (= (out 1 1) 0.0) (= (out 1 2) 0.0)))
 
+;; (b') the same collapsed joint (1,1,0) sends (0,0,1) to ITSELF: the
+;;     cofactor is diag(0,0,1), the determinant is 0 and the sign must
+;;     read +1 there.  A sign() built-in (or det/|det|) gives 0 at a
+;;     zero determinant and would erase this normal -- the half-fix the
+;;     zero-vector case above cannot tell apart.
+(define collapsed-kept-ok                  ; v2's normal (0 r2 r2) -> (0 0 r2) -> (0 0 1)
+  (and (near? (out 2 0) 0.0) (near? (out 2 1) 0.0) (near? (out 2 2) 1.0)))
+
 ;; uniform scale and identity: unchanged by the rule (compatibility)
 (posed! 3.0 3.0 3.0)
 (define uniform-ok
@@ -104,5 +112,6 @@
 (define (report name ok) (unless ok (display "  FAIL ") (display name) (newline)) ok)
 (let ((all (list (report "uneven" uneven-ok) (report "mirrored" mirrored-ok)
                  (report "reflection" reflection-ok) (report "collapsed" collapsed-ok)
+                 (report "collapsed-kept" collapsed-kept-ok)
                  (report "uniform" uniform-ok))))
   (let loop ((l all)) (or (null? l) (and (car l) (loop (cdr l))))))
