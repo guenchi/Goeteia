@@ -1,8 +1,8 @@
 # Changelog
 
-## Unreleased
+## 1.6.2 — 2026-09-07
 
-*13 commits since 1.6.1.* The glTF reader keeps the whole material model, the GLB
+*14 commits.* The glTF reader keeps the whole material model, the GLB
 writer writes it back, skinned normals light correctly under uneven and
 mirrored joints, an interrupted crossfade no longer jumps, and a program
 that dies tells its host why.
