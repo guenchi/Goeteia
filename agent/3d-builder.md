@@ -130,20 +130,21 @@ Before any shader reaches a page:
 - `anim-machine` carries ONE transition. Interrupting a live fade
   releases the outgoing clip and the pose JUMPS; that is documented,
   not a bug you should try to fix in an app.
-- LINEAR rotation is shortest-path nlerp, not slerp. The runtime has
-  NO inverse trigonometry (`flacos`/`flatan` do not exist): no IK,
-  (corrected 2026-08-07: flasin/flacos/flatan/flatan2 and q-slerp
-  now live in (gfx mat) -- angle-from-vector and constant-rate
-  quaternion interpolation are available; orthonormal-basis
-  construction remains a fine trig-free alternative).
-- Two skin carriers (corrected 2026-08-07): the ESSL 1.00 uniform
-  array carries 32 joints; gltf-skin-program3!'s std140 uniform
-  block carries 256. The PROGRAM decides the carrier, not the
-  asset -- gltf-parse accepts up to 256 joints.
-- `gltf-animation-duration` is exported (corrected 2026-08-07) --
-  read clip lengths from it, never hardcode. One-shot pattern:
-  play, count the duration down, fade back to idle; a hold-last
-  clip (death) freezes the machine instead of fading.
+- LINEAR rotation is shortest-path nlerp, not slerp -- a deliberate
+  choice in the glTF animation path, not a missing capability.
+  `(gfx mat)` exports `flasin`/`flacos`/`flatan`/`flatan2` and
+  `q-slerp`, so angle-from-vector work and constant-rate quaternion
+  interpolation are both available to you: IK and angle math are
+  fine to write. Orthonormal-basis construction is still a good
+  trig-free alternative where it fits.
+- Two skin carriers: the ESSL 1.00 uniform array carries 32 joints;
+  gltf-skin-program3!'s std140 uniform block carries 256. The
+  PROGRAM decides the carrier, not the asset -- gltf-parse accepts
+  up to 256 joints.
+- `gltf-animation-duration` is exported -- read clip lengths from
+  it, never hardcode. One-shot pattern: play, count the duration
+  down, fade back to idle; a hold-last clip (death) freezes the
+  machine instead of fading.
 - To ask "is this animation broken or just subtle", measure it:
   sample the clip over a cycle and report the max joint-translation
   delta. Breath-type clips sit an order of magnitude below walk.
