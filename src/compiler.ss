@@ -1401,13 +1401,36 @@
                     (compile-fn-value (car f) (cdr f))
                     (let ((p (assq r prim-arity)))
                       (if p
-                          ;; a primitive used as a value: synthesize
-                          ;; the eta-expansion and close over nothing
-                          (let ((ps (map (lambda (i) (gensym "p"))
-                                         (nums-below (cdr p)))))
-                            (compile-lambda ps (list (cons r ps))
-                                            locals cell))
+                          (compile-prim-value r (cdr p))
                           (errorf 'goeteia "unbound variable:" e))))))))))
+
+;; A primitive used as a VALUE: one eta-expansion, held in a global,
+;; however many times the name is referenced -- the same rule as
+;; compile-fn-value, for the same reason.  `(eq? car car)' is true in
+;; R6RS and in Chez; synthesizing the wrapper at each reference site
+;; made it false, and made `car' unfindable in a list or an
+;; eq-hashtable that held it.
+;;
+;; It shares *wrappers* and the `fn' interning key with user functions,
+;; and the two cannot collide: the *fns* lookup above runs BEFORE this
+;; one, so a name that a module defines at top level never reaches
+;; here, and a name that reaches here is not defined in that module.
+;;
+;; Only the VALUE path goes through the global.  A direct call `(car x)'
+;; is compiled as the primitive it is, with no closure and no
+;; indirection -- that is the hot path, and this changes nothing on it.
+(define (compile-prim-value name arity)
+  (if (assq name *wrappers*)
+      (global-get (intern! 'fn name))
+      (let ((idx (alloc-fn!))
+            (ps (map (lambda (i) (gensym "p")) (nums-below arity))))
+        ;; the eta-expansion closes over nothing, so its environment is
+        ;; G-NULL and the closure is a constant -- which is what lets it
+        ;; live in a global initializer
+        (lift-fixed! idx ps (list (cons name ps)) '())
+        (let ((gidx (adapter! arity)))
+          (set! *wrappers* (cons (list name idx gidx arity #f) *wrappers*))
+          (global-get (intern! 'fn name))))))
 
 ;; walk an argument list held in local t, pushing n elements
 (define (unpack-args t n)

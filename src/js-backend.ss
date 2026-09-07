@@ -403,12 +403,17 @@
                     (jfn-name r (cadr f))
                     (let ((p (assq r prim-arity)))
                       (if p
-                          ;; a primitive as a value: eta-expand
-                          (let ((ps (map-in-order (lambda (i) (jfresh!))
-                                                  (nums-below (cdr p)))))
-                            (list "((" (jsep "," ps) ")=>"
-                                  (jp r (map (lambda (x) 'eta) ps) ps)
-                                  ")"))
+                          ;; A primitive as a value: ONE eta-expansion,
+                          ;; bound once at module level, however many
+                          ;; times the name is referenced.  A variable
+                          ;; names one object -- `(eq? car car)' is true
+                          ;; in R6RS and in Chez -- and emitting a fresh
+                          ;; arrow at each reference made it false here
+                          ;; too, which is how a primitive went missing
+                          ;; from a list or an eq-hashtable holding it.
+                          ;; A direct call `(car x)' does not come this
+                          ;; way and is untouched.
+                          (jconst! 'prim r)
                           (errorf 'goeteia "unbound variable:" e))))))))))
 
 (define (jx-let e env lctx)
@@ -1354,10 +1359,25 @@
                      (i (cdr e)))
                  (when (eq? kind 'sym) (jkernel! 'sym))
                  (list "const C" (jb28 i) "="
-                       (if (eq? kind 'str)
-                           (list "S(" (jstring-lit datum) ")")
-                           (list "new Sym(S("
-                                 (jstring-lit (symbol->string datum)) "))"))
+                       (cond
+                        ((eq? kind 'str) (list "S(" (jstring-lit datum) ")"))
+                        ;; the eta-expansion of a primitive used as a
+                        ;; value; built here so that every reference is
+                        ;; this one name.  Constants are emitted after
+                        ;; the kernels and the top-level functions, so
+                        ;; whatever the call text reaches for is already
+                        ;; bound.
+                        ((eq? kind 'prim)
+                         (let ((ps (map-in-order
+                                    (lambda (i) (jfresh!))
+                                    (nums-below
+                                     (cdr (assq datum prim-arity))))))
+                           (list "((" (jsep "," ps) ")=>"
+                                 (jp datum (map (lambda (x) 'eta) ps) ps)
+                                 ")")))
+                        (else (list "new Sym(S("
+                                    (jstring-lit (symbol->string datum))
+                                    "))")))
                        ";\n")))
              (reverse *jconsts*)))
            ;; the interned-symbol registry: a fresh list per call, in
