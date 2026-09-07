@@ -3053,10 +3053,8 @@ the tuple, every candidate signature in registration order, and the
 winner's signature or `#f`. A diagnostic, so it never runs a handler.
 
 Predicate mode (`'predicates` in place of the classifier list) takes
-open-ended predicates and can only report ambiguity at the call. On the
-wasm target a top-level `(define (f x) …)` currently yields a fresh
-closure at every reference, so predicate identity does not hold there
-and tag mode is the form to write; see `docs/lng.md`.
+open-ended predicates and can only report ambiguity at the call; see
+`docs/lng.md`.
 
 ## Current Limits and Planned Work
 
