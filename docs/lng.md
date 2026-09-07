@@ -122,7 +122,7 @@ one hash lookup.
   what it reports. The tuple, every candidate signature in registration
   order, and the winning signature or `#f`.
 
-## Predicate mode, and why it is not the recommended form
+## Predicate mode, and why tag mode is the default
 
 `(make-generic 'name arity 'predicates)` takes signatures of ordinary
 predicates instead of tags. Nothing about open-ended procedures is
@@ -132,14 +132,6 @@ declared relation is `declare-subset!` over procedure objects.
 A predicate's identity is the **procedure object**. Two lambdas with
 identical bodies are two different predicates, and a relation declared
 about one says nothing about the other.
-
-> **Limitation, 2026-09-07.** On the wasm target a top-level
-> `(define (f x) …)` yields a *fresh closure at every reference*, so
-> even two mentions of one name are not `eq?`. Predicate identity
-> therefore does not hold there, and predicate mode is usable only on
-> the JS target and under Chez. Tag mode is unaffected — tags are
-> symbols. The wasm backend fix is a batch of its own; until it lands,
-> write tag mode.
 
 ## Not done
 

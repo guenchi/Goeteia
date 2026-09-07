@@ -15,12 +15,13 @@
 ;; Known divergences from the wasm target.  This list used to end
 ;; with "all confined to corners the test suite pins down as
 ;; unobservable", and both halves of that were false: `(eq? f f)` on
-;; a top-level f answers #f here and #t on wasm, which is an ordinary
-;; expression rather than a corner, and no test asserted it -- the one
-;; place that cared, test/trig.ss, worked AROUND it with a textual
-;; check and said so.  A note that claims coverage stops the next
-;; person from looking, so it is worth more than the divergence it
-;; was describing.
+;; a top-level f used to answer #t here and #f on wasm, which is an
+;; ordinary expression rather than a corner, and no test asserted it
+;; -- the one place that cared, test/trig.ss, worked AROUND it with a
+;; textual check and said so.  That divergence is gone (see the
+;; top-level-function entry below), but the lesson outlives it: a note
+;; that claims coverage stops the next person from looking, so it is
+;; worth more than the divergence it was describing.
 ;;
 ;;   argument evaluation order inside a few primitives follows JS
 ;;   left-to-right;
