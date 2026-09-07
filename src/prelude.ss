@@ -1461,8 +1461,21 @@
 (define (> a b) (< b a))
 (define (<= a b) (if (< b a) #f #t))
 (define (>= a b) (if (< a b) #f #t))
-(define (max a b) (if (< a b) b a))
-(define (min a b) (if (< a b) a b))
+;; R6RS max and min take one argument or more, not exactly two.  They
+;; were binary, so `(max 1 5 2)' was a compile error and `(apply max
+;; (list 3 9 4 100))' answered 9 -- the extra arguments went by without
+;; a word.  (What they still do NOT do is R6RS's inexactness
+;; contagion: `(max 1 2.0)' answers 2.0 here because that argument is
+;; the larger, not because any argument was inexact, and `(max 3 2.0)'
+;; answers 3 where R6RS asks for 3.0.  The binary version did not do it
+;; either; making only the n-ary path do it would be a worse
+;; inconsistency than leaving it, so it stays a known gap.)
+(define (max a . rest)
+  (let loop ((m a) (l rest))
+    (if (null? l) m (loop (if (< m (car l)) (car l) m) (cdr l)))))
+(define (min a . rest)
+  (let loop ((m a) (l rest))
+    (if (null? l) m (loop (if (< (car l) m) (car l) m) (cdr l)))))
 
 ;; A list has FINITE length by definition, so a chain that cycles is
 ;; not one and #f is the only answer -- but the answer has to ARRIVE.

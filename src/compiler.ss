@@ -1284,6 +1284,22 @@
     (set-car! cell (+ i 1))
     i))
 
+;; The n-ary arithmetic primitives, and the whole of what "n-ary" means
+;; for each: the value of the zero-argument call, and what one argument
+;; answers.  Two readers -- the direct-call fold in compile-prim* and
+;; the variadic eta-expansion a reference-as-value builds, in both
+;; backends -- take the rule from here, so `(+)' and `(apply + '())'
+;; cannot come to disagree.
+;;
+;;   (op zero-value unary)   unary: 'self or 'negate; #f zero-value
+;;   means the zero-argument call has no answer and must fail.
+(define prim-nary
+  '((+ 0 self) (* 1 self) (- #f negate)))
+
+(define (nary? op) (and (assq op prim-nary) #t))
+(define (nary-zero op) (cadr (assq op prim-nary)))
+(define (nary-unary op) (caddr (assq op prim-nary)))
+
 (define prim-arity
   '((car . 1) (cdr . 1) (cons . 2) (pair? . 1) (null? . 1) (zero? . 1)
     (+ . 2) (- . 2) (* . 2) (quotient . 2) (remainder . 2)
@@ -1422,15 +1438,68 @@
 (define (compile-prim-value name arity)
   (if (assq name *wrappers*)
       (global-get (intern! 'fn name))
-      (let ((idx (alloc-fn!))
-            (ps (map (lambda (i) (gensym "p")) (nums-below arity))))
+      (if (nary? name)
+          (compile-nary-value name)
+          (compile-fixed-prim-value name arity))))
+
+;; An n-ary primitive as a value is a VARIADIC closure: `+' called
+;; directly takes any number of arguments, so `+' passed to `map' or
+;; reached through `apply' has to as well.  A two-argument eta-expansion
+;; answered 3 for `(apply + (list 1 2 3))' -- a wrong answer with no
+;; error, which is the worst of the three outcomes.
+;;
+;; The body folds with the SAME binary operation the direct call folds
+;; with, and takes the zero- and one-argument answers from prim-nary,
+;; so there is one statement of what n-ary means and four readers of
+;; it: the direct call and the value form, in each of the two backends.
+;; It references only primitives, never a prelude procedure: dead-code
+;; elimination runs over the source, where this body does not exist
+;; yet, so a prelude name here would be pruned out from under it.
+(define (compile-nary-value name)
+  (let* ((idx (alloc-fn!))
+         (a (gensym "a"))
+         (acc (gensym "acc"))
+         (l (gensym "l"))
+         (lp (gensym "lp"))
+         (zero (nary-zero name))
+         (body
+          (list
+           (list 'if (list 'null? a)
+                 ;; no zero-argument answer means the call must fail
+                 ;; rather than invent one.  KNOWN GAP: this failure is
+                 ;; not equivalent to the direct call's.  `(-)' written
+                 ;; out is a named compile-time error; reached through
+                 ;; the value form it is an unreachable trap on wasm and
+                 ;; a "wrong argument count" on js -- a runtime failure
+                 ;; that does not name the primitive.  Deliberate, not
+                 ;; an oversight: naming it would need the name to
+                 ;; survive into the lifted body.
+                 (if zero zero (list '%unreachable))
+                 (list 'if (list 'null? (list 'cdr a))
+                       (if (eq? (nary-unary name) 'negate)
+                           (list '- 0 (list 'car a))
+                           (list 'car a))
+                       (list '%loop lp (list acc l)
+                             (list (list 'car a) (list 'cdr a))
+                             (list 'if (list 'null? l)
+                                   acc
+                                   (list lp
+                                         (list name acc (list 'car l))
+                                         (list 'cdr l)))))))))
+    (lift-variadic! idx '() a body '())
+    (set! *wrappers* (cons (list name idx idx 0 #t) *wrappers*))
+    (global-get (intern! 'fn name))))
+
+(define (compile-fixed-prim-value name arity)
+  (let ((idx (alloc-fn!))
+        (ps (map (lambda (i) (gensym "p")) (nums-below arity))))
         ;; the eta-expansion closes over nothing, so its environment is
         ;; G-NULL and the closure is a constant -- which is what lets it
         ;; live in a global initializer
-        (lift-fixed! idx ps (list (cons name ps)) '())
-        (let ((gidx (adapter! arity)))
-          (set! *wrappers* (cons (list name idx gidx arity #f) *wrappers*))
-          (global-get (intern! 'fn name))))))
+    (lift-fixed! idx ps (list (cons name ps)) '())
+    (let ((gidx (adapter! arity)))
+      (set! *wrappers* (cons (list name idx gidx arity #f) *wrappers*))
+      (global-get (intern! 'fn name)))))
 
 ;; walk an argument list held in local t, pushing n elements
 (define (unpack-args t n)
@@ -2672,12 +2741,19 @@
   (case op
     ((+ - *)
      ;; n-ary as nested binary ops, each with a fixnum fast path and
-     ;; a generic fallback (bignum promotion, flonum contagion)
+     ;; a generic fallback (bignum promotion, flonum contagion).  The
+     ;; zero- and one-argument answers come from prim-nary, which the
+     ;; value form reads too.
      (cond
-      ((and (eq? op '-) (= (length args) 1))
-       (arith2 '- (emit-fixnum 0) (arg 0) cell))
-      ((< (length args) 2)
-       (errorf 'goeteia "this primitive needs two or more arguments:" op))
+      ((= (length args) 1)
+       (if (eq? (nary-unary op) 'negate)
+           (arith2 '- (emit-fixnum 0) (arg 0) cell)
+           (arg 0)))
+      ((= (length args) 0)
+       (let ((z (nary-zero op)))
+         (if z
+             (emit-fixnum z)
+             (errorf 'goeteia "this primitive needs an argument:" op))))
       (else
        (let fold ((code (arg 0)) (i 1))
          (if (= i (length args))

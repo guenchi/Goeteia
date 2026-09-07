@@ -848,11 +848,20 @@
       (errorf 'goeteia "wrong argument count for primitive:" op)))
   (case op
     ((+ - *)
+     ;; n-ary as nested binary helpers.  The zero- and one-argument
+     ;; answers come from prim-nary -- the same table the wasm direct
+     ;; call and both backends' value forms read, so `(+)' here and
+     ;; `(apply + (list))' cannot come to disagree.
      (cond
-      ((and (eq? op '-) (= (length trees) 1))
-       (list (jhelper! "JSUB") "((0)," (a 0) ")"))
-      ((< (length trees) 2)
-       (errorf 'goeteia "this primitive needs two or more arguments:" op))
+      ((= (length trees) 1)
+       (if (eq? (nary-unary op) 'negate)
+           (list (jhelper! "JSUB") "((0)," (a 0) ")")
+           (a 0)))
+      ((= (length trees) 0)
+       (let ((z (nary-zero op)))
+         (if z
+             (jd z)
+             (errorf 'goeteia "this primitive needs an argument:" op))))
       (else
        (let ((h (jhelper! (case op ((+) "JADD") ((-) "JSUB") (else "JMUL")))))
          (let fold ((code (a 0)) (i 1))
@@ -1367,6 +1376,34 @@
                         ;; the kernels and the top-level functions, so
                         ;; whatever the call text reaches for is already
                         ;; bound.
+                        ;; an n-ary primitive as a value is VARIADIC
+                        ;; here too, folding with the same binary
+                        ;; operation the direct call folds with and
+                        ;; taking its zero- and one-argument answers
+                        ;; from prim-nary -- the same table the wasm
+                        ;; backend and the direct-call path read
+                        ((and (eq? kind 'prim) (nary? datum))
+                         (let* ((r (jfresh!)) (x (jfresh!)) (y (jfresh!))
+                                (z (nary-zero datum)))
+                           (list "((..." r ")=>" r ".length===0?"
+                                 ;; the zero-argument answer is a
+                                 ;; Scheme number, so it goes through
+                                 ;; the datum emitter: a bare JS
+                                 ;; integer is not one, and displayed
+                                 ;; as nothing at all
+                                 (if z
+                                     (jd z)
+                                     ;; no zero-argument answer: fail
+                                     ;; rather than invent one
+                                     "(()=>{throw new Error(\"wrong argument count\")})()")
+                                 ":" r ".length===1?"
+                                 (if (eq? (nary-unary datum) 'negate)
+                                     (list (jp '- (list 'eta 'eta)
+                                               (list "0" (list r "[0]"))))
+                                     (list r "[0]"))
+                                 ":" r ".reduce((" x "," y ")=>"
+                                 (jp datum (list 'eta 'eta) (list x y))
+                                 "))")))
                         ((eq? kind 'prim)
                          (let ((ps (map-in-order
                                     (lambda (i) (jfresh!))
