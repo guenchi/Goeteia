@@ -45,7 +45,8 @@ A `*`-prefixed name is a *pointer to a host object*: `*jsObject` (a Wasm
 15. [Running in the Browser](#running-in-the-browser)
 16. [Testing](#testing)
 17. [Porting from JavaScript/TypeScript](#porting-from-javascripttypescript)
-18. [Current Limits and Planned Work](#current-limits-and-planned-work)
+18. [Dispatch and Rules](#dispatch-and-rules)
+19. [Current Limits and Planned Work](#current-limits-and-planned-work)
 
 ## Toolchain and Workflow
 
@@ -2969,6 +2970,93 @@ JS-in-Scheme runtime.
 It runs like any Claude Code subagent — inside a session, by asking
 Claude to use the `web-porter` agent on a file — not as a standalone
 shell command.
+
+## Dispatch and Rules
+
+Rules that grow a case at a time — "fire against a mage", "fire against
+anyone" — need an answer to which one runs, and the two usual answers
+(first registered, last registered) both make the behaviour depend on
+where a `define` sits in a file. `(lng pred)` and `(lng generic)` make
+the relation between rules **declared** and a conflict with no declared
+answer an **error the program reports**. No classes, no inheritance, no
+method combination. Not for per-frame work: dispatch here is for event
+and turn granularity. Long form in `docs/lng.md`.
+
+### `(lng pred)`: Classifiers and Their Relations
+
+```
+procedure: (define-classifier name proc tags)
+
+func -> symbol -> procedure -> list -> *classifier
+```
+A classifier maps a value to a symbol out of a **declared finite** set.
+`classify c x` answers the tag and refuses one outside the domain.
+`declare-subtag! c sub super` records that `sub` is a kind of `super`,
+refusing a declaration that would close a cycle; the relation is kept
+as a reflexive, transitive closure, so `subtag? c 'paladin 'warrior`
+and `descendants c 'warrior` (which includes `warrior` itself) read it
+back. A diamond — paladin under both warrior and healer — is allowed.
+
+Finiteness is the point: because the tag set is declared, every tuple
+two handler signatures could both match can be enumerated, which is
+what turns an ambiguity into something the program can state when the
+rules are installed. `declare-subset!` and `subset?` are the same
+relation over ordinary predicates.
+
+### `(lng generic)`: Dispatch on Several Arguments
+
+```
+procedure: (make-generic name arity (classifiers c ...) [default])
+
+func -> symbol -> int -> list -> *generic
+```
+Answers an ordinary procedure of that arity, so a generic goes wherever
+a procedure is wanted. Arity is 1 to 4 — dispatch is written out per
+arity because this runtime has no `apply` — and a fifth is refused at
+construction. A **signature** has one entry per argument, a tag or `_`
+for any; the applicable handler that is most specific *at every
+position* wins, and one that is more specific in one argument and less
+in another conflicts rather than winning.
+
+```
+procedure: (add-handlers! g pairs)
+
+func -> *generic -> list -> boolean
+```
+`pairs` is a list of `(signature . procedure)`.
+Every change is a **transaction**: `add-handler!`, `add-handlers!`,
+`remove-handler!` and a `declare-subtag!` touching a classifier the
+generic uses each validate the whole proposed configuration before
+committing it, and leave the previous one untouched when they refuse.
+So `(fire _)` and `(_ mage)` are refused together — `(fire mage)`
+matches both and neither is more specific, and the irritants name that
+tuple — while the same two committed *with* `(fire mage)` are accepted.
+Signatures that resolve an overlap must be committed with it; splitting
+them across two commits is refused at the first. Removing the handler
+that resolved an overlap is refused and removes nothing.
+
+`generic-check!` revalidates on demand, `generic-handlers` lists
+handlers in registration order, and `generic-default!` installs a
+default after construction. At the call, nothing applicable runs the
+default or — with none — refuses under the generic's own name with the
+arguments as irritants; a tag outside a classifier's domain refuses
+**even when a default exists**, because the domain is what every
+conflict check was computed over.
+
+```
+procedure: (dispatch-trace g args)
+
+func -> *generic -> list -> list
+```
+What a call would do, without doing it: `(tags candidates winner)` —
+the tuple, every candidate signature in registration order, and the
+winner's signature or `#f`. A diagnostic, so it never runs a handler.
+
+Predicate mode (`'predicates` in place of the classifier list) takes
+open-ended predicates and can only report ambiguity at the call. On the
+wasm target a top-level `(define (f x) …)` currently yields a fresh
+closure at every reference, so predicate identity does not hold there
+and tag mode is the form to write; see `docs/lng.md`.
 
 ## Current Limits and Planned Work
 
