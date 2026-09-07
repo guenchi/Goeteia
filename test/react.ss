@@ -30,14 +30,14 @@
 (define dispose (js-call factory (js-undefined)
                          host (js-eval "({start: 5})")))
 
-(define root (kid host 0))
+(define page (kid host 0))
 (define mounted-ok
   (and (= (kid-count host) 1)
-       (string=? (kid-text (kid root 0) 0) "5")))
+       (string=? (kid-text (kid page 0) 0) "5")))
 
 ;; a click on the embedded widget updates its hole
-(js-method (kid root 1) "fire" "click")
-(define click-ok (string=? (kid-text (kid root 0) 0) "6"))
+(js-method (kid page 1) "fire" "click")
+(define click-ok (string=? (kid-text (kid page 0) 0) "6"))
 
 ;; missing props read as #f
 (define props-ok

@@ -120,7 +120,6 @@
 (define Qb (vector 0.5 -0.5 0.5 0.5))
 (define Qc (vector -0.5 0.5 0.5 0.5))
 (define nQa (vector -0.5 -0.5 -0.5 -0.5))
-(define (v3 x y z) (vector x y z))
 
 (define times3 (vector 0.0 1.0 2.0))
 (define times2 (vector 0.0 1.0))

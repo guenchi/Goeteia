@@ -3232,25 +3232,37 @@
   (and (define-form? f) (symbol? (cadr f))))
 
 ;; every application or lambda arity might need a closure type
+;; Which closure arities the program needs a type for.  A FORM and a
+;; LIST OF FORMS are different things here and must not share an entry
+;; point: handing a body -- or the top level -- to the form scanner
+;; makes it read that list, and every tail of it, as an application,
+;; so a body of n forms asked for closure types of every arity below
+;; n.  That is where 190KB of the compiler's own type section came
+;; from.  Over-recording an arity only wastes a type; missing one
+;; would be a miscompile, so the application case stays generous.
+(define (scan-arity-list es acc)
+  (if (pair? es)
+      (scan-arity-list (cdr es) (scan-arities (car es) acc))
+      acc))
 (define (scan-arities e acc)
   (if (pair? e)
       (case (car e)
         ((quote) acc)
         ((lambda)
-         (scan-arities (cddr e)
-                       (let ((a (length (formals-fixed (cadr e)))))
-                         (if (memv a acc) acc (cons a acc)))))
+         (scan-arity-list (cddr e)
+                          (let ((a (length (formals-fixed (cadr e)))))
+                            (if (memv a acc) acc (cons a acc)))))
         ((if begin set! define)
-         (scan-arities (cdr e) acc))
+         (scan-arity-list (cdr e) acc))
         ((let)
-         (scan-arities (map cadr (cadr e))
-                       (scan-arities (cddr e) acc)))
+         (scan-arity-list (map cadr (cadr e))
+                          (scan-arity-list (cddr e) acc)))
         (else
          (let ((acc (if (list? e)
                         (let ((a (length (cdr e))))
                           (if (memv a acc) acc (cons a acc)))
                         acc)))
-           (scan-arities (car e) (scan-arities (cdr e) acc)))))
+           (scan-arity-list e acc))))
       acc))
 
 (define (scan-recs e acc)
@@ -3389,6 +3401,34 @@
   (if (and (pair? f) (symbol? (car f)) (eq? (unmark (car f)) 'define))
       (cons 'define (cdr f))
       f))
+
+;; ---- one definition per top-level name ----
+;; The flat top level made a second definition of a name silently win
+;; for some readers and lose for others.  Refuse it by name instead.
+;; R6RS makes all three shapes an error anyway: a program defining a
+;; name it imported, two libraries exporting one name, and one file
+;; defining a name twice.
+;;
+;; The key is the definition name AS CODE GENERATION REGISTERS IT --
+;; marks included.  Two expansions of one macro introduce two
+;; hygienically distinct top-level bindings, which are two names here
+;; and not a duplicate; a program's own `define' is unmarked and can
+;; never collide with an introduced one.  Duplicate define-syntax is
+;; not checked here: expansion has already consumed those forms.
+(define (check-duplicate-defines! forms)
+  (let loop ((fs forms) (seen '()))
+    (cond
+     ((null? fs) forms)
+     ((define-form? (car fs))
+      (let* ((n (def-name (car fs)))
+             (p (assq n seen)))
+        (when p
+          (errorf 'goeteia "top-level name defined twice:"
+                  (unmark n)
+                  (origin-string (cdr p))
+                  (origin-string (form-loc (car fs)))))
+        (loop (cdr fs) (cons (cons n (form-loc (car fs))) seen))))
+     (else (loop (cdr fs) seen)))))
 
 ;; ---- dead code elimination ----
 ;; The prelude is compiled into every module; keep only definitions
@@ -3715,6 +3755,262 @@
              nf))
          forms))))
 
+;; ---- library-private namespacing ----
+;; The driver splices every imported library positionally into one
+;; flat top level, so two libraries' private helpers that happen to
+;; share a name become one name with two definitions, and the call
+;; sites of both bind to whichever the later passes pick.  That is not
+;; a pruning accident: it silently swaps one library's helper for
+;; another's, with a different meaning.  Before anything else reads
+;; the forms, rewrite each library's PRIVATE names to `path:name'.
+;; Exported names are untouched, so every program and every other
+;; library sees the same API.
+;;
+;; A library may export a macro whose template mentions a private
+;; helper, and that template is expanded in the importing program.
+;; So inside a define-syntax the rewrite is TOTAL -- quoted symbols
+;; there are code the transformer emits, not data.  Outside one,
+;; quoted data and case labels are left alone: a symbol used as a
+;; datum keeps its printed name.  (Both halves are load-bearing here:
+;; (web sx) quotes $sx-build inside its transformer and needs the
+;; rename, and quotes the data tags $sx-l / $sx-d on both sides of the
+;; transformer boundary -- those are never DEFINED, so they are not
+;; private names and neither half touches them.)
+
+;; loc string -> the library name that form came from, so a duplicate
+;; can say WHICH library, not just which file
+(define *lib-origins* '())
+
+(define (lib-name-string spec)
+  (let loop ((l spec) (acc ""))
+    (if (or (null? l) (not (pair? l)))
+        acc
+        (loop (cdr l)
+              (string-append acc (if (string=? acc "") "" " ")
+                             (symbol->string (unmark (car l))))))))
+
+(define (record-lib-origins! forms locs)
+  (set! *lib-origins* '())
+  (let loop ((fs forms) (ls locs))
+    (unless (null? fs)
+      (when (and (pair? ls) (car ls)
+                 (pair? (car fs)) (symbol? (car (car fs)))
+                 (eq? (resolve-tag (car (car fs))) 'library)
+                 (pair? (cdr (car fs))))
+        (set! *lib-origins*
+              (cons (cons (car ls) (lib-name-string (cadr (car fs))))
+                    *lib-origins*)))
+      (loop (cdr fs) (if (pair? ls) (cdr ls) '())))))
+
+(define (origin-string loc)
+  (if (not loc)
+      "unknown origin"
+      (let loop ((l *lib-origins*))
+        (cond
+         ((null? l) loc)
+         ((string=? (car (car l)) loc)
+          (string-append "(" (cdr (car l)) ") " loc))
+         (else (loop (cdr l)))))))
+
+(define (lib-prefix spec)
+  (let loop ((l spec) (acc ""))
+    (if (or (null? l) (not (pair? l)))
+        acc
+        (loop (cdr l)
+              (string-append acc (if (string=? acc "") "" "/")
+                             (symbol->string (unmark (car l))))))))
+
+(define (define-target x)
+  (if (pair? x) (define-target (car x)) x))
+
+;; ctor, predicate, accessors and mutators, derived exactly as
+;; xpand-record derives them.  The record TYPE name is not a top-level
+;; variable -- it survives only as the tag datum inside the rtd, which
+;; the printer shows -- so it keeps its original name.
+(define (record-bound-names e)
+  (let* ((spec (cadr e))
+         (name (if (pair? spec) (car spec) spec))
+         (ctor (if (pair? spec) (cadr spec) (sym-cat (list "make-" name))))
+         (pred (if (pair? spec) (caddr spec) (sym-cat (list name "?"))))
+         (fspecs (let find ((cs (cddr e)))
+                   (cond
+                    ((null? cs) '())
+                    ((eq? (resolve-tag (car (car cs))) 'fields) (cdr (car cs)))
+                    (else (find (cdr cs))))))
+         (fields (map (lambda (fs) (parse-field fs name)) fspecs)))
+    (cons (define-target ctor)
+          (cons (define-target pred)
+                (fold-left (lambda (acc f)
+                             (append acc (cons (caddr f)
+                                               (if (cadr f)
+                                                   (list (cadddr f))
+                                                   '()))))
+                           '()
+                           fields)))))
+
+;; the names one top-level form of a library body binds
+(define (bound-names f)
+  (if (not (pair? f))
+      '()
+      (case (resolve-tag (car f))
+        ((define) (list (define-target (cadr f))))
+        ((define-syntax) (list (define-target (cadr f))))
+        ((define-record-type) (record-bound-names f))
+        ((begin) (fold-left (lambda (acc x) (append acc (bound-names x)))
+                            '()
+                            (cdr f)))
+        (else '()))))
+
+;; every symbol an export clause mentions, `(rename (a b))' included:
+;; naming a symbol in an export list is enough to keep it unrenamed.
+(define (export-entry-names x)
+  (cond
+   ((symbol? x) (list (unmark x)))
+   ((pair? x) (fold-left (lambda (acc y) (append acc (export-entry-names y)))
+                         '()
+                         x))
+   (else '())))
+
+(define (library-export-names lib)
+  (let ((header (caddr lib)))
+    (let loop ((fs (cdr (cdddr lib)))
+               (acc (if (and (pair? header)
+                             (eq? (resolve-tag (car header)) 'export))
+                        (export-entry-names (cdr header))
+                        '())))
+      (cond
+       ((null? fs) acc)
+       ((and (pair? (car fs))
+             (eq? (resolve-tag (car (car fs))) 'export))
+        (loop (cdr fs) (append acc (export-entry-names (cdr (car fs))))))
+       (else (loop (cdr fs) acc))))))
+
+(define (ns-lookup s table)
+  (let ((e (assq s table)))
+    (if e (cdr e) s)))
+
+;; total rewrite: every symbol, quotes included.  Used inside
+;; define-syntax, where a quoted symbol is code the macro emits.
+(define (ns-total x table)
+  (cond
+   ((symbol? x) (ns-lookup x table))
+   ((pair? x) (cons (ns-total (car x) table) (ns-total (cdr x) table)))
+   ((vector? x)
+    (list->vector (map (lambda (y) (ns-total y table)) (vector->list x))))
+   (else x)))
+
+(define (ns-qq x table depth)
+  (cond
+   ((not (pair? x)) x)
+   ((and (symbol? (car x)) (eq? (resolve-tag (car x)) 'unquote))
+    (if (= depth 0)
+        (list (car x) (ns-walk (cadr x) table #f))
+        (list (car x) (ns-qq (cadr x) table (- depth 1)))))
+   ((and (symbol? (car x)) (eq? (resolve-tag (car x)) 'quasiquote))
+    (list (car x) (ns-qq (cadr x) table (+ depth 1))))
+   ((and (pair? (car x)) (symbol? (car (car x)))
+         (eq? (resolve-tag (car (car x))) 'unquote-splicing))
+    (cons (if (= depth 0)
+              (list (car (car x)) (ns-walk (cadr (car x)) table #f))
+              (list (car (car x)) (ns-qq (cadr (car x)) table (- depth 1))))
+          (ns-qq (cdr x) table depth)))
+   (else (cons (ns-qq (car x) table depth) (ns-qq (cdr x) table depth)))))
+
+(define (ns-walk-list l table total?)
+  (cond
+   ((pair? l) (cons (ns-walk (car l) table total?) (ns-walk-list (cdr l) table total?)))
+   ((null? l) '())
+   (else (ns-walk l table total?))))
+
+;; A record type's implicit names -- make-<t>, <t>?, <t>-<f>, and the
+;; mutator -- are derived at EXPANSION, long after this rewrite runs,
+;; so renaming only the references would leave the definitions behind
+;; under their bare names: the library would call `L:make-point' and
+;; define `make-point'.  Write the derived names out explicitly here,
+;; already renamed, and the expander then produces exactly them.  The
+;; record TYPE name is left alone -- it is not a top-level variable,
+;; it is the tag datum the rtd carries and the printer shows.
+(define (ns-record e table)
+  (let* ((spec (cadr e))
+         (name (if (pair? spec) (car spec) spec))
+         (ctor (if (pair? spec) (cadr spec) (sym-cat (list "make-" name))))
+         (pred (if (pair? spec) (caddr spec) (sym-cat (list name "?"))))
+         (fields (map (lambda (fs) (parse-field fs name))
+                      (let find ((cs (cddr e)))
+                        (cond
+                         ((null? cs) '())
+                         ((eq? (resolve-tag (car (car cs))) 'fields) (cdr (car cs)))
+                         (else (find (cdr cs))))))))
+    (cons (car e)
+          (cons (list name (ns-lookup ctor table) (ns-lookup pred table))
+                (map (lambda (c)
+                       (if (and (pair? c) (eq? (resolve-tag (car c)) 'fields))
+                           (cons (car c)
+                                 (map (lambda (f)
+                                        (if (cadr f)
+                                            (list 'mutable (car f)
+                                                  (ns-lookup (caddr f) table)
+                                                  (ns-lookup (cadddr f) table))
+                                            (list 'immutable (car f)
+                                                  (ns-lookup (caddr f) table))))
+                                      fields))
+                           c))
+                     (cddr e))))))
+
+(define (ns-walk x table total?)
+  (cond
+   ((symbol? x) (ns-lookup x table))
+   ((not (pair? x)) x)
+   (total? (ns-total x table))
+   (else
+    (let ((h (car x)))
+      (cond
+       ((and (symbol? h) (eq? (resolve-tag h) 'quote)) x)
+       ((and (symbol? h) (eq? (resolve-tag h) 'quasiquote))
+        (list h (ns-qq (cadr x) table 0)))
+       ((and (symbol? h) (eq? (resolve-tag h) 'define-syntax))
+        (cons h (ns-total (cdr x) table)))
+       ((and (symbol? h) (eq? (resolve-tag h) 'define-record-type)
+             (pair? (cdr x)))
+        (ns-record x table))
+       ((and (symbol? h) (eq? (resolve-tag h) 'case) (pair? (cdr x)))
+        (cons h (cons (ns-walk (cadr x) table #f)
+                      (map (lambda (c)
+                             (if (and (pair? c) (pair? (car c)))
+                                 (cons (car c) (ns-walk-list (cdr c) table #f))
+                                 (ns-walk-list c table #f)))
+                           (cddr x)))))
+       (else (ns-walk-list x table #f)))))))
+
+(define (namespace-library f)
+  (if (and (pair? f) (symbol? (car f)) (eq? (resolve-tag (car f)) 'library)
+           (pair? (cdr f)) (pair? (cddr f)) (pair? (cdddr f)))
+      (let* ((prefix (lib-prefix (cadr f)))
+             (exports (library-export-names f))
+             (body (cdr (cdddr f)))
+             (table (let loop ((fs body) (acc '()))
+                      (if (null? fs)
+                          acc
+                          (loop (cdr fs)
+                                (fold-left
+                                 (lambda (a n)
+                                   (if (or (not (symbol? n))
+                                           (memq (unmark n) exports)
+                                           (assq n a))
+                                       a
+                                       (cons (cons n (sym-cat (list prefix ":" n)))
+                                             a)))
+                                 acc
+                                 (bound-names (car fs))))))))
+        (if (null? table)
+            f
+            (cons (car f)
+                  (cons (cadr f)
+                        (cons (caddr f)
+                              (cons (cadddr f)
+                                    (map (lambda (x) (ns-walk x table #f)) body)))))))
+      f))
+
 ;; the target-independent front half -- expansion, assignment
 ;; conversion, inlining, DCE -- shared by every backend; returns
 ;; (export-names forms fn-defs var-defs main-steps)
@@ -3723,6 +4019,11 @@
   (set! *renames* '())
   (set! *macros* '())
   (set! *form-locs* '())
+  ;; library privates get their namespace before anything reads the
+  ;; forms -- collect-macros! descends into libraries and would
+  ;; otherwise register a library's macros under their bare names
+  (set! forms (map-in-order namespace-library forms))
+  (record-lib-origins! forms locs)
   ;; collect explicit macro definitions first so they can be used
   ;; before their definition -- descend into libraries and begins,
   ;; since a library splices globally and a macro it defines must be
@@ -3739,16 +4040,21 @@
                            acc))
                      '()
                      expanded))
+         ;; one definition per name, checked before inlining and DCE
+         ;; read the forms -- both of them have their own idea of what
+         ;; a name means, and neither should see a name twice
+         (checked (check-duplicate-defines!
+                   (filter (lambda (f)
+                             (not (and (pair? f) (symbol? (car f))
+                                       (eq? (unmark (car f)) 'export))))
+                           expanded)))
          (forms (prune-dead
                  (map-in-order (lambda (f)
                                  (let ((nf (convert-assignments f)))
                                    (unless (eq? nf f)
                                      (record-loc! nf (form-loc f)))
                                    nf))
-                     (filter (lambda (f)
-                               (not (and (pair? f) (symbol? (car f))
-                                         (eq? (unmark (car f)) 'export))))
-                             (inline-forms expanded)))
+                     (inline-forms checked))
                  export-names))
          (fn-defs (filter fn-define? forms))
          (var-defs (filter var-define? forms))
@@ -4215,7 +4521,32 @@
                                        (if (memv a acc) acc (cons a acc))))
                                    '(0)
                                    fn-defs)))
-           (clos-arities (sort-by self-id (scan-arities forms '())))
+           ;; per FORM: handing the whole top-level LIST to scan-arities
+           ;; makes it read that list, and every tail of it, as an
+           ;; application, so the arity of each tail (hundreds of them)
+           ;; got a closure type pair of its own.
+           ;;
+           ;; Scanning the source finds the closures the source
+           ;; WRITES.  The set is seeded with the primitive arities
+           ;; because the compiler also SYNTHESIZES closures: a
+           ;; primitive named in value position becomes an eta wrapper
+           ;; of that primitive's own arity (compile-prim-value), and
+           ;; nothing in the program need be a call of that arity for
+           ;; it to be emitted -- `(apply car '((1)))' in a file with
+           ;; no other one-argument call is the whole reproduction.
+           ;; The over-broad old scan was hiding this by handing out
+           ;; types for every arity it mistook a list tail for.
+           ;; Variadic wrappers (prim-nary) use TY-CLOSV and need
+           ;; nothing here.
+           (clos-arities (sort-by self-id
+                                  (fold-left (lambda (acc f) (scan-arities f acc))
+                                             (fold-left (lambda (acc e)
+                                                          (if (memv (cdr e) acc)
+                                                              acc
+                                                              (cons (cdr e) acc)))
+                                                        '()
+                                                        prim-arity)
+                                             forms)))
            (rec-fields (sort-by self-id (scan-recs forms '())))
            (next (let number ((as plain-arities) (i TY-FIRST-FREE))
                    (if (null? as)

@@ -296,6 +296,11 @@ else
     cat "$DOCS_OUT"
     echo "FAIL test/docs.mjs"; fail=1
 fi
+if ${NODE-node} test/duplicate-top-level.mjs >/dev/null 2>&1; then
+    echo "ok   test/duplicate-top-level.mjs"
+else
+    echo "FAIL test/duplicate-top-level.mjs"; fail=1
+fi
 if ${NODE-node} test/trig-single-supply.mjs >/dev/null 2>&1; then
     echo "ok   test/trig-single-supply.mjs"
 else

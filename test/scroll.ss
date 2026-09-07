@@ -6,8 +6,8 @@
 
 (js-eval "globalThis.__ls = {}; globalThis.document = { createElement(tag){ if (tag === 'canvas') return { getContext(k){ return { font:'', measureText(s){ return { width: 10 } } } } }; return { style:{}, children:[], textContent:'', scrollTop:0, appendChild(c){ this.children.push(c) }, removeChild(c){ this.children = this.children.filter(x => x !== c) }, addEventListener(k,f){ globalThis.__ls[k] = f }, get offsetHeight(){ const t = this.textContent; return t && t[0] === 'X' ? 48 : 24 } } } }")
 
-(define body (js-eval "globalThis.document.createElement('div')"))
-(define vs (make-vscroll body 400 600 "15px m" 24))
+(define host (js-eval "globalThis.document.createElement('div')"))
+(define vs (make-vscroll host 400 600 "15px m" 24))
 (define outer (vscroll-element vs))
 (define inner (js-index (js-get outer "children") 0))
 

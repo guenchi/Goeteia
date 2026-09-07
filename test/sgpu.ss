@@ -209,11 +209,11 @@ globalThis.__gpulog = [];
   ;; among the pipelines, exactly two carry a blend target with
   ;; depth writes disabled (the blended lit + tex)
   (= (count-log "depth:depth24plus:less:0:blend") 4))
-(define d0 (count-log "drawIndexedIndirect"))
+(define dii0 (count-log "drawIndexedIndirect"))
 (gpu-begin!) (gpu-clear! 0.0 0.0 0.0 1.0) (sgpu-draw! sctr) (gpu-flush!)
 (define tr-draw-ok
   ;; two indirect draws: the opaque box, then the glass sphere on
   ;; the blend pipeline
-  (= (- (count-log "drawIndexedIndirect") d0) 2))
+  (= (- (count-log "drawIndexedIndirect") dii0) 2))
 
 (and init-ok frame1-ok static-ok dirty-ok tr-init-ok tr-draw-ok)

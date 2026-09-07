@@ -412,6 +412,45 @@ failing definition identifies itself.  Very large quoted literals
 traversed with `for-each` can overflow the expander — build big
 tables programmatically instead.
 
+### `define` inside a `begin` in expression position
+
+A `begin` that carries definitions is a top-level (or body) form, not
+an expression.  Written where a value is expected it is refused, and
+the message names `define` because that is what the compiler was asked
+to call:
+
+```scheme
+(display (begin (define (h) 42) (h)))   ; Exception in goeteia: cannot call: define
+```
+
+R6RS says the same, so this is not a gap to be filled.  The shape most
+often arrives through a macro whose template is
+`(begin (define …) (use …))` and which is then used as an argument.
+Use it as a top-level form, or make the definition internal:
+
+```scheme
+(display (let () (define (h) 42) (h)))  ; 42
+```
+
+A macro of that shape used at the top level is fine, including more
+than once: two expansions introduce two distinct top-level bindings.
+
+### One definition per top-level name
+
+Libraries are spliced into one flat top level, so a program that
+defines a name a library exports, two libraries exporting one name,
+and one file defining a name twice are all the same situation.  Each
+is refused by name, with both origins:
+
+```
+top-level name defined twice: root "(web reactive) …/lib/web/reactive.ss:3" "app.ss:33"
+```
+
+Rename your own definition.  A
+library's *private* helpers cannot collide this way: they are given
+their library's namespace before anything else sees them, so two
+libraries may both call a helper `$u8` without meeting.
+
 ### Reader errors say where the construct *opened*
 
 An unbalanced file used to be reported at its end, which is never
