@@ -1053,11 +1053,55 @@ Run `thunk` now, tracking every signal it reads, and rerun it whenever
 one of those signals changes. Returns the effect handle.
 
 ```
+procedure: (on-cleanup thunk)
+
+func -> procedure -> void
+```
+Register `thunk` to run at the end of the current effect's run —
+before that effect's next run, or when it is disposed, whichever comes
+first. This is how an effect releases what it acquired: the run that
+opened a socket registers the thunk that closes it, and the close
+happens before the next open.
+
+Several registrations run in reverse order of registration, and an
+effect's children are cleaned up before the effect itself. A `root`
+body may register directly too; those thunks run when the root's
+disposer fires.
+
+That order covers the thunks of the tree being released, and nothing
+else. A cleanup is ordinary code: one that writes a signal or disposes
+another effect runs that other effect's cleanups — and its next body —
+right there, between two thunks of this release. Keep cleanups to
+releasing what the run acquired and the order above is the whole
+story; drive the rest of the program from one and the interleaving is
+yours to reason about.
+
+Releasing a tree is one transaction. If a cleanup raises, every other
+cleanup in that tree — the failing thunk's siblings, its owner's own,
+and the rest of the subtree — still runs, and the first condition is
+re-raised once they are all done, so a failing release cannot strand
+what the others were going to free. On a rerun that also ends the
+rerun: the new body does not run, and the condition comes out of the
+write that triggered it.
+
+Called with no run to end it is an error by name: outside every
+effect, and from inside a cleanup, which is itself the end of a run.
+An `effect` or `root` created inside a cleanup is a new run, though,
+and its body may register normally.
+
+Under `batch`, a condition raised by a cleanup surfaces where the
+reruns happen — out of the `batch` call, not out of the `signal-set!`
+that queued them.
+
+```
 procedure: (dispose-effect! e)
 
 func -> *effect -> void
 ```
-Stop effect `e` and dispose the effects it owns; it will not rerun again.
+Stop effect `e` and dispose the effects it owns, running their
+cleanups and then its own; it will not rerun again. A cleanup that
+raises does not stop the others: the whole tree is released first and
+the first condition is re-raised afterwards.
 
 ```
 procedure: (root thunk)
