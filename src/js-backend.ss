@@ -26,13 +26,18 @@
 ;;   left-to-right;
 ;;
 ;;   a top-level function referenced as a value is one stable JS
-;;   function, not a fresh closure per reference.  `eq?` sees this,
-;;   and so does anything keyed by it -- an eq-hashtable finds a
-;;   top-level procedure again here and does not on wasm.  Both
-;;   answers are pinned, per target, in
-;;   test/js-backend-procedure-identity.mjs; a .ss fixture cannot
-;;   express them, because run-tests.sh holds every target to one
-;;   `;; expect:` line.
+;;   function, not a fresh closure per reference.  The wasm target
+;;   USED to differ here -- it built a closure struct at every
+;;   reference site, so `eq?` said no and an eq-hashtable could not
+;;   find a top-level procedure again -- and this note recorded the
+;;   divergence.  It is gone: the wasm emitter now holds that one
+;;   closure in a global (see compile-fn-value), because a variable
+;;   names one object, which is R6RS and not an optimization.  The
+;;   two targets agree, and test/procedure-identity.ss holds both to
+;;   it.  What is still true is that a .ss fixture cannot express a
+;;   PER-TARGET answer at all, since run-tests.sh holds every target
+;;   to one `;; expect:` line -- so a divergence that is deliberate
+;;   still needs an .mjs to say so.
 ;;
 ;; The %-prefixed accessors (%ratio-num, %ratio-den, %cx-re, %cx-im
 ;; and their kin) do NOT check the type of their argument, on either

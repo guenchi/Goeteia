@@ -1439,13 +1439,25 @@
           idx))))
 
 (define (compile-fn-value name entry)
-  ;; a top-level function used as a value: wrap it in a closure
+  ;; A top-level function used as a value: wrap it in a closure -- ONE
+  ;; closure, held in a global, however many times the name is
+  ;; referenced.
+  ;;
+  ;; This is a semantic requirement, not an optimization.  A variable
+  ;; names one object: R6RS says `(eq? f f)' is true, and the JS target
+  ;; and the Chez host both say so.  Allocating a fresh closure at each
+  ;; reference made `(eq? f f)' false for a `(define (f x) ...)' while
+  ;; `(define f (lambda ...))' stayed true, so two spellings of the same
+  ;; binding disagreed -- and `memq' could not find a procedure in a
+  ;; list holding it, nor a hashtable key on one.  The global also costs
+  ;; less: a reference is one `global.get' instead of four instructions
+  ;; and an allocation.
   (let ((idx (car entry))
         (nfixed (cadr entry))
         (variadic? (caddr entry))
         (w (assq name *wrappers*)))
     (if w
-        (make-closure-code (cadr w) (cddr w) nfixed variadic?)
+        (global-get (intern! 'fn name))
         (let ((widx (alloc-fn!)))
           (if variadic?
               ;; generic-only wrapper: unpack the fixed arguments,
@@ -1458,8 +1470,9 @@
                              (unpack-args t nfixed)
                              (local-get t)
                              #x12 (uleb idx))))   ; return_call f
-                (set! *wrappers* (cons (cons name (cons widx widx)) *wrappers*))
-                (make-closure-code widx widx nfixed #t))
+                (set! *wrappers*
+                      (cons (list name widx widx nfixed #t) *wrappers*))
+                (global-get (intern! 'fn name)))
               ;; typed wrapper plus the shared per-arity adapter
               (let ((tys (clos-ty nfixed)))
                 (record-fn!
@@ -1470,8 +1483,8 @@
                              #x12 (uleb idx))))
                 (let ((gidx (adapter! nfixed)))
                   (set! *wrappers*
-                        (cons (cons name (cons widx gidx)) *wrappers*))
-                  (make-closure-code widx gidx nfixed #f))))))))
+                        (cons (list name widx gidx nfixed #f) *wrappers*))
+                  (global-get (intern! 'fn name)))))))))
 
 (define (make-closure-code code-idx generic-idx arity variadic?)
   (list (ref-func code-idx)
@@ -4426,6 +4439,26 @@
 
 (define (emit-interned entry)
   ;; ((kind . datum) . global-idx) -> immutable global
+  (if (eq? (caar entry) 'fn)
+      (emit-fn-global (cdar entry))
+      (emit-text-global entry)))
+
+;; The one closure object for a top-level function used as a value.
+;; It is built here, in the global's initializer, so that every
+;; reference to the name is a `global.get' of the same object -- see
+;; compile-fn-value for why that is the semantics and not a saving.
+(define (emit-fn-global name)
+  (let* ((w (assq name *wrappers*))
+         (widx (cadr w))
+         (gidx (caddr w))
+         (nfixed (cadddr w))
+         (variadic? (list-ref w 4))
+         (ty (if variadic? TY-CLOSV (cdr (clos-ty nfixed)))))
+    (list #x64 (sleb ty) #x00
+          (make-closure-code widx gidx nfixed variadic?)
+          #x0B)))
+
+(define (emit-text-global entry)
   (let* ((kind (caar entry))
          (datum (cdar entry))
          (str (if (eq? kind 'sym) (symbol->string datum) datum))

@@ -296,16 +296,6 @@ else
     cat "$DOCS_OUT"
     echo "FAIL test/docs.mjs"; fail=1
 fi
-# Output is NOT redirected here, unlike the group just below.  This
-# fixture records what each target answers today, so the day it goes
-# red the useful part IS its output: which of the three cases moved
-# and what the new answer is.  Hiding that leaves "something changed"
-# and nothing to change the note in src/js-backend.ss to.
-if ${NODE-node} test/js-backend-procedure-identity.mjs; then
-    echo "ok   test/js-backend-procedure-identity.mjs"
-else
-    echo "FAIL test/js-backend-procedure-identity.mjs"; fail=1
-fi
 if ${NODE-node} test/trig-single-supply.mjs >/dev/null 2>&1; then
     echo "ok   test/trig-single-supply.mjs"
 else
