@@ -14,9 +14,10 @@ declarative scenes and the compressed-asset pipeline.
 4. [Math](#4-math)
 5. [The compressed-asset pipeline](#5-the-compressed-asset-pipeline)
 6. [Effects and games toolkit](#6-effects-and-games-toolkit)
-7. [CPU rasterization](#7-cpu-rasterization)
-8. [Images without a host](#8-images-without-a-host)
-9. [Retargeting and CPU skinning](#9-retargeting-and-cpu-skinning)
+7. [How much of a reflection needs drawing](#7-how-much-of-a-reflection-needs-drawing)
+8. [CPU rasterization](#8-cpu-rasterization)
+9. [Images without a host](#9-images-without-a-host)
+10. [Retargeting and CPU skinning](#10-retargeting-and-cpu-skinning)
 
 ---
 
@@ -1169,7 +1170,63 @@ source rectangles under `'premul` blending. Example:
 `examples/breakout.html` (bricks, ball, paddle, and the score text in a
 single draw).
 
-## 7. CPU rasterization
+## 7. How much of a reflection needs drawing
+
+`(gfx reflect)` is the arithmetic in front of a planar reflection pass.
+The world is re-rendered into an offscreen target with a mirrored
+camera — the targets of chapter 6 — and almost always only a small
+part of that target can ever be sampled, because the reflector covers
+a small part of the screen. Rendering all of it wastes fragments in
+exact proportion to how small the pond is.
+
+```scheme
+(define mirror (reflect-plane-matrix 0.0))          ; about y = 0
+(define rvp (m4-mul proj (m4-look-at mirrored-eye focus up)))
+(reflect-range vp rvp (list footprint) 8 tw th)
+;; => #f  skip the pass
+;;    #t  draw the whole target
+;;    #(x y w h)  scissor to this, in pixels from the LOWER LEFT
+```
+
+The failure mode this exists to avoid is a **silently missing
+reflection**: a rectangle one pixel too small reflects nothing there,
+and nothing reports it — no error, no black, just a plausible wrong
+picture. So the arithmetic leans one way throughout. Anything that
+cannot be projected conservatively answers `#t`: a footprint crossing
+the eye plane, a vertex that lands at `w <= 0` under the mirrored
+projection, a non-finite intermediate, an intersection whose divisor
+is too near zero. Rounding is outward only — floor the minimum, ceil
+the maximum, then pad, then clamp. `#f` comes back only when the
+footprint is provably not visible, never because the arithmetic ran
+out of precision.
+
+Clipping happens in homogeneous space against the six half-spaces
+`w ± x`, `w ± y`, `w ± z`, carrying world coordinates through the
+intersections, because what survives has to be re-projected with a
+different matrix. `m4-transform` is the wrong primitive for this: it
+divides by w, and w is exactly what these tests are about.
+
+**What the caller owes.** The polygons passed in must already enclose
+the maximum displacement the caller's shader applies. A pixel pad
+cannot recover geometry a wave pushes into view, because padding
+happens after the footprint has been clipped against the main view: a
+crest rising into frame from a footprint already rejected contributes
+nothing, and the reflection is missing exactly where the wave is.
+`pad` covers what happens after projection — distorted sampling,
+filter taps.
+
+`m4-crop-rect` restricts a projection to the rectangle, so the
+rectangle becomes the whole of clip space. Its first use is culling
+the reflection pass against the smaller frustum. Cropping the
+projection and scissoring the pass are **alternatives**, not a pair:
+cropping while leaving the full viewport stretches the image.
+
+Pixels have their origin at the lower left, matching `gl.scissor` and
+`cmd-viewport!`; `(gfx sprite)` speaks the opposite convention. The
+bounds are the target's own dimensions, not `fx-width`/`fx-height`,
+which are the canvas backing size.
+
+## 8. CPU rasterization
 
 `(gfx raster)` is a rasterizer with no GPU under it and no canvas in
 front of it: orbit camera → vertex projection → screen-space scanline →
@@ -1396,7 +1453,7 @@ and **both textured renders** with it byte for byte, checks the loss
 against a third computation done in JavaScript, and reports the timing
 of both.
 
-## 8. Images without a host
+## 9. Images without a host
 
 `(gfx image)` reads and writes pixels in pure Scheme, so headless
 pipelines no longer lean on a browser or a Python helper for their
@@ -1436,7 +1493,7 @@ error instead of a wild write. `channels` is the *source's* count,
 which is what `png-info` reports and what sizes the scratch; the
 decoded output is RGBA8 either way.
 
-## 9. Retargeting and CPU skinning
+## 10. Retargeting and CPU skinning
 
 `(gfx retarget)` moves a clip between skeletons without touching a
 bone length: rotations copy locally, only the root chain carries

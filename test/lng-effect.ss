@@ -142,6 +142,12 @@
        (refused? 'make-effect (lambda () (make-effect "not-a-symbol" 'x 0 'p 1)))
        (refused? 'collect-effects (lambda () (collect-effects (list (lambda (a b) 'not-a-list)) 1 2)))
        (refused? 'collect-effects (lambda () (collect-effects (list 'not-a-procedure) 1 2)))
+       ;; a producer that returns a list is not enough: what is IN the list
+       ;; has to be effects, or the mistake surfaces later as a wrong fold
+       (refused? 'collect-effects
+                 (lambda () (collect-effects (list (lambda (a b) (list (make-effect 'k 'x 0 'p 1)
+                                                                      'not-an-effect)))
+                                             1 2)))
        ;; a built-in policy name means one thing everywhere: rebinding it would
        ;; give one name two readings, which is what this library refuses everywhere else
        (refused? 'resolve (lambda () (resolve (list (make-effect 'k 'x 0 'p 1)) '(p) '((k . sum))
