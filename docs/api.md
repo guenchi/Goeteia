@@ -111,12 +111,12 @@ Drawing, and the geometry and assets behind it.
 - `fx-ticks!` — runs a procedure every frame with the elapsed and delta time in seconds, and no GL side effects of its own -- so another renderer's loop can use it directly
 - `fx-loop!` — ticks plus the GL frame plumbing: begin the frame, set the viewport, run the caller's commands, check for overflow, flush once
 - `fx-loop-fixed!` — a frame loop with a fixed simulation step: the simulation runs whole steps and the render gets what is between them, so one call is the loop and the drawing and nothing else
-- `fx-init-input!` — starts tracking keys on the window and pointer events on an element, defaulting to the canvas fx-init! was given
+- `fx-init-input!` — starts tracking keys on the window and pointer events on an element, defaulting to the canvas `fx-init!` was given. Calling it again RETARGETS: the new element drives the pointer and the old one stops, without a second set of handlers being added anywhere (a duplicate handler is invisible on this surface, since writing `#t` twice is still `#t`, but it doubles anything that accumulates)
 - `key-down?` — whether a key is held right now, by its event key name
 - `pointer-x` — the pointer's x in element pixels as of the last event
 - `pointer-y` — the pointer's y in element pixels as of the last event
 - `pointer-down?` — whether a pointer button is held right now
-- `pointer-lock!` — asks for pointer capture, which the browser grants only from a user gesture; Esc releases it and motion arrives as deltas while it holds
+- `pointer-lock!` — asks for pointer capture, which the browser grants only from a user gesture; Esc releases it and motion arrives as deltas while it holds. Calling it again retargets rather than adding handlers -- a second call used to double every delta `pointer-motion!` reported, silently, which is what a game re-locking on a new level did
 - `pointer-locked?` — whether the pointer is currently captured
 - `pointer-motion!` — the accumulated motion since the last call as (dx . dy); reading it resets the accumulator, so poll it once per frame
 - `fx-fullscreen!` — a fullscreen quad from fragment shader forms -- the whole of a post-processing pass's plumbing

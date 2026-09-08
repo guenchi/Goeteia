@@ -593,34 +593,85 @@
          (cmd-flush!)))))
 
   ;; ---- polled input ----
+  ;;
+  ;; Attaching twice must not make one event count twice.  These entry
+  ;; points may legitimately be called again -- a page re-initialises
+  ;; when it switches canvas, and fx-init! itself is written to be
+  ;; called again -- and they used to add a second live handler to
+  ;; every event each time.  On the polled surface that is invisible,
+  ;; because writing #t twice is still #t; it is not invisible for
+  ;; anything that ACCUMULATES, and pointer-motion! sums movementX, so
+  ;; a second pointer-lock! reported every mouse movement at twice its
+  ;; size with nothing anywhere raising an error.
+  ;;
+  ;; The repair cannot be removeEventListener: converting one and the
+  ;; same Scheme closure to JS twice yields two DIFFERENT JS functions
+  ;; (measured on both back ends), so a remove call would be handed a
+  ;; function that was never registered -- and removeEventListener
+  ;; answers a wrong function with silence, which is the very failure
+  ;; shape being repaired here.
+  ;;
+  ;; So registration happens at most once per (source, event), and a
+  ;; handler on an element that is no longer the current target goes
+  ;; inert instead of being unregistered: retargeting is what the
+  ;; guard in each element handler decides, frame by frame.  A handler
+  ;; therefore survives on an element the caller has moved away from,
+  ;; and does nothing there.
   (define $fx-keys (make-hashtable string-hash string=?))
   (define $fx-px 0.0)
   (define $fx-py 0.0)
   (define $fx-pdown #f)
+  (define $fx-input-el #f)              ; the element pointer events come from
+  (define $fx-input-window? #f)         ; window key handlers registered?
+
+  ;; "have we already registered on this element?" is recorded ON the
+  ;; element, the way fx-init! records its generation on the owner.  A
+  ;; list of elements here would answer the same question while holding
+  ;; every element the page has ever attached to alive for as long as
+  ;; the module lives; a page that cycles canvases would keep them all.
+  ;; The key sits outside the __goeteia_ namespace on purpose -- the
+  ;; bridge keeps that private per module instance.
+  (define ($fx-marked? el key)
+    (js-truthy? (js-get el key)))
+  (define ($fx-mark! el key)
+    (js-set! el key #t))
 
   ;; keys on the window, pointer on the element (default: fx-init!'s
-  ;; canvas; pass a Three.js renderer's domElement to use it there)
+  ;; canvas; pass a Three.js renderer's domElement to use it there).
+  ;; Calling it again is how the target changes, so it must not become
+  ;; "already attached, do nothing" -- that would make retargeting
+  ;; silently fail.
   (define (fx-init-input! . el)
     (let ((target (if (null? el) $fx-canvas (car el))))
       (unless target
         (error 'fx-init-input! "no element: pass one or call fx-init! first"))
-      (js-method (js-global) "addEventListener" "keydown"
-                 (lambda (e)
-                   (hashtable-set! $fx-keys (js->string (js-get e "key")) #t)
-                   (js-undefined)))
-      (js-method (js-global) "addEventListener" "keyup"
-                 (lambda (e)
-                   (hashtable-set! $fx-keys (js->string (js-get e "key")) #f)
-                   (js-undefined)))
-      (js-method target "addEventListener" "pointermove"
-                 (lambda (e)
-                   (set! $fx-px ($fx-fl (js->number (js-get e "offsetX"))))
-                   (set! $fx-py ($fx-fl (js->number (js-get e "offsetY"))))
-                   (js-undefined)))
-      (js-method target "addEventListener" "pointerdown"
-                 (lambda (e) (set! $fx-pdown #t) (js-undefined)))
-      (js-method target "addEventListener" "pointerup"
-                 (lambda (e) (set! $fx-pdown #f) (js-undefined)))))
+      (set! $fx-input-el target)
+      (unless $fx-input-window?
+        (set! $fx-input-window? #t)
+        (js-method (js-global) "addEventListener" "keydown"
+                   (lambda (e)
+                     (hashtable-set! $fx-keys (js->string (js-get e "key")) #t)
+                     (js-undefined)))
+        (js-method (js-global) "addEventListener" "keyup"
+                   (lambda (e)
+                     (hashtable-set! $fx-keys (js->string (js-get e "key")) #f)
+                     (js-undefined))))
+      (unless ($fx-marked? target "goeteiaFxInput")
+        ($fx-mark! target "goeteiaFxInput")
+        (js-method target "addEventListener" "pointermove"
+                   (lambda (e)
+                     (when (js-eq? target $fx-input-el)
+                       (set! $fx-px ($fx-fl (js->number (js-get e "offsetX"))))
+                       (set! $fx-py ($fx-fl (js->number (js-get e "offsetY")))))
+                     (js-undefined)))
+        (js-method target "addEventListener" "pointerdown"
+                   (lambda (e)
+                     (when (js-eq? target $fx-input-el) (set! $fx-pdown #t))
+                     (js-undefined)))
+        (js-method target "addEventListener" "pointerup"
+                   (lambda (e)
+                     (when (js-eq? target $fx-input-el) (set! $fx-pdown #f))
+                     (js-undefined))))))
 
   (define (key-down? k) (hashtable-ref $fx-keys k #f))
   (define (pointer-x) $fx-px)
@@ -631,35 +682,50 @@
   (define $fx-dx 0.0)
   (define $fx-dy 0.0)
   (define $fx-locked #f)
+  (define $fx-lock-el #f)               ; the element the gesture captures
+  (define $fx-lock-doc? #f)             ; document handlers registered?
 
-  ;; call once; clicking the element captures the pointer (browsers
-  ;; require the gesture), Esc releases it.  While captured, mouse
-  ;; motion accumulates as movementX/Y deltas.
+  ;; clicking the element captures the pointer (browsers require the
+  ;; gesture), Esc releases it.  While captured, mouse motion
+  ;; accumulates as movementX/Y deltas.
+  ;;
+  ;; Calling it again retargets rather than adding a second set of
+  ;; handlers: the deltas ACCUMULATE, so a duplicate mousemove handler
+  ;; doubled every reported movement and said nothing.  See the note
+  ;; above fx-init-input! for why the old handlers are silenced by a
+  ;; guard rather than removed.
   (define (pointer-lock! . el)
     (let ((target (if (null? el) $fx-canvas (car el)))
           (doc (js-get (js-global) "document")))
       (unless target
         (error 'pointer-lock! "no element: pass one or call fx-init! first"))
-      (js-method target "addEventListener" "click"
-                 (lambda (e)
-                   (unless $fx-locked
-                     (js-method target "requestPointerLock"))
-                   (js-undefined)))
-      (js-method doc "addEventListener" "pointerlockchange"
-                 (lambda (e)
-                   (set! $fx-locked
-                         (js-truthy? (js-get doc "pointerLockElement")))
-                   (js-undefined)))
-      (js-method doc "addEventListener" "mousemove"
-                 (lambda (e)
-                   (when $fx-locked
-                     (set! $fx-dx
-                           (fl+ $fx-dx
-                                ($fx-fl (js->number (js-get e "movementX")))))
-                     (set! $fx-dy
-                           (fl+ $fx-dy
-                                ($fx-fl (js->number (js-get e "movementY"))))))
-                   (js-undefined)))))
+      (set! $fx-lock-el target)
+      (unless ($fx-marked? target "goeteiaFxLock")
+        ($fx-mark! target "goeteiaFxLock")
+        (js-method target "addEventListener" "click"
+                   (lambda (e)
+                     (when (and (js-eq? target $fx-lock-el) (not $fx-locked))
+                       (js-method target "requestPointerLock"))
+                     (js-undefined))))
+      ;; these two are the document's, not the element's, so one
+      ;; registration serves every target
+      (unless $fx-lock-doc?
+        (set! $fx-lock-doc? #t)
+        (js-method doc "addEventListener" "pointerlockchange"
+                   (lambda (e)
+                     (set! $fx-locked
+                           (js-truthy? (js-get doc "pointerLockElement")))
+                     (js-undefined)))
+        (js-method doc "addEventListener" "mousemove"
+                   (lambda (e)
+                     (when $fx-locked
+                       (set! $fx-dx
+                             (fl+ $fx-dx
+                                  ($fx-fl (js->number (js-get e "movementX")))))
+                       (set! $fx-dy
+                             (fl+ $fx-dy
+                                  ($fx-fl (js->number (js-get e "movementY"))))))
+                     (js-undefined))))))
 
   (define (pointer-locked?) $fx-locked)
 
