@@ -88,14 +88,21 @@
     (vector-set! uvs (* v 2) u)
     (vector-set! uvs (+ (* v 2) 1) vv))
 
-  ;; a quad (a b | a+1 b+1) as two triangles at index slot k
+  ;; A quad (a b | a+1 b+1) as two triangles at index slot k, wound so
+  ;; that the triangle's own normal agrees with the vertex normals the
+  ;; generator stored -- which is what a renderer culling back faces
+  ;; decides by.  Every caller passes (row i, row i+1) at the same
+  ;; column, so one orientation serves all of them; it used to be the
+  ;; other one, and sphere, torus and the cylinder's side wall were
+  ;; inside out.  Box, plane and heightmap emit their own indices and
+  ;; were never affected.
   (define ($mesh-quad! ix k a b)
     (vector-set! ix k a)
-    (vector-set! ix (+ k 1) b)
-    (vector-set! ix (+ k 2) (+ a 1))
+    (vector-set! ix (+ k 1) (+ a 1))
+    (vector-set! ix (+ k 2) b)
     (vector-set! ix (+ k 3) (+ a 1))
-    (vector-set! ix (+ k 4) b)
-    (vector-set! ix (+ k 5) (+ b 1)))
+    (vector-set! ix (+ k 4) (+ b 1))
+    (vector-set! ix (+ k 5) b))
 
   ;; ---- generators ----
   (define (mesh-plane w d)                    ; on xz, +y normal
@@ -315,6 +322,10 @@
           (idx (+ j 1) (+ k 12))))
       ($make-mesh vs ix uvs)))
 
+  (define ($mesh-torus-check br tr)
+    (when (fl<? br tr)
+      (error 'mesh-torus "tube radius exceeds ring radius" br tr)))
+
   (define (mesh-torus big small . opt)        ; ring radius, tube radius
     (let* ((segs (if (null? opt) 32 (car opt)))         ; around the ring
            (rings (if (or (null? opt) (null? (cdr opt))) 16 (cadr opt)))
@@ -324,6 +335,13 @@
            (vs (make-vector (* (+ segs 1) cols 6) 0.0))
            (uvs (make-vector (* (+ segs 1) cols 2) 0.0))
            (ix (make-vector (* segs rings 6) 0)))
+      ;; A tube wider than the ring is a spindle torus: the surface passes
+      ;; through its own axis and intersects itself, so no winding agrees
+      ;; with the stored normals everywhere -- part of it is inside out
+      ;; whatever we emit.  Refuse it rather than hand back a shape that
+      ;; renders wrong only where culling is on.  Equal radii (a horn
+      ;; torus) touch at the axis and are still consistent.
+      ($mesh-torus-check br tr)
       (let seg ((i 0))
         (when (<= i segs)
           (let* ((th (fl/ (fl* $mesh-2pi (fixnum->flonum i))
