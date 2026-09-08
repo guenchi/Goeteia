@@ -1,3 +1,17 @@
+;; Copyright 2026 guenchi
+;;
+;; Licensed under the Apache License, Version 2.0 (the "License");
+;; you may not use this file except in compliance with the License.
+;; You may obtain a copy of the License at
+;;
+;;     http://www.apache.org/licenses/LICENSE-2.0
+;;
+;; Unless required by applicable law or agreed to in writing, software
+;; distributed under the License is distributed on an "AS IS" BASIS,
+;; WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+;; See the License for the specific language governing permissions and
+;; limitations under the License.
+
 ;; Files as bytes, through the host's file shims.
 ;;
 ;; The shim protocol underneath is one call per byte: a path is
@@ -39,7 +53,6 @@
 ;;   any failure to the close (that is where the bytes are written),
 ;;   so a -1 there means there is no filesystem at all.
 ;;
-;; Copyright (c) 2026 guenchi. MIT license; see LICENSE.
 (library (web fs)
   (export fs-exists? fs-size fs-slurp! fs-spit!
           fs-slurp-string fs-spit-string!)

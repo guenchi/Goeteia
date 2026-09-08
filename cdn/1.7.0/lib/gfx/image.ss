@@ -1,3 +1,17 @@
+;; Copyright 2026 guenchi
+;;
+;; Licensed under the Apache License, Version 2.0 (the "License");
+;; you may not use this file except in compliance with the License.
+;; You may obtain a copy of the License at
+;;
+;;     http://www.apache.org/licenses/LICENSE-2.0
+;;
+;; Unless required by applicable law or agreed to in writing, software
+;; distributed under the License is distributed on an "AS IS" BASIS,
+;; WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+;; See the License for the specific language governing permissions and
+;; limitations under the License.
+
 ;; PNG and TGA in pure Scheme -- the ground floor of image IO for the
 ;; graphics pipeline.  No host codec, no createImageBitmap: the bytes
 ;; are decoded here, so the same file yields the same pixels on every
@@ -78,7 +92,6 @@
 ;;     the correct thing first is deliberate: Huffman coding on the
 ;;     way out is an addition here, not a rewrite.
 ;;
-;; Copyright (c) 2026 guenchi. MIT license; see LICENSE.
 (library (gfx image)
   (export png-info png-decode! png-encode! png-encode-size
           tga-info tga-decode!

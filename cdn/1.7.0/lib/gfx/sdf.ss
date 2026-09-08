@@ -1,3 +1,17 @@
+;; Copyright 2026 guenchi
+;;
+;; Licensed under the Apache License, Version 2.0 (the "License");
+;; you may not use this file except in compliance with the License.
+;; You may obtain a copy of the License at
+;;
+;;     http://www.apache.org/licenses/LICENSE-2.0
+;;
+;; Unless required by applicable law or agreed to in writing, software
+;; distributed under the License is distributed on an "AS IS" BASIS,
+;; WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+;; See the License for the specific language governing permissions and
+;; limitations under the License.
+
 ;; Signed distance fields from rasterized text (or any canvas
 ;; alpha): the fix for bitmap labels that blur when the camera
 ;; leans in.  Rasterize once at a modest size, run a distance
@@ -19,7 +33,6 @@
 ;; Widen the smoothstep for soft halos, shift its center below 0.5
 ;; for outlines and glow; the field carries all of it.
 ;;
-;; Copyright (c) 2026 guenchi. MIT license; see LICENSE.
 (library (gfx sdf)
   (export sdf-from-canvas!)
   (import (rnrs) (web js))

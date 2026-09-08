@@ -1,3 +1,17 @@
+;; Copyright 2026 guenchi
+;;
+;; Licensed under the Apache License, Version 2.0 (the "License");
+;; you may not use this file except in compliance with the License.
+;; You may obtain a copy of the License at
+;;
+;;     http://www.apache.org/licenses/LICENSE-2.0
+;;
+;; Unless required by applicable law or agreed to in writing, software
+;; distributed under the License is distributed on an "AS IS" BASIS,
+;; WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+;; See the License for the specific language governing permissions and
+;; limitations under the License.
+
 ;; KTX2 + Basis Universal ETC1S/BasisLZ and UASTC, from the specs --
 ;; no C++ transcoder, no dependency.  A .ktx2 file lands in staging
 ;; memory (fetch or bytes), ktx-parse reads the container, and the
@@ -20,7 +34,6 @@
 ;; codebooks, and cube/array/3D textures -- one 2D image with its mip
 ;; chain is the whole of it.
 ;;
-;; Copyright (c) 2026 guenchi. MIT license; see LICENSE.
 (library (gfx ktx)
   (export ktx-parse ktx? ktx-width ktx-height ktx-level-count
           ktx-scheme ktx-etc1s? ktx-uastc?

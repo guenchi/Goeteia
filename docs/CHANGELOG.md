@@ -7,6 +7,13 @@ it acquired; a procedure and a primitive are one object wherever they are
 named; and library-private helpers stop colliding with each other, which
 also takes 36% off the compiler.
 
+**Licensed under Apache 2.0 from this version on.** Earlier versions stay
+under the MIT license they were published with. `cdn/1.7.0/` was republished
+after the change, so its bytes, `SHA256SUMS` and `manifest.json` differ from
+the ones first put there: a pinned checksum from the first hours of 1.7.0
+will not match, and that is this republish rather than tampering. The
+`cdn/1.5.8` through `cdn/1.6.2` directories are untouched and still MIT.
+
 ### Breaking
 
 - A top-level name defined twice is refused at compile time, naming both
