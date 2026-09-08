@@ -1,3 +1,17 @@
+;; Copyright 2026 guenchi
+;;
+;; Licensed under the Apache License, Version 2.0 (the "License");
+;; you may not use this file except in compliance with the License.
+;; You may obtain a copy of the License at
+;;
+;;     http://www.apache.org/licenses/LICENSE-2.0
+;;
+;; Unless required by applicable law or agreed to in writing, software
+;; distributed under the License is distributed on an "AS IS" BASIS,
+;; WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+;; See the License for the specific language governing permissions and
+;; limitations under the License.
+
 ;; WGSL from the same shader forms (gfx glsl) renders -- one source
 ;; of truth, three dialects.  wgsl->string takes the VERTEX and
 ;; FRAGMENT form lists together, because WebGPU wants one module:
@@ -23,7 +37,6 @@
 ;; Mind the uniform struct's std140-like alignment: order members
 ;; mat4 / vec4 / vec3+pad / f32, as WGSL will read them.
 ;;
-;; Copyright (c) 2026 guenchi. MIT license; see LICENSE.
 (library (gfx wgsl)
   (export wgsl->string wgsl-compute->string wgsl-layout)
   (import (rnrs) (gfx glsl))
