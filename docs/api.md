@@ -1,16 +1,21 @@
 # API index
 
-Every name the libraries export, by library.  The manual explains what
-each library is for and how to use it; this file exists so that a name
-can be found at all.  It is generated from the `(export ...)` forms and
-`test/api-index.mjs` fails if it drifts, so a name that is here is
-exported and a name that is exported is here.
+Every name the libraries export, by library, with one line each.  The
+manual explains what a library is for and how to use it; this file
+exists so that a name can be found at all, and so that finding it tells
+you whether it is the one you want.
+
+It is generated from the `(export ...)` forms and `test/api-index.mjs`
+fails if it drifts: a name that is here is exported, a name that is
+exported is here, and every one of them has a description.
 
 A capability nobody can find is one that gets written again downstream.
-That is not hypothetical: of the names below, 442 appeared nowhere in
-the manual when this file was first generated, and a consumer rebuilt
-frustum culling, an input layer and a joint palette that all already
-existed.
+That is not hypothetical: when this file was written, 449 of these names
+appeared nowhere in the manual and another 236 appeared in it exactly
+once, which in a document of several thousand lines is the same thing.
+A consumer had rebuilt frustum culling, an input layer and a joint
+palette that all already existed; the three names they needed were
+mentioned zero, once and once.
 
 # aud
 
@@ -18,7 +23,13 @@ Sound.
 
 ## `(aud sfx)`
 
-`audio-init!`  `audio-time`  `beep!`  `load-sound!`  `play!`  `loop-sound!`  `stop-sound!`
+- `audio-init!` — creates the audio context if there is none; idempotent, and worth calling from a user gesture since that is when a browser will let sound start
+- `audio-time` — the audio clock in seconds -- the one to schedule against, which is not the frame clock
+- `beep!` — an oscillator blip of a given frequency and duration, faded out linearly so it ends without a click; optional volume and wave type, answers the oscillator
+- `load-sound!` — fetches a URL, decodes it, and hands the buffer to a continuation; loading needs no user gesture, only playing does
+- `play!` — plays a decoded buffer once with an optional volume and rate, answering the source node
+- `loop-sound!` — plays a decoded buffer on repeat with an optional volume, answering the source node to stop it with later
+- `stop-sound!` — stops a source node that play! or loop-sound! answered
 
 
 # gfx
@@ -27,103 +38,697 @@ Drawing, and the geometry and assets behind it.
 
 ## `(gfx collide)`
 
-`sphere-sphere?`  `aabb-aabb?`  `sphere-aabb?`  `capsule-sphere?`  `capsule-capsule?`  `capsule-aabb?`  `ray-sphere`  `ray-aabb`  `ray-plane`  `ray-triangle`  `ray-mesh`  `sphere-aabb-push`  `sweep-sphere-aabb`  `move-and-slide`  `make-character`  `character?`  `character-pos`  `character-grounded?`  `character-move!`  `character-jump!`  `make-aabb-grid`  `grid-near`
+- `sphere-sphere?` — whether two spheres overlap, given centre and radius of each
+- `aabb-aabb?` — whether two axis-aligned boxes overlap, each given as its min and max corner
+- `sphere-aabb?` — whether a sphere overlaps an axis-aligned box; touching exactly is not overlap
+- `capsule-sphere?` — whether a capsule -- the segment p..q swept by a radius -- overlaps a sphere
+- `capsule-capsule?` — whether two capsules overlap, from the distance between their segments
+- `capsule-aabb?` — whether a capsule overlaps a box; the distance is convex along the segment, so a ternary search finds the minimum
+- `ray-sphere` — the distance from the origin to the first hit on a sphere, or #f; the direction must be a unit vector for the distance to be in world units
+- `ray-aabb` — the distance to the first hit on an axis-aligned box, or #f; an origin already inside answers 0.0
+- `ray-plane` — the distance to the hit on a plane given by a point and a normal, or #f when the ray runs parallel or away
+- `ray-triangle` — the distance to the hit on a triangle by Moller-Trumbore, or #f; triangles are hit from either side
+- `ray-mesh` — the distance to the nearest triangle of a (gfx mesh) mesh, or #f; brute force, meant for picking and shot tests over generated geometry rather than for broadphase physics
+- `sphere-aabb-push` — the v3 that moves an overlapping sphere out of a box by the shortest way, or #f when they do not overlap; adding it to a position is what makes movement slide along a wall
+- `sweep-sphere-aabb` — the first contact of a sphere moving along a motion vector against a box, as (t . normal) with t in [0,1], or #f; the box is inflated by the radius so fast movement cannot tunnel through
+- `move-and-slide` — advances a position to the first contact, drops the component along the normal and continues -- walls slide and corners stop
+- `make-character` — a character controller at a position with a radius: gravity, landing and jumping packaged over the slide
+- `character?` — whether a value is a character controller
+- `character-pos` — where the character is now
+- `character-grounded?` — whether the character is standing on something, which is what gates jumping
+- `character-move!` — applies gravity, moves by a horizontal velocity for dt, slides along the boxes, updates grounded and vertical speed, and answers the new position
+- `character-jump!` — gives the character an upward speed, but only while it is grounded
+- `make-aabb-grid` — a broadphase: hashes static boxes into xz cells of a given size, so a query touches a handful instead of all of them
+- `grid-near` — every box whose cells the sphere at pos with radius r touches, each box once
 
 ## `(gfx fx)`
 
-`fx-init!`  `fx-slot!`  `fx-alloc!`  `fx-mark`  `fx-release!`  `fx-buffer!`  `fx-texture!`  `fx-texture-array!`  `fx-mesh!`  `fx-mesh?`  `fx-mesh-use!`  `fx-mesh-draw!`  `fx-mesh-count`  `fx-width`  `fx-height`  `fx-target!`  `fx-target-hdr!`  `fx-target-msaa!`  `fx-resolve!`  `fx-target-mrt!`  `fx-mrt-texture`  `fx-cube-target!`  `fx-bind-cube-face!`  `fx-target?`  `fx-target-texture`  `fx-target-width`  `fx-target-height`  `fx-bind-target!`  `fx-bind-canvas!`  `fx-read-target!`  `fx-program!`  `fx-program3!`  `fx-tf-program!`  `fx-ubo!`  `fx-program?`  `fx-program-slot`  `fx-program-stride`  `fx-program-attribute-names`  `fx-program-attribute-schema`  `fx-program-istride`  `fx-program-blocks`  `fx-use!`  `fx-use-instanced!`  `fx-uniform!`  `fx-uniform?`  `fx-ticks!`  `fx-loop!`  `fx-loop-fixed!`  `fx-init-input!`  `key-down?`  `pointer-x`  `pointer-y`  `pointer-down?`  `pointer-lock!`  `pointer-locked?`  `pointer-motion!`  `fx-fullscreen!`  `fx-quad-program`  `fx-fullscreen-use!`  `fx-fullscreen-draw!`
+- `fx-init!` — attaches GL to a canvas and resets the slot counter, the staging heap and the scratch space; a fresh init also retires the render loops of any earlier run of the same mount, which is what keeps a live editor from stacking loops
+- `fx-slot!` — the next free numeric resource slot; buffers, textures, programs and targets are all named by these, and asking before fx-init! is an error
+- `fx-alloc!` — reserves bytes of staging memory as an 8-aligned bump, growing wasm memory when it must, and answers the base offset
+- `fx-mark` — the current top of the staging heap, to hand back to fx-release! -- it is a level, not a total, which is what makes a rebuild loop bounded
+- `fx-release!` — rewinds the staging heap to a mark taken earlier; a mark above the current level, or one that was never allocated, is refused with both numbers named
+- `fx-buffer!` — a slot with a GL buffer created in it
+- `fx-texture!` — a slot with a GL texture created in it
+- `fx-texture-array!` — one texture holding many same-size layers behind a single bind; fill the layers with the gl-texture-layer! calls and sample with sampler2DArray
+- `fx-mesh!` — uploads a (gfx mesh) mesh into its own vertex and index buffers and answers a handle carrying both plus the index count
+- `fx-mesh?` — whether a value is an uploaded mesh handle
+- `fx-mesh-use!` — binds an uploaded mesh's buffers and attributes for a program
+- `fx-mesh-draw!` — draws an uploaded mesh's indices
+- `fx-mesh-count` — how many indices the uploaded mesh has
+- `fx-width` — the canvas width in pixels, read from the canvas itself
+- `fx-height` — the canvas height in pixels, read from the canvas itself
+- `fx-target!` — an offscreen render target of a given size, or a depth-only one; its texture samples like any other
+- `fx-target-hdr!` — a half-float target, so values past 1.0 survive for bloom and tonemapping; needs WebGL 2 with EXT_color_buffer_float
+- `fx-target-msaa!` — a multisampled target: render into it as usual, then fx-resolve! before sampling its texture
+- `fx-resolve!` — blits a multisampled target into the texture that can be sampled; passes rendered after this call are not in it until it is called again
+- `fx-target-mrt!` — a target with several colour attachments written in one pass; fx-mrt-texture says which texture caught which output
+- `fx-mrt-texture` — the texture that caught output i of a multiple-render-target
+- `fx-cube-target!` — a cube target of a given face size: render the world once per face, then sample it with a direction -- point-light shadows
+- `fx-bind-cube-face!` — binds one face of a cube target as the thing being rendered into
+- `fx-target?` — whether a value is a render target
+- `fx-target-texture` — the target's colour texture, to sample like any other
+- `fx-target-width` — the target's width in pixels
+- `fx-target-height` — the target's height in pixels
+- `fx-bind-target!` — renders into a target from here on, and sets the viewport to match it
+- `fx-bind-canvas!` — renders into the canvas again, viewport included
+- `fx-read-target!` — reads a target's pixels back into staging memory; for a multisampled target it reads the resolved image, so resolve first or read a stale one
+- `fx-program!` — links a program from vertex and fragment shader forms and works out its attribute and uniform surface; the shaders are s-expressions, not strings
+- `fx-program3!` — the same wiring from the same forms, rendered as ESSL 3.00 -- for shaders that need uniform blocks or transform feedback
+- `fx-tf-program!` — a transform-feedback program: what the vertex shader declares is captured, interleaved, into the bound buffer, which is the GPU-side update step of a particle system
+- `fx-ubo!` — a slot holding a uniform buffer object of a given size
+- `fx-program?` — whether a value is a linked program
+- `fx-program-slot` — the numeric slot the linked program lives in
+- `fx-program-stride` — the per-vertex byte stride the program's attributes imply
+- `fx-program-attribute-names` — the vertex attribute names in declaration order
+- `fx-program-attribute-schema` — the vertex attributes as name and component count, in order; the contract is per-attribute because strides collide -- two vec4s look alike, and vec2+vec4 spans the same 24 bytes as vec3+vec3
+- `fx-program-istride` — the per-instance byte stride the i_ attributes imply
+- `fx-program-blocks` — the uniform BLOCK names the shaders declare, in order; block members never reach the uniform table, so this is the question to ask about a name that lives in a block, and it and fx-uniform? stay mutually exclusive
+- `fx-use!` — binds a program and a vertex buffer, wiring the attributes at the program's own stride unless another is given
+- `fx-use-instanced!` — binds a program with per-vertex data from one buffer and i_ attributes from another at divisor 1; draw it with cmd-draw-elements-instanced!
+- `fx-uniform!` — sets a uniform by name, encoding by its declared type; the same value twice sends no command, since GL uniform state is per-program and persistent
+- `fx-uniform?` — whether a program actually declares a uniform, so a renderer can bind optional resources only when the shader asks for them
+- `fx-ticks!` — runs a procedure every frame with the elapsed and delta time in seconds, and no GL side effects of its own -- so another renderer's loop can use it directly
+- `fx-loop!` — ticks plus the GL frame plumbing: begin the frame, set the viewport, run the caller's commands, check for overflow, flush once
+- `fx-loop-fixed!` — a frame loop with a fixed simulation step: the simulation runs whole steps and the render gets what is between them, so one call is the loop and the drawing and nothing else
+- `fx-init-input!` — starts tracking keys on the window and pointer events on an element, defaulting to the canvas fx-init! was given
+- `key-down?` — whether a key is held right now, by its event key name
+- `pointer-x` — the pointer's x in element pixels as of the last event
+- `pointer-y` — the pointer's y in element pixels as of the last event
+- `pointer-down?` — whether a pointer button is held right now
+- `pointer-lock!` — asks for pointer capture, which the browser grants only from a user gesture; Esc releases it and motion arrives as deltas while it holds
+- `pointer-locked?` — whether the pointer is currently captured
+- `pointer-motion!` — the accumulated motion since the last call as (dx . dy); reading it resets the accumulator, so poll it once per frame
+- `fx-fullscreen!` — a fullscreen quad from fragment shader forms -- the whole of a post-processing pass's plumbing
+- `fx-quad-program` — the linked program behind a fullscreen quad, to set further uniforms on
+- `fx-fullscreen-use!` — binds a fullscreen quad for drawing at a time t; u_time and u_resolution are set only if the fragment declares them, and anything else goes through fx-uniform! on its program
+- `fx-fullscreen-draw!` — draws the bound fullscreen quad
 
 ## `(gfx gl)`
 
-`gl-attach!`  `gl-program!`  `gl-buffer!`  `gl-uniform!`  `gl-texture!`  `gl-texture-upload!`  `gl-texture-data!`  `gl-cubemap!`  `gl-cubemap-empty!`  `gl-cube-face-fb!`  `gl-slot-object!`  `gl-target!`  `gl-target-hdr!`  `gl-target-msaa!`  `gl-cube-target!`  `gl-target-mrt!`  `cmd-bind-target!`  `cmd-bind-canvas!`  `cmd-resolve!`  `cmd-read-pixels!`  `cmd-region!`  `cmd-begin!`  `cmd-flush!`  `cmd-pos`  `cmd-draws`  `cmd-clear!`  `cmd-use-program!`  `cmd-bind-buffer!`  `cmd-buffer-data!`  `cmd-vertex-attrib!`  `cmd-vertex-attrib-h!`  `cmd-uniform1f!`  `cmd-uniform4f!`  `cmd-uniform1i!`  `cmd-uniform2f!`  `cmd-uniform3f!`  `cmd-uniform-matrix4!`  `cmd-uniform-matrix4s!`  `cmd-bind-texture!`  `cmd-unbind-texture!`  `cmd-bind-cubemap!`  `cmd-unbind-cubemap!`  `gl-texture-array!`  `gl-texture-layer!`  `gl-texture-layer-data!`  `cmd-bind-texture-array!`  `gl-gpu-timer!`  `gl-gpu-ms`  `gl-compressed-family`  `gl-texture-compressed!`  `gl-compressed-level!`  `gl-texture-base-level!`  `gl-texture-sampler!`  `cmd-depth!`  `cmd-depth-write!`  `gl-vao!`  `cmd-bind-vao!`  `cmd-unbind-vao!`  `gl-ubo!`  `gl-uniform-block!`  `cmd-bind-ubo!`  `cmd-ubo-data!`  `gl-tf-program!`  `cmd-tf-buffer!`  `cmd-tf-begin!`  `cmd-tf-end!`  `cmd-bind-index!`  `cmd-index-data!`  `cmd-draw-elements!`  `cmd-index-data32!`  `cmd-draw-elements32!`  `cmd-attrib-divisor!`  `cmd-draw-elements-instanced!`  `cmd-draw-elements-instanced32!`  `cmd-uniform-matrices!`  `cmd-uniform-matrices4s!`  `cmd-draw-arrays!`  `cmd-viewport!`  `cmd-blend!`  `GL-POINTS`  `GL-LINES`  `GL-TRIANGLES`  `GL-TRIANGLE-STRIP`
+- `gl-attach!` — take the WebGL2 context on a canvas and set up the slot tables; everything else here needs it first
+- `gl-program!` — link a program from `(gfx glsl)` forms into a slot. The optional fourth argument is a comma-joined attribute-name string bound to locations 0, 1, ... before linking -- drivers do not otherwise guarantee declaration order
+- `gl-buffer!` — create a buffer object in a slot
+- `gl-uniform!` — look up a uniform's location in a program once and park it in a slot, so the per-frame command carries a number
+- `gl-texture!` — create a texture in a slot, LINEAR and CLAMP_TO_EDGE
+- `gl-texture-upload!` — upload a JS canvas or image into a texture slot; may be called again to refresh it. Pass `#t` third to premultiply alpha on upload
+- `gl-texture-data!` — upload raw RGBA bytes out of staging memory -- the procedural-texture path
+- `gl-cubemap!` — a cube map from six `dim`-by-`dim` RGBA faces laid out consecutively at `base`, in +x -x +y -y +z -z order
+- `gl-cubemap-empty!` — an empty cube map with an explicit mip chain, for baking prefiltered environments into
+- `gl-cube-face-fb!` — a framebuffer aimed at one face of one level of a cube map
+- `gl-slot-object!` — park a host-owned GL object -- an XRWebGLLayer's framebuffer, say -- in the slot table so commands can bind it
+- `gl-target!` — an offscreen render target: a framebuffer in `slot` whose attachment texture lands in `tslot` for later sampling. `depth-only?` gives a shadow-map style depth texture instead of colour plus depth
+- `gl-target-hdr!` — a half-float (RGBA16F) target: light in real HDR and tonemap later
+- `gl-target-msaa!` — a multisampled target: render into `slot`, `cmd-resolve!` blits it into `rslot`, and `tslot` is the texture you sample
+- `gl-cube-target!` — six half-float faces around a point: `slot`..`slot+5` become framebuffers sharing one depth renderbuffer, and `tslot` is the cube map they render into -- point-light shadows
+- `gl-target-mrt!` — a multi render target: one framebuffer with `n` half-float colour attachments in `tslot0`..`tslot0+n-1` plus depth, for a shader whose `(out ...)` forms write several buffers at once
+- `cmd-bind-target!` — render into an offscreen target from here on
+- `cmd-bind-canvas!` — render back to the canvas
+- `cmd-resolve!` — blit a multisampled target into its resolve framebuffer; the sampled texture is only valid afterwards
+- `cmd-read-pixels!` — read a `w` by `h` rectangle back into staging memory as `w*h*4` bytes at `base`, readable with `%mem-u8-ref` once `cmd-flush!` returns. This stalls the frame -- the GPU has to finish first
+- `cmd-region!` — point the command encoder at a staging region, with an optional byte limit; everything encoded afterwards is written there
+- `cmd-begin!` — start a frame: reset the write cursor and the draw counter
+- `cmd-flush!` — replay the whole frame in one bridge call
+- `cmd-pos` — the write cursor, in bytes -- what a caller checks against its region size to catch an overflow
+- `cmd-draws` — how many draws have been encoded this frame; the HUD reads it
+- `cmd-clear!` — clear the bound target to a colour
+- `cmd-use-program!` — use a linked program for the draws that follow
+- `cmd-bind-buffer!` — bind a buffer as the array buffer
+- `cmd-buffer-data!` — upload from staging into the bound buffer. The count is in BYTES, and the replayer takes `bytes >> 2` float32s -- a count that is not a multiple of four uploads SHORT and silently
+- `cmd-vertex-attrib!` — wire attribute location `loc` to `size` floats at `offset` within `stride` bytes of the bound buffer
+- `cmd-vertex-attrib-h!` — the HALF_FLOAT spelling of the same wiring, two bytes a component -- what `mesh-write-f16!` data draws with
+- `cmd-uniform1f!` — set a float uniform
+- `cmd-uniform4f!` — set a vec4 uniform
+- `cmd-uniform1i!` — set an int uniform -- also how a sampler is pointed at a texture unit
+- `cmd-uniform2f!` — set a vec2 uniform
+- `cmd-uniform3f!` — set a vec3 uniform
+- `cmd-uniform-matrix4!` — set a mat4 uniform from a 16-element flonum vector, column-major, as `(gfx mat)` makes them
+- `cmd-uniform-matrix4s!` — the same when the matrix already lives in staging at `at`: the command carries its address and the replayer reads the sixteen floats in place -- three words instead of eighteen
+- `cmd-bind-texture!` — bind a texture to a texture unit
+- `cmd-unbind-texture!` — unbind a 2D texture unit. Do this before rendering into a target you sampled last frame, or a strict validator sees a feedback loop
+- `cmd-bind-cubemap!` — bind a cube map to a texture unit
+- `cmd-unbind-cubemap!` — unbind before rendering into a cube target's faces: a cube map both attached and bound for sampling is a feedback loop, and ANGLE rejects every draw of it
+- `gl-texture-array!` — a texture array: many same-size images behind ONE bind, with the shader picking a layer -- `sampler2DArray` and `texture(u, vec3(uv, layer))`, where the layer can ride an instance attribute
+- `gl-texture-layer!` — upload a JS canvas or image into one layer of a texture array
+- `gl-texture-layer-data!` — upload raw RGBA staging bytes into one layer of a texture array
+- `cmd-bind-texture-array!` — bind a texture array to a texture unit
+- `gl-gpu-timer!` — turn on GPU frame timing, once; every replay then wraps itself in a TIME_ELAPSED query. Answers `#f` where the extension is absent
+- `gl-gpu-ms` — the last GPU frame time in milliseconds, arriving a few frames late; `-1.0` until the first result
+- `gl-compressed-family` — which compressed-block family this context speaks: 2 = ETC2/ETC1, 1 = S3TC/BC, 0 = neither, in which case transcode to RGBA
+- `gl-texture-compressed!` — create a texture that will receive `levels` compressed mip levels
+- `gl-compressed-level!` — upload one compressed level straight from staging bytes; `fmt` is 0 for ETC1 RGB, 1 for BC1 RGB
+- `gl-texture-base-level!` — the streaming knob: while only levels `l` and finer have arrived, declare the texture complete from base level `l`, and lower it as bigger mips land
+- `gl-texture-sampler!` — apply a glTF sampler to a texture slot; pass `#f` for a filter the file omitted and the creation default stays
+- `cmd-depth!` — turn the depth test on or off
+- `cmd-depth-write!` — the depth WRITE mask, independent of the test: a translucent pass keeps the test but stops writing, so blended fragments do not occlude each other
+- `gl-vao!` — a vertex array object: record a whole attribute setup once and rebind it with one word per frame
+- `cmd-bind-vao!` — bind a recorded attribute setup
+- `cmd-unbind-vao!` — unbind it, so later attribute commands do not edit the recording
+- `gl-ubo!` — a uniform buffer: per-frame state that every program reads from one upload
+- `gl-uniform-block!` — wire a program's named uniform block to a binding point
+- `cmd-bind-ubo!` — bind a uniform buffer to a binding point
+- `cmd-ubo-data!` — upload `bytes` from staging at `base` into a uniform buffer
+- `gl-tf-program!` — link a program whose vertex outputs land in a buffer, interleaved -- the GPU-side update step of transform-feedback particles
+- `cmd-tf-buffer!` — aim transform feedback at a buffer
+- `cmd-tf-begin!` — begin capture, with rasterizer discard on: the draw between here and `cmd-tf-end!` writes the buffer instead of pixels
+- `cmd-tf-end!` — end capture and turn rasterization back on
+- `cmd-bind-index!` — bind a buffer as the element array
+- `cmd-index-data!` — upload u16 indices from staging into the bound element array
+- `cmd-draw-elements!` — draw `count` u16 indices in `mode`
+- `cmd-index-data32!` — upload u32 indices -- what a mesh past 65536 vertices needs
+- `cmd-draw-elements32!` — draw `count` u32 indices in `mode`
+- `cmd-attrib-divisor!` — make attribute `loc` advance once per instance instead of per vertex
+- `cmd-draw-elements-instanced!` — draw `count` u16 indices `n` times, one draw for the whole crowd
+- `cmd-draw-elements-instanced32!` — the u32-index form of the instanced draw, for instanced geometry past 65536 vertices
+- `cmd-uniform-matrices!` — upload a vector of m4s to an array uniform -- a whole skeleton of joint matrices in one command
+- `cmd-uniform-matrices4s!` — the staging-resident flavour: `n` matrices already lying at `at` upload in three words, read in place by the replayer
+- `cmd-draw-arrays!` — draw `count` vertices from `first`, without indices
+- `cmd-viewport!` — the viewport rectangle, in pixels from the lower left
+- `cmd-blend!` — blending for translucent draws: `'alpha` src-over, `'add` additive glow, `'premul` src-over for premultiplied textures, `'off` opaque
+- `GL-POINTS` — the POINTS draw mode
+- `GL-LINES` — the LINES draw mode
+- `GL-TRIANGLES` — the TRIANGLES draw mode
+- `GL-TRIANGLE-STRIP` — the TRIANGLE_STRIP draw mode
 
 ## `(gfx glb)`
 
-`glb-write!`  `glb-stride`  `glb-offset`
+- `glb-write!` — wrap interleaved vertex and index blocks already in staging memory as glTF 2.0 GLB bytes; answers `(base . length)`, which `gltf-parse` reads back directly. Nothing is repacked
+- `glb-stride` — the byte stride a vertex layout packs into, tightly
+- `glb-offset` — where an attribute sits inside that stride, or `#f` when the layout does not carry it
 
 ## `(gfx gltf)`
 
-`gltf?`  `gltf-prims`  `gltf-images`  `gltf-parse`  `gltf-fetch!`  `gltf-load-textures!`  `gltf-draw!`  `gltf-textures`  `gltf-samplers`  `gltf-cameras`  `gltf-node-camera`  `gsampler?`  `gsampler-mag`  `gsampler-min`  `gsampler-wrap-s`  `gsampler-wrap-t`  `gtexref?`  `gtexref-texture`  `gtexref-image`  `gtexref-sampler`  `gtexref-texcoord`  `gtexref-factor`  `gprim-base-tex`  `gprim-mr-tex`  `gprim-normal-tex`  `gprim-emissive-tex`  `gprim-occlusion-tex`  `gprim-mrtex`  `gprim-morph-normals`  `gprim-morph-tangents`  `gprim-base-color-factor`  `gprim-node`  `gprim-skin`  `gltf-anims`  `gltf-nodes`  `gltf-skins`  `gltf-node-translation`  `gltf-node-rotation`  `gltf-node-scale`  `gltf-node-translation-set!`  `gltf-node-rotation-set!`  `gltf-node-scale-set!`  `gltf-node-count`  `gltf-node-parent`  `gltf-node-matrix?`  `gltf-animation-names`  `gltf-animation-duration`  `gltf-animate!`  `gltf-pose-at!`  `gltf-animate-blend!`  `gltf-weights!`  `gprim-morph`  `anim-machine`  `anim-machine?`  `anim-state`  `anim-goto!`  `anim-update!`  `gltf-joint-matrices`  `gltf-joint-palette!`  `gltf-joint-count`  `gltf-skin-positions!`  `gltf-skin-normals!`  `gprim-vcount`  `gltf-skin-vs`  `gltf-skin-shader`  `gltf-skin-vs3`  `gltf-skin-shader3`  `gltf-skin-program3!`  `gltf-skin-binding`  `gltf-skin-block-joints`  `gltf-skin-uniform-joints`  `gprim-vbase`  `gprim-vbytes`  `gprim-ibase`  `gprim-ibytes`  `gprim-icount`  `gprim-index-u32?`  `gprim-color`  `gprim-metallic`  `gprim-roughness`  `gprim-world`  `gltf-prim-world`  `gprim-stride`  `gprim-layout`  `gprim-tex`  `gprim-textured?`  `gprim-normal-img`  `gprim-emissive-img`  `gprim-occlusion-img`  `gprim-emissive`  `gprim-ntex`  `gprim-etex`  `gprim-otex`
+- `gltf?` — is this a parsed glTF?
+- `gltf-prims` — the drawable primitives, a vector of `gprim`s already flattened out of the node tree -- one entry per mesh primitive per node instance, not one per mesh
+- `gltf-images` — the file's images, each `(abs-offset byte-length mime)` pointing into staging. Undecoded bytes: `gltf-load-textures!` is what turns them into textures
+- `gltf-parse` — parse a GLB already sitting in staging at `base` for `len` bytes, and answer a `gltf`. It reads GLB only -- a `.gltf` JSON file with side-car buffers is not this entry point
+- `gltf-fetch!` — the browser loader: fetch `url`, copy the whole body into staging in one go, parse it, and call `k` with the `gltf`. Asynchronous -- it returns before `k` runs
+- `gltf-load-textures!` — decode the embedded images and give every textured primitive its texture slot, then call `k` with the `gltf` once the last image is up. Asynchronous, and until it has run `gprim-tex` is `#f` everywhere
+- `gltf-draw!` — draw every primitive with one program, view-projection `vp` and an optional root matrix. It refuses a program whose attribute schema does not match the primitive layout (name AND component count -- widths can cancel in the stride), and refuses one declaring per-instance `i_*` attributes, since it binds no instance buffer
+- `gltf-textures` — the file's `textures[]` array verbatim, `#((image . sampler|#f) ...)`, duplicates and unreferenced entries included -- a re-export has to reproduce the array, not a set rebuilt from what the materials happened to use
+- `gltf-samplers` — the file's `samplers[]` array as a vector of `gsampler`s, likewise verbatim
+- `gltf-cameras` — the file's cameras, each `#(kind p0 p1 p2 p3)`: perspective is yfov aspect znear zfar, orthographic is xmag ymag znear zfar, and any key the file omitted is `#f` rather than a default
+- `gltf-node-camera` — which camera node `i` carries, or `#f`. Cameras are data here, not a view: build the matrix from the parameters with `(gfx mat)`, and the node's global transform is its pose
+- `gsampler?` — is this a glTF sampler record?
+- `gsampler-mag` — the magnification filter, or `#f` where the file omitted it -- which is not the same as a default: it means whatever the runtime does, and a re-export must omit it again
+- `gsampler-min` — the minification filter, `#f` when omitted, with the same meaning as above
+- `gsampler-wrap-s` — the S wrap mode. This one is always a number: the spec default (10497, REPEAT) is filled in, because an omitted key and an explicit REPEAT mean the same thing
+- `gsampler-wrap-t` — the T wrap mode, likewise always filled in
+- `gtexref?` — is this a material texture reference?
+- `gtexref-texture` — the glTF TEXTURE index this slot names -- not the image: two textures may share one image and differ only in sampler
+- `gtexref-image` — the image index the texture resolves to, carried along because every caller wants it and resolving it needs the file
+- `gtexref-sampler` — the sampler index, or `#f` when the texture names none
+- `gtexref-texcoord` — which UV set this slot samples, 0 or 1
+- `gtexref-factor` — the slot's scalar: `normalTexture.scale`, `occlusionTexture.strength`, or 1.0 for the slots that have none -- one field because no slot has two
+- `gprim-base-tex` — the base-colour texture reference, or `#f`
+- `gprim-mr-tex` — the metallic-roughness texture reference, or `#f`
+- `gprim-normal-tex` — the normal-map texture reference, or `#f`
+- `gprim-emissive-tex` — the emissive texture reference, or `#f`
+- `gprim-occlusion-tex` — the occlusion texture reference, or `#f`
+- `gprim-mrtex` — the GL texture slot the metallic-roughness map landed in after `gltf-load-textures!`, or `#f`
+- `gprim-morph-normals` — the per-target NORMAL deltas (3 floats per vertex per target), or `#f` where the file gave none. Inside the vector a target that carried none is a `#f` hole, so index per target -- do not assume the whole vector is present or absent together
+- `gprim-morph-tangents` — the per-target TANGENT deltas, with the same per-target `#f` holes
+- `gprim-base-color-factor` — what the FILE said, or `#f` where the material omits `baseColorFactor`. Use this one for a re-export: `gprim-color` falls back to a neutral grey, so there an omitted key and an explicit grey are one value
+- `gprim-node` — which node this primitive came from -- a re-export needs to say which node carried the mesh
+- `gprim-skin` — the skin index this primitive is bound to, or `#f` when it is not skinned
+- `gltf-anims` — the animation table, each clip `#(name channels duration touched-nodes)`
+- `gltf-nodes` — the node table. Each entry is a small vector: 0..2 translation, 3..6 rotation (x y z w), 7..9 scale, 10 the matrix form or `#f`, 11 the parent index. WRITING A LOCAL IS THE POSE -- no global is cached, so a write shows in the very next draw -- but a clip overwrites it: sample first, then pose by hand, or pose nodes no clip touches. The raw path stays legitimate for an inner loop writing one lane at a time; what it loses is the `gltf-node-matrix?` check, and losing that poses nothing, silently
+- `gltf-skins` — the skin table, each `#(joint-nodes ibms)`
+- `gltf-node-translation` — node `i`'s translation as a fresh 3-vector. The getters COPY: what they hand back must not be a second, unchecked way to write the slots the setters guard
+- `gltf-node-rotation` — node `i`'s rotation as a fresh 4-vector, (x y z w), likewise a copy
+- `gltf-node-scale` — node `i`'s scale as a fresh 3-vector, likewise a copy
+- `gltf-node-translation-set!` — write node `i`'s translation -- three components loose, or one vector or list of them, so a getter's result feeds straight back in. Values widen to flonum (a pose out of JSON carries an exact 0 in any zero lane). It ERRORS on a node carrying a matrix transform, and the check runs before any slot is written, so a rejected call leaves the node as it found it
+- `gltf-node-rotation-set!` — write node `i`'s rotation quaternion, four components loose or as one vector or list, (x y z w). It is NOT renormalized: a caller composing several rotations wants to normalize once at the end, and a silent normalize would hide a drifting product. Errors on a matrix node, as the other two setters do
+- `gltf-node-scale-set!` — write node `i`'s scale, three components loose or as one vector or list. Errors on a matrix node, and widens exact values as above
+- `gltf-node-count` — how many nodes -- the bound every index is checked against, and the loop bound for walking the whole skeleton
+- `gltf-node-parent` — node `i`'s parent index, or -1 at a root
+- `gltf-node-matrix?` — does node `i` carry the file's MATRIX form instead of TRS? Such a node ignores its TRS slots entirely -- both `$node-local` and the palette read the matrix in preference -- so the three setters refuse it by name. Ask this first; an importer that wants the TRS path decomposes the matrix itself and clears it
+- `gltf-animation-names` — the clip names, in file order -- the list `anim-machine`'s state table is written against
+- `gltf-animation-duration` — clip `ai`'s length in seconds, the largest timestamp over its channels and the period `gltf-animate!` wraps into. A clip whose keyframes all sit at t = 0 measures 0.0, which is a constant pose rather than an error
+- `gltf-animate!` — sample clip `ai` at time `t`: every channel it drives writes its node's TRS, and every channel it does NOT drive returns to the bind pose, so the result is a complete pose rather than a residue of the last clip. `t` LOOPS, and that is a contract, not an implementation accident
+- `gltf-pose-at!` — the same sampling with the clock HELD instead of wrapped: `t` past the duration poses the last keyframe and stays, negative `t` poses the first. Use it to scrub or to freeze; use `gltf-animate!` to play
+- `gltf-animate-blend!` — the crossfade: pose `ai` at `ti` and `aj` at `tj` INDEPENDENTLY, each as a complete pose, then blend with weight `k` (0 = all `ai`, 1 = all `aj`). Posing them independently is what lets clips driving different channels blend correctly
+- `gltf-weights!` — set a primitive's morph weights by hand from a list of numbers. Errors on a primitive with no morph targets; a list shorter than the target count leaves the rest alone
+- `gprim-morph` — the morph state, `#(base-positions target-deltas weights dirty node bind-weights normal-deltas|#f tangent-deltas|#f)`, or `#f` on a primitive with no targets
+- `anim-machine` — a state machine over named clips: `states` is an alist of state name to clip index, the optional `fade` is the default crossfade in seconds (0.25). It starts in the first state
+- `anim-machine?` — is this an animation state machine?
+- `anim-state` — which state the machine is currently in
+- `anim-goto!` — transition to a named state, with an optional fade overriding the default. Interrupting a live transition FREEZES what is on screen and fades from there: the displayed pose is a blend no single clip can reproduce, so the pose itself is saved
+- `anim-update!` — advance the machine by `dt` seconds and write the resulting pose. An instant (or negative) fade still reaches the completion branch, so a zero-length transition finishes rather than staying live forever
+- `gltf-joint-matrices` — skin `si`'s palette as a vector of boxed m4s, each global(joint) x inverse-bind. The boxed form: for the draw path use `gltf-joint-palette!`, which keeps them in staging
+- `gltf-joint-palette!` — refresh every node's global matrix (locals in closed form from the animated TRS, chains in SIMD, parents first) and compose skin `si`'s palette in place; answers the palette's staging address, for `cmd-uniform-matrices4s!` or a UBO upload. No boxed matrix anywhere on this path
+- `gltf-joint-count` — how many joints skin `si` has -- the palette length a shader must be sized for
+- `gltf-skin-positions!` — pose one skinned primitive's positions into `dst` (12 bytes a vertex, tightly packed) and answer the vertex count -- CPU skinning, for collision or a silhouette fit rather than for drawing
+- `gltf-skin-normals!` — the same for normals, renormalized. A separate pass by design: a silhouette fit wants positions alone and should not pay for normals it throws away
+- `gprim-vcount` — how many vertices the interleave carries. Callers size their own destination buffers with it, so it is API rather than a derivation each of them repeats
+- `gltf-skin-vs` — the built-in skinning vertex shader, 4 joints x 4 weights per vertex out of a `mat4 u_joints[32]` uniform array. Pair it with `mesh-tex-fs` -- `mesh-lit-fs` declares different varyings and will not match
+- `gltf-skin-shader` — the combinator behind it: take any vertex shader's forms and add the palette declaration, the joint/weight attributes and the skinning of position and normal. Use it to skin a shader of your own instead of hand-editing one
+- `gltf-skin-vs3` — the big-palette twin of `gltf-skin-vs`, from the same combinator
+- `gltf-skin-shader3` — the big-palette flavour of the combinator: up to 256 joints out of a std140 uniform block. ESSL 3.00 ONLY -- build it with `fx-program3!`, since `fx-program!` rejects a uniform-block form outright, and wire the block to `gltf-skin-binding`
+- `gltf-skin-program3!` — the whole big-palette program in one call: skin the vertex shader, build it as ESSL 3.00, and wire the Skin block to its binding point. Doing the wiring here is what keeps the binding number out of the caller
+- `gltf-skin-binding` — the binding point the Skin block wants (1). 0 belongs to the frame-globals block of `(gfx scene)`, so a skinned program can carry both without either party knowing about the other
+- `gltf-skin-block-joints` — how many joints the std140 block holds (256) -- the ceiling on the ESSL 3.00 path
+- `gltf-skin-uniform-joints` — how many joints the ESSL 1.00 `u_joints[]` array holds (32) -- the ceiling on the no-extension path, and the number to check a skin's joint count against before choosing a carrier
+- `gprim-vbase` — the staging address of this primitive's interleaved vertex data
+- `gprim-vbytes` — how many bytes of vertex data
+- `gprim-ibase` — the staging address of the index data
+- `gprim-ibytes` — how many bytes of index data
+- `gprim-icount` — how many indices -- the count a draw call wants, not a byte count
+- `gprim-index-u32?` — are the indices 32-bit? Which decides between `cmd-index-data!`/`cmd-draw-elements!` and their `32` twins
+- `gprim-color` — the base colour as an r g b a flonum vector, always a colour -- a neutral grey stands in where the material gave none, which is what a renderer wants
+- `gprim-metallic` — the metallic factor
+- `gprim-roughness` — the roughness factor
+- `gprim-world` — the bind-pose model matrix captured at parse time. It does not move with animation; for what to feed `u_model` this frame use `gltf-prim-world`
+- `gltf-prim-world` — a primitive's CURRENT model matrix, following its node's animated transform -- what `gltf-draw!` feeds `u_model`, and what a renderer driving its own shaders wants
+- `gprim-stride` — total bytes per vertex. Bind at THIS stride, not the program's: a primitive carrying uv1 for a shader that ignores it is wider than the shader declares
+- `gprim-layout` — the attributes present, in interleave order -- the exact contract a matching shader must declare
+- `gprim-tex` — the GL texture slot for base colour. After `gltf-load-textures!` EVERY primitive has one -- a 1x1 white texture where the material had no image -- so this answers "what do I bind", not "does it have a texture"; that question is `gprim-textured?`
+- `gprim-textured?` — does this primitive have a base-colour IMAGE to sample, as opposed to the white stand-in every primitive gets
+- `gprim-normal-img` — the image index behind the normal map, or `#f` -- a projection of `gprim-normal-tex`, so it cannot disagree with it
+- `gprim-emissive-img` — the image index behind the emissive map, or `#f`, likewise a projection
+- `gprim-occlusion-img` — the image index behind the occlusion map, or `#f`, likewise a projection
+- `gprim-emissive` — the emissive factor as r g b
+- `gprim-ntex` — the GL texture slot for the normal map, or `#f`
+- `gprim-etex` — the GL texture slot for the emissive map, or `#f`
+- `gprim-otex` — the GL texture slot for the occlusion map, or `#f`
 
 ## `(gfx gpu)`
 
-`gpu-attach!`  `gpu-pipeline!`  `gpu-pipeline2!`  `gpu-pipeline2-blend!`  `gpu-buffer!`  `gpu-index!`  `gpu-uniforms!`  `gpu-storage!`  `gpu-indirect!`  `gpu-compute-group*!`  `gpu-draw-indexed-indirect!`  `gpu-draw-indirect!`  `gpu-hzb-init!`  `gpu-end-pass!`  `gpu-hzb!`  `gpu-compute-groupx!`  `gpu-texture!`  `gpu-texture-data!`  `gpu-sampler!`  `gpu-bindgroup!`  `gpu-texgroup!`  `gpu-compute!`  `gpu-compute-group!`  `gpu-begin!`  `gpu-flush!`  `gpu-clear!`  `gpu-use-pipeline!`  `gpu-bind-vbuf!`  `gpu-bind-vbuf2!`  `gpu-bind-ibuf!`  `gpu-set-group!`  `gpu-buffer-data!`  `gpu-draw!`  `gpu-draw-indexed!`  `gpu-draw-instanced!`  `gpu-dispatch!`  `gpu-bundle!`  `gpu-execute!`  `gpu-gpu-timer!`  `gpu-gpu-ms`
+- `gpu-attach!` — acquire the WebGPU device and configure the canvas; `k` runs when resources may be created, because the handshake is asynchronous
+- `gpu-pipeline!` — a render pipeline from one WGSL module (entry points `vs`/`fs`) over one interleaved vertex buffer: `stride` in bytes, `fmts` a comma-joined GPUVertexFormat list bound to locations 0, 1, ...
+- `gpu-pipeline2!` — the same with two vertex buffers: slot 0 steps per vertex, slot 1 per instance, and locations number straight through both
+- `gpu-pipeline2-blend!` — the same again with src-over alpha blending and depth writes off -- the translucent pass
+- `gpu-buffer!` — a vertex buffer of `bytes`, filled from staging memory by `gpu-buffer-data!`
+- `gpu-index!` — an index buffer of `bytes`, u16 indices
+- `gpu-uniforms!` — one uniform buffer per pipeline; the WGSL declares it at `@group(0) @binding(0)` and the whole struct rides one `gpu-buffer-data!` per frame
+- `gpu-storage!` — a storage buffer that doubles as a vertex stream: compute writes it, the render pass reads it back as attributes
+- `gpu-indirect!` — an indirect-argument buffer: compute writes the draw call's own arguments and the render pass draws from it
+- `gpu-compute-group*!` — a compute bind group over any buffer list -- `"3,5,6,4"` binds those slots at bindings 0..3, storage or uniform alike, since the auto layout reads the WGSL
+- `gpu-draw-indexed-indirect!` — the GPU-driven indexed draw: the argument buffer holds `[indexCount instanceCount firstIndex baseVertex firstInstance]`, written by a compute pass -- a cull the CPU never sees
+- `gpu-draw-indirect!` — the same for a non-indexed draw
+- `gpu-hzb-init!` — build the depth-pyramid resources for occlusion culling, once, at `w` by `h`
+- `gpu-end-pass!` — close the occluder pass so later draws load the depth buffer instead of clearing it
+- `gpu-hzb!` — reduce the depth buffer into the pyramid, for the next frame's occlusion test
+- `gpu-compute-groupx!` — like `gpu-compute-group*!` but entries may be textures: `"3,4,t7"` binds buffers 3 and 4 and texture 7's full view
+- `gpu-texture!` — an rgba8 texture of `w` by `h`
+- `gpu-texture-data!` — fill a texture from `w*h*4` staging bytes at `base`
+- `gpu-sampler!` — a linear sampler with repeat addressing
+- `gpu-bindgroup!` — the plain bind group: the uniform buffer at binding 0
+- `gpu-texgroup!` — the textured bind group, in the order `(gfx wgsl)` declares its bindings: uniforms at 0 (pass `-1` when the shader has no scalar uniforms), then the sampler, then the texture view
+- `gpu-compute!` — a compute pipeline from one WGSL module (entry point `cs`)
+- `gpu-compute-group!` — its bind group: a storage buffer at binding 0 and uniforms at binding 1
+- `gpu-begin!` — start encoding a frame -- resets the command cursor
+- `gpu-flush!` — submit everything encoded since `gpu-begin!`
+- `gpu-clear!` — the clear colour for the frame's render pass
+- `gpu-use-pipeline!` — bind a render pipeline for the draws that follow
+- `gpu-bind-vbuf!` — bind a vertex buffer at slot 0
+- `gpu-bind-vbuf2!` — bind a vertex buffer at slot 1 -- the per-instance stream
+- `gpu-bind-ibuf!` — bind an index buffer
+- `gpu-set-group!` — bind a bind group for the draws that follow
+- `gpu-buffer-data!` — upload `bytes` from staging memory at `base` into a buffer slot
+- `gpu-draw!` — draw `verts` vertices without indices
+- `gpu-draw-indexed!` — draw `count` indices
+- `gpu-draw-instanced!` — draw `verts` vertices `insts` times, reading the per-instance stream from slot 1
+- `gpu-dispatch!` — one compute step in its own pass. Encode dispatches BEFORE the frame's draws: a render pass cannot be interrupted
+- `gpu-bundle!` — freeze the draws and state encoded since `gpu-begin!` into a render bundle. Recorded once, a static scene replays inside the browser with no decoding per frame
+- `gpu-execute!` — replay a recorded bundle
+- `gpu-gpu-timer!` — ask for GPU frame timing, AFTER `gpu-attach!`; answers `#f` where the timestamp-query feature is absent
+- `gpu-gpu-ms` — the last GPU frame time in milliseconds, resolving a few frames behind, or `#f` when no result has arrived yet
 
 ## `(gfx ibl)`
 
-`ibl-brdf-lut!`  `ibl-prefilter!`
+- `ibl-brdf-lut!` — bake the split-sum BRDF lookup table once; answers the texture slot to sample with (NdotV, roughness)
+- `ibl-prefilter!` — GGX-convolve the cube map in `src-slot` into a fresh cube map with `levels` mips; answers its slot
 
 ## `(gfx image)`
 
-`png-info`  `png-decode!`  `png-encode!`  `png-encode-size`  `tga-info`  `tga-decode!`  `inflate!`  `zlib-inflate!`  `crc32`  `adler32`
+- `png-info` — the size and channel count of a PNG without decoding it -- THREE VALUES (width, height, channels), so receive them with `let-values`. `channels` is what the file carries, not what the decode writes
+- `png-decode!` — decode a PNG to RGBA8 at `dst` -- TWO VALUES (width, height), received with `let-values`. `scratch` holds the filtered scanlines and is bounds-checked against `scratch-len`
+- `png-encode!` — encode `w` by `h` pixels of `ch` channels at `pix` into a PNG at `dst`; answers the byte length written
+- `png-encode-size` — an upper bound on the bytes `png-encode!` will write, for sizing the destination first
+- `tga-info` — the size and channel count of a TGA without decoding it
+- `tga-decode!` — decode a TGA to RGBA8 at `dst`
+- `inflate!` — raw DEFLATE (RFC 1951) from `src` to `dst`; answers the byte count written
+- `zlib-inflate!` — the same with a zlib wrapper (RFC 1950): the two-byte header is checked and skipped
+- `crc32` — the CRC-32 of `slen` bytes at `src`, as PNG chunks use it
+- `adler32` — the Adler-32 of `slen` bytes at `src`, as the zlib trailer uses it
 
 ## `(gfx ktx)`
 
-`ktx-parse`  `ktx?`  `ktx-width`  `ktx-height`  `ktx-level-count`  `ktx-scheme`  `ktx-etc1s?`  `ktx-uastc?`  `ktx-level-width`  `ktx-level-height`  `ktx-transcode!`  `ktx-transcode-bytes`  `ktx-uastc-level!`  `ktx-fetch!`  `ktx-upload!`  `ktx-stream!`  `ktx-alpha?`
+- `ktx-parse` — read a KTX2 container already in staging memory at `base`; answers a handle the rest of this library takes, or refuses a file it cannot read
+- `ktx?` — whether a value is a parsed KTX2 handle
+- `ktx-width` — the width of level 0, in pixels
+- `ktx-height` — the height of level 0, in pixels
+- `ktx-level-count` — how many mip levels the file carries
+- `ktx-scheme` — the supercompression scheme number: 0 none, 1 BasisLZ, 2 zstd
+- `ktx-etc1s?` — whether the payload is BasisLZ/ETC1S, the small-and-lossy encoding
+- `ktx-uastc?` — whether the payload is UASTC LDR 4x4, raw or zstd-supercompressed
+- `ktx-level-width` — the width of mip level `l`, halving and clamping at 1
+- `ktx-level-height` — the height of mip level `l`
+- `ktx-transcode!` — transcode level `l` into GPU format `fmt` at `dst`; the destination must be `ktx-transcode-bytes` long
+- `ktx-transcode-bytes` — how many bytes level `l` occupies once transcoded to `fmt` -- ask before allocating
+- `ktx-uastc-level!` — decode a UASTC level to RGBA at `dst` (`w*h*4` bytes); a zstd frame is inflated to the raw blocks first
+- `ktx-fetch!` — fetch a `.ktx2` over the network, copy it into staging in one go, parse it, and hand the handle to `k`
+- `ktx-upload!` — transcode every level for whatever the context speaks and upload the chain; answers the texture slot. What it picks depends on the extensions present: ETC1 blocks kept, BC1 repacked, or level 0 decoded to RGBA
+- `ktx-stream!` — fetch and upload in one call, handing the finished texture slot to `cb`
+- `ktx-alpha?` — whether the file carries alpha slices -- for ETC1S they are second slices whose grey carries the coverage
 
 ## `(gfx mat)`
 
-`flsin`  `flcos`  `fltan`  `flasin`  `flacos`  `flatan`  `flatan2`  `q-mul`  `q-conj`  `q-neg`  `q-dot`  `q-normalize`  `q-slerp`  `v3`  `v3-x`  `v3-y`  `v3-z`  `v3-add`  `v3-sub`  `v3-scale`  `v3-dot`  `v3-cross`  `v3-normalize`  `v3-set!`  `v3-copy!`  `v3-add!`  `v3-sub!`  `v3-scale!`  `v3-cross!`  `v3-normalize!`  `m4-identity`  `m4-mul`  `m4-scratch!`  `m4-transform`  `m4s-write!`  `m4s-read`  `m4s-identity!`  `m4s-mul!`  `m4s-trs!`  `m4s-tqs!`  `m4-translate`  `m4-scale`  `m4-rotate-x`  `m4-rotate-y`  `m4-rotate-z`  `m4-from-quat`  `m4-perspective`  `m4-ortho`  `m4-look-at`  `m4-inverse`  `m4-unproject`  `m4-frustum-planes`  `sphere-in-frustum?`  `sphere-in-frustum-xyz?`  `fl-clamp`  `fl-lerp`  `fl-damp`  `fl-turn`  `fl-smooth`
+- `flsin` — sine of a flonum, from the system's own range-reduced polynomial, so both compiler targets emit identical bits
+- `flcos` — cosine of a flonum, from the same reduction and polynomial as flsin
+- `fltan` — tangent of a flonum as sine over cosine; it carries no absolute error bound, unlike the two it is built from
+- `flasin` — arcsine, accurate to about 1e-7 across its domain; an argument outside [-1,1] is clamped rather than answered with a NaN, because a dot product of two unit vectors leaves that interval as a matter of course
+- `flacos` — arccosine, computed directly rather than by subtracting flasin from pi/2, which near |x| = 1 would cancel away the answer's leading digits
+- `flatan` — arctangent of one argument, reduced onto one series
+- `flatan2` — the angle of (y, x) with the host's sign conventions; it answers 0 at the origin and does not distinguish negative zero, so the negative x axis answers +pi
+- `q-mul` — the Hamilton product, in the composition order the matrices use: (q-mul q r) turns q by r expressed in q's own frame. It does not commute -- the operands the other way round give the other frame's answer
+- `q-conj` — negates the vector part; on a UNIT quaternion that is the inverse rotation, on any other it is not, so normalize first if the input has been composed for a while
+- `q-neg` — negates all four components -- the same rotation, the other way round the sphere; flipping a key whose dot with the previous one is negative is what stops an interpolation taking the long way
+- `q-dot` — the four-component dot product; its sign is what says whether two keys are on the same side of the sphere
+- `q-normalize` — scales a quaternion to unit length so it is a rotation again; whether the input had drifted is a question for q-dot of it with itself
+- `q-slerp` — interpolation at a constant angular rate, for code that needs the rate itself -- an IK or camera solver; the animation path deliberately keeps its cheaper nlerp
+- `v3` — a 3-vector from three numbers, coercing them to flonums
+- `v3-x` — the first component
+- `v3-y` — the second component
+- `v3-z` — the third component
+- `v3-add` — the sum of two vectors, as a new vector
+- `v3-sub` — the difference of two vectors, as a new vector
+- `v3-scale` — a vector times a scalar, as a new vector
+- `v3-dot` — the dot product; for unit vectors, the cosine of the angle between them
+- `v3-cross` — the cross product, right-handed, as a new vector
+- `v3-normalize` — a unit vector in the same direction, as a new vector
+- `v3-set!` — writes three flonums into a caller-owned vector and answers it; the destructive spellings exist so a per-frame loop allocates once, and they assume their arguments are already flonums
+- `v3-copy!` — copies one vector into a caller-owned destination and answers it
+- `v3-add!` — adds two vectors into a caller-owned destination and answers it
+- `v3-sub!` — subtracts two vectors into a caller-owned destination and answers it
+- `v3-scale!` — scales a vector into a caller-owned destination and answers it
+- `v3-cross!` — crosses two vectors into a caller-owned destination, which must not be either operand -- the components land as they are computed
+- `v3-normalize!` — normalizes a vector into a caller-owned destination and answers it
+- `m4-identity` — a fresh identity matrix, 16 elements, column-major as m[col*4 + row] -- the order uniformMatrix4fv expects
+- `m4-mul` — the product of two matrices: (m4-mul a b) transforms as a after b
+- `m4-scratch!` — sets the staging base the m4s- spellings write into and read from
+- `m4-transform` — transforms a point by a matrix and divides by w; it is a POINT transform, so it is not what a clip-space half-space test wants
+- `m4s-write!` — copies a matrix vector into staging memory at a byte offset, where instance buffers and uniform uploads read the bytes as they lie
+- `m4s-read` — reads a matrix back out of staging memory into a fresh vector
+- `m4s-identity!` — writes the identity directly into staging, with no vector in between
+- `m4s-mul!` — multiplies two staged matrices into a staged destination, loading scalars straight from staging; the destination must not be either operand, since the columns land as they compute
+- `m4s-trs!` — writes a translate-rotate-scale matrix straight into staging from Euler angles and a uniform scale, which is what a scene rebuild wants and what saves four constructors and three multiplies' worth of boxed intermediates
+- `m4s-tqs!` — writes a translate-quaternion-scale matrix straight into staging, with a per-axis scale; the quaternion is assumed to be unit
+- `m4-translate` — a translation matrix
+- `m4-scale` — a per-axis scale matrix
+- `m4-rotate-x` — a rotation about the x axis, angle in radians
+- `m4-rotate-y` — a rotation about the y axis, angle in radians
+- `m4-rotate-z` — a rotation about the z axis, angle in radians
+- `m4-from-quat` — the rotation matrix of a unit quaternion, taking its components unboxed
+- `m4-perspective` — a perspective projection from a vertical field of view in radians, an aspect ratio and the near and far planes
+- `m4-ortho` — an orthographic projection from the six clip bounds
+- `m4-look-at` — a view matrix looking from an eye at a centre with an up vector
+- `m4-inverse` — the inverse of a matrix; inverting a view-projection is the door to picking -- unproject the cursor, then raycast with (gfx collide)
+- `m4-unproject` — a point in normalized device coordinates back to world space through an inverted view-projection; the w division is already done
+- `m4-frustum-planes` — the six clip planes of a view-projection, for culling
+- `sphere-in-frustum?` — whether a sphere given by centre and radius is at all inside the six planes; conservative, so it never culls something that is visible
+- `sphere-in-frustum-xyz?` — the same test with the centre unboxed, for per-frame culls that have the three scalars in hand and would only be making a vector of them
+- `fl-clamp` — x held between a low and a high end; ends the wrong way round are refused, because whoever computed them has a bug that a silent swap would hide
+- `fl-lerp` — linear interpolation that does NOT clamp: extrapolation past either end is half of what it is for, and the bounded version is this composed with fl-clamp
+- `fl-damp` — moves x toward a target at a rate per unit of TIME, not per call: sixty steps of 1/60 and six of 1/6 land in the same place. It cannot overshoot however large rate*dt grows, and a dt of zero answers x itself
+- `fl-turn` — the same damping on an angle, taking the short way across the 0/tau seam; the answer is NOT folded back into a canonical range, so a caller integrating it sees a continuous quantity
+- `fl-smooth` — smoothstep between two edges, flat outside them and eased at both ends; edges that are equal or reversed are refused rather than dividing by zero and answering a plausible 0.0
 
 ## `(gfx mesh)`
 
-`mesh?`  `mesh-verts`  `mesh-indices`  `mesh-uvs`  `mesh-optimize!`  `mesh-remap!`  `mesh-acmr`  `mesh-vert-count`  `mesh-index-count`  `mesh-vertex-bytes`  `mesh-index-bytes`  `mesh-index-u32?`  `mesh-write!`  `mesh-vertex-bytes-f16`  `mesh-write-f16!`  `mesh-vertex-bytes-uv`  `mesh-write-uv!`  `mesh-tangents`  `mesh-vertex-bytes-tan`  `mesh-write-tan!`  `mesh-bounds`  `mesh-plane`  `mesh-box`  `mesh-sphere`  `mesh-cylinder`  `mesh-torus`  `mesh-heightmap`  `mesh-lit-vs`  `mesh-lit-fs`  `mesh-tex-vs`  `mesh-tex-fs`  `mesh-normal-vs`  `mesh-normal-fs`  `mesh-pbr-vs`  `mesh-pbr-fs`
+- `mesh?` — whether a value is a mesh
+- `mesh-verts` — the interleaved vertex array, six flonums per vertex: position then normal
+- `mesh-indices` — the triangle indices, three per face
+- `mesh-uvs` — two flonums per vertex in [0,1], or `#f` for a mesh built without them
+- `mesh-optimize!` — reorder the triangles for the vertex cache (Forsyth), in place. `mesh-acmr` measures what it bought
+- `mesh-remap!` — reorder the vertex arrays so vertices appear in the order the indices first reference them; every per-vertex stream moves together and the indices renumber
+- `mesh-acmr` — average cache miss ratio under a FIFO cache of `size`: misses per triangle. About 1.0 is unoptimised soup, about 0.6 is good for a 32-entry cache
+- `mesh-vert-count` — how many vertices the mesh has
+- `mesh-index-count` — how many indices, which is three times the triangle count
+- `mesh-vertex-bytes` — the bytes `mesh-write!` will write for the vertices: 24 per vertex
+- `mesh-index-bytes` — the bytes `mesh-write!` will write for the indices, u16 or u32 depending on the vertex count
+- `mesh-index-u32?` — whether this mesh indexes as u32 -- true past 65536 vertices. Callers ask before choosing `cmd-index-data32!` and `cmd-draw-elements32!` over the u16 pair
+- `mesh-write!` — lay the vertices at `vbase` and the indices at `ibase` in staging memory, interleaved x y z nx ny nz
+- `mesh-vertex-bytes-f16` — the bytes the half-float layout writes: 12 per vertex
+- `mesh-write-f16!` — the same as `mesh-write!` with positions and normals as half floats, through a `scratch` region
+- `mesh-vertex-bytes-uv` — the bytes the textured layout writes: 32 per vertex
+- `mesh-write-uv!` — interleaved x y z nx ny nz u v, 32 bytes per vertex, matching `mesh-tex-vs`'s attribute layout
+- `mesh-tangents` — per-vertex tangents `(tx ty tz w)` derived from the uvs, for normal mapping; the mesh must have uvs
+- `mesh-vertex-bytes-tan` — the bytes the tangent layout writes: 48 per vertex
+- `mesh-write-tan!` — interleaved x y z nx ny nz u v tx ty tz w, matching `mesh-normal-vs`'s layout
+- `mesh-bounds` — the bounding sphere as `(center . radius)`, which `sphere-in-frustum?` culls against
+- `mesh-plane` — a plane of `w` by `d` on xz with a +y normal
+- `mesh-box` — a box of `w` by `h` by `d`, centred, with flat face normals
+- `mesh-sphere` — a UV sphere of radius `r` from the +y pole; the optional arguments are the segment counts
+- `mesh-cylinder` — a cylinder of radius `r` and height `h` with end caps
+- `mesh-torus` — a torus of ring radius `big` and tube radius `small`
+- `mesh-heightmap` — a heightfield: `nx` by `nz` cells over `w` by `d` on xz with `y = (f x z)`. Normals come from central differences of `f` itself, not of the mesh, so the surface is as smooth as the function
+- `mesh-lit-vs` — ready-made vertex shader forms for one directional light: uniforms `u_mvp` and `u_model`, attributes `a_pos` and `a_normal`. Just data -- compose or replace them
+- `mesh-lit-fs` — the matching fragment forms: `u_light` (unit vector TOWARD the light), `u_color`, `u_ambient`
+- `mesh-tex-vs` — vertex forms for the textured layout, adding `a_uv` to the lit pair
+- `mesh-tex-fs` — the matching fragment forms, sampling `u_tex` and shading it with the same directional light
+- `mesh-normal-vs` — vertex forms for normal mapping, adding `a_tangent` and building the tangent frame
+- `mesh-normal-fs` — the matching fragment forms, perturbing the normal by `u_normal_map` before lighting
+- `mesh-pbr-vs` — vertex forms for the metallic-roughness model
+- `mesh-pbr-fs` — the matching fragment forms: GGX specular with `u_metallic` and `u_roughness`, and an image-based ambient term when the IBL maps are bound
 
 ## `(gfx meshopt)`
 
-`meshopt-vertex!`  `meshopt-index!`  `meshopt-index-sequence!`  `meshopt-filter-oct!`  `meshopt-filter-quat!`  `meshopt-filter-exp!`
+- `meshopt-vertex!` — decode a meshoptimizer vertex buffer from `src` into `dst`: `count` vertices of `stride` bytes, delta-coded per byte lane
+- `meshopt-index!` — decode a meshoptimizer TRIANGLES index buffer into `dst`, `count` indices of `stride` bytes
+- `meshopt-index-sequence!` — decode the dual-baseline INDICES sequence codec, which glTF uses for non-triangle index data
+- `meshopt-filter-oct!` — undo the octahedral filter in place: normals and tangents at stride 4 (int8) or 8 (int16)
+- `meshopt-filter-quat!` — undo the quaternion filter in place, stride 8, reconstructing the dropped largest component
+- `meshopt-filter-exp!` — undo the exponential filter in place: an exponent byte and a signed 24-bit mantissa per 32-bit component
 
 ## `(gfx post)`
 
-`post-quad!`  `post-pass!`  `make-blur`  `blur-run!`  `blur-texture`  `make-bloom`  `bloom-run!`  `bloom-texture`  `bloom-composite!`  `make-fxaa`  `fxaa-run!`  `make-grade`  `grade-run!`  `make-dof`  `dof-run!`
+- `post-quad!` — a fullscreen pass from a fragment-shader form: the floor everything else here is built on
+- `post-pass!` — runs a quad into a target, #f meaning the canvas; the setup procedure receives the program to bind textures and set uniforms on
+- `make-blur` — a ping-pong pair of render targets of a given size, for separable blur
+- `blur-run!` — runs the given number of horizontal-plus-vertical rounds over a source texture; the result is the blur's own texture
+- `blur-texture` — the texture holding the last blur result
+- `make-bloom` — the targets a bloom needs at a given size: a threshold pass and the blur behind it
+- `bloom-run!` — keeps what lies between the two luminance edges and blurs it twice; the glow lands in the bloom's texture
+- `bloom-texture` — the texture holding the glow bloom-run! produced
+- `bloom-composite!` — adds scene and glow into a target, #f meaning the canvas, with a gain and a tonemap of 'none, 'clamp or 'reinhard
+- `make-fxaa` — an FXAA quad; it needs no targets of its own
+- `fxaa-run!` — antialiases a source texture of the given width and height into a target, #f meaning the canvas
+- `make-grade` — a colour-grading quad; it needs no targets of its own
+- `grade-run!` — grades a source texture into a target under a mode and an exposure, at the given size
+- `make-dof` — the targets a depth-of-field pass needs at a given size
+- `dof-run!` — blurs a scene by depth around a focus distance over a range, both in the depth texture's own units; target #f is the canvas
 
 ## `(gfx raster)`
 
-`make-rcam`  `rcam`  `rcam?`  `rcam-az`  `rcam-el`  `rcam-dist`  `rcam-roll`  `rcam-fov`  `rcam-target-x`  `rcam-target-y`  `rcam-target-z`  `rcam-shift-u`  `rcam-shift-v`  `rcam-near`  `rcam-far`  `rcam->list`  `list->rcam`  `rcam-basis`  `rcam-basis!`  `rcam-eye`  `rcam-eye!`  `rcam-view`  `rcam-view!`  `rcam-project`  `rcam-project!`  `rcam-ray`  `rcam-ray!`  `rattr?`  `rattr-count`  `rattr-ncomp`  `rattr-ref`  `rattr-f32`  `rattr-f64`  `rattr-vector`  `rattr-proc`  `ridx?`  `ridx-count`  `ridx-ref`  `ridx-u16`  `ridx-u32`  `ridx-vector`  `ridx-range`  `ridx-proc`  `make-rmesh`  `rmesh?`  `rmesh-positions`  `rmesh-indices`  `rmesh-vertex-count`  `rmesh-tri-count`  `rmesh-tri`  `raster-scratch-bytes`  `project-vertices!`  `proj-x`  `proj-y`  `proj-depth`  `tri-spans!`  `tri-spans-capacity`  `make-rmask`  `rmask?`  `rmask-base`  `rmask-width`  `rmask-height`  `rmask-bytes`  `rmask-clear!`  `rmask-ref`  `rmask-set!`  `rmask-count`  `render-mask!`  `render-mask-add!`  `mask-iou`  `make-rframe`  `rframe?`  `rframe-base`  `rframe-width`  `rframe-height`  `rframe-bytes`  `rframe-clear!`  `render-frame!`  `frame-tri`  `frame-depth`  `frame-invd`  `frame-bary!`  `frame-interp!`  `frame-mask!`  `frame-point-visible?`  `make-rimg`  `rimg?`  `rimg-base`  `rimg-width`  `rimg-height`  `rimg-bytes`  `rimg-clear!`  `rimg-ref`  `rimg-set!`  `rimg-texel!`  `rimg-nearest!`  `rimg-bilinear!`  `render-textured!`  `shade-textured!`  `frame-texel`  `frame-texel!`  `frame-splat!`  `frame-diff`
+A CPU rasterizer, for fitting pipelines rather than for display: no
+canvas is touched and no GL command is issued, so it runs headlessly and
+identically on the wasm and the JS backend.  The pipeline is orbit
+camera -> `project-vertices!` -> `tri-spans!` -> either a silhouette
+mask or a full visibility buffer -> sampling a texture through that
+buffer, and `frame-splat!` back the other way.  Every buffer is
+caller-owned staging memory: ask the `*-bytes` procedure how large, get
+it from `fx-alloc!`, and hand the base to the `make-*` constructor.
+Screen coordinates are x right over [0,W] and y **downwards** over
+[0,H], with pixel centres at (i+0.5, j+0.5); the near plane clips and
+the far plane never does.
+
+- `make-rcam` — the full orbit camera: az el dist roll fov, target x y z, shift-u shift-v, near far. `near` and `far` accept `#f`, meaning the defaults derived from `dist`, so a serialized camera that omitted them reconstructs identically
+- `rcam` — the short form -- az el dist fov and a target -- with roll and shift zero and the derived near/far. Degrees throughout: az turns about +Y from the +Z side towards +X, positive el raises the camera so it looks down, and fov is the VERTICAL field of view
+- `rcam?` — is this a raster camera?
+- `rcam-az` — azimuth in degrees. At 0 the camera sits in the +Z direction from the target and looks towards -Z; increasing it rotates about +Y towards +X
+- `rcam-el` — elevation in degrees; positive raises the camera, so it looks down
+- `rcam-dist` — camera-to-target distance, and the quantity the default near and far planes are derived from
+- `rcam-roll` — roll about the view direction in degrees; positive turns the picture content clockwise
+- `rcam-fov` — the VERTICAL field of view in degrees -- the horizontal one follows from the aspect ratio the render is given, so it is not a camera field
+- `rcam-target-x` — the orbit target's world x
+- `rcam-target-y` — the orbit target's world y (world +Y is up)
+- `rcam-target-z` — the orbit target's world z
+- `rcam-shift-u` — translate the target along the camera's RIGHT direction, in world units -- how "the subject is off-centre in frame" is said without moving world coordinates
+- `rcam-shift-v` — the same along the camera's UP direction
+- `rcam-near` — the near plane. It IS applied: triangles crossing it are clipped, and a vertex at or behind it projects to depth 0.0
+- `rcam-far` — the far plane. Metadata that travels with the camera -- nothing in this module ever clips against it
+- `rcam->list` — serialize a camera, in the reference implementation's key order, with the target as a nested three-list. That order is a contract: it is what lets a camera cross between toolchains without either side owning a private field order
+- `list->rcam` — the inverse, accepting a list or a vector at either level. Reconstructs `#f` near/far as the derived defaults, so a round trip through a file that omitted them is exact
+- `rcam-basis` — the camera basis as a fresh nine-element vector: right, up, forward. Forward is the unit vector the camera looks along
+- `rcam-basis!` — the same nine flonums written into `out[0..8]`, for a caller that owns the vector already
+- `rcam-eye` — the eye position in world space, a fresh 3-vector. It follows from target, dist and the two shifts -- it is derived, never stored
+- `rcam-eye!` — the same three flonums written into `out[0..2]`
+- `rcam-view` — right, up, forward, eye as a fresh twelve-element vector: taking a world point into view space then costs three dot products and no matrix
+- `rcam-view!` — the same twelve flonums written into `out[0..11]`
+- `rcam-project` — project one world point at a `w` by `h` viewport, answering a fresh `#(sx sy depth)` or `#f` when the point is at or behind the eye plane. `depth` is the distance ALONG the view direction, not a clip-space z, and `sy` grows downwards
+- `rcam-project!` — the same into `out[0..2]`, answering `#t` or `#f` rather than the vector -- `out` is untouched on `#f`
+- `rcam-ray` — the inverse: the world-space ray through a screen point, as a fresh six-element vector, `[0..2]` the origin (the eye) and `[3..5]` a UNIT direction. Every point origin + t*dir with t > 0 projects back to exactly that screen point
+- `rcam-ray!` — the same six flonums written into `out[0..5]`
+- `rattr?` — is this a per-vertex attribute source?
+- `rattr-count` — how many elements the source has
+- `rattr-ncomp` — how many components per element. A source wider than the consumer needs is fine: positions read the first three, so a whole interleaved vertex block is accepted where positions are wanted
+- `rattr-ref` — component `k` of element `i`, always as a flonum
+- `rattr-f32` — an attribute over interleaved 32-bit floats in staging: `base`, `stride`, the attribute's byte `offset` inside the vertex, `count`, `ncomp` -- exactly the shape a glTF primitive's vertex block already has
+- `rattr-f64` — the same over 64-bit floats; `offset` and `stride` are still in BYTES
+- `rattr-vector` — an attribute over a flat Scheme vector, `ncomp` values per element. Exact numbers are coerced on the way out, so a literal written `(0 1 0)` reads back as flonums
+- `rattr-proc` — an attribute computed on demand: `(get i k)` per component, coerced to flonum. Nothing caches, so it is called once per read
+- `ridx?` — is this a triangle index source?
+- `ridx-count` — how many indices -- three per triangle, so this is not the triangle count
+- `ridx-ref` — index `i` of the source, as a vertex number
+- `ridx-u16` — indices as unsigned 16-bit little-endian values in staging at `base`
+- `ridx-u32` — the same for unsigned 32-bit. Assembled by multiplication rather than shifts: an index at or past 2^29 would trap the bitwise operators
+- `ridx-vector` — indices out of a Scheme vector, one per element
+- `ridx-range` — the non-indexed draw: vertex `i` is triangle corner `i`
+- `ridx-proc` — indices computed on demand by `(get i)`
+- `make-rmesh` — a mesh from a position attribute and a triangle index source, and nothing else the rasterizer would have to know about. Errors on positions narrower than three components
+- `rmesh?` — is this a raster mesh?
+- `rmesh-positions` — the position attribute
+- `rmesh-indices` — the index source
+- `rmesh-vertex-count` — how many vertices -- the number `raster-scratch-bytes` must be sized for
+- `rmesh-tri-count` — how many triangles, the index count divided by three
+- `rmesh-tri` — corner `k` (0..2) of triangle `t`, as a VERTEX index
+- `raster-scratch-bytes` — how many staging bytes a projected-vertex scratch block needs for that many vertices (24: screen x, screen y and depth as f64, interleaved per vertex). Every render takes such a block and never allocates one itself
+- `project-vertices!` — project a whole mesh into a scratch block at `base` for a `w` by `h` viewport, and answer `base`. A vertex at or inside the near plane gets depth 0.0 rather than being dropped -- near-plane clipping happens a level up, per triangle, where the surviving corners are still available
+- `proj-x` — vertex `i`'s screen x in a projected block. Meaningless where `proj-depth` is 0.0: that vertex was behind the near plane
+- `proj-y` — vertex `i`'s screen y, growing DOWNWARDS from the top edge
+- `proj-depth` — vertex `i`'s depth along the view direction, or exactly 0.0 for a vertex at or behind the near plane -- the flag the triangle loop tests
+- `tri-spans!` — the footprint rule, written in exactly one place: fill `spans` with `(row x0 x1)` triples covering a screen triangle, half-open in x, and answer how many triples were written. A pixel is covered when its CENTRE lies inside; a triangle covering no centre at all falls back to the single cell holding its centroid, so no triangle is ever empty. Rows outside `[jlo, jhi)` are visited but not emitted -- they still decide whether any centre was covered -- and the fallback cell is emitted wherever it lands, so the caller must range-check every span it is handed. It neither clips nor wraps: a viewport is the caller's policy
+- `tri-spans-capacity` — how large a `spans` vector must be for that row window. Size it once outside the triangle loop
+- `make-rmask` — a `w` by `h` binary mask over `rmask-bytes` staging bytes at `base`. It does NOT clear -- `render-mask!` or `rmask-clear!` does
+- `rmask?` — is this a mask?
+- `rmask-base` — the mask's staging address
+- `rmask-width` — the mask's width in pixels
+- `rmask-height` — the mask's height in pixels
+- `rmask-bytes` — how many staging bytes a `w` by `h` mask needs: one byte per pixel, not one bit
+- `rmask-clear!` — zero every pixel
+- `rmask-ref` — the byte at (x, y). No bounds check -- the caller owns the range, as everywhere else in this module
+- `rmask-set!` — write the byte at (x, y). Any non-zero value counts as set for `rmask-count`, `mask-iou` and `frame-diff`
+- `rmask-count` — how many pixels are non-zero
+- `render-mask!` — the silhouette path: clear the mask, then union in every triangle's footprint, and answer the set-pixel count. No depth buffer and no barycentrics -- a silhouette does not depend on z order. Backfaces are NOT culled, which is what lets this and `render-frame!` be cross-checked against each other
+- `render-mask-add!` — the same without clearing: union this mesh into whatever the mask already holds, which is how a multi-primitive asset renders into one mask. Also answers the mask's total set-pixel count, not this mesh's contribution
+- `mask-iou` — intersection over union of two equally sized masks, the measure of fit, computed here and nowhere else. Two EMPTY masks score 1.0 by definition -- a caller that must distinguish "perfect" from "nothing rendered" checks `rmask-count` as well
+- `make-rframe` — a `w` by `h` visibility buffer over `rframe-bytes` staging bytes at `base`. It does not clear; `render-frame!` clears at entry
+- `rframe?` — is this a visibility buffer?
+- `rframe-base` — the buffer's staging address
+- `rframe-width` — its width in pixels
+- `rframe-height` — its height in pixels
+- `rframe-bytes` — how many staging bytes a `w` by `h` visibility buffer needs (36 per pixel: 1/depth and three barycentrics as f64, plus an i32 triangle id)
+- `rframe-clear!` — reset every pixel to empty: 1/depth 0.0 and triangle id -1
+- `render-frame!` — the full path: clear, project, scanline, z-buffer, and write per pixel the triangle id, the perspective-correct barycentrics and 1/depth. Backfaces are not culled, and the footprint must equal `render-mask!`'s byte for byte -- that the two are separately written fills is the cross-check
+- `frame-tri` — the triangle id at a pixel, or -1 where nothing was rasterized
+- `frame-depth` — the depth at a pixel, or `#f` where nothing was rasterized. `#f` rather than a sentinel infinity, which every caller would have to remember to compare correctly
+- `frame-invd` — the raw 1/depth at a pixel; larger is nearer, and 0.0 means empty. This is the number the depth test compares -- for a distance use `frame-depth`
+- `frame-bary!` — the perspective-correct barycentrics at a pixel into `out[0..2]`, answering `#t`, or `#f` on an empty pixel with `out` untouched
+- `frame-interp!` — interpolate ANY per-vertex attribute at a pixel, at whatever width it carries -- positions, normals, UVs, a scalar. Fills `out` with `ncomp` values and answers `#t`; `#f` means the pixel is empty. `out` must be at least `rattr-ncomp` long
+- `frame-mask!` — write the silhouette of a rendered frame into a mask and answer its set-pixel count. It must equal `render-mask!`'s answer byte for byte on the same camera
+- `frame-point-visible?` — is a world point visible in this frame? `ti` is the triangle the point is known to belong to, or -1 when it belongs to none: landing on its own triangle counts as visible immediately, which keeps a surface from shadowing itself out of its own bake. `bias` is a RELATIVE depth tolerance, not an absolute distance
+- `make-rimg` — a `w` by `h` RGBA8 raster over `rimg-bytes` staging bytes at `base` -- one container for both roles, the texture a render samples and the colour frame a render writes. Errors on a non-positive size
+- `rimg?` — is this an RGBA8 raster?
+- `rimg-base` — the raster's staging address; row 0 sits at the base, four bytes a texel
+- `rimg-width` — its width in texels
+- `rimg-height` — its height in texels
+- `rimg-bytes` — how many staging bytes a `w` by `h` RGBA8 raster needs
+- `rimg-clear!` — fill every texel with r g b a, each a byte
+- `rimg-ref` — channel `k` (0=R 1=G 2=B 3=A) of the texel at column x, row y. Raw indexing with no wrap and no clamp: like `tri-spans!` this one neither knows nor decides what happens outside, so the same container serves a sampler that repeats and a frame that does not
+- `rimg-set!` — write all four channels of the texel at column x, row y
+- `rimg-texel!` — which single texel a NEAREST sample of (u, v) reads: `out[0]` column, `out[1]` row. (u, v) arrive in the OpenGL sense -- v upwards from the bottom edge, so glTF coordinates are passed as (u, 1-v) -- and outside [0,1] they REPEAT, glTF's default wrap. Same arithmetic the sampler fetches through; there is no second copy of it
+- `rimg-nearest!` — nearest sample of (u, v) into `out[0..3]` as exact bytes. Same (u, v) convention as above: v upwards, and outside [0,1] repeats
+- `rimg-bilinear!` — bilinear sample of (u, v) into `out[0..3]` as flonums, UN-quantized -- the caller decides whether the answer becomes a byte and by which rounding. All four channels go through the same arithmetic: alpha is not a special case. Same (u, v) convention: v upwards, repeating outside [0,1]
+- `render-textured!` — geometry and shading in one call: `render-frame!` then `shade-textured!`. `fr` is left holding the pose, so `frame-texel`, `frame-splat!` and `frame-point-visible?` all still apply to the picture just made. `mode` is `'nearest` or `'bilinear`; `uv` carries glTF-convention texture coordinates and the flip is applied here
+- `shade-textured!` — shade an already-rendered visibility buffer with a texture into `dst`, and answer how many pixels a triangle covered. Uncovered pixels are written (0,0,0,0) -- transparent black, so background is distinguishable from a black surface by alpha alone. `mode` is `'nearest` or `'bilinear`, and the `uv` attribute must carry at least two components
+- `frame-texel` — which texel a pixel read, as a fresh `#(column row)`, or `#f` where the pixel is background. Under `'nearest` the rendered pixel is by construction `rimg-ref` of this texel; under `'bilinear` a pixel has no single texel and this answers the nearest one -- right for "where on the atlas am I", wrong for redistributing a correction, which is `frame-splat!`
+- `frame-texel!` — the same into `out[0..1]`, answering `#t` or `#f`
+- `frame-splat!` — the transpose of sampling: call `(proc px py tx ty w)` once per (pixel, texel) contribution and answer how many times it was called. Under `'nearest` that is once per covered pixel with w = 1.0; under `'bilinear` four times, with exactly the four weights the sampler gave, summing to one. `tri` selects one triangle or `#f` for every covered pixel -- and it narrows what is EMITTED, not what is walked: the scan is the whole frame either way, so a caller splatting every triangle in turn should pass `#f` once and dispatch on `frame-tri` itself
+- `frame-diff` — |a - b| over the pixels a mask admits, into `out`: `[0]` the sum over all four channels as a flonum, `[1]` how many pixels were compared, `[2]` the largest single-channel difference. ALPHA COUNTS -- a render that put background where the photograph has surface reads (0,0,0) just like a black surface, and only alpha tells them apart. `mask` is an `rmask` whose non-zero bytes select, or `#f` for every pixel
 
 ## `(gfx reflect)`
 
-`reflect-plane-matrix`  `reflect-range`  `m4-crop-rect`
+- `reflect-plane-matrix` — a mirror matrix about the horizontal plane `y = plane-y`, for building the mirrored camera
+- `reflect-range` — how much of a reflection target needs drawing: `#f` to skip the pass, `#t` for all of it, or `#(x y w h)` in pixels from the LOWER LEFT; anything it cannot bound conservatively answers `#t`
+- `m4-crop-rect` — the projection restricted to a pixel rectangle, so that rectangle becomes the whole of clip space -- a culling frustum for the reflection pass
 
 ## `(gfx retarget)`
 
-`retarget-clip!`  `retarget-write-glb!`  `retarget-report`  `retarget-normalize-name`  `retarget-glb-node-names`
+- `retarget-clip!` — map one animation clip from a source rig onto a target rig, answering a clip descriptor `(gfx glb)` takes verbatim. Every target joint gets a rotation channel; an unmapped one holds its bind rotation
+- `retarget-write-glb!` — the target asset plus one retargeted clip as GLB bytes, answering `(base . length)` that `gltf-parse` reads back. The clip replaces one of the same name; `keep-anims? #f` drops the rest
+- `retarget-report` — the same walk as `retarget-clip!` but reporting instead of producing: which rule matched what, the two rigs' extents and their ratio, and which joints received a translation track. This is what to read when a retarget looks wrong
+- `retarget-normalize-name` — fold the spellings of one joint name into a single key -- namespace prefixes (`rig:Hips`, `rig|Hips`), any separator and any casing all collapse
+- `retarget-glb-node-names` — the node names out of a GLB's own JSON chunk, indexed by node. The loader keeps a node's transform and parent but not its name, and matching by name needs them
 
 ## `(gfx scene)`
 
-`sgl`  `$sgl-build`  `sgl-scene?`  `sgl-draw!`
+- `sgl` — the scene macro: a declarative camera, lights and meshes, with `,(signal-ref x)` holes that re-render when the signal changes
+- `$sgl-build` — what `sgl` expands into; needs `fx-init!` first. Not called directly
+- `sgl-scene?` — whether a value is a scene built by `sgl`
+- `sgl-draw!` — draw the scene for this frame, re-reading whatever signals its holes named
 
 ## `(gfx sdf)`
 
-`sdf-from-canvas!`
+- `sdf-from-canvas!` — grab a canvas's alpha into staging memory at `base` and run a two-pass distance transform over it, `spread` pixels wide; answers `(width . height)`, and the field is what a smoothstep around 0.5 samples so text stays sharp at any magnification
 
 ## `(gfx sgpu)`
 
-`sgl-gpu`  `$sgpu-build`  `sgpu-init!`  `sgpu-draw!`  `sgpu-scene?`  `sgpu-occlusion!`
+- `sgl-gpu` — the WebGPU scene macro: the same declarative shape as `sgl`, emitted for the GPU backend
+- `$sgpu-build` — what `sgl-gpu` expands into. Not called directly
+- `sgpu-init!` — acquire the device, build the pipelines and bind groups for a scene on a canvas -- async, and everything else waits on it
+- `sgpu-draw!` — draw the scene for this frame, re-reading the signals its holes named
+- `sgpu-scene?` — whether a value is a scene built by `sgl-gpu`
+- `sgpu-occlusion!` — turn the occlusion-query pass on or off for scenes drawn afterwards
 
 ## `(gfx sprite)`
 
-`atlas?`  `make-atlas`  `atlas-measurer`  `atlas-line-height`  `batch?`  `make-batch`  `batch-atlas`  `batch-begin!`  `sprite!`  `rect!`  `draw-text!`  `batch-draw!`  `load-image!`  `sheet?`  `make-sheet`  `sheet-width`  `sheet-height`  `sheet-batch?`  `make-sheet-batch`  `sheet-batch-sheet`  `sheet!`  `sheet-draw!`
+- `atlas?` — whether a value is a glyph atlas
+- `make-atlas` — a glyph atlas for a CSS font and size: each distinct code point is rasterized once into one texture, which grows by doubling with the old face copied over. Needs fx-init! first
+- `atlas-measurer` — the atlas's own width source, to hand to typeset's prepare -- measuring IS rasterizing here, so a prepared text is already in the atlas by the time it draws, and layout and rendering can never disagree about a width
+- `atlas-line-height` — the line height of the atlas's font, to pass to layout so lines sit where the glyphs were rasterized for
+- `batch?` — whether a value is a quad batch
+- `make-batch` — a quad batch over an atlas, with an optional capacity; it writes interleaved position, UV and colour into staging memory at 192 bytes per quad
+- `batch-atlas` — the atlas a batch draws from
+- `batch-begin!` — empties the batch for a new frame; quads are written between this and batch-draw!
+- `sprite!` — a textured quad: a pixel rect on screen from a pixel rect in the atlas, tinted. UVs are atlas pixels, so atlas growth never invalidates a written vertex
+- `rect!` — a solid tinted rectangle; it samples the white block at the atlas origin, so fills and text go through one program
+- `draw-text!` — draws a typeset layout at a position in a colour; the layout must have been prepared with this same atlas's measurer and line height
+- `batch-draw!` — one texture refresh if the atlas grew or gained glyphs, one buffer upload, one TRIANGLES draw -- a whole frame of sprites and text in a single call
+- `load-image!` — loads an image URL and calls the continuation when the browser has the pixels; make-sheet is what to do with it there
+- `sheet?` — whether a value is a sprite sheet
+- `make-sheet` — uploads a loaded image or canvas as a premultiplied texture, for drawing source rectangles out of a sprite sheet
+- `sheet-width` — the sheet texture's width in pixels, which is what source rectangles are measured in
+- `sheet-height` — the sheet texture's height in pixels
+- `sheet-batch?` — whether a value is a sheet batch
+- `make-sheet-batch` — a quad batch over a sprite sheet, with an optional capacity; it draws under premultiplied blending rather than the atlas's alpha mask
+- `sheet-batch-sheet` — the sheet a sheet batch draws from
+- `sheet!` — a destination pixel rect drawn from a source pixel rect of the sheet, tinted
+- `sheet-draw!` — uploads and draws everything written into the sheet batch since it was last drawn
 
 ## `(gfx stats)`
 
-`make-stats`  `stats-draw!`
+- `make-stats` — the performance HUD, built after `fx-init!`: a sprite batch, a 60-frame ring of frame times, and a GPU timer when the browser exposes the extension
+- `stats-draw!` — draw the HUD for this frame -- call it LAST, since it reports the draw count and command bytes accumulated so far and its own commands would otherwise not be counted
 
 ## `(gfx uastc)`
 
-`uastc-block!`  `uastc-decode!`  `uastc-block-mode`
+- `uastc-block!` — decode one 16-byte UASTC block at `src` into 16 RGBA texels at `dst`, row-major
+- `uastc-decode!` — decode a whole UASTC image, `w` by `h`, block by block; partial edge blocks are clipped so the destination is exactly `w*h*4` bytes
+- `uastc-block-mode` — the block's mode number, read from its first byte -- the shape of everything else in it
 
 ## `(gfx wgsl)`
 
-`wgsl->string`  `wgsl-compute->string`  `wgsl-layout`  `wgsl-check`
+- `wgsl->string` — a WGSL render module from vertex and fragment forms: the uniform struct, the varying struct, the helpers and both entry points
+- `wgsl-compute->string` — a WGSL compute module from one form list: the storage array at binding 0 and the uniform struct at binding 1, in the order `gpu-compute-group!` wires them
+- `wgsl-layout` — the pipeline's vertex layout, derived from the same attribute forms the module was built from
+- `wgsl-check` — validate one form list and report what is wrong with it; every emission path runs this first, so an error names the forms rather than the module they end up in
 
 ## `(gfx xr)`
 
-`xr-supported?`  `xr-start!`  `xr-end!`  `xr-framebuffer`  `xr-eye-count`  `xr-eye-viewport!`  `xr-eye-vp`
+- `xr-supported?` — whether the browser offers WebXR for session mode `k` -- async, and the answer is a promise
+- `xr-start!` — enter an XR session; must be called from a user gesture. `frame-cb` runs once per XR frame with the time in seconds, `end-cb` when the session closes
+- `xr-end!` — end the session and hand the frame loop back
+- `xr-framebuffer` — the session's framebuffer, to bind before drawing an eye
+- `xr-eye-count` — how many views this frame has -- one per eye, and not always two
+- `xr-eye-viewport!` — set the viewport for eye `i` inside the shared framebuffer
+- `xr-eye-vp` — projection times inverse view for eye `i`, as a `(gfx mat)` m4
 
 ## `(gfx zstd)`
 
-`zstd-decode!`  `zstd-frame-size`
+- `zstd-decode!` — inflate one zstd frame from `src` (`slen` bytes) to `dst`, staging literals through `scratch`; answers the byte count written. `scratch-len` bounds the literal writes, so a hostile header cannot overrun a short scratch
+- `zstd-frame-size` — the decompressed size the frame header declares, or `#f` when the header does not carry one -- read it before allocating the destination
 
 
 # lng
@@ -132,19 +737,60 @@ Language: dispatch, machines, effects -- how a program is organised, not what it
 
 ## `(lng effect)`
 
-`make-effect`  `effect?`  `effect-kind`  `effect-source`  `effect-priority`  `effect-phase`  `effect-payload`  `effect->datum`  `datum->effect`  `resolve`  `collect-effects`
+- `make-effect` — one effect: its kind, the source that produced it, a priority, the phase it belongs to, and a payload
+- `effect?` — whether a value is an effect
+- `effect-kind` — what the effect asks for, as a symbol; policies are written per kind
+- `effect-source` — who produced the effect, kept so a resolved outcome can still say where it came from
+- `effect-priority` — the number a policy orders or chooses by among effects of one kind
+- `effect-phase` — which phase of resolution this effect belongs to
+- `effect-payload` — the effect's data; this library reads payloads once and returns, so a later mutation cannot make a stored result describe a world that has moved on
+- `effect->datum` — the effect as a plain datum, so a set of effects can be written out, diffed or read back
+- `datum->effect` — reads back what effect->datum wrote, refusing anything that is not that shape
+- `resolve` — runs the phases in order, applies the policies to the effects of each kind, and answers what survives; phases are symbols and may not repeat, and a binding may not shadow a name the library already answers to
+- `collect-effects` — calls each producer with the same arguments and appends what they returned, in the order the caller listed them -- a producer contributes because it is named here, not because it registered somewhere
 
 ## `(lng generic)`
 
-`make-generic`  `generic?`  `generic-name`  `generic-arity`  `classifiers`  `add-handler!`  `add-handlers!`  `remove-handler!`  `generic-default!`  `generic-check!`  `generic-handlers`  `dispatch-trace`
+- `make-generic` — a generic procedure of a fixed arity of 1 to 4, dispatching either through named classifiers or by predicates; the mode is chosen here and never changes
+- `generic?` — whether a value is a generic made by this library
+- `generic-name` — the symbol the generic was made under, which is the name its errors are raised in
+- `generic-arity` — how many arguments the generic dispatches on; dispatch is written out per arity, so it is fixed at 1 to 4
+- `classifiers` — packages the classifier list a tag-mode generic dispatches through, for the mode operand of make-generic
+- `add-handler!` — registers one handler under a signature; a signature that already has one is a named error rather than a silent replacement
+- `add-handlers!` — registers several signature-and-handler pairs at once; a duplicate inside the batch is named too, and the whole batch is checked before any of it is committed
+- `remove-handler!` — drops the handler registered under a signature; a signature that has none is a named error
+- `generic-default!` — sets what runs when nothing applies, and clears the dispatch cache -- "nothing applies here" is itself a cached answer
+- `generic-check!` — checks the registered handlers for overlap now, rather than at the call that would have hit the ambiguity
+- `generic-handlers` — the registered signatures and handlers, copied: the configuration belongs to the library, so editing what you are given cannot move a handler behind the checks
+- `dispatch-trace` — what a call would do without doing it -- the tags, every candidate in registration order, and the winner; the classifiers run because the tags are the answer, no handler does
 
 ## `(lng machine)`
 
-`make-machine`  `machine?`  `machine-state`  `machine-ctx`  `machine-spec`  `machine-events`  `machine-transitions`  `machine-step`  `machine->datum`  `datum->machine`
+- `make-machine` — a machine from a spec that is data and an alist binding the guard and action names the spec mentions; a repeated clause or a name bound twice is a named error, never first-occurrence-wins
+- `machine?` — whether a value is a machine
+- `machine-state` — the state the machine is in
+- `machine-ctx` — the context value the machine carries
+- `machine-spec` — a copy of the spec, so a caller cannot edit the model out from under a live machine
+- `machine-events` — the events the spec structurally offers from this state, with no guard evaluated -- whether a button is disabled is a question about shape, and asking it must not run the caller's predicates
+- `machine-transitions` — a copy of the transitions the spec lists, for drawing or checking the model
+- `machine-step` — answers a NEW machine and the names of the actions that transition asks for, performing none of them; more than one guard holding is a named error rather than a decision made by line order
+- `machine->datum` — the machine as a datum -- spec, state, context and strictness -- for writing out, diffing or reading back; the bindings are procedures and stay out
+- `datum->machine` — reads back what machine->datum wrote, with the bindings supplied again, and refuses a datum whose fields repeat or are empty
 
 ## `(lng pred)`
 
-`define-classifier`  `classifier?`  `classifier-name`  `classifier-tags`  `classify`  `classify-as`  `declare-subtag!`  `subtag?`  `descendants`  `classifier-watch!`  `declare-subset!`  `subset?`
+- `define-classifier` — makes a classifier from a name, a procedure and a fixed set of tags; it is a value the caller binds, and the tag domain never grows, which is what makes conflicts decidable
+- `classifier?` — whether a value is a classifier
+- `classifier-name` — the symbol the classifier was made under
+- `classifier-tags` — a copy of the declared tag domain; the list itself stays inside, because every conflict check was computed over it
+- `classify` — the tag a classifier gives a value; a value outside the declared domain is refused, since nothing was reasoned about it
+- `classify-as` — classify, refused under a caller's own name, so a dispatcher can speak in its own voice without keeping a second copy of the rule
+- `declare-subtag!` — declares one tag a kind of another; the change is a transaction -- every watcher is consulted, and one refusal puts the old relation back before the refusal reaches the caller
+- `subtag?` — whether one tag is a kind of another under the relation as it stands
+- `descendants` — every tag that is a kind of the given one, that tag included
+- `classifier-watch!` — registers a thunk consulted when the relation changes, once to approve and, only if all approved, once to commit; it lets a lattice change invalidate a generic without this library knowing what a generic is
+- `declare-subset!` — declares the values of one predicate a subset of another's; predicates are identified by object, and a relation that would close a cycle is refused
+- `subset?` — whether one predicate has been declared a subset of another
 
 
 # sim
@@ -153,27 +799,53 @@ The half that is not drawing: who exists, what runs each tick, who hears what.
 
 ## `(sim entity)`
 
-`make-entities`  `entity-spawn!`  `entity-alive?`  `entity-destroy!`  `entity-set!`  `entity-ref`  `entity-each`  `entity-count`  `entity-capacity`
+- `make-entities` — a fixed-capacity store of entities; running out raises rather than growing, because the moment a simulation stopped being bounded is worth knowing
+- `entity-spawn!` — takes a free slot and answers a handle -- the slot paired with the generation it is on; raises when the store is full
+- `entity-alive?` — whether a handle still names a live entity: its slot is occupied and still on the generation the handle was issued for
+- `entity-destroy!` — frees the slot and bumps its generation, so every older handle to it stops matching for good; destroying an already-dead handle is quiet
+- `entity-set!` — writes one component on a live entity; a write through a stale handle raises, because that is a mistake in the caller
+- `entity-ref` — reads one component, answering the default for a missing key or a stale handle -- asking about the dead is how a caller finds out
+- `entity-each` — applies a procedure to every live handle; destroyed slots are skipped, and anything spawned during the walk waits for the next one
+- `entity-count` — how many entities are alive right now
+- `entity-capacity` — the fixed number of slots the store was made with
 
 ## `(sim events)`
 
-`make-bus`  `bus-on!`  `bus-off!`  `bus-emit!`  `bus-clear!`  `bus-depth-limit`
+- `make-bus` — an empty topic bus; listeners hear a topic in the order they subscribed
+- `bus-on!` — subscribes a procedure to a symbol topic and answers a token to unsubscribe with
+- `bus-off!` — retires the subscription a token names; it takes effect inside a running emit, and calling it twice is quiet
+- `bus-emit!` — delivers one payload to a topic's listeners over a snapshot of the list, so subscribing during delivery does not change this emit
+- `bus-clear!` — drops every subscription and leaves the bus usable
+- `bus-depth-limit` — how deep emit may nest before it raises: a listener that feeds its own topic hits this instead of recursing forever
 
 ## `(sim grid)`
 
-`grid-cell`  `grid-origin`  `grid-in-cell?`
+- `grid-cell` — the index of the cell a coordinate falls in: a floor, so negative coordinates get their own cells instead of sharing cell 0 with the positive side
+- `grid-origin` — where a cell starts; because cells are half-open the origin of a cell always lies inside that cell
+- `grid-in-cell?` — whether a point lies in a given cell, asked as two grid-cell questions so a point on a boundary cannot get two different answers
 
 ## `(sim random)`
 
-`make-rng`  `random-integer!`  `random-real!`  `random-range!`
+- `make-rng` — a generator whose whole state the caller holds; the seed must be a fixnum, the same seed replays the same sequence, and two generators never interfere
+- `random-integer!` — the next draw as an integer in [0, n) for a positive fixnum n; advances the generator by exactly one step
+- `random-real!` — the next draw as a real in [0.0, 1.0); the top end is excluded at the last representable double, not merely in the limit
+- `random-range!` — the next draw as a real in [lo, hi); a range that is empty in flonum precision is refused rather than answered with its own upper end
 
 ## `(sim schedule)`
 
-`make-schedule`  `schedule-add!`  `schedule-remove!`  `schedule-run!`  `schedule-systems`
+- `make-schedule` — an empty tick schedule; what runs each tick is decided by registered priorities, never by which file loaded first
+- `schedule-add!` — registers a system under a symbol id and a fixnum priority, answering a row token to remove it with; a duplicate live id raises
+- `schedule-remove!` — retires the row a token names; it takes effect at once, even inside a tick that is already walking the list
+- `schedule-run!` — runs one tick, handing each live system the context and dt in priority order; a system that raises stops the tick and the condition carries its name
+- `schedule-systems` — the ids of the live systems, in the order they will run
 
 ## `(sim step)`
 
-`make-fixed-step`  `fixed-step-advance!`  `fixed-step-alpha`  `fixed-step-time`  `fixed-step-reset!`
+- `make-fixed-step` — a fixed-step accumulator: the step in seconds, and a cap on how many steps one advance may take so a stall cannot spiral
+- `fixed-step-advance!` — adds elapsed seconds and runs the body once per whole step now due; the count is derived from the total every time, so one frame's rounding is never carried into the next
+- `fixed-step-alpha` — how far the caller stands between the last simulated state and the next, in [0,1), for interpolating what is drawn
+- `fixed-step-time` — the simulated clock -- steps taken times the step, which differs from the summed frame times by whatever a stall dropped
+- `fixed-step-reset!` — throws the remainder away, so time that passed while nothing was simulated is not owed after a pause
 
 
 # web
@@ -182,89 +854,199 @@ The page: markup, styling, reactivity, transport.
 
 ## `(web args)`
 
-`args-count`  `args-ref`  `args-list`
+- `args-count` — how many program arguments there are
+- `args-ref` — one argument by index; an index that is not there raises rather than answering #f, so an argument the caller believed in stops the run where the mistake is
+- `args-list` — the arguments as a list of strings
 
 ## `(web canvas)`
 
-`canvas-measurer`
+- `canvas-measurer` — a text measure for a CSS font, backed by a hidden 2d canvas -- the width source (web typeset) needs, coerced to flonum at the boundary because measureText can answer an exact integer
 
 ## `(web component)`
 
-`styled`  `styled-css`  `define-component`
+- `styled` — an SXML node whose style declarations are interned into a class: the markup and its CSS are written together, and repeated calls share one rule
+- `styled-css` — every interned rule in registration order, ready for css->string -- what a page emits once after its components have been built
+- `define-component` — defines a procedure that answers a styled node: the style block and the markup live in one form, and the class is interned once no matter how often it is called
 
 ## `(web css)`
 
-`css->string`  `num->css`  `palette->root`
+- `css->string` — renders (web css) rule data to a stylesheet string
+- `num->css` — a scalar as CSS text: exact integers and strings pass through, and there are no floats -- a fraction is written with the two-argument unit form instead
+- `palette->root` — a palette alist as a :root rule of custom properties, so one binding names a colour for both Scheme and CSS
 
 ## `(web dom)`
 
-`window`  `document`  `body`  `get-element-by-id`  `query-selector`  `create-element`  `make-text`  `append-child!`  `replace-child!`  `insert-before!`  `remove-child!`  `remove-all-children!`  `set-inner-html!`  `inner-text`  `set-text!`  `set-attribute!`  `set-style!`  `computed-style`  `computed-px`  `add-event-listener!`  `console-log`  `alert`
+- `window` — the browser window object
+- `document` — the document object
+- `body` — the document body element
+- `get-element-by-id` — the element with an id, or a false value when there is none
+- `query-selector` — the first element matching a CSS selector, or a false value when nothing matches
+- `create-element` — a new detached element of a tag name; nothing shows until it is appended
+- `make-text` — a text node, which is the safe way to put user text on a page
+- `append-child!` — adds a node as the last child of a parent
+- `replace-child!` — replaces one child of a parent with another node
+- `insert-before!` — inserts a node before an existing child of a parent
+- `remove-child!` — removes a child node from its parent
+- `remove-all-children!` — empties an element of its children, leaving the element itself in place
+- `set-inner-html!` — sets an element's markup from a string -- it PARSES, so a string that came from a user belongs in make-text or set-text! instead
+- `inner-text` — the element's rendered text, as the reader sees it rather than as the markup holds it
+- `set-text!` — replaces an element's contents with a text node, which never parses markup
+- `set-attribute!` — sets an attribute by name
+- `set-style!` — sets one inline style property by its JavaScript spelling
+- `computed-style` — a resolved style value as a string, after the cascade rather than as written
+- `computed-px` — the same value parsed as pixels; anything parseFloat refuses, such as "normal" or "auto", takes the fallback
+- `add-event-listener!` — registers a handler for an event on an element
+- `console-log` — logs a value to the browser console
+- `alert` — opens a browser alert dialog, which blocks the page until it is dismissed
 
 ## `(web fetch)`
 
-`fetch`  `fetch-direct?`  `http-get`  `http-post`  `response-status`  `response-ok?`  `response-text`  `response-header`
+- `fetch` — an HTTP request that reads like a blocking call: the wasm stack suspends on the promise and resumes with the response. Options are an alist of method, body and headers
+- `fetch-direct?` — whether the host really has stack switching; without it the await import is the identity and a promise comes back unawaited instead of a value
+- `http-get` — a GET whose body is answered as a string -- fetch and response-text in one call
+- `http-post` — a POST of a body with an optional content type, answering the response
+- `response-status` — the HTTP status number of a response
+- `response-ok?` — whether the status is in the 2xx range; a 404 is a response that arrived, not a failure to reach the server
+- `response-text` — the response body as a string, suspending until it has arrived in full
+- `response-header` — one response header by name
 
 ## `(web frac)`
 
-`frac-digits`
+- `frac-digits` — the fractional digits of an exact fraction to a given width, keeping leading zeros so 1/200 at width 3 is "005" and not "5" -- the order of rounding and padding is the whole of the rule
 
 ## `(web fs)`
 
-`fs-exists?`  `fs-size`  `fs-slurp!`  `fs-spit!`  `fs-slurp-string`  `fs-spit-string!`
+- `fs-exists?` — whether a path exists; a host with no filesystem holds no files, so it answers #f there rather than raising
+- `fs-size` — the byte length of a file; a caller that is going to read the file anyway should read it and take the count fs-slurp! returns instead of asking twice
+- `fs-slurp!` — reads a whole file into staging memory at a base offset and answers the byte count; a block allocated too small and a memory that must grow are reported apart
+- `fs-spit!` — writes a count of bytes from staging memory at a base offset to a path, answering the count written
+- `fs-slurp-string` — reads a whole file as a string; Goeteia strings are UTF-8 bytes and this moves one byte per character, so a UTF-8 file arrives unchanged
+- `fs-spit-string!` — writes a string to a path as its bytes and answers the byte count
 
 ## `(web glyphs)`
 
-`glyphs!`  `glyphs-mixed!`  `glyphs-group?`  `glyphs-track!`  `glyphs-step!`  `glyphs-dodge!`  `glyphs-rebuild!`
+- `glyphs!` — explodes an element's plain text into per-glyph spans that keep the original layout -- pen positions come from real advances normalized against the whole-string width, so kerning is not lost, and a hidden copy of the text keeps the element's box
+- `glyphs-mixed!` — the same for an element carrying inline markup such as em, code and a, re-setting it without flattening the markup
+- `glyphs-group?` — whether a value is a group of exploded glyphs
+- `glyphs-track!` — attaches pointer tracking to groups, leaving the frame loop to the caller -- the way to drive glyphs from an existing render loop
+- `glyphs-step!` — advances one frame of the spring back home and the repulsion from the pointer; the DOM is touched only for glyphs that actually moved
+- `glyphs-dodge!` — the standalone driver: listeners plus its own animation frame loop, for a page that has no loop of its own
+- `glyphs-rebuild!` — re-explodes a group after the text, the font or the element's width changed
 
 ## `(web html)`
 
-`sxml->html`  `html->document`  `html-escape`  `raw`  `raw?`
+- `sxml->html` — renders an SXML tree to an HTML string, escaping text and attribute values as it goes
+- `html->document` — the same with a doctype in front and a trailing newline -- a whole page rather than a fragment
+- `html-escape` — the five characters that must not survive as markup, replaced by their entities; this is what makes text from outside safe to put in a page
+- `raw` — marks a string to be emitted verbatim; nothing in it is escaped, so it must never carry anything a stranger wrote
+- `raw?` — whether a node is one of those verbatim strings
 
 ## `(web js)`
 
-`js-ref?`  `js-global`  `js-undefined`  `js-eq?`  `js-truthy?`  `js-get`  `js-set!`  `js-call`  `js-method`  `js-new`  `js-index`  `string->js`  `js->string`  `number->js`  `js->number`  `->js`  `js-eval`  `js-await`  `js-callback-error!`
+- `js-ref?` — whether a value is a handle on a JavaScript object rather than a Scheme value
+- `js-global` — the JavaScript global object, the root every other lookup starts from
+- `js-undefined` — the JavaScript undefined value, which is distinct from #f and from a missing property
+- `js-eq?` — JavaScript identity between two handles, which is not Scheme eq?
+- `js-truthy?` — the truth a JavaScript if would give a value, so a caller can branch on it without translating it first
+- `js-get` — reads a property of a JavaScript object by name
+- `js-set!` — writes a property of a JavaScript object by name
+- `js-call` — calls a JavaScript function with an explicit this and arguments
+- `js-method` — calls a method on an object by name, which is js-call with the object as its own this
+- `js-new` — constructs with a JavaScript constructor and arguments
+- `js-index` — reads an element of a JavaScript array or array-like by integer index
+- `string->js` — a Scheme string as a JavaScript string
+- `js->string` — a JavaScript string as a Scheme string
+- `number->js` — a Scheme number as a JavaScript number, inexact on the way out
+- `js->number` — a JavaScript number as a Scheme number
+- `->js` — any Scheme value as the corresponding JavaScript one; a closure becomes a callable JavaScript function
+- `js-eval` — evaluates a string of JavaScript source and answers the result
+- `js-await` — waits for a promise and answers what it resolved to; without engine support for stack switching the promise comes back unawaited instead
+- `js-callback-error!` — installs what runs when a Scheme callback raises inside a JavaScript call, or restores the default console report when given #f -- the stack it would otherwise unwind into is not ours
 
 ## `(web json)`
 
-`string->json`  `json->string`  `json-ref`  `json-array?`  `json-array->list`
+- `string->json` — parses JSON text into Scheme values: objects as alists, arrays as VECTORS, null, true and false as their own values
+- `json->string` — serializes those same Scheme values back to JSON text
+- `json-ref` — walks a path of object keys and array indices into a parsed value, answering a false value when the path is not there
+- `json-array?` — whether a parsed value is a JSON array; arrays are vectors, so list? answers #f on them and the mistake is silent -- this name is where that knowledge lives
+- `json-array->list` — a parsed JSON array as a list, for code that would rather iterate than index
 
 ## `(web react)`
 
-`react-component`  `props-ref`
+- `react-component` — registers a mount procedure under a name so React can render it; whatever the mount answers is the disposer, and when it answers nothing the children are removed instead
+- `props-ref` — one prop as a JavaScript handle, or #f when it is absent
 
 ## `(web reactive)`
 
-`signal`  `signal-ref`  `signal-set!`  `signal-update!`  `effect`  `dispose-effect!`  `on-cleanup`  `root`  `batch`  `untracked`
+- `signal` — a mutable cell that remembers which effects read it
+- `signal-ref` — reads a signal, and subscribes the effect that is running to it
+- `signal-set!` — writes a signal and reruns the effects that read it; a write of an eqv? value changes nothing and notifies no one
+- `signal-update!` — writes a signal from its own current value
+- `effect` — runs a thunk now and again whenever a signal it read has changed; the dependencies are whatever it actually read on the last run
+- `dispose-effect!` — retires an effect and everything it owns, so it stops running and its cleanups fire
+- `on-cleanup` — registers a thunk to run before the current effect reruns and when it is disposed; calling it outside a run is a named error rather than a thunk dropped on the floor
+- `root` — runs a thunk under a fresh detached owner and answers (result . dispose); effects created inside survive reruns of the enclosing effect and die only through that disposer
+- `batch` — defers the effects a group of writes would trigger until the group ends, so each of them runs once no matter how many of its signals moved
+- `untracked` — reads inside the thunk without subscribing the running effect to what they touched
 
 ## `(web rpc)`
 
-`rpc`  `rpc!`  `rpc-get`  `rpc-serialize`  `rpc-parse`
+- `rpc` — calls a remote procedure by sending a datum and answering the reply datum, written as a blocking call; it needs real stack switching, and code that cannot assume it uses rpc! instead
+- `rpc!` — the same call in callback form: the reply datum is handed to a procedure, with an optional failure handler, and nothing suspends
+- `rpc-get` — GETs a datum from any route serving application/sexpr, not only from an RPC endpoint -- the REST-shaped half of the same protocol
+- `rpc-serialize` — a datum as the wire text: the extended s-expression format, with no host read/write surprises, no flonums, and bytevectors as base64
+- `rpc-parse` — reads that wire text back into a datum
 
 ## `(web scroll)`
 
-`make-vscroll`  `vscroll?`  `vscroll-element`  `vscroll-count`  `vscroll-append!`  `vscroll-render!`
+- `make-vscroll` — a virtualized vertical list in a parent element at a size, font and line height: only the visible window is ever mounted
+- `vscroll?` — whether a value is a virtualized scroller
+- `vscroll-element` — the scroller's own element, to place or style
+- `vscroll-count` — how many items the scroller holds
+- `vscroll-append!` — appends one item; a view already at the bottom stays at the bottom, which is what a log wants
+- `vscroll-render!` — mounts the visible window and unmounts the rest, measuring what was newly mounted so the offsets correct themselves
 
 ## `(web sexpr)`
 
-`sexpr->string`  `string->sexpr`
+- `sexpr->string` — a datum as the extended s-expression wire text -- the format the RPC and socket paths speak
+- `string->sexpr` — reads that wire text back into a datum, refusing what is not in the format
 
 ## `(web sse)`
 
-`sse-connect!`  `sse-close!`
+- `sse-connect!` — opens a server-sent-events stream and calls a procedure with each datum that arrives, with optional open and error handlers
+- `sse-close!` — closes the event stream
 
 ## `(web sx)`
 
-`sx`  `sx-mount`  `sx-list`  `$sx-build`
+- `sx` — a reactive DOM template: the static structure is split out at expansion time and built once, each unquote becomes a hole -- an on-* attribute is attached as a listener, everything else is a thunk rerun inside its own effect, updating just that node
+- `sx-mount` — mounts a template's nodes into a container element
+- `sx-list` — a keyed list of children rebuilt from a thunk: the child order is mirrored on the Scheme side, so the DOM is never read back to find out what is there
+- `$sx-build` — the builder the sx expansion calls; it is exported because expanded code refers to it, not because callers should
 
 ## `(web typeset)`
 
-`prepare`  `prepared?`  `prepared-width`  `layout`  `layout?`  `layout-height`  `layout-line-count`  `layout-lines`  `line?`  `line-text`  `line-width`  `line-y`  `string-fold-cp`
+- `prepare` — measures a string once into tokens and a per-code-point width table; the measure procedure is the caller's, so the same widths the renderer will use are the ones the layout is computed from
+- `prepared?` — whether a value is a prepared text
+- `prepared-width` — the width the text would take if nothing wrapped -- the widest hard-break-only line
+- `layout` — breaks a prepared text to a maximum width at a line height; pure arithmetic over the tokens, with no measuring left to do
+- `layout?` — whether a value is a layout
+- `layout-height` — the total height of the laid-out lines
+- `layout-line-count` — how many lines the text broke into
+- `layout-lines` — the lines themselves, in order
+- `line?` — whether a value is one laid-out line
+- `line-text` — the text of one line
+- `line-width` — the width of one line, for centring or right-aligning it
+- `line-y` — the line's baseline offset within the layout
+- `string-fold-cp` — folds over a string's code points, handing the accumulator, the code point, and its byte start and length -- indices rather than substrings, so the hot path allocates nothing and only what is needed gets sliced
 
 ## `(web utf8)`
 
-`utf8-well-formed?`
+- `utf8-well-formed?` — whether a Goeteia string's bytes are valid UTF-8; strings here are byte strings, so "is this text" and "is this valid" are separate questions and every codec putting a string on a wire has to ask the second
 
 ## `(web ws)`
 
-`ws-connect!`  `ws-send!`  `ws-close!`  `ws-open?`
+- `ws-connect!` — opens a WebSocket and calls a procedure with each datum that arrives, with optional handlers for open, close and error
+- `ws-send!` — sends one datum over an open socket, serialized in the same wire format the RPC calls use
+- `ws-close!` — closes the socket
+- `ws-open?` — whether the socket is open right now, rather than still connecting or already closed
 

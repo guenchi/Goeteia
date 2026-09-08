@@ -2,12 +2,20 @@
 // there that no library exports.
 //
 // The manual explains what a library is for; it cannot mention every
-// name, and measuring it showed how far that falls short: of 834
-// exported names, 442 appear nowhere in the manual and 213 appear
-// nowhere in the manual, the README or docs/ at all.  A capability
-// nobody can find is a capability that gets written again downstream,
-// which is exactly what happened -- a consumer rebuilt frustum culling,
-// an input layer and a joint palette that all already existed.
+// name, and measuring it showed how far that falls short.  Measured on
+// the libraries this test scrapes: 823 exported names, of which 449
+// appear nowhere in the manual and 236 appear in it exactly once -- in
+// a document of several thousand lines, which is the same as not at
+// all.  A capability nobody can find is a capability that gets written
+// again downstream, which is exactly what happened: a consumer rebuilt
+// frustum culling, an input layer and a joint palette that all already
+// existed, and the three names they needed were mentioned zero, once
+// and once.
+//
+// Those counts move as libraries are added, so they are here as the
+// reason this file exists, not as an assertion.  The assertion is
+// below: every exported name is listed, and every listed name says
+// something.
 //
 // So the index is generated and this test is the thing that keeps it
 // true: add an export without listing it, or list one that is gone, and
@@ -50,15 +58,18 @@ for (const [name, file] of libraryFiles()) {
     if (names.length) expected.set(name, names);
 }
 
-// The index as it stands: "## (family name)" followed by names in backticks.
+// The index as it stands: "## (family name)" then one bullet per name,
+// each carrying its description after an em dash.
 const index = fs.readFileSync(path.join(root, 'docs/api.md'), 'utf8');
 const listed = new Map();
+const described = new Map();
 let current = null;
 for (const line of index.split('\n')) {
     const h = /^## `?\(([a-z0-9]+) ([a-z0-9-]+)\)`?/.exec(line);
     if (h) { current = `(${h[1]} ${h[2]})`; listed.set(current, []); continue; }
     if (!current) continue;
-    for (const t of line.matchAll(/`([^`\s]+)`/g)) listed.get(current).push(t[1]);
+    const b = /^- `([^`]+)`\s+—\s*(.*)$/.exec(line.trimEnd());
+    if (b) { listed.get(current).push(b[1]); described.set(`${current} ${b[1]}`, b[2]); }
 }
 
 // Ground the parser: these are names a consumer went looking for and
@@ -88,6 +99,24 @@ for (const [lib, names] of expected) {
 }
 for (const lib of listed.keys()) {
     if (!expected.has(lib)) problems.push(`docs/api.md has a section for ${lib}, which is not a library`);
+}
+
+// A name with no line beside it is the failure this file exists to
+// prevent, one step further in: findable but still unreadable.  The
+// index is what a reader consults when the manual does not mention a
+// name at all -- 442 of them did not when it was written -- so a bare
+// list would only move the dead end.  A placeholder counts as missing:
+// generating one is how a new export announces that nobody has said
+// what it does yet.
+const PLACEHOLDER = /^TODO\b/;
+for (const [lib, names] of expected) {
+    for (const n of names) {
+        const d = described.get(`${lib} ${n}`);
+        if (d === undefined) continue;              // already reported above
+        if (!d.trim()) problems.push(`${lib} ${n} has no description`);
+        else if (PLACEHOLDER.test(d.trim())) problems.push(`${lib} ${n} still has a placeholder`);
+        else if (d.trim().length < 12) problems.push(`${lib} ${n} has a description too short to say anything: "${d.trim()}"`);
+    }
 }
 
 assert.deepEqual(problems, [], `\n${problems.slice(0, 40).join('\n')}${problems.length > 40 ? `\n... and ${problems.length - 40} more` : ''}`);
