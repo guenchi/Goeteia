@@ -31,12 +31,12 @@
 ;;
 ;; PREDICATE MODE.  Signatures are lists of ordinary predicates.
 ;; Nothing about open-ended procedures is enumerable, so ambiguity can
-;; only be reported at the call.  It is the documented escape hatch --
-;; and it is SUSPENDED on the wasm target, where a top-level
-;; (define (f x) ...) yields a fresh closure at every reference, so two
-;; mentions of one predicate are not eq? and no relation declared about
-;; it can be found again.  It works on the JS target and under Chez;
-;; tag mode is unaffected, because tags are symbols.  See docs/lng.md.
+;; only be reported at the call, and that is the whole reason it is the
+;; escape hatch rather than the recommended form: with a finite tag
+;; domain a conflict is a fact about the program, and with predicates
+;; it is a fact about a particular call.  A predicate is identified by
+;; the procedure object, so a relation and a signature must name the
+;; same one.  See docs/lng.md.
 ;;
 ;; EVERY CHANGE IS A TRANSACTION.  add-handler!, add-handlers!,
 ;; remove-handler! and a lattice change in (lng pred) each validate the

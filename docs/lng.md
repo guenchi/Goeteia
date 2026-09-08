@@ -1,8 +1,9 @@
 # `(lng …)` — dispatch and the relations behind it
 
-Three libraries so far: `(lng pred)` holds named classifications and
+Four libraries so far: `(lng pred)` holds named classifications and
 the relations between them, `(lng generic)` dispatches on more than one
-argument, and `(lng machine)` keeps a state machine as data. They are
+argument, `(lng machine)` keeps a state machine as data, and
+`(lng effect)` folds what several sources do to one quantity. They are
 for game and simulation logic — rules that grow a case at a time — and
 are deliberately absent from any per-frame path.
 
@@ -262,6 +263,86 @@ evaluating a guard, which is what a UI disabling buttons wants.
 `machine-transitions` answers the whole table, for diagnostics and
 diagrams. `machine-state`, `machine-ctx` and `machine-spec` answer the
 parts.
+
+## `(lng effect)`
+
+An **effect** is a record saying what a source does to a quantity:
+
+```scheme
+(make-effect 'damage 'sword 0 'compute 5)   ; kind source priority phase payload
+```
+
+A **policy** per kind says how the payloads combine, and `resolve`
+folds them:
+
+```scheme
+(let-values (((result provenance)
+              (resolve effects '(compute settle) '((damage . sum) (armor . max)))))
+  result)        ; => ((damage . 10) (armor . 7))
+```
+
+Two values come back: the answer, and where each part of it came from
+— `((damage (sword . 5) (ring . 2) (curse . 3)) …)`. The second is not
+a log the library keeps; it is built from the same fold that produced
+the first, so it cannot drift from it.
+
+**Every ordering the answer depends on is in the data.** The phase
+list the caller passes decides which effects fold first; the priority
+number orders them inside a phase; and effects that agree on both stay
+in the order they were collected, because the sort is stable. Nothing
+comes from registration order, from a method chain, or from which
+module loaded first — which is what lets three modules that have never
+heard of each other contribute to one number and get the same answer
+however they were loaded.
+
+**Policies are names, not procedures.** `sum`, `max`, `min`, `last`
+and `all` are built in; any other name is bound by the caller, the way
+a machine binds its guards:
+
+```scheme
+(resolve effects '(p) '((k . how-many))
+         (list (cons 'how-many (lambda (payloads) (length payloads)))))
+```
+
+So the whole input to `resolve` — effects, phases, policies — is a
+datum, which a table of closures could not be: it can be written to a
+file and replayed. A built-in name cannot be rebound, because one name
+with two readings is the ambiguity this library refuses everywhere
+else.
+
+**Dispatch and collection are different jobs.** Picking the one rule
+that applies is dispatch, and `(lng generic)` does it. Unioning what
+several producers each returned is collection:
+
+```scheme
+(collect-effects (list skill-effects gear-effects aura-effects) attacker target)
+```
+
+Each producer is called with the same arguments and its effects are
+appended, in the order the caller listed them. A producer contributes
+because it is named in that list, not because it registered itself
+somewhere. There is no implicit method combination here.
+
+**Round trip.** `effect->datum` and `datum->effect` write an effect
+out and read it back, so a fight can be replayed. A payload is
+whatever the caller's policy understands and is not checked when the
+effect is made — mid-fight it is often a live object, and refusing
+those would be refusing the ordinary case. `effect->datum` is where it
+has to be a datum, and that is where a live payload or a cyclic one is
+refused by name.
+
+**What is refused**, all by name: a phase listed twice, a kind with
+two policies, a policy name that is neither built in nor bound, a name
+bound twice or bound to something that is not a procedure, an effect
+in a phase the caller did not ask for, a kind with no policy, and a
+cyclic list where a list was expected. Nothing is settled by which
+entry came first.
+
+Nothing is copied here. `(lng machine)` holds a spec for as long as
+the machine lives and must therefore own it; `resolve` reads the
+effects once and returns, so there is no later moment at which a
+mutated payload could make something it stored describe a world that
+has moved on.
 
 ## Not done
 

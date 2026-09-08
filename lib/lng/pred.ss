@@ -34,11 +34,12 @@
 ;;
 ;;   PREDICATES.  Ordinary procedures, open-ended, unenumerable.  The
 ;;   relation is still declared, but nothing can be checked ahead of
-;;   time; ambiguity is reported at the call.  The escape hatch -- and
-;;   SUSPENDED on the wasm target, where a top-level (define (f x) ...)
-;;   yields a fresh closure at every reference, so declare-subset! can
-;;   never name the same object a signature holds.  Tags are symbols
-;;   and are unaffected.  See docs/lng.md.
+;;   time; ambiguity is reported at the call.  That -- not the target,
+;;   not anything about how a procedure is represented -- is why tag
+;;   mode is the recommended form and this one is the escape hatch: an
+;;   open set cannot be reasoned about before it is used.  A predicate
+;;   is identified by the procedure object, so declare-subset! and a
+;;   signature must name the same one.  See docs/lng.md.
 ;;
 ;; Both relations are stored as a REFLEXIVE, TRANSITIVE closure and a
 ;; declaration that would close a cycle is refused: with a cycle, "more

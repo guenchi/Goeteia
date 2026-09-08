@@ -74,6 +74,14 @@ both.  See [The JS target](#the-js-target).
   `(web sexpr)`; anything ambiguous, duplicated, unknown or cyclic is
   refused by name at construction, never settled by where it was
   written (`docs/lng.md`).
+- `(lng effect)` — what several independent sources do to one quantity,
+  as data: each effect names its kind, its source, when it applies and
+  how strongly, and a named policy per kind says how they combine.  A
+  pass over them answers the result and where every part of it came
+  from.  Dispatch picks one rule; collecting unions what several
+  producers returned; there is no implicit method combination.  Policies
+  are names, not procedures, so the whole input is a datum and a fight
+  can be replayed (`docs/lng.md`).
 
 See [Design](#design) for the object representation, the calling
 convention, and the milestone-by-milestone build log.
