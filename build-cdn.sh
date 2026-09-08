@@ -44,9 +44,16 @@ OUT="$HERE/cdn/$VER"
 STAGE=$(mktemp -d "${TMPDIR:-/tmp}/goeteia-cdn.XXXXXX")
 trap 'rm -rf "$STAGE"' EXIT
 mkdir -p "$STAGE/rt"
+# Minifying drops comments, the license header with them, so each file
+# gets the notice back as a banner.  esbuild keeps only comments it
+# recognises as legal (`/*!`, `@license`, `@preserve`) and the sources
+# carry the plain Apache boilerplate, which it does not recognise -- so
+# the notice is put back here rather than by tagging a hundred sources.
+BANNER="/*! Goeteia $VER | Copyright 2026 guenchi | Apache-2.0 | http://www.apache.org/licenses/LICENSE-2.0 */"
 for f in web jsbridge worker sexpr react; do
   npx --yes "$ESBUILD" "$SRC/rt/$f.mjs" --minify --format=esm --target=es2022 \
-      --legal-comments=none --outfile="$STAGE/rt/$f.mjs" 2>&1 | grep -v '^$' || true
+      --legal-comments=none --banner:js="$BANNER" \
+      --outfile="$STAGE/rt/$f.mjs" 2>&1 | grep -v '^$' || true
 done
 cp "$SRC/goeteia.wasm" "$STAGE/goeteia.wasm"
 mkdir -p "$STAGE/src"; cp "$SRC/src/prelude.ss" "$STAGE/src/prelude.ss"
