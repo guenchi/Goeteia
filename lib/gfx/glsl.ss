@@ -133,9 +133,23 @@
         (cond
          ;; float literal -- see fl-literal->string
          ((eq? h 'fl) (fl-literal->string e))
-         ;; unary minus
+         ;; Unary minus.  A separator goes in only when the operand's
+         ;; text already starts with a minus, because "--" is the
+         ;; decrement operator rather than two negations: (- (fl -1 0))
+         ;; emitted "(--1.0)", which is not valid GLSL and which
+         ;; nothing downstream reads -- the page verifier's GL is a
+         ;; stub whose compileShader does nothing.  The separator is
+         ;; conditional and not unconditional so that every ordinary
+         ;; negation in the tree keeps emitting the bytes it always
+         ;; did; widening it would rewrite them all for two cases.
          ((and (eq? h '-) (null? (cddr e)))
-          (string-append "(-" (expr->glsl (cadr e)) ")"))
+          (let ((operand (expr->glsl (cadr e))))
+            (string-append "(-"
+                           (if (and (> (string-length operand) 0)
+                                    (char=? (string-ref operand 0) #\-))
+                               " "
+                               "")
+                           operand ")")))
          ;; array indexing: (at u_joints i) -> u_joints[i]
          ((eq? h 'at)
           (string-append (expr->glsl (cadr e)) "["
@@ -401,12 +415,52 @@
           (begin ($glsl-check-stmt (car ss)) (loop (cdr ss)))
           #t)))
 
+  ;; The payload of (fl ...) is printed without being looked at
+  ;; (fl-literal->string just concatenates), so a negative digit count
+  ;; emitted "1.-2" -- a token that is not a number, and one nothing
+  ;; downstream would reject.  The three arities the printer accepts
+  ;; all stay accepted: (fl i), (fl i d), (fl i d w).
+  ;;
+  ;; Checked here rather than at print time because the error belongs
+  ;; to the forms, not to the dialect that happens to render them --
+  ;; the same reason glsl-check runs before every emission path.
+  (define ($glsl-proper-length x)       ; -1 when it is not a proper list
+    (let loop ((x x) (n 0))
+      (cond ((null? x) n)
+            ((pair? x) (loop (cdr x) (+ n 1)))
+            (else -1))))
+
+  (define ($glsl-count? x) (and (integer? x) (exact? x) (>= x 0)))
+
+  (define ($glsl-check-fl e)
+    (let ((n ($glsl-proper-length e)))
+      (unless (and (>= n 2) (<= n 4)
+                   (integer? (cadr e)) (exact? (cadr e))
+                   (or (< n 3) ($glsl-count? (caddr e)))
+                   (or (< n 4) ($glsl-count? (cadddr e))))
+        (error 'glsl
+               (string-append
+                "bad fl literal: (fl i), (fl i d) or (fl i d w), where i "
+                "is an exact integer and d and w are non-negative counts")
+               e))))
+
+  ;; fl can appear at any expression depth, so this walks the form
+  ;; rather than enumerating the expression slots of each statement --
+  ;; a list of slots is one more thing to keep in step with the
+  ;; printer, and missing an entry there would be silent.
+  (define ($glsl-check-literals x)
+    (when (pair? x)
+      (when (eq? (car x) 'fl) ($glsl-check-fl x))
+      ($glsl-check-literals (car x))
+      ($glsl-check-literals (cdr x))))
+
   ;; Only names the *user* introduces are checked.  The DSL's own
   ;; structure words sit in head position -- attribute, varying, out
   ;; in (out 0 vec4 name), uniform-block -- and type names sit in
   ;; type position; neither is a declared identifier, so neither is
   ;; matched against the tables.
   (define ($glsl-check-form f)
+    ($glsl-check-literals f)
     (if (pair? f)
         (case (car f)
           ((attribute uniform varying)
