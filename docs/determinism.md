@@ -129,6 +129,13 @@ target, and section `edge` walks 80 values from 2^-1000 down past
 the subnormal floor to zero to keep it that way — but it is an engine
 property, not a language one.
 
+**`eq?` on two numbers.** R6RS leaves it unspecified, and the two
+targets use the answer differently: a large integer is a heap object on
+wasm and a host `BigInt` on JS, so two separately computed copies of one
+value are `eq?` on JS and not on wasm. An `eq`-keyed table whose keys
+are computed numbers therefore behaves differently on the two targets.
+Case D2a below has the reproduction and what to do instead.
+
 ## What breaks it
 
 Ordered by how often it will actually happen.
@@ -314,6 +321,45 @@ worth more: a defect would have to occur twice, identically, to pass.
 Verified over 833 conversions (bignums, ratios, `sqrt` of exact
 integers, and `1/n` for large `n`): both targets identical, none off
 the oracle.
+
+### D2a — `eq?` on two large integers answers differently on the two targets
+
+Not a rounding, and not fixed: a divergence that D2's reasoning did not
+cover, found by a consumer of `(sim random)` and reproduced here.
+
+```scheme
+(define k1 (* 999999 1000003))
+(define k2 (* 999999 1000003))
+(eq? k1 k2)                     ; wasm => #f     JS => #t
+
+(define h (make-eq-hashtable))
+(hashtable-set! h k1 'stored)
+(hashtable-ref h k2 'missing)   ; wasm => missing   JS => stored
+```
+
+**Cause**: the same split D2 names, reaching a place D2 did not look.
+On wasm a large integer is a heap object, so `eq?` compares identity
+and two separately computed copies are distinct; on JS it is a host
+`BigInt`, a primitive, so `eq?` compares by value. D2 argued that the
+bignum layer agrees because every operation in it except one is exact —
+which is true of the *arithmetic*, and `eq?` is not arithmetic. The
+premise quietly excluded the identity predicates, and nothing pointed
+that out until an `eq`-keyed table full of computed bignums behaved
+differently on the two targets.
+
+**Standing**: R6RS leaves `eq?` on numbers unspecified, so neither
+answer is wrong and no correction is available. It is written down
+because this project's promise is that the two targets agree, and an
+unspecified corner where they do not is exactly what a reader of that
+promise needs to know.
+
+**What it means in practice**: an `eq`-keyed table whose keys are
+computed numbers is not portable between the targets. Key such a table
+on a fixnum (the range ends at 2^29), on a symbol, or use `equal?`
+hashing. `test/sim-random.ss` carries the scar: its long-run check
+first used `(prev * 1000003 + v)` as a key, which is a bignum, so on
+wasm almost every lookup missed for a reason unrelated to what the cell
+was asking, and a generator with a period of 65536 passed it.
 
 ### D3 — the two hosts disagreed about a string line continuation
 *(fixed; witness kept as `test/string-continuation.ss`)*
