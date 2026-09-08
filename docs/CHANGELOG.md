@@ -1,5 +1,108 @@
 # Changelog
 
+## 1.7.0 — 2026-09-08
+
+*8 commits.* Three new libraries under `(lng …)`; an effect can release what
+it acquired; a procedure and a primitive are one object wherever they are
+named; and library-private helpers stop colliding with each other, which
+also takes 36% off the compiler.
+
+### Breaking
+
+- A top-level name defined twice is refused at compile time, naming both
+  origins: `top-level name defined twice: root "(web reactive)
+  lib/web/reactive.ss:3" "app.ss:33"`. Libraries are spliced into one flat
+  top level, so a program that defined a name one of its libraries exports
+  used to compile with the last definition winning, while dead-code
+  elimination kept only that one's callees — the failure surfaced later as
+  `cannot call:` on an unrelated name. The three cases it covers are a
+  program redefining a library or prelude name, two libraries exporting one
+  name, and one file defining a name twice. **Migration**: rename your own
+  definition. Names a macro introduces are not affected: one macro used
+  twice defines two distinct helpers, as hygiene says.
+- `define` inside a `begin` in expression position is refused rather than
+  miscompiled (`cannot call: define`), as R6RS refuses it. At top level, and
+  from a macro that expands to one there, it works as before.
+
+### API
+
+- `(lng pred)`: `define-classifier`, `classifier?`, `classifier-name`,
+  `classifier-tags`, `classify`, `classify-as`, `declare-subtag!`,
+  `subtag?`, `descendants`, `classifier-watch!`, `declare-subset!`,
+  `subset?`. A classifier gives each value a tag out of a declared finite
+  set, with a subtag lattice over it.
+- `(lng generic)`: `make-generic`, `generic?`, `generic-name`,
+  `generic-arity`, `classifiers`, `add-handler!`, `add-handlers!`,
+  `remove-handler!`, `generic-default!`, `generic-check!`,
+  `generic-handlers`, `dispatch-trace`. Dispatch on every argument, not the
+  first. In tag mode the tag domain is finite, so two handlers that could
+  both apply are found when they are installed rather than settled by
+  registration order; every change is a transaction, validated whole,
+  committed atomically, and the previous set survives a refusal. Predicate
+  mode (`'predicates`) takes open-ended predicates and can only report
+  ambiguity at the call.
+- `(lng machine)`: `make-machine`, `machine?`, `machine-state`,
+  `machine-ctx`, `machine-spec`, `machine-events`, `machine-transitions`,
+  `machine-step`, `machine->datum`, `datum->machine`. A state machine is a
+  datum: states, an initial state, and transitions whose guards and actions
+  are names, the guards bound to procedures when the machine is made. A step
+  is pure and returns the new machine and the action names for the caller to
+  run. Several guarded transitions on one (state, event) are all evaluated,
+  exactly one true takes it, and more than one true is an error naming them,
+  so spec order carries no meaning (which assumes pure guards). Duplicates,
+  unknown options, non-datums and cycles are refused at construction by
+  name; everything handed in or out is deep-copied, except the ctx, which is
+  retained as given.
+- `(web reactive)`: `on-cleanup`. Called inside an effect body or a root
+  body, it registers a thunk for the end of that run: thunks run in reverse
+  order of registration before the next run's body, on `dispose-effect!`,
+  through a root's disposer, and when a parent takes its children down,
+  children before parent. Releasing a tree is one transaction — every thunk
+  runs even when an earlier one raised, and the first condition is raised
+  after the whole tree. A cleanup that disposes its own effect ends it: the
+  new body does not run.
+- Arithmetic primitives used as values are as n-ary as they are in a call:
+  `(apply + (list 1 2 3))` is 6 where it was 3, and `((let ((f +)) f) 1 2 3)`
+  no longer drops an argument. `(+)` and `(*)` answer 0 and 1 in both forms.
+  `max` and `min` take one argument or more instead of exactly two; they
+  still do not do R6RS inexactness contagion.
+
+### Fixed
+
+- Two libraries' private helpers with one name met on the flat top level and
+  the last one spliced won at every call site. `(gfx gltf)` and
+  `(gfx meshopt)` each define a `$s8` — one takes a value, the other an
+  address — and gltf calls `meshopt-filter-oct!` itself, so **its
+  EXT_meshopt_compression path was broken in every program**; `(gfx image)`
+  and `(gfx meshopt)` collided on `$u8` the same way. Every name a library
+  defines and does not export now carries its library's namespace, so two
+  libraries may both call a helper `$u8` without meeting.
+- A top-level procedure used as a value was a fresh closure at every
+  reference on the wasm target, so `(eq? f f)` was `#f`, `memq` could not
+  find a procedure in a list holding it and an `eq-hashtable` could not key
+  on one. A primitive used as a value had the same problem on both targets:
+  `(eq? car car)` was `#f`. Each is now one object, as in Chez and as R6RS
+  says.
+- The arity scan that decides which closure types a module needs treated a
+  sequence of forms as an application, so every body length produced a
+  closure-type pair (one example carried 424 arities, 323 of them above
+  100). `goeteia.wasm` goes from 487,725 to 309,862 bytes, its type section
+  from 192,368 to 1,287; the example programs shrink by about 30% on wasm
+  and are byte-identical on the JS target.
+
+### Tests and tooling
+
+- The differential proofs for the collisions (`test/meshopt-with-gltf.ss`,
+  `test/meshopt-with-image.ss`) are the same test as `test/meshopt.ss` with
+  one library added to the import list, which is the whole difference
+  between red and green. `test/duplicate-top-level.mjs` pins the five
+  refusal shapes on both targets, since a compile-time failure cannot be
+  written as a `;; expect:` line.
+- `test/lng-generic.ss` (13 groups), `test/lng-generic-pred.ss`,
+  `test/lng-machine.ss` (17 groups) and `test/reactive-cleanup.ss` (16
+  groups), with probes under `test/probes/` for the refusals that used to be
+  an accepted order-dependence, a crash or a hang.
+
 ## 1.6.2 — 2026-09-07
 
 *14 commits.* The glTF reader keeps the whole material model, the GLB
