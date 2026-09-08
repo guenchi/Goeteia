@@ -260,11 +260,11 @@
                 (lambda (alpha t dt) (set! alphas (cons alpha alphas))))
 (pump! 5000)                            ; first frame: dt 0, no sim
 (pump! 5025)                            ; +25ms: two steps, half left
-(pump! 15025)                           ; a stall: clamped to 3 more
+(pump! 15025)                           ; a stall: clamped to 4 more
 (define fixed-ok
-  (and (= sims 5)
+  (and (= sims 6)
        (near? (car (cdr alphas)) 0.5)
-       (near? (car alphas) 1.0)))
+       (near? (car alphas) 0.0)))
 
 ;; ---- texture arrays through fx: sampler2DArray dispatches as a
 ;; sampler, and a per-instance layer index is just another i_* attr

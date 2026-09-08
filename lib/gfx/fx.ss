@@ -575,20 +575,26 @@
   ;; states by it for perfectly smooth motion).  The accumulator is
   ;; clamped to 4 steps so a background tab does not spiral
   (define (fx-loop-fixed! step sim render)
-    (let ((acc 0.0)
-          (cap (fl* ($fx-fl step) 4.0)))
+    (let* ((step ($fx-fl step))
+           (acc 0.0)
+           (cap (fl* step 4.0)))
       (fx-ticks!
        (lambda (t dt)
          (set! acc (fl+ acc dt))
          (when (fl<? cap acc) (set! acc cap))
-         (let pump ()
-           (when (fl<? ($fx-fl step) acc)
-             (set! acc (fl- acc ($fx-fl step)))
-             (sim ($fx-fl step))
-             (pump)))
+         ;; Count complete ticks before subtracting.  A strict comparison
+         ;; defers an exact boundary; repeated subtraction can also turn
+         ;; four decimal steps into three with a nearly-full remainder.
+         (let* ((ticks (exact (floor (fl/ acc step))))
+                (rest (fl- acc (fl* ($fx-fl ticks) step))))
+           (set! acc (if (fl<? rest 0.0) 0.0 rest))
+           (let pump ((left ticks))
+             (when (> left 0)
+               (sim step)
+               (pump (- left 1)))))
          (cmd-begin!)
          (cmd-viewport! 0 0 (fx-width) (fx-height))
-         (render (fl/ acc ($fx-fl step)) t dt)
+         (render (fl/ acc step) t dt)
          (when (> (cmd-pos) $fx-cmd-limit)
            (error 'fx-loop-fixed! "command region overflow" (cmd-pos)))
          (cmd-flush!)))))
