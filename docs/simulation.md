@@ -271,3 +271,41 @@ This is not a cryptographic generator. Two successive draws determine
 the state, and from the state every later draw follows. Use it for
 simulation, sampling and content generation; never for a secret, a
 token, or a nonce.
+
+## `(sim grid)` — which cell owns a coordinate
+
+Streaming, spatial hashing and chunked worlds all ask one question, and
+it has exactly two hard cases.
+
+```scheme
+(import (sim grid))
+
+(grid-cell 33.0 32.0)              ; 1     -- which cell x falls in
+(grid-cell -0.5 32.0)              ; -1
+(grid-origin -1 32.0)              ; -32.0 -- where that cell starts
+(grid-in-cell? 1 2 32.0 40.0 70.0) ; #t    -- is (x,y) in cell (cx,cy)
+```
+
+The index is an exact integer, because callers address something with
+it. The size is a length and may be any positive number; zero and
+negative sizes are refused by name, as is a non-integer cell index.
+
+**Negative coordinates.** The index is a *floor*, not a truncation.
+Truncating toward zero maps `-0.5` and `0.5` into the same cell, which
+makes cell 0 twice as wide as every other cell and cell -1 an address
+that never occurs. Nothing raises when this is wrong: the world simply
+has one seam where objects pile up. Floor and truncation agree on the
+positive side, which is why the bug survives every test written in the
+first quadrant.
+
+**Boundaries.** Cells are half-open — `[origin, origin + size)` — so a
+point exactly on an edge belongs to the cell it *opens*, and has exactly
+one owner. Under a closed interval an object sitting on a seam is loaded
+twice by a streamer that unions cells and not at all by one that
+partitions them. The same choice is what makes `grid-origin` an exact
+inverse rather than an approximate one: the origin of a cell is always
+inside that cell, for every index, on both sides of zero.
+
+`grid-in-cell?` asks `grid-cell` twice and compares, rather than testing
+a rectangle of its own, so it cannot come to a different conclusion
+about a boundary point than the index function does.

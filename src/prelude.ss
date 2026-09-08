@@ -1747,16 +1747,61 @@
            (remainder (+ (* h 31) (char->integer (string-ref s i)))
                       536870911))
       h))
+;; The hash an eq/eqv table uses.  It may depend ONLY on things that
+;; cannot change while the object sits in a table: a hash that moved
+;; would leave the entry unreachable in a table that still holds it.
+;; That rules out contents for anything mutable, which is why this is
+;; not simply `equal-hash'.
+;;
+;; What each type can offer:
+;;   - bignums, ratios, complexes are immutable, and `eqv?' compares
+;;     them by value anyway, so their value is the honest hash;
+;;   - a vector's or string's LENGTH is fixed for the life of the
+;;     object (nothing in this runtime resizes one; vector-fill! does
+;;     not), so it is eq-stable and spreads them BY SIZE -- which is
+;;     sound and nearly useless, because objects of one size are the
+;;     normal case: coordinates, colours, fixed-field records.  Twenty
+;;     thousand one-element vectors still land in one bucket.
+;;   - a record carries its rtd, which spreads records BY TYPE, with
+;;     the same caveat: a table full of one record type gains nothing.
+;;
+;; So only the immutable numeric types are genuinely fixed here.  The
+;; rest are divided into a handful of buckets instead of one, which is
+;; not the same thing as being fast, and nothing in this file should be
+;; read as saying eq-hashtables are now scalable.
+;;
+;; PAIRS AND PROCEDURES HAVE NOTHING that is both eq-stable and
+;; varying: a pair's car and cdr are mutable, and a procedure offers
+;; no observable at all.  They stay constant here, so a table with
+;; many pair keys is still a linear scan.  Fixing that needs an
+;; identity the runtime does not have -- see docs/limits.md, which
+;; also records what would change it.
 (define ($eqv-hash k)
   (cond
    ((fixnum? k) (abs k))
-   ((number? k) 0)
    ((char? k) (char->integer k))
    ((symbol? k) (string-hash (symbol->string k)))
    ((eq? k #t) 1)
    ((eq? k #f) 2)
    ((null? k) 3)
-   (else 0)))
+   ;; A bignum is hashed through generic `remainder' rather than by
+   ;; reading its limbs: %bignum-limbs is a wasm-backend primitive and
+   ;; the JS backend does not implement it, so the limb version
+   ;; compiled on one target and not the other.
+   ((%bignum? k) (+ 11 (abs (remainder k 536870911))))
+   ((%ratio? k) (+ 13 (remainder (+ (* 31 ($eqv-hash (%ratio-num k)))
+                                    ($eqv-hash (%ratio-den k)))
+                                 536870911)))
+   ((%complex? k) (+ 17 (remainder (+ (* 31 ($eqv-hash (%cx-re k)))
+                                      ($eqv-hash (%cx-im k)))
+                                   536870911)))
+   ((number? k) 0)                      ; flonums: eqv? is by value,
+                                        ; but no cheap stable spread
+   ((vector? k) (+ 19 (* 7 (vector-length k))))
+   ((string? k) (+ 23 (* 7 (string-length k))))
+   ((bytevector? k) (+ 29 (* 7 (bytevector-length k))))
+   ((%recbase? k) (+ 31 (string-hash (symbol->string (car (%record-rtd k))))))
+   (else 0)))                           ; pairs, procedures: see above
 (define (equal-hash k)
   (cond
    ((string? k) (string-hash k))

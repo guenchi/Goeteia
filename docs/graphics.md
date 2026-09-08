@@ -390,11 +390,11 @@ backend's for now. Example: `examples/sgpu-scene.html`.
 
 ## 4. Math
 
-`(gfx mat)` is vec3 and column-major mat4 over plain flonum vectors —
-pure, verifies headlessly. Its `flsin`, `flcos` and `fltan` bind the
-prelude's range-reduced trig (the flonum layer under `sin`/`cos`/`tan`,
-one implementation for the whole system) so both compiler hosts emit
-identical bytes.
+`(gfx mat)` is scalar arithmetic, vec3, and column-major mat4 over
+plain flonum vectors — pure, verifies headlessly. Its `flsin`, `flcos`
+and `fltan` bind the prelude's range-reduced trig (the flonum layer
+under `sin`/`cos`/`tan`, one implementation for the whole system) so
+both compiler hosts emit identical bytes.
 
 The inverses come the same way — `flasin`, `flacos`, `flatan`,
 `flatan2`, each a reduction onto one series, accurate to 1e-7 across
@@ -473,6 +473,64 @@ memory with no allocation. The `v3-*!` destructive spellings (`v3-add!`
 … `v3-normalize!`) land results in a caller-owned vector so per-frame
 loops allocate once. Culling helpers: `m4-frustum-planes`,
 `sphere-in-frustum?`, and the unboxed `sphere-in-frustum-xyz?`.
+
+### Scalars: `fl-clamp` `fl-lerp` `fl-damp` `fl-turn` `fl-smooth`
+
+Underneath the vectors, and the reason `(gfx mat)` is worth importing
+into a headless simulation that owns no matrices: it has no GL in it at
+all. `fl-clamp` and `fl-lerp` are what they sound like — `fl-lerp`
+deliberately does **not** clamp, since extrapolation past either end is
+half of what it is for, and the bounded version is `fl-clamp` composed
+onto it rather than the other way round. `fl-smooth` is the usual
+smoothstep, `t*t*(3-2t)` over a clamped `t`.
+
+`fl-damp` and `fl-turn` are the two that are worth having written down,
+because they are the two that get rewritten wrong.
+
+**`fl-damp` is frame-rate independent, and that is a statement about
+composition.** `(fl-damp x target rate dt)` retains a fraction
+`exp(-rate*dt)` of the distance to the target, and that fraction
+multiplies over a subdivision of the interval — so sixty steps of 1/60
+and six steps of 1/6 land in the same place. The version that moves a
+fixed fraction of the distance each frame does not: it converges twice
+as fast at 120 fps as at 60, which is the same code and the same
+numbers producing a different simulation on a faster machine.
+
+The result is formed as `target + (x - target) * r` rather than as an
+interpolation by `1 - r`. Since `r` never leaves `[0,1]`, the answer
+never leaves the segment between `x` and the target, no matter how large
+`rate*dt` grows; the `lerp`-by-`rate*dt` form sails past the target as
+soon as `rate*dt` exceeds 1. A `dt` of zero answers `x` itself, not a
+rounding away from it, so a paused simulation does not drift.
+
+**`fl-turn` takes the short way round.** Heading arithmetic that ignores
+the seam turns 350 degrees left to reach a target 10 degrees right;
+`fl-turn` folds the difference into `[-pi, pi)` before damping it, so
+the turn is always the short one. Its **answer** is not folded — it
+stays beside the angle handed in, so a caller integrating it sees a
+continuous quantity instead of a jump every time it crosses the seam. A
+caller who wants a canonical angle folds it once, where that matters.
+
+Both refuse a negative rate and a negative `dt` by name. `fl-clamp`
+refuses ends that are the wrong way round, and `fl-smooth` refuses ends
+that are equal or reversed rather than dividing by zero and returning a
+plausible `0.0` — the argument being that a caller who computed those
+ends has a bug upstream, and a swapped or invented answer hides it.
+
+**The exponential is this library's own.** The prelude has none, and
+nothing weaker will do: frame-rate independence *is* the identity
+`r(a+b) = r(a)·r(b)`, and only an exponential satisfies it. The
+implementation reduces `x = k·ln2 + f` with `|f| <= ln2/2`, evaluates
+`exp(-f)` by fourteen Horner terms, and takes `2^-k` by halving, which
+is exact. Past `rate*dt = 40` it answers zero, where the true value is
+under 5e-18 and every use here multiplies it by a difference before
+adding it to a target.
+
+Measured against `math.exp` over `rate*dt` in `[0.0001, 39.9]`: within
+**8 ulps**, and the error grows with `k` because the reduction rounds
+`k·ln2` once — the same shape of bound, and the same cause, as the
+prelude's trig (see `docs/limits.md`). Both targets produce identical
+bits, since every step of it is flonum arithmetic and an integer loop.
 
 ## 5. The compressed-asset pipeline
 

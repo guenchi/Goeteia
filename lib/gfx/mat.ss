@@ -12,12 +12,13 @@
 ;; See the License for the specific language governing permissions and
 ;; limitations under the License.
 
-;; 3D math for raw-GL scenes: vec3 and column-major mat4 over plain
-;; flonum vectors.  Pure -- no host, verifies headlessly -- and the
-;; trig is the system's own (range-reduced polynomials in flonum
-;; arithmetic: sin/cos/tan live in the prelude, the inverses below),
-;; so both compiler hosts emit identical bytes, the same reasoning
-;; that computes IEEE bits for flonum literals in pure Scheme.
+;; Math for raw-GL scenes: scalar arithmetic, vec3 and column-major
+;; mat4, over plain flonum vectors.  Pure -- no host, verifies
+;; headlessly -- and the trig is the system's own (range-reduced
+;; polynomials in flonum arithmetic: sin/cos/tan live in the prelude,
+;; the inverses below), so both compiler hosts emit identical bytes,
+;; the same reasoning that computes IEEE bits for flonum literals in
+;; pure Scheme.
 ;;
 ;;   (define proj (m4-perspective 0.9 (/ 800.0 600.0) 0.1 100.0))
 ;;   (define view (m4-look-at (v3 0 0 6) (v3 0 0 0) (v3 0 1 0)))
@@ -42,10 +43,144 @@
           m4-translate m4-scale m4-rotate-x m4-rotate-y m4-rotate-z
           m4-from-quat m4-perspective m4-ortho m4-look-at
           m4-inverse m4-unproject
-          m4-frustum-planes sphere-in-frustum? sphere-in-frustum-xyz?)
+          m4-frustum-planes sphere-in-frustum? sphere-in-frustum-xyz?
+          fl-clamp fl-lerp fl-damp fl-turn fl-smooth)
   (import (rnrs))
 
   (define ($mat-fl v) (if (flonum? v) v (exact->inexact v)))
+
+  ;; ---- scalar arithmetic --------------------------------------------
+  ;;
+  ;; Below the vectors, and used by them: the five that every simulation
+  ;; writes on its first day.  Two of them are only worth having because
+  ;; they are the two that get rewritten wrong.
+
+  (define $ln2 0.6931471805599453)
+  (define $pi 3.141592653589793)
+  (define $tau 6.283185307179586)
+
+  ;; exp(-x) for x >= 0.  The prelude has no exponential, and nothing
+  ;; cheaper than one will do here: damping is frame-rate independent
+  ;; exactly when the retained fraction composes, r(a+b) = r(a)*r(b),
+  ;; and the exponential is the only function that does.
+  ;;
+  ;; Reduce x = k*ln2 + f with |f| <= ln2/2, so exp(-x) = 2^-k * exp(-f).
+  ;; The series for exp(-f) is evaluated by Horner over fourteen terms:
+  ;; the first one dropped is below f^15/15! < 1e-19 over that interval,
+  ;; which is under the rounding of a result near 1.  Halving is exact,
+  ;; so the reduction costs nothing beyond the one rounding in f.
+  ;;
+  ;; Past x = 40 the true value is under 5e-18 and every caller here
+  ;; multiplies it by a difference before adding it to a target, so it
+  ;; answers zero.  That is what bounds k, and therefore the halving
+  ;; loop, at 58 steps.
+  ;;
+  ;; RANGE: this computes exp(-x) for x >= 0 and nothing else.  A
+  ;; negative argument answers 1.0 -- the identity the callers here
+  ;; want for a zero elapsed time, NOT exp of a positive number.  It is
+  ;; not a general exponential and must not be pressed into service as
+  ;; one; the prelude has no exp, log or expt, so the next caller who
+  ;; needs one needs to write it, not to widen this.
+  ;;
+  ;; Accuracy is within 8 ulps over x in [0.0001, 39.9], measured
+  ;; against a host exp.  The error grows with k because k*ln2 is
+  ;; rounded once; splitting ln2 into a high and a low part
+  ;; (Cody-Waite) would bring it under an ulp for about two constants
+  ;; and one subtraction.  Deliberately NOT done: nothing here is
+  ;; sensitive to it -- damping composes the fraction, it does not
+  ;; expose it -- and precision that no caller asked for is how a
+  ;; private helper starts being read as a general maths library.
+  (define ($exp-neg x)
+    (cond ((not (> x 0.0)) 1.0)
+          ((> x 40.0) 0.0)
+          (else
+           (let* ((k (flfloor (+ (/ x $ln2) 0.5)))
+                  (f (- x (* k $ln2)))
+                  (s (let poly ((n 14) (acc 1.0))
+                       (if (= n 0)
+                           acc
+                           (poly (- n 1)
+                                 (+ 1.0 (/ (* (- 0.0 f) acc)
+                                           (exact->inexact n))))))))
+             (let halve ((i (exact k)) (v s))
+               (if (= i 0) v (halve (- i 1) (* v 0.5))))))))
+
+  ;; The ends are checked rather than sorted.  A caller who passes them
+  ;; the wrong way round has a bug in the code that computed them, and
+  ;; silently swapping produces a plausible number that hides it.
+  (define (fl-clamp x lo hi)
+    (let ((x ($mat-fl x)) (lo ($mat-fl lo)) (hi ($mat-fl hi)))
+      (when (> lo hi)
+        (error 'fl-clamp "the low end is above the high end" lo hi))
+      (cond ((< x lo) lo)
+            ((> x hi) hi)
+            (else x))))
+
+  ;; Deliberately not clamped: extrapolation past either end is what
+  ;; makes this usable for extending a trend, and a caller who wants the
+  ;; bounded version composes it with fl-clamp, which cannot be done in
+  ;; the other direction.
+  (define (fl-lerp a b t)
+    (let ((a ($mat-fl a)) (b ($mat-fl b)) (t ($mat-fl t)))
+      (+ a (* (- b a) t))))
+
+  ;; Damping toward a target, at a rate per unit of TIME rather than per
+  ;; call.  The naive version moves a fixed fraction each frame, which
+  ;; converges twice as fast at 120 fps as at 60 -- the same code, the
+  ;; same numbers, a different result on a faster machine.  Here sixty
+  ;; steps of 1/60 and six steps of 1/6 land in the same place, because
+  ;; the retained fraction exp(-rate*dt) multiplies over a subdivision.
+  ;;
+  ;; Writing the result as target + (x - target)*r rather than as an
+  ;; interpolation by (1 - r) is what makes overshoot impossible: r
+  ;; never leaves [0,1], so the answer never leaves the segment between
+  ;; x and the target, however large rate*dt grows.  The naive
+  ;; lerp-by-rate*dt form passes the target outright once rate*dt > 1.
+  ;;
+  ;; A zero elapsed time answers x itself rather than something a
+  ;; rounding away from it, so a paused simulation does not drift.
+  (define (fl-damp x target rate dt)
+    (let ((x ($mat-fl x)) (target ($mat-fl target))
+          (rate ($mat-fl rate)) (dt ($mat-fl dt)))
+      (when (< rate 0.0)
+        (error 'fl-damp "the rate must not be negative" rate))
+      (when (< dt 0.0)
+        (error 'fl-damp "the elapsed time must not be negative" dt))
+      (let ((r ($exp-neg (* rate dt))))
+        (if (= r 1.0) x (+ target (* (- x target) r))))))
+
+  ;; The same damping, on a quantity that wraps.  A heading that ignores
+  ;; the seam turns 350 degrees left to reach a target 10 degrees right:
+  ;; the difference is folded into [-pi, pi) first, so the turn is
+  ;; always the short one.
+  ;;
+  ;; The answer is NOT folded -- it stays next to the angle handed in,
+  ;; so a caller integrating it sees a continuous quantity rather than a
+  ;; jump each time it crosses the seam.  A caller that wants a
+  ;; canonical angle folds the result itself, once, where it matters.
+  (define (fl-turn a target rate dt)
+    (let ((a ($mat-fl a)) (target ($mat-fl target))
+          (rate ($mat-fl rate)) (dt ($mat-fl dt)))
+      (when (< rate 0.0)
+        (error 'fl-turn "the rate must not be negative" rate))
+      (when (< dt 0.0)
+        (error 'fl-turn "the elapsed time must not be negative" dt))
+      (let* ((y (+ (- target a) $pi))
+             (d (- (- y (* $tau (flfloor (/ y $tau)))) $pi))
+             (r ($exp-neg (* rate dt))))
+        (if (= r 1.0) a (+ a (* d (- 1.0 r)))))))
+
+  ;; Equal edges are refused rather than divided by: the quotient below
+  ;; would be an infinity or a NaN that survives the clamp and reaches
+  ;; the caller as a plausible 0.0 or 1.0.  Reversed edges are refused
+  ;; for the reason fl-clamp refuses them.
+  (define (fl-smooth edge0 edge1 x)
+    (let ((e0 ($mat-fl edge0)) (e1 ($mat-fl edge1)) (x ($mat-fl x)))
+      (unless (< e0 e1)
+        (error 'fl-smooth "the edges must be in increasing order" e0 e1))
+      (let* ((raw (/ (- x e0) (- e1 e0)))
+             (t (cond ((< raw 0.0) 0.0) ((> raw 1.0) 1.0) (else raw))))
+        (* t (* t (- 3.0 (* 2.0 t)))))))
 
   ;; ---- trig: the prelude carries the implementation (reduce to
   ;; [-pi/2, pi/2], one odd polynomial); these names stay so the

@@ -173,18 +173,42 @@
   ;; running first was true of the spec and false of these two, and a
   ;; cyclic list of either hung the compiler with no output at all.
   ;; This is the door those two arguments get instead.
+  ;; Floyd's two pointers, not a table of visited pairs.  A LIST SPINE
+  ;; HAS ONE SUCCESSOR PER NODE, and that is the whole reason this
+  ;; works: a fast pointer taking two steps to the slow one's one must
+  ;; meet it inside any cycle, so a cycle is found in O(n) time and no
+  ;; space at all.  The table it replaces was O(n) space and, on this
+  ;; runtime, O(n^2) time -- `$eqv-hash' answers a constant for pairs,
+  ;; so every visited pair landed in one bucket and each step rescanned
+  ;; all of them.  A guard against cyclic input was therefore itself
+  ;; quadratic in the length of ordinary, perfectly acyclic input.
+  ;;
+  ;; DO NOT COPY THIS INTO A WALK OVER A TREE OR A GRAPH.  The
+  ;; two-pointer argument needs a single successor; `$walk-datum' below
+  ;; descends into both halves of a pair and into every element of a
+  ;; vector, so there is no "next" to run ahead along and no meeting
+  ;; theorem to appeal to.  That one keeps its table, and keeps the
+  ;; cost that comes with it.
   (define ($check-spine who what l)
-    (let ((seen (make-eq-hashtable)))
-      (let loop ((l l))
-        (cond
-         ((null? l) #t)
-         ((not (pair? l))
-          ($fail who "this argument is not a proper list" (list what)))
-         ((hashtable-ref seen l #f)
-          ($fail who "this argument contains a cycle" (list what 'cyclic)))
-         (else
-          (hashtable-set! seen l #t)
-          (loop (cdr l)))))))
+    (let step ((slow l) (fast l))
+      (cond
+       ((null? slow) #t)
+       ((not (pair? slow))
+        ($fail who "this argument is not a proper list" (list what)))
+       (else
+        ;; advance the fast pointer two, checking the shape as it goes
+        (let* ((f1 (cdr fast))
+               (f2 (if (pair? f1) (cdr f1) f1)))
+          (cond
+           ((null? f1) #t)
+           ((not (pair? f1))
+            ($fail who "this argument is not a proper list" (list what)))
+           ((null? f2) #t)
+           ((not (pair? f2))
+            ($fail who "this argument is not a proper list" (list what)))
+           ((eq? f2 (cdr slow))
+            ($fail who "this argument contains a cycle" (list what 'cyclic)))
+           (else (step (cdr slow) f2))))))))
 
   (define ($clause l key)
     (let loop ((cs l))

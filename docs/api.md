@@ -63,7 +63,7 @@ Drawing, and the geometry and assets behind it.
 
 ## `(gfx mat)`
 
-`flsin`  `flcos`  `fltan`  `flasin`  `flacos`  `flatan`  `flatan2`  `q-mul`  `q-conj`  `q-neg`  `q-dot`  `q-normalize`  `q-slerp`  `v3`  `v3-x`  `v3-y`  `v3-z`  `v3-add`  `v3-sub`  `v3-scale`  `v3-dot`  `v3-cross`  `v3-normalize`  `v3-set!`  `v3-copy!`  `v3-add!`  `v3-sub!`  `v3-scale!`  `v3-cross!`  `v3-normalize!`  `m4-identity`  `m4-mul`  `m4-scratch!`  `m4-transform`  `m4s-write!`  `m4s-read`  `m4s-identity!`  `m4s-mul!`  `m4s-trs!`  `m4s-tqs!`  `m4-translate`  `m4-scale`  `m4-rotate-x`  `m4-rotate-y`  `m4-rotate-z`  `m4-from-quat`  `m4-perspective`  `m4-ortho`  `m4-look-at`  `m4-inverse`  `m4-unproject`  `m4-frustum-planes`  `sphere-in-frustum?`  `sphere-in-frustum-xyz?`
+`flsin`  `flcos`  `fltan`  `flasin`  `flacos`  `flatan`  `flatan2`  `q-mul`  `q-conj`  `q-neg`  `q-dot`  `q-normalize`  `q-slerp`  `v3`  `v3-x`  `v3-y`  `v3-z`  `v3-add`  `v3-sub`  `v3-scale`  `v3-dot`  `v3-cross`  `v3-normalize`  `v3-set!`  `v3-copy!`  `v3-add!`  `v3-sub!`  `v3-scale!`  `v3-cross!`  `v3-normalize!`  `m4-identity`  `m4-mul`  `m4-scratch!`  `m4-transform`  `m4s-write!`  `m4s-read`  `m4s-identity!`  `m4s-mul!`  `m4s-trs!`  `m4s-tqs!`  `m4-translate`  `m4-scale`  `m4-rotate-x`  `m4-rotate-y`  `m4-rotate-z`  `m4-from-quat`  `m4-perspective`  `m4-ortho`  `m4-look-at`  `m4-inverse`  `m4-unproject`  `m4-frustum-planes`  `sphere-in-frustum?`  `sphere-in-frustum-xyz?`  `fl-clamp`  `fl-lerp`  `fl-damp`  `fl-turn`  `fl-smooth`
 
 ## `(gfx mesh)`
 
@@ -158,6 +158,10 @@ The half that is not drawing: who exists, what runs each tick, who hears what.
 ## `(sim events)`
 
 `make-bus`  `bus-on!`  `bus-off!`  `bus-emit!`  `bus-clear!`  `bus-depth-limit`
+
+## `(sim grid)`
+
+`grid-cell`  `grid-origin`  `grid-in-cell?`
 
 ## `(sim random)`
 

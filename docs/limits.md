@@ -272,6 +272,57 @@ procedures of forty and loads fine; the same 600 at top level do
 not.  Grouping does not help if one procedure still holds them all —
 it is a per-function limit, not a per-module one.
 
+## `eq`/`eqv` hashtables are linear for most object keys
+
+`make-eq-hashtable` and `make-eqv-hashtable` hash a key by identity, and
+this runtime has no identity to hash. The compiler exposes no address,
+no serial and no object hash — `eq?` compiles to a reference comparison
+and nothing can read the reference — there are no weak references, and a
+heap object cannot be handed to the host either: the JS bridge refuses a
+WasmGC struct (`->js: cannot convert to a JS value (1 . 2)`), so the
+usual trick of keeping a `WeakMap` of serial numbers is not available.
+
+What the hash can use instead is whatever each type has that is both
+**stable for the life of the object** (a hash that moved would strand
+the entry in a table that still holds it) and **varying between
+objects**:
+
+| key | hashed by | effect |
+|---|---|---|
+| fixnum, char, symbol, boolean, `()` | its value | spreads |
+| bignum, ratio, complex | its value — these are immutable | spreads |
+| vector, string, bytevector | its **length** | see below |
+| record | its **type** | see below |
+| **pair, procedure** | nothing — a constant | one bucket |
+
+**Length and type are sound but nearly useless.** A vector's length
+cannot change, so hashing by it is correct; the trouble is that objects
+of one size are the normal case — coordinates, colours, fixed-field
+records — and twenty thousand one-element vectors still land in one
+bucket. The same holds for records of one type. Measured: 20 000 keys
+inserted into an `eq` table take 0.68 s when they are all
+`(make-vector 1 i)`, and 0.04 s when the lengths are spread over 200
+values. Adding more type cases would not change this; the missing thing
+is identity, not more types.
+
+So an `eq`/`eqv` table keyed by pairs, procedures, or same-shaped
+vectors, strings or records **degrades to a linear scan per operation
+and a quadratic fill**. It is fine for the hundreds of keys a cycle
+check or a small memo uses, and it is the wrong structure for a hundred
+thousand.
+
+**What would change it**: giving heap objects a lazily-assigned identity
+slot — an extra mutable field on the WasmGC structs, filled from a
+counter the first time a hash is asked for. That is a compiler change
+and it costs memory on every object of the types that get it, most of
+all pairs. The size of that cost has not been measured, and measuring it
+is the first step of that work rather than an argument to be had without
+it.
+
+**If you need a large table now**, key it by something that spreads — an
+integer id you already have, a symbol, a string through
+`make-hashtable` with `string-hash` — rather than by the object.
+
 ## Capacity limits in the graphics stack
 
 - **Index width is per-geometry, and follows the vertex count.** A u16
