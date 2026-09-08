@@ -166,6 +166,10 @@ const apiThere = path.join(here, '..', '..', '04-goeteia-website', 'docs', 'api.
 if (!fs.existsSync(apiThere)) {
     console.log('NOT EXERCISED HERE (the website checkout ../04-goeteia-website/docs/api.md is not beside this tree; clone the website branch there to check that the served copy of the API index matches this one)');
 } else {
+    // A stand-down prints a line; running prints nothing, so a log with
+    // neither says "the check ran" only by absence -- and absence is what
+    // a silently skipped check looks like too.  Say it positively.
+    console.log('EXERCISED HERE: the website copy of the API index is beside this tree and is compared');
     test('the website serves the same API index this tree generates', () => {
         const a = fs.readFileSync(apiHere);
         const b = fs.readFileSync(apiThere);

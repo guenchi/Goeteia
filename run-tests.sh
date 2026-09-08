@@ -290,7 +290,7 @@ fi
 # output is the part worth reading.
 DOCS_OUT="$T/docs-mjs.out"
 if ${NODE-node} --test test/docs.mjs > "$DOCS_OUT" 2>&1; then
-    grep 'NOT EXERCISED HERE' "$DOCS_OUT"
+    grep -E 'NOT EXERCISED HERE|^EXERCISED HERE' "$DOCS_OUT"
     echo "ok   test/docs.mjs"
 else
     cat "$DOCS_OUT"
