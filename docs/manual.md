@@ -3022,7 +3022,8 @@ anyone" — need an answer to which one runs, and the two usual answers
 (first registered, last registered) both make the behaviour depend on
 where a `define` sits in a file. `(lng pred)` and `(lng generic)` make
 the relation between rules **declared** and a conflict with no declared
-answer an **error the program reports**. No classes, no inheritance, no
+answer an **error the program reports**; `(lng machine)` does the same
+for state machines, which it keeps as data rather than as code. No classes, no inheritance, no
 method combination. Not for per-frame work: dispatch here is for event
 and turn granularity. Long form in `docs/lng.md`.
 
@@ -3099,6 +3100,128 @@ winner's signature or `#f`. A diagnostic, so it never runs a handler.
 Predicate mode (`'predicates` in place of the classifier list) takes
 open-ended predicates and can only report ambiguity at the call; see
 `docs/lng.md`.
+
+### `(lng machine)`: State Machines as Data
+
+A machine's states, initial state and transitions are lists of
+symbols; guards and actions are **names**. The guard names are bound
+to procedures when the machine is made; the action names are not —
+they are handed back to the caller and never called here. Nothing in the spec is a procedure, so it can be
+written to a file, read back and drawn.
+
+```scheme
+(define door-spec
+  '((states (closed open locked))
+    (initial closed)
+    (transitions
+     ((closed push open) (open push closed)
+      (closed lock locked has-key)
+      (closed lock closed no-key ring-alarm)
+      (locked unlock closed has-key)))))
+```
+
+A transition is `(from event to)` with an optional guard name and then
+an optional action name. Guard names need bindings — a guard is a
+question the library asks. Action names do not: an action is handed
+back to the caller by name and never called here. Several transitions may share a
+`(state, event)` key only when every one of them is guarded; all those
+guards run on each step and exactly one may hold. Two holding at once
+is an error naming both — writing order carries no meaning, and the
+two other places it could have (a clause written twice, a name bound
+twice) are refused rather than resolved by position. That is the one
+modelling error reported at the step rather than at construction,
+because guard truth is a run-time fact.
+
+Order independence assumes guards are **pure**: one that writes the
+context can make its neighbours' answers depend on which ran first,
+and the library cannot see that.
+
+```
+procedure: (make-machine spec bindings)
+procedure: (make-machine spec bindings ctx)
+procedure: (make-machine spec bindings ctx opts)
+
+func -> list -> list -> any -> list -> *machine
+```
+Build a machine. `bindings` is an alist from guard name to a procedure
+of one argument, the context. `ctx` is the initial context and must be
+a datum (default `()`). `opts` understands `(strict #f)`, which allows
+states unreachable from the initial one — useful for a fragment
+assembled at run time. An option is exactly `(name value)`: a name
+this library does not know, a missing value, an extra element and a
+`strict` that is not `#t` or `#f` are each refused by name. Refused by name: an unknown state in a
+transition, a state that is not a symbol, an initial state that is not
+declared, a clause or an option given twice, an option with no value,
+two unguarded transitions on one key, a bindings entry that is not
+`(name . procedure)` or binds a name twice, a guard name with no
+binding, an option name this library does not know, anything that is
+not a datum in the spec, the options or the context — a procedure or
+a cycle included — and unreachable states unless `strict` is off. A
+spec may carry clauses the library does not know, since it is the
+caller's data and round trips; an option may not, since an
+instruction the library cannot read is a misspelling rather than a
+weaker request. A cyclic value is named in the error but never
+carried in it: printing it would not terminate either.
+Reachability is structural — an edge counts even if its guard could
+never hold.
+
+```
+procedure: (machine? x)
+
+func -> any -> boolean
+```
+Whether `x` is a machine.
+
+```
+procedure: (machine-step m event)
+procedure: (machine-step m event ctx)
+
+func -> *machine -> symbol -> any -> (values *machine list)
+```
+Two values: the machine after the event, and the **names** of the
+actions that transition asks for. It performs none of them. A `ctx`
+given here replaces the machine's for this step and is retained in the
+machine that comes back. An event with no transition — and one whose
+guards all fail — leaves the machine as it is and answers no actions,
+unless the spec carries `(on-unknown error)`, which makes it an error
+by name.
+
+```
+procedure: (machine-state m)
+procedure: (machine-ctx m)
+procedure: (machine-spec m)
+
+func -> *machine -> any
+```
+The current state, the retained context, and the spec as written.
+
+```
+procedure: (machine-events m)
+
+func -> *machine -> list
+```
+The events available from the current state, structurally: no guard is
+evaluated. This is the question a UI asks when it decides which
+buttons to disable.
+
+```
+procedure: (machine-transitions m)
+
+func -> *machine -> list
+```
+Every transition, for diagnostics and diagrams.
+
+```
+procedure: (machine->datum m)
+procedure: (datum->machine d bindings)
+
+func -> *machine -> list
+```
+The round trip. The datum carries the spec, the current state, the
+context and the strictness — everything but the procedures, which are
+named in the spec and supplied again to `datum->machine`. A guard
+name without a binding is refused there by name, so a save file
+cannot quietly load as a machine whose guards do nothing.
 
 ## Current Limits and Planned Work
 
