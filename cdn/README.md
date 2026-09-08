@@ -1,8 +1,16 @@
 # cdn.goeteia.dev
 
-Versioned, immutable copies of the browser half of the Goeteia runtime,
-plus the self-hosted compiler snapshot.  Built by `../build-cdn.sh`
-from a tagged source tree; a directory here is never rebuilt in place.
+Versioned copies of the browser half of the Goeteia runtime, plus the
+self-hosted compiler snapshot.  Built by `../build-cdn.sh` from a tagged
+source tree; a directory here is not rebuilt in place.
+
+It has happened once.  `1.7.0` went out hours before the project moved
+from the MIT license to Apache 2.0, and was rebuilt so that the version
+in this directory carries the same license as the repository at that
+version.  Only the license headers differ; the compiler bytes are the
+same.  A checksum taken against the first `1.7.0` does not match the
+current one, and this is why.  `1.5.8` through `1.6.2` were published
+under MIT and are untouched.
 
     https://cdn.goeteia.dev/<version>/rt/web.mjs       loader: loadGoeteia, loadGoeteiaAuto, loadGoeteiaWorker, hasWasmGC
     https://cdn.goeteia.dev/<version>/rt/jsbridge.mjs  the js.* import bridge (web.mjs imports it)
