@@ -296,6 +296,16 @@ else
     cat "$DOCS_OUT"
     echo "FAIL test/docs.mjs"; fail=1
 fi
+# Output is kept and shown only on failure: when the index drifts, the
+# useful part IS the list of names, and a pipe here would report the
+# exit status of the pager instead of the test.
+API_OUT="$T/api-index.out"
+if ${NODE-node} test/api-index.mjs > "$API_OUT" 2>&1; then
+    echo "ok   test/api-index.mjs"
+else
+    head -40 "$API_OUT"
+    echo "FAIL test/api-index.mjs"; fail=1
+fi
 if ${NODE-node} test/duplicate-top-level.mjs >/dev/null 2>&1; then
     echo "ok   test/duplicate-top-level.mjs"
 else
