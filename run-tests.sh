@@ -45,6 +45,19 @@ fi
 # 124 is timeout(1)'s own code for "the command outlived the bound".
 timed_out() { [ -n "$CAP" ] && [ "$1" -eq 124 ]; }
 
+# A test that could not measure what it wanted says so on a line of its
+# own.  That line is a note to the reader, not part of the value under
+# test: leaving it in the captured output makes the ANNOUNCEMENT fail the
+# test (which is what happened -- a discard path went red the first time
+# it ran, on stdout being the verdict), and dropping it makes the discard
+# invisible, which is the shape the announcement exists to prevent.  So
+# it is lifted out of the comparison and printed.
+NOTE_RE='^[[:space:]]*NOT (MEASURED|EXERCISED) HERE'
+lift_notes() { # raw-output -> prints notes, sets $got to the rest
+    printf '%s\n' "$1" | grep -E "$NOTE_RE" || true
+    got=$(printf '%s\n' "$1" | grep -vE "$NOTE_RE" || true)
+}
+
 run_one() { # wasmfile testfile
     input="${2%.ss}.input"
     if [ -f "$input" ]; then
@@ -61,7 +74,10 @@ run_js() { # jsfile testfile
         $CAP ${NODE-node} rt/runjs.mjs "$1"
     fi
 }
-for t in test/*.ss; do
+# GOETEIA_TESTS narrows the loop to named files, so a change to the
+# verdict machinery can be exercised on one test instead of all of
+# them.  Unset -- which is how the gate runs it -- it is every test.
+for t in ${GOETEIA_TESTS-test/*.ss}; do
     want=$(head -1 "$t" | sed 's/^;; expect: //')
     $CAP ./bin/goeteiac "$t" "$T/test.wasm"; ec=$?
     if timed_out $ec; then
@@ -69,7 +85,7 @@ for t in test/*.ss; do
     elif [ $ec -ne 0 ]; then
         echo "FAIL $t (stage0 compile error)"; fail=1; continue
     fi
-    got=$(run_one "$T/test.wasm" "$t"); ec=$?
+    raw=$(run_one "$T/test.wasm" "$t"); ec=$?; lift_notes "$raw"
     if timed_out $ec; then
         echo "TIMEOUT $t (stage0 run) after ${TLIMIT}s"; fail=1; continue
     fi
@@ -82,7 +98,7 @@ for t in test/*.ss; do
         if ! ${NODE-node} rt/compile.mjs goeteia.wasm "$t" "$T/test1.wasm" 2>/dev/null; then
             echo "FAIL $t (stage1 compile error)"; fail=1; continue
         fi
-        got=$(run_one "$T/test1.wasm" "$t"); ec=$?
+        raw=$(run_one "$T/test1.wasm" "$t"); ec=$?; lift_notes "$raw"
         if timed_out $ec; then
             echo "TIMEOUT $t (stage1 run) after ${TLIMIT}s"; fail=1; continue
         fi
@@ -100,7 +116,7 @@ for t in test/*.ss; do
     if ! ./bin/goeteiac --js "$t" "$T/test.js"; then
         echo "FAIL $t (js compile error)"; fail=1; continue
     fi
-    got=$(run_js "$T/test.js" "$t"); ec=$?
+    raw=$(run_js "$T/test.js" "$t"); ec=$?; lift_notes "$raw"
     if timed_out $ec; then
         echo "TIMEOUT $t (js run) after ${TLIMIT}s"; fail=1; continue
     fi
