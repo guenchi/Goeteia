@@ -12,7 +12,6 @@ the manual when this file was first generated, and a consumer rebuilt
 frustum culling, an input layer and a joint palette that all already
 existed.
 
-
 # aud
 
 Sound.
@@ -260,3 +259,4 @@ The page: markup, styling, reactivity, transport.
 ## `(web ws)`
 
 `ws-connect!`  `ws-send!`  `ws-close!`  `ws-open?`
+

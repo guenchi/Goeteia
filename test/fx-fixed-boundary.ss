@@ -52,4 +52,22 @@ globalThis.__canvas = { width:64, height:64, getContext() { return { viewport(){
 (pump! 0)
 (pump! 1000)
 (check "integer step boundary is inclusive" (and (= sims 1) (fl=? alpha 0.0)))
+;; ---- a remainder carried between frames drifts, and the drift is silent ----
+;; Two frames of 250 ms at a 100 ms step is five steps and nothing left
+;; over.  An implementation that keeps the leftover time and adds the
+;; next frame to it answers four, because 0.25 - 2*0.1 is
+;; 0.04999999999999999 and the error comes back every frame.  Counting
+;; whole ticks does not fix this on its own; not keeping a remainder
+;; does.  This ran green while fx-loop-fixed! had the defect, because
+;; nothing above ever fed it two fractional frames in a row.
+(set! sims 0)
+(set! alpha -1.0)
+(fx-loop-fixed! 0.1
+  (lambda (step) (set! sims (+ sims 1)))
+  (lambda (a t dt) (set! alpha a)))
+(pump! 0)
+(pump! 250)
+(pump! 500)
+(check "a remainder is not carried between frames" (and (= sims 5) (fl<? alpha 0.000001)))
+
 (= failed 0)

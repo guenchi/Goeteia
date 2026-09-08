@@ -64,7 +64,7 @@
           pointer-lock! pointer-locked? pointer-motion!
           fx-fullscreen! fx-quad-program
           fx-fullscreen-use! fx-fullscreen-draw!)
-  (import (rnrs) (web js) (gfx gl) (gfx glsl) (gfx mat) (gfx mesh))
+  (import (rnrs) (web js) (gfx gl) (gfx glsl) (gfx mat) (gfx mesh) (sim step))
 
   (define ($fx-fl v) (if (flonum? v) v (exact->inexact v)))
 
@@ -574,27 +574,20 @@
   ;; into the next step the frame landed (blend previous/current
   ;; states by it for perfectly smooth motion).  The accumulator is
   ;; clamped to 4 steps so a background tab does not spiral
+  ;; The stepping rule itself lives in (sim step) and is called here.
+  ;; It used to be written out inline, and a consumer who wanted the
+  ;; rule without the frame callback wrote it a third time -- which is
+  ;; how three copies of one rule come to disagree.  One rule, one
+  ;; place: this function is now the loop and the drawing, nothing
+  ;; more.
   (define (fx-loop-fixed! step sim render)
-    (let* ((step ($fx-fl step))
-           (acc 0.0)
-           (cap (fl* step 4.0)))
+    (let ((clock (make-fixed-step ($fx-fl step) 4)))
       (fx-ticks!
        (lambda (t dt)
-         (set! acc (fl+ acc dt))
-         (when (fl<? cap acc) (set! acc cap))
-         ;; Count complete ticks before subtracting.  A strict comparison
-         ;; defers an exact boundary; repeated subtraction can also turn
-         ;; four decimal steps into three with a nearly-full remainder.
-         (let* ((ticks (exact (floor (fl/ acc step))))
-                (rest (fl- acc (fl* ($fx-fl ticks) step))))
-           (set! acc (if (fl<? rest 0.0) 0.0 rest))
-           (let pump ((left ticks))
-             (when (> left 0)
-               (sim step)
-               (pump (- left 1)))))
+         (fixed-step-advance! clock dt sim)
          (cmd-begin!)
          (cmd-viewport! 0 0 (fx-width) (fx-height))
-         (render (fl/ acc step) t dt)
+         (render (fixed-step-alpha clock) t dt)
          (when (> (cmd-pos) $fx-cmd-limit)
            (error 'fx-loop-fixed! "command region overflow" (cmd-pos)))
          (cmd-flush!)))))
