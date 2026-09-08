@@ -448,11 +448,19 @@
   ;; rather than enumerating the expression slots of each statement --
   ;; a list of slots is one more thing to keep in step with the
   ;; printer, and missing an entry there would be silent.
+  ;; Only ELEMENTS are nodes; a tail is not one.  Recursing into the
+  ;; cdr as though it were a node made every suffix of every form look
+  ;; like a form: the tail of (uniform float fl) is (fl), whose car is
+  ;; the symbol fl, so a uniform NAMED fl was refused as a malformed
+  ;; literal.  Nothing in the suite said so, because nothing in the
+  ;; tree is called fl -- the gate was green on it.
   (define ($glsl-check-literals x)
     (when (pair? x)
       (when (eq? (car x) 'fl) ($glsl-check-fl x))
-      ($glsl-check-literals (car x))
-      ($glsl-check-literals (cdr x))))
+      (let loop ((y x))
+        (when (pair? y)
+          ($glsl-check-literals (car y))
+          (loop (cdr y))))))
 
   ;; Only names the *user* introduces are checked.  The DSL's own
   ;; structure words sit in head position -- attribute, varying, out

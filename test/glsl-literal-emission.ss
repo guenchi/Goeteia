@@ -83,4 +83,30 @@
        (and (equal? (emit '(fl 1)) "void main() { gl_Position = 1.0; } ")
             (equal? (emit '(fl 1 0)) "void main() { gl_Position = 1.0; } ")
             (equal? (emit '(fl 1 0 3)) "void main() { gl_Position = 1.0; } ")))
+;; ---- the payload check must not fire on a list TAIL ----
+;; Walking a form by recursing into both car and cdr visits every tail
+;; as if it were a node, so the tail of `(uniform float fl)` is the
+;; one-element list `(fl)`, whose car is the symbol fl.  A shader that
+;; names anything `fl` is then refused for a literal it never wrote.
+;; The check that was added to catch a malformed literal must not
+;; start rejecting well-formed shaders, and nothing in the tree names
+;; anything `fl`, so the suite would never have said so.
+(define (accepts? forms)
+  (guard (e (#t #f))
+    (let ((s (glsl->string forms))) (and (string? s) (> (string-length s) 0)))))
+
+(check "a uniform named fl is not mistaken for a literal"
+       (accepts? '((uniform float fl)
+                   (define (main) void (set! gl_Position fl)))))
+(check "a local named fl is not mistaken for a literal"
+       (accepts? '((define (main) void
+                     (local float fl (fl 1))
+                     (set! gl_Position fl)))))
+(check "a read of a name called fl is not mistaken for a literal"
+       (accepts? '((uniform float fl)
+                   (define (main) void (set! gl_Position (- fl))))))
+;; and the real literal is still refused, from inside a nested position
+(check "a malformed literal nested in an expression is still refused"
+       (refused? '(+ (fl 1 0) (fl 1 -2)) "fl"))
+
 (display (= failed 0))

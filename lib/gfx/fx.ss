@@ -620,7 +620,36 @@
   (define $fx-keys (make-hashtable string-hash string=?))
   (define $fx-px 0.0)
   (define $fx-py 0.0)
-  (define $fx-pdown #f)
+  ;; Which pointers are down, by pointerId.  A single boolean could
+  ;; not say WHOSE press it was recording: with two fingers on a
+  ;; screen, the second one's release cleared the flag while the first
+  ;; was still pressed, and a caller read "nothing is held".  The
+  ;; element handler was always ownerless; watching the window for
+  ;; releases only widened the reach, so a pointer that was never ours
+  ;; could clear it too.
+  ;;
+  ;; Membership is also what makes a repeat harmless for more than a
+  ;; boolean: one physical release is delivered twice, on the element
+  ;; and again as it bubbles to the window.  Removing an id that is no
+  ;; longer there does nothing, so the release is recognised once --
+  ;; which a boolean also survived, but a count would not.
+  ;;
+  ;; An event with no pointerId at all (a synthetic one, or a host
+  ;; that does not set it) is recorded under one shared key rather
+  ;; than dropped: such a press still has to be releasable.
+  (define $fx-pointers (make-eqv-hashtable))
+
+  (define ($fx-pointer-id e)
+    (let ((v (js-get e "pointerId")))
+      (if (js-eq? v (js-undefined)) 'no-pointer-id (js->number v))))
+
+  (define ($fx-press! e)
+    (hashtable-set! $fx-pointers ($fx-pointer-id e) #t))
+
+  ;; the FIRST terminating event for a pointer ends it; later ones for
+  ;; the same id, and any for an id we never saw pressed, do nothing
+  (define ($fx-unpress! e)
+    (hashtable-delete! $fx-pointers ($fx-pointer-id e)))
   (define $fx-input-el #f)              ; the element pointer events come from
   (define $fx-input-window? #f)         ; window key handlers registered?
 
@@ -697,9 +726,9 @@
         ;; pointerup (which arrives first, and carries offsetX/Y) is
         ;; left in place and the two simply agree.
         (js-method (js-global) "addEventListener" "pointerup"
-                   (lambda (e) (set! $fx-pdown #f) (js-undefined)))
+                   (lambda (e) ($fx-unpress! e) (js-undefined)))
         (js-method (js-global) "addEventListener" "pointercancel"
-                   (lambda (e) (set! $fx-pdown #f) (js-undefined))))
+                   (lambda (e) ($fx-unpress! e) (js-undefined))))
       (unless ($fx-seen? $fx-input-seen target)
         (set! $fx-input-seen ($fx-see! $fx-input-seen target))
         (js-method target "addEventListener" "pointermove"
@@ -710,17 +739,18 @@
                      (js-undefined)))
         (js-method target "addEventListener" "pointerdown"
                    (lambda (e)
-                     (when (js-eq? target $fx-input-el) (set! $fx-pdown #t))
+                     (when (js-eq? target $fx-input-el) ($fx-press! e))
                      (js-undefined)))
+        ;; a release is not guarded by the current target: it ends a
+        ;; press this module recorded, wherever it is delivered, and
+        ;; the id is what says whether it was ours
         (js-method target "addEventListener" "pointerup"
-                   (lambda (e)
-                     (when (js-eq? target $fx-input-el) (set! $fx-pdown #f))
-                     (js-undefined))))))
+                   (lambda (e) ($fx-unpress! e) (js-undefined))))))
 
   (define (key-down? k) (hashtable-ref $fx-keys k #f))
   (define (pointer-x) $fx-px)
   (define (pointer-y) $fx-py)
-  (define (pointer-down?) $fx-pdown)
+  (define (pointer-down?) (> (hashtable-size $fx-pointers) 0))
 
   ;; ---- pointer lock: relative mouse for first-person cameras ----
   (define $fx-dx 0.0)
