@@ -3023,7 +3023,8 @@ anyone" — need an answer to which one runs, and the two usual answers
 where a `define` sits in a file. `(lng pred)` and `(lng generic)` make
 the relation between rules **declared** and a conflict with no declared
 answer an **error the program reports**; `(lng machine)` does the same
-for state machines, which it keeps as data rather than as code. No classes, no inheritance, no
+for state machines, which it keeps as data rather than as code, and
+`(lng effect)` for what several sources do to one quantity. No classes, no inheritance, no
 method combination. Not for per-frame work: dispatch here is for event
 and turn granularity. Long form in `docs/lng.md`.
 
@@ -3222,6 +3223,81 @@ context and the strictness — everything but the procedures, which are
 named in the spec and supplied again to `datum->machine`. A guard
 name without a binding is refused there by name, so a save file
 cannot quietly load as a machine whose guards do nothing.
+
+### `(lng effect)`: What Several Sources Do to One Quantity
+
+An effect is a record — kind, source, priority, phase, payload — and a
+policy per kind says how the payloads combine. `resolve` folds them
+and answers both the result and where each part came from. Every
+ordering the answer depends on is in the data: the phase list, the
+priority number, and the order the effects were collected, which a
+stable sort preserves. Nothing depends on registration order or on
+which module loaded first.
+
+Policies are **names**, not procedures — `sum`, `max`, `min`, `last`,
+`all` are built in and any other name is bound by the caller — so the
+whole input to `resolve` is a datum that can be written out and
+replayed.
+
+```
+procedure: (make-effect kind source priority phase payload)
+
+func -> symbol -> symbol -> number -> symbol -> any -> *effect
+```
+Build an effect. Kind, source and phase are symbols and priority is a
+number; the payload is anything at all, since mid-run it is often a
+live object. Refused by name if any of the first four is the wrong
+sort of thing.
+
+```
+procedure: (effect? x)
+procedure: (effect-kind e)
+procedure: (effect-source e)
+procedure: (effect-priority e)
+procedure: (effect-phase e)
+procedure: (effect-payload e)
+
+func -> any -> any
+```
+The predicate and the five accessors.
+
+```
+procedure: (resolve effects phases policies)
+procedure: (resolve effects phases policies bindings)
+
+func -> list -> list -> list -> list -> (values list list)
+```
+Two values: `((kind . value) …)` and the provenance,
+`((kind (source . payload) …) …)`, both in the order the kinds first
+contribute. `phases` is the phase order; `policies` is
+`((kind . policy-name) …)`; `bindings` is `((name . procedure) …)` for
+any policy name that is not built in, each procedure taking the
+payload list in fold order. Refused by name: a phase listed twice, a
+kind with two policies, a policy name neither built in nor bound, a
+built-in name rebound, a name bound twice or bound to a non-procedure,
+an effect in a phase not listed, a kind with no policy, a cyclic list.
+
+```
+procedure: (collect-effects producers arg ...)
+
+func -> list -> any -> list
+```
+Call each producer with the same arguments and append what they
+returned, in the order the producers are listed. This is the only
+combining the library does: a producer contributes because it is named
+here. A producer that is not a procedure, or that returns anything but
+a list of effects, is refused by name.
+
+```
+procedure: (effect->datum e)
+procedure: (datum->effect d)
+
+func -> any -> any
+```
+The round trip, so a run can be replayed. `effect->datum` refuses a
+payload that is not a datum — a procedure, a cycle — which is where
+that has to be checked; `datum->effect` refuses anything that is not
+an effect datum.
 
 ## Current Limits and Planned Work
 
