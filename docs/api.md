@@ -112,13 +112,13 @@ Drawing, and the geometry and assets behind it.
 - `fx-loop!` — ticks plus the GL frame plumbing: begin the frame, set the viewport, run the caller's commands, check for overflow, flush once
 - `fx-loop-fixed!` — a frame loop with a fixed simulation step: the simulation runs whole steps and the render gets what is between them, so one call is the loop and the drawing and nothing else
 - `fx-init-input!` — starts tracking keys on the window and pointer events on an element, defaulting to the canvas `fx-init!` was given. Calling it again RETARGETS: the new element drives the pointer and the old one stops, without a second set of handlers being added anywhere (a duplicate handler is invisible on this surface, since writing `#t` twice is still `#t`, but it doubles anything that accumulates)
-- `key-down?` — whether a key is held right now, by its event key name
-- `pointer-x` — the pointer's x in element pixels as of the last event
-- `pointer-y` — the pointer's y in element pixels as of the last event
-- `pointer-down?` — whether a pointer button is held right now
+- `key-down?` — whether a key is held right now, named by the event's `key` -- the CHARACTER the key produced (`"w"`, `" "`, `"Shift"`), not the physical key `e.code` would name, so a binding written for one keyboard layout does not name the same physical key on another
+- `pointer-x` — the pointer's x in element pixels as of the last event on the element that is CURRENTLY the input target; after `fx-init-input!` retargets, events on the old element no longer move it
+- `pointer-y` — the pointer's y in element pixels as of the last event on the element that is currently the input target, as with `pointer-x`
+- `pointer-down?` — whether a pointer button is held right now on the element that is currently the input target; a button pressed on an element `fx-init-input!` has since retargeted away from does not set it
 - `pointer-lock!` — asks for pointer capture, which the browser grants only from a user gesture; Esc releases it and motion arrives as deltas while it holds. Calling it again retargets rather than adding handlers -- a second call used to double every delta `pointer-motion!` reported, silently, which is what a game re-locking on a new level did
 - `pointer-locked?` — whether the pointer is currently captured
-- `pointer-motion!` — the accumulated motion since the last call as (dx . dy); reading it resets the accumulator, so poll it once per frame
+- `pointer-motion!` — the accumulated motion since the last call as (dx . dy); reading it RESETS the accumulator, so poll it once per frame. Motion accumulates only while the pointer is captured -- mouse movement with no lock in force is not collected and does not appear here later
 - `fx-fullscreen!` — a fullscreen quad from fragment shader forms -- the whole of a post-processing pass's plumbing
 - `fx-quad-program` — the linked program behind a fullscreen quad, to set further uniforms on
 - `fx-fullscreen-use!` — binds a fullscreen quad for drawing at a time t; u_time and u_resolution are set only if the fragment declares them, and anything else goes through fx-uniform! on its program

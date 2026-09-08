@@ -153,6 +153,34 @@ test('verify.md documents the spec-key whitelist and the 2d context', () => {
 // down, so a missing sibling reads as "not run", never as "passed".
 const here = path.dirname(fileURLToPath(import.meta.url));
 const manualPath = path.join(here, '..', '..', '04-goeteia-website', 'docs', 'manual.md');
+// The website serves its own copy of the API index -- api.js fetches
+// docs/api.md from the website root at run time -- so the copy is what
+// readers actually get, and nothing tied the two files together.  It
+// drifted within hours of the first one being written: two lines were
+// corrected here and the site kept serving the old text, silently,
+// because the index test only compares this tree's copy against lib/.
+// A generated file with a second home needs a check that they are the
+// same file, or the second home is a fork nobody declared.
+const apiHere = path.join(here, '..', 'docs', 'api.md');
+const apiThere = path.join(here, '..', '..', '04-goeteia-website', 'docs', 'api.md');
+if (!fs.existsSync(apiThere)) {
+    console.log('NOT EXERCISED HERE (the website checkout ../04-goeteia-website/docs/api.md is not beside this tree; clone the website branch there to check that the served copy of the API index matches this one)');
+} else {
+    test('the website serves the same API index this tree generates', () => {
+        const a = fs.readFileSync(apiHere);
+        const b = fs.readFileSync(apiThere);
+        if (!a.equals(b)) {
+            const al = a.toString('utf8').split('\n');
+            const bl = b.toString('utf8').split('\n');
+            const diffs = [];
+            for (let i = 0; i < Math.max(al.length, bl.length) && diffs.length < 6; i++) {
+                if (al[i] !== bl[i]) diffs.push(`line ${i + 1}:\n  here:  ${al[i] ?? '(absent)'}\n  there: ${bl[i] ?? '(absent)'}`);
+            }
+            assert.fail(`docs/api.md and the website's copy differ; the site serves its copy to readers.\n${diffs.join('\n')}`);
+        }
+    });
+}
+
 if (!fs.existsSync(manualPath)) {
     console.log('NOT EXERCISED HERE (the website checkout ../04-goeteia-website/docs/manual.md is not beside this tree; clone the website branch there to run the manual checks)');
 } else {
