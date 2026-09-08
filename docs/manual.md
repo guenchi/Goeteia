@@ -2052,6 +2052,61 @@ Extract the six view-frustum planes from a view-projection, and test a
 bounding sphere against them — conservative frustum culling. Pair with
 `mesh-bounds`.
 
+### `(gfx reflect)`: How Much of a Reflection Needs Drawing
+
+A planar reflection re-renders the world into an offscreen target with
+a mirrored camera, and almost always only a small part of that target
+can ever be sampled — the pond, the floor, the pane covers a small
+part of the screen. This library answers how much, as pure geometry:
+no GL, no state.
+
+The failure mode it exists to avoid is a **silently missing
+reflection**: a rectangle one pixel too small reflects nothing there
+and nothing reports it. So anything that cannot be projected
+conservatively answers `#t`, rounding is outward only, and `#f` comes
+back only when the footprint is provably not visible.
+
+```
+procedure: (reflect-plane-matrix plane-y)
+
+func -> number -> vector
+```
+A mirror matrix about the horizontal plane `y = plane-y`, for building
+the mirrored camera.
+
+```
+procedure: (reflect-range main-vp reflect-vp polys pad width height)
+
+func -> vector -> vector -> list -> number -> number -> number -> any
+```
+`#f` to skip the pass, `#t` for the whole target, or `#(x y w h)` in
+pixels with the origin at the **lower left**, matching `gl.scissor`
+and `cmd-viewport!` — `(gfx sprite)` speaks the opposite convention.
+`polys` is a list of flat world-space `x y z` vectors, one per
+footprint, all on the plane `reflect-vp` already encodes; reflectors
+on different planes are different calls. `width`/`height` are the
+**target's**, not the canvas backing size, and must be positive
+integers; `pad` is a non-negative number of pixels. Anything else is a
+named error.
+
+The polygons must already enclose the maximum displacement the
+caller's shader applies. A pixel pad cannot recover geometry a wave
+pushes into view, because padding happens after the footprint has been
+clipped against the main view: a crest rising into frame from a
+footprint already rejected contributes nothing. `pad` covers what
+happens after projection — distorted sampling, filter taps.
+
+```
+procedure: (m4-crop-rect proj x y w h width height)
+
+func -> vector -> number -> number -> number -> number -> number -> number -> vector
+```
+The projection restricted to that pixel rectangle, so the rectangle
+becomes the whole of clip space. Its first use is culling the
+reflection pass against the smaller frustum. Note that cropping the
+projection and scissoring the pass are **alternatives**: cropping
+while leaving the full viewport stretches the image.
+
 ### `(gfx mesh)`: Parametric Geometry
 
 Positions, normals, indices generated in pure Scheme — a framework's
