@@ -237,7 +237,10 @@
            ,(source-badge source-file)
            (div (@ (class "wrap"))
              ,@body
-             (footer "Goeteia · Apache License 2.0 · "
+             (footer "Goeteia · "
+               (a (@ (href "https://github.com/guenchi/Goeteia/blob/master/LICENSE"))
+                 "Apache License 2.0")
+               " · "
                (a (@ (href "https://github.com/guenchi/Goeteia")) "GitHub")
                (br)
                "Built in pure " (a (@ (href "https://scheme.com")) "Scheme")
