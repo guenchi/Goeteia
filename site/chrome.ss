@@ -3,8 +3,8 @@
 ;; footer, the "Built in pure Scheme" badge and the view-source overlay
 ;; are the same on every page. Rendered to a string by Goeteia.
 (library (chrome)
-  (export render-page write-file base-styles footer-styles palette
-          feat section* soft-box inline-code)
+  (export render-page write-file base-styles footer-styles doc-styles
+          palette feat section* soft-box inline-code)
   (import (rnrs) (web html) (web css) (web component) (hl))
 
   ;; read a file whole -- the view-source panel is filled at build time
@@ -90,6 +90,45 @@
         (".fsep" (display inline))
         (".fbrk" (display none)))))
 
+  ;; the rendered-markdown styles: manual, changelog and api are one
+  ;; kind of page -- a container that a script fills from a .md -- and
+  ;; they styled it from three byte-identical copies.  It lives here so
+  ;; the three cannot drift apart; soft-box and inline-code are the same
+  ;; ones the hand-written code blocks on the other pages use.
+  (define (doc-styles)
+  `((.doc (padding (em 3) 0 (em 4)))
+    (".doc h1, .doc h2, .doc h3, .doc h4"
+     (font-weight 650) (line-height (dec 1 25)) (margin (em 1 60) 0 (em 0 60)))
+    (".doc h1" (font-size (em 2 40)) (margin-top (em 0 20))
+     (background "linear-gradient(120deg, var(--lapis), var(--azure))")
+     (-webkit-background-clip text) (background-clip text) (color transparent))
+    (".doc h2" (font-size (em 1 60)) (padding-bottom (em 0 25))
+     (border-bottom (px 1) solid (var line)))
+    (".doc h3" (font-size (em 1 25)))
+    (".doc h4" (font-size (em 1 5 2)) (color (var dim)))
+    (".doc p, .doc li" (color (var ink)))
+    (".doc a" (color (var lapis)))
+    (".doc ul, .doc ol" (padding-left (em 1 40)))
+    (".doc li" (margin (em 0 25) 0))
+    (".doc code" ,@(inline-code) (font-size (em 0 90))
+     (background "#eef1f9") (padding (em 0 12) (em 0 40)) (border-radius (px 5)))
+    (".doc pre" ,@(soft-box) (padding (em 0 90) (em 1)) (overflow-x auto)
+     (font-family (var mono)) (font-size (px 13 50)) (line-height (dec 1 5 2)))
+    (".doc pre code" (color (var ink)) (background none) (padding 0) (font-size inherit))
+    (".doc blockquote" (margin (em 1) 0) (padding (em 0 20) (em 1)) (color (var dim))
+     (border-left (px 3) solid (var azure)) (background (var bg2))
+     (border-radius 0 (px 8) (px 8) 0))
+    (".doc hr" (border none) (border-top (px 1) solid (var line)) (margin (em 2) 0))
+    (".doc table" (border-collapse collapse) (width (pct 100)) (margin (em 1 20) 0)
+     (font-size (em 0 95)))
+    (".doc th, .doc td" (border (px 1) solid (var line)) (padding (em 0 50) (em 0 80))
+     (text-align left))
+    (".doc th" (background (var bg2)) (font-weight 600))
+    (".doc img" (max-width (pct 100)))
+    (".doc :target" (scroll-margin-top (em 4 50)))
+    (.status (padding (em 4) 0) (text-align center) (color (var dim)))
+    (".status code" (font-family (var mono)))))
+
   ;; ---- build-time file I/O ----
   ;; each page renders to its .html here; the stylesheets are now
   ;; (web css) data in the page sources, so nothing reads raw files
@@ -107,6 +146,7 @@
            (a (@ (class ,(nav-class active 'why)) (href "why.html")) "Why Scheme?")
            (a (@ (class ,(nav-class active '3d)) (href "3d.html")) "3D")
            (a (@ (class ,(nav-class active 'manual)) (href "manual.html")) "Manual")
+           (a (@ (class ,(nav-class active 'api)) (href "api.html")) "API")
            (a (@ (class ,(nav-class active 'changelog)) (href "changelog.html")) "Changelog")
            (a (@ (class ,(nav-class active 'agent)) (href "agent.html")) "Agents")
            (a (@ (class "gh") (href "https://github.com/guenchi/Goeteia")) "GitHub")))))
