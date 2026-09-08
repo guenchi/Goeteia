@@ -66,5 +66,28 @@ globalThis.__count = t => (globalThis.__L[t] || []).length;")
 (let ((d (pointer-motion!)))
   (check "the motion is consumed" (and (= (car d) 0.0) (= (cdr d) 0.0))))
 
+;; ---- a mark left by ANOTHER module must not silence this one ----
+;; The "already attached" mark lives on the DOM element, and a page can
+;; run two goeteia modules -- fx-init! carries an owner argument exactly
+;; so two independent widgets can share a page.  Each module has its own
+;; key table and its own pointer state, but they see one element and one
+;; mark: the second module reads "someone registered" and registers
+;; nothing, while the first module's handlers go on updating the first
+;; module's state.  The second gets no input at all, and nothing says so.
+;;
+;; A mark therefore has to say WHO registered, not that somebody did.
+(js-eval "globalThis.__other = { addEventListener(t, f) { (this.L = this.L || {},
+                                   this.L[t] = this.L[t] || []).push(f) },
+                                 requestPointerLock(){},
+                                 goeteiaFxInput: true };   // left by another module
+globalThis.__fireOther = (t, e) => ((globalThis.__other.L || {})[t] || []).forEach(f => f(e));")
+(define other (js-get (js-global) "__other"))
+(fx-init-input! other)
+(js-call (js-get (js-global) "__fireOther") (js-undefined) "pointermove"
+         (js-eval "({offsetX: 42, offsetY: 7})"))
+(check "an element another module marked still delivers input to this one"
+       (and (< (abs (- (pointer-x) 42.0)) 0.001)
+            (< (abs (- (pointer-y) 7.0)) 0.001)))
+
 (display (= failed 0))
 (newline)

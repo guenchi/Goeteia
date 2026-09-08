@@ -624,17 +624,39 @@
   (define $fx-input-el #f)              ; the element pointer events come from
   (define $fx-input-window? #f)         ; window key handlers registered?
 
-  ;; "have we already registered on this element?" is recorded ON the
-  ;; element, the way fx-init! records its generation on the owner.  A
-  ;; list of elements here would answer the same question while holding
-  ;; every element the page has ever attached to alive for as long as
-  ;; the module lives; a page that cycles canvases would keep them all.
-  ;; The key sits outside the __goeteia_ namespace on purpose -- the
-  ;; bridge keeps that private per module instance.
-  (define ($fx-marked? el key)
-    (js-truthy? (js-get el key)))
-  (define ($fx-mark! el key)
-    (js-set! el key #t))
+  ;; "have I already registered on this element?" -- and the pronoun is
+  ;; the whole of it.  This record first lived as a boolean property on
+  ;; the element, which answered a DIFFERENT question: whether anybody
+  ;; had.  One page can run two goeteia modules (fx-init! takes an owner
+  ;; precisely so two independent widgets can share a page), each with
+  ;; its own key table and pointer state but seeing one and the same
+  ;; element; the second module read "already registered", registered
+  ;; nothing, and received no input at all while the first module's
+  ;; handlers went on updating the first module's state.  Silently, on
+  ;; both back ends.
+  ;;
+  ;; Carrying the owner's identity in that property would not be enough
+  ;; either: one slot remembers one owner, so with a third module in
+  ;; play the first one re-attaching would find a stranger's mark, take
+  ;; it for "not mine", and register a second set of handlers for
+  ;; itself -- the duplicate counting this whole mechanism exists to
+  ;; prevent.
+  ;;
+  ;; So the record belongs to the module asking the question, not to
+  ;; the element being asked about: a WeakSet per surface, private to
+  ;; this module instance.  Weak because the alternative -- a list of
+  ;; elements here -- would hold every element the page ever attached
+  ;; to alive for as long as the module lives, and a page that cycles
+  ;; canvases would keep them all.
+  (define $fx-input-seen #f)
+  (define $fx-lock-seen #f)
+
+  (define ($fx-seen? set el)
+    (and set (js-truthy? (js-method set "has" el))))
+  (define ($fx-see! set el)
+    (let ((s (or set (js-eval "new WeakSet()"))))
+      (js-method s "add" el)
+      s))
 
   ;; keys on the window, pointer on the element (default: fx-init!'s
   ;; canvas; pass a Three.js renderer's domElement to use it there).
@@ -656,8 +678,8 @@
                    (lambda (e)
                      (hashtable-set! $fx-keys (js->string (js-get e "key")) #f)
                      (js-undefined))))
-      (unless ($fx-marked? target "goeteiaFxInput")
-        ($fx-mark! target "goeteiaFxInput")
+      (unless ($fx-seen? $fx-input-seen target)
+        (set! $fx-input-seen ($fx-see! $fx-input-seen target))
         (js-method target "addEventListener" "pointermove"
                    (lambda (e)
                      (when (js-eq? target $fx-input-el)
@@ -700,8 +722,8 @@
       (unless target
         (error 'pointer-lock! "no element: pass one or call fx-init! first"))
       (set! $fx-lock-el target)
-      (unless ($fx-marked? target "goeteiaFxLock")
-        ($fx-mark! target "goeteiaFxLock")
+      (unless ($fx-seen? $fx-lock-seen target)
+        (set! $fx-lock-seen ($fx-see! $fx-lock-seen target))
         (js-method target "addEventListener" "click"
                    (lambda (e)
                      (when (and (js-eq? target $fx-lock-el) (not $fx-locked))
