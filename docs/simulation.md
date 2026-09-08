@@ -160,7 +160,114 @@ loop, and a consumer who wanted the rule without the frame callback
 wrote it a third time. Three copies of one rule agree until someone
 fixes one of them.
 
-## `(sim random)` — repeatable chance
+## `(sim random)` — draws a replay can reproduce
 
-*Written by the session that implemented it; see the source until this
-section lands.*
+A simulation that can be replayed needs its randomness to come from a
+seed someone wrote down. Nothing in this library reads a clock, a device
+or a global: the entire state is one integer held by the caller, so two
+generators cannot interfere and a run is repeated by repeating its seed.
+
+```scheme
+(import (sim random))
+
+(define r (make-rng 12345))
+
+(random-integer! r 6)          ; an integer in [0, 6)
+(random-real! r)               ; a real in [0.0, 1.0)
+(random-range! r -2.5 4.0)     ; a real in [-2.5, 4.0)
+```
+
+`make-rng` refuses a seed that is not a fixnum, `random-integer!` refuses
+a bound that is not a positive fixnum, and `random-range!` refuses a
+range that is empty. Each refusal is raised under the name of the
+procedure that refused.
+
+### The algorithm, in enough detail to write again
+
+The generator is the Lehmer recurrence standardised as MINSTD:
+
+    s  <-  48271 * s   mod   2147483647
+
+on states `s` in `[1, 2147483646]`.
+
+| quantity | value |
+|---|---|
+| modulus | `2147483647` = 2^31 − 1, prime |
+| multiplier | `48271`, a primitive root of the modulus |
+| state width | 31 bits; the state is **not** a fixnum on this platform |
+| state range | `[1, 2147483646]` — zero is unreachable and would be absorbing |
+| period | exactly `2147483646` |
+
+Primality and the primitive root are both load-bearing. Because the
+modulus is prime no state can drift into a shorter orbit, and because
+48271 is a primitive root the single orbit is all of the non-zero
+residues — so the period is the full `2147483646` from every seed, not
+merely from a lucky one.
+
+**Seeding.** A seed is folded into the state space rather than checked
+against it, so every fixnum is a usable seed including a negative one:
+
+    s0  =  1 + (seed mod 2147483646)
+
+`mod` by a positive divisor is non-negative, and the `+1` keeps the state
+off zero. Three draws are then discarded. Those discards are not
+ceremony: the recurrence is linear, so seeds one apart start one apart,
+and their first draws would differ by one step's worth of the range
+instead of by all of it. Three steps multiply the difference by
+48271^3 mod 2147483647 and spread it over the whole span.
+
+**Drawing.** Every draw advances the state exactly once, and the value is
+derived from the *new* state `s`:
+
+    integer in [0, n)   ->   floor((s - 1) * n / 2147483646)
+    real in [0, 1)      ->   (s - 1) / 2147483646     in binary64
+    real in [lo, hi)    ->   lo + (hi - lo) * (the real draw above)
+
+The value comes off the high end of the state rather than its low bits,
+which are the weakest part of a Lehmer generator: a low bit of `s`
+carries far less of the period than a high one, so `s mod n` would be
+visibly worse than the scaling above at exactly the small bounds a
+simulation asks for most often.
+
+`(s - 1)` is uniform on `[0, 2147483645]`, so the largest integer
+numerator is `2147483645 * n`, which is below `2147483646 * n`, and the
+quotient therefore never reaches `n`. The residual bias is the one every
+scaled generator has — at most `n / 2147483646` in relative terms.
+
+For the range draw, `lo + (hi - lo) * u` can round up to `hi` when `lo`
+is large enough that `hi - lo` falls below the spacing of doubles near
+`lo`. When that happens the draw is reported as `lo`, which keeps the
+interval half-open. Callers index and scissor against that promise, and
+a value equal to `hi` is the one that reads past the end of an array.
+For the same reason the two ends are compared *after* they are coerced
+to binary64: two exact ends that differ can land on the same double, and
+a range that is empty in the precision it will be computed in is refused
+rather than silently answered with its own upper end.
+
+**Checking a reimplementation.** The bare recurrence has a published
+check value, independent of this or any other implementation: starting
+from state 1, ten thousand steps of `s <- 48271 * s mod 2147483647`
+leave the state at **399268537**. This is the value `std::minstd_rand`
+is required to produce, and it exercises the recurrence without
+involving the seeding or the draw formulas above — so a reimplementation
+can be verified in two stages rather than one.
+
+### Why this generator and not a wider one
+
+It needs no bitwise operation. Bitwise operators here work on i31-tagged
+fixnums and trap at 2^29 (`docs/limits.md`), while `*` and `mod` stay
+exact without bound: the intermediate `48271 * s` reaches 2^47 and the
+product inside an integer draw reaches 2^60, both computed exactly.
+
+The trap this avoids is writing a generator against the *fixnum range*
+instead of against the *arithmetic*. That road ends at a modulus small
+enough to be a fixnum — 65537, say — and therefore a period of 65536
+draws, which one particle system walks through in seconds, after which
+the sequence repeats exactly.
+
+### What it is not
+
+This is not a cryptographic generator. Two successive draws determine
+the state, and from the state every later draw follows. Use it for
+simulation, sampling and content generation; never for a secret, a
+token, or a nonce.

@@ -159,6 +159,10 @@ The half that is not drawing: who exists, what runs each tick, who hears what.
 
 `make-bus`  `bus-on!`  `bus-off!`  `bus-emit!`  `bus-clear!`  `bus-depth-limit`
 
+## `(sim random)`
+
+`make-rng`  `random-integer!`  `random-real!`  `random-range!`
+
 ## `(sim schedule)`
 
 `make-schedule`  `schedule-add!`  `schedule-remove!`  `schedule-run!`  `schedule-systems`
