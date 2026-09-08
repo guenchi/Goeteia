@@ -82,6 +82,12 @@ both.  See [The JS target](#the-js-target).
   producers returned; there is no implicit method combination.  Policies
   are names, not procedures, so the whole input is a datum and a fight
   can be replayed (`docs/lng.md`).
+- `(sim entity)` / `(sim schedule)` / `(sim events)` — the simulation
+  half: entities behind generational handles, so a reference kept past a
+  destruction can never address whatever took the slot; the systems that
+  run each tick, ordered by a number written down rather than by load
+  order; and a topic bus that dispatches over a snapshot, so what a
+  listener sees does not depend on who subscribed while it was running.
 
 See [Design](#design) for the object representation, the calling
 convention, and the milestone-by-milestone build log.
