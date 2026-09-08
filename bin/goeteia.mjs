@@ -1,4 +1,18 @@
 #!/usr/bin/env node
+// Copyright 2026 guenchi
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 // Goeteia command-line driver.
 //
 //   goeteia compile <input.ss> [output.wasm]   compile to a wasm module
@@ -9,7 +23,6 @@
 //
 // The self-hosted compiler (goeteia.wasm) and the prelude ship inside
 // this package, so no external toolchain is required — just Node 22+.
-// Copyright (c) 2026 guenchi. MIT license; see LICENSE.
 
 import fs from 'fs';
 import path from 'path';

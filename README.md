@@ -1068,4 +1068,4 @@ Tail calls use `return_call_ref` on either path.
 
 ## License
 
-MIT.  See LICENSE.
+Apache License 2.0.  See LICENSE.

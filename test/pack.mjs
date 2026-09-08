@@ -1,3 +1,17 @@
+// Copyright 2026 guenchi
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 // rt/pack.mjs: one .ss in, one self-contained .html out.
 //
 // The claim a packaged page makes is not "it was written" but "what
@@ -18,7 +32,6 @@
 // at the bytes the packager happens to still hold in memory, which is
 // why the self-check does not.
 //
-// Copyright (c) 2026 guenchi. MIT license; see LICENSE.
 
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -69,8 +82,21 @@ test('a DOM page packages into one file that carries the same program', async ()
     // rt/web.mjs -- they are simply never reached, because the launch
     // block reads the payload off the page and calls runGoeteiaBytes
     // with it.  What must not appear is a URL to reach for.
+    //
+    // ONE STRING IS EXEMPT, and only that one: the license URL the
+    // Apache header puts in a comment at the top of every source,
+    // including the loader that gets inlined here.  It is exempt
+    // because it sits in a comment and nothing reads it -- not
+    // because URLs in licenses are harmless.  The check is written as
+    // "no OTHER url", so a second one, license-looking or not, still
+    // fails; adding to this list means arguing that the new string is
+    // also unreachable, which is the argument that matters.
+    const LICENSE_URL = 'http://www.apache.org/licenses/LICENSE-2.0';
     assert.doesNotMatch(html, /\bfetch\s*\(\s*['"`]/, 'no literal URL is fetched');
-    assert.doesNotMatch(html, /https?:\/\//);
+    assert.deepEqual(
+        [...new Set([...html.matchAll(/https?:\/\/[^\s"'<)]*/g)].map(m => m[0]))]
+            .filter(u => u !== LICENSE_URL),
+        [], 'no URL to reach for');
     assert.doesNotMatch(html, /^\s*import\s/m, 'the loader must be inlined, not imported');
     assert.match(html, /getElementById\("goeteia-module"\)[\s\S]*runGoeteiaBytes\(bytes\)/,
         'the module must come off the page itself');

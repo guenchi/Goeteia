@@ -1,3 +1,17 @@
+// Copyright 2026 guenchi
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 // docs/llm/ is the page substrate: the context a model is handed so
 // that a page it has never written before compiles and runs the first
 // time.  Documentation rots quietly, and a substrate that rots teaches
@@ -22,7 +36,6 @@
 // caller sizes an injection by, and a manifest that reports last
 // month's sizes is worse than one that reports none.
 //
-// Copyright (c) 2026 guenchi. MIT license; see LICENSE.
 
 import assert from 'node:assert/strict';
 import fs from 'node:fs';

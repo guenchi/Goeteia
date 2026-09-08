@@ -1,3 +1,17 @@
+// Copyright 2026 guenchi
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 // What a goeteia program hands its host when it dies.
 //
 // The prelude writes "unhandled exception: who: message irritants"
@@ -19,7 +33,6 @@
 // get its fake reported -- deliberately not defended against, since
 // the only cost is a misleading message on a program built to mislead.
 //
-// Copyright (c) 2026 guenchi. MIT license; see LICENSE.
 
 export function programFailure(cause, text) {
     const PREFIX = 'unhandled exception: ';

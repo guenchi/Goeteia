@@ -1,3 +1,17 @@
+;; Copyright 2026 guenchi
+;;
+;; Licensed under the Apache License, Version 2.0 (the "License");
+;; you may not use this file except in compliance with the License.
+;; You may obtain a copy of the License at
+;;
+;;     http://www.apache.org/licenses/LICENSE-2.0
+;;
+;; Unless required by applicable law or agreed to in writing, software
+;; distributed under the License is distributed on an "AS IS" BASIS,
+;; WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+;; See the License for the specific language governing permissions and
+;; limitations under the License.
+
 ;; UASTC LDR 4x4 -> RGBA, decoded from the Basis Universal transcoder.
 ;; A UASTC block is 128 bits describing an ASTC-like block: a 7-bit
 ;; mode code selects the layout (1/2/3 subsets, 1 or 2 weight planes,
@@ -13,7 +27,6 @@
 ;; Verified byte-for-byte against the basisu transcoder's RGBA32 unpack
 ;; across the modes its encoder emits (test/uastc.ss).
 ;;
-;; Copyright (c) 2026 guenchi. MIT license; see LICENSE.
 (library (gfx uastc)
   (export uastc-block! uastc-decode! uastc-block-mode)
   (import (rnrs))

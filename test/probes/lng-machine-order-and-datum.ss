@@ -1,4 +1,18 @@
 ;; expect: #t
+;; Copyright 2026 guenchi
+;;
+;; Licensed under the Apache License, Version 2.0 (the "License");
+;; you may not use this file except in compliance with the License.
+;; You may obtain a copy of the License at
+;;
+;;     http://www.apache.org/licenses/LICENSE-2.0
+;;
+;; Unless required by applicable law or agreed to in writing, software
+;; distributed under the License is distributed on an "AS IS" BASIS,
+;; WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+;; See the License for the specific language governing permissions and
+;; limitations under the License.
+
 ;; The eight defects an independent review found in (lng machine)
 ;; after the first round of fixes, one cell each.  Three of them --
 ;; A, B and C -- were the same shape: a silent "the first one wins"
@@ -9,7 +23,6 @@
 ;; Kept as a probe rather than folded into test/lng-machine.ss so the
 ;; findings stay legible as findings; the suite's own cells cover the
 ;; same ground in the shape the suite wants.
-;; Copyright (c) 2026 guenchi.  MIT license; see LICENSE.
 (import (rnrs) (lng machine))
 
 (define S '((states (a b)) (initial a) (transitions ((a go b)))))

@@ -1,3 +1,17 @@
+;; Copyright 2026 guenchi
+;;
+;; Licensed under the Apache License, Version 2.0 (the "License");
+;; you may not use this file except in compliance with the License.
+;; You may obtain a copy of the License at
+;;
+;;     http://www.apache.org/licenses/LICENSE-2.0
+;;
+;; Unless required by applicable law or agreed to in writing, software
+;; distributed under the License is distributed on an "AS IS" BASIS,
+;; WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+;; See the License for the specific language governing permissions and
+;; limitations under the License.
+
 ;; A name defined twice at the top level makes dead-code elimination
 ;; drop what only the FIRST definition calls, while keeping both
 ;; definitions to compile.  Compiling this file fails, on both
@@ -16,7 +30,6 @@
 ;; inlines into the same top level: a program that defines `root' next
 ;; to (web reactive)'s `root' pruned that library's dispose path out
 ;; from under it.  A program file is the smallest statement of it.
-;; Copyright (c) 2026 guenchi.  MIT license; see LICENSE.
 (import (rnrs))
 (define (bye) (display 'gone) (newline))
 (define (use) (bye))

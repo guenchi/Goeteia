@@ -1,3 +1,17 @@
+;; Copyright 2026 guenchi
+;;
+;; Licensed under the Apache License, Version 2.0 (the "License");
+;; you may not use this file except in compliance with the License.
+;; You may obtain a copy of the License at
+;;
+;;     http://www.apache.org/licenses/LICENSE-2.0
+;;
+;; Unless required by applicable law or agreed to in writing, software
+;; distributed under the License is distributed on an "AS IS" BASIS,
+;; WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+;; See the License for the specific language governing permissions and
+;; limitations under the License.
+
 ;; Named classifications and the relations between them.
 ;;
 ;; Dispatch on more than one argument needs an answer to "which of
@@ -37,7 +51,6 @@
 ;; relation declared about one says nothing about the other.  Name your
 ;; predicates and pass the name.
 ;;
-;; Copyright (c) 2026 guenchi. MIT license; see LICENSE.
 (library (lng pred)
   (export define-classifier classifier? classifier-name classifier-tags
           classify classify-as

@@ -1,3 +1,17 @@
+;; Copyright 2026 guenchi
+;;
+;; Licensed under the Apache License, Version 2.0 (the "License");
+;; you may not use this file except in compliance with the License.
+;; You may obtain a copy of the License at
+;;
+;;     http://www.apache.org/licenses/LICENSE-2.0
+;;
+;; Unless required by applicable law or agreed to in writing, software
+;; distributed under the License is distributed on an "AS IS" BASIS,
+;; WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+;; See the License for the specific language governing permissions and
+;; limitations under the License.
+
 ;; Multi-argument dispatch whose conflicts are found by the program,
 ;; not settled by the order the handlers happened to be registered in.
 ;;
@@ -33,7 +47,6 @@
 ;; committed apart, and the refusal says which tuple it could not
 ;; decide.  The dispatch table is emptied on every commit.
 ;;
-;; Copyright (c) 2026 guenchi. MIT license; see LICENSE.
 (library (lng generic)
   (export make-generic generic? generic-name generic-arity
           classifiers

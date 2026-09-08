@@ -1,3 +1,17 @@
+// Copyright 2026 guenchi
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 // Worker-side loader: the whole render loop off the main thread.
 // The main thread transfers an OffscreenCanvas and forwards input
 // events as messages (rt/web.mjs's loadGoeteiaWorker is the other
@@ -8,7 +22,6 @@
 // (js-get (js-global) "__goeteia_canvas") -- there is no document
 // in a worker.  requestAnimationFrame works here (the frames pace
 // with the display), so fx-loop! runs unchanged.
-// Copyright (c) 2026 guenchi. MIT license; see LICENSE.
 
 import { loadGoeteia } from './web.mjs';
 

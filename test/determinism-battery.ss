@@ -1,4 +1,18 @@
 ;; expect: trig 357c/c6b3 m4scalar 7c8c/267a m4simd baef/73e9 slerp 7d6d/512d gltf 1481/d453 intbits 4631/adbf fltext 32ed/9b30 numlit bccc/537b edge 0478/553a bigfl 3e32/924a
+;; Copyright 2026 guenchi
+;;
+;; Licensed under the Apache License, Version 2.0 (the "License");
+;; you may not use this file except in compliance with the License.
+;; You may obtain a copy of the License at
+;;
+;;     http://www.apache.org/licenses/LICENSE-2.0
+;;
+;; Unless required by applicable law or agreed to in writing, software
+;; distributed under the License is distributed on an "AS IS" BASIS,
+;; WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+;; See the License for the specific language governing permissions and
+;; limitations under the License.
+
 ;; Numeric determinism battery: one fixed computation list whose every
 ;; result is printed as an IEEE 754 bit pattern, so "the two backends
 ;; agree" becomes a byte comparison instead of an assumption.
@@ -34,7 +48,6 @@
 ;; Changing this line is a deliberate act.  Regenerate it only when you
 ;; can say which computation changed and why.
 ;;
-;; Copyright (c) 2026 guenchi.  MIT license; see LICENSE.
 (import (rnrs) (web js) (gfx gl) (gfx fx) (gfx mat) (gfx gltf))
 
 ;; ---- output mode ----

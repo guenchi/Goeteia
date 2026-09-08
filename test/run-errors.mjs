@@ -1,3 +1,17 @@
+// Copyright 2026 guenchi
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 // The host side of an unhandled Scheme error: what a program wrote
 // before it died, and the exception line itself, must reach the
 // caller.  A program that raises an unhandled error prints
@@ -16,7 +30,6 @@
 //     exception line on stderr;
 //   * a program that finishes normally is untouched (the control).
 //
-// Copyright (c) 2026 guenchi.  MIT license; see LICENSE.
 
 import fs from 'node:fs';
 import os from 'node:os';
