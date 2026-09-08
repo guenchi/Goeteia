@@ -80,7 +80,7 @@
       (if (js-truthy? g) (js->number g) 0)))
 
   ;; the VAO cache: (program, buffer, instance buffer) -> vao slot
-  (define $fx-vaos (make-eq-hashtable))
+  (define $fx-vaos (make-eqv-hashtable))
 
   ;; An optional owner scopes loop retirement, for a page running two
   ;; independent widgets that must not retire each other: pass the node
@@ -96,7 +96,7 @@
     (gl-attach! canvas)
     (set! $fx-slot 0)
     (set! $fx-heap $fx-cmd-limit)
-    (set! $fx-vaos (make-eq-hashtable))
+    (set! $fx-vaos (make-eqv-hashtable))
     ;; 128 bytes of scratch turn every m4-mul into wasm SIMD
     (m4-scratch! (fx-alloc! 128))
     ;; a fresh init retires loops from any earlier run of this mount
@@ -410,10 +410,15 @@
   ;; that binding, and dynamic streams upload right after fx-use!.
   ;; The index binding IS VAO state: a caller's cmd-bind-index!
   ;; lands in the open VAO and is restored with it.
-  ;; Keys pack three slot numbers into one fixnum, so slots must
-  ;; stay under 1024 -- far past any real scene
-  (define ($fx-vao-key pslot buf inst)
-    (+ (* pslot 1048576) (* buf 1024) (+ inst 1)))
+  ;; Slot dimensions stay separate: packing inst+1 into ten bits
+  ;; aliases slot 1023 with the next vertex buffer.  Numeric equality
+  ;; also keeps cache lookup independent of fixnum/bignum identity.
+  ;; Tables are allocated only on the first use of a program/buffer.
+  (define ($fx-vao-table table slot)
+    (or (hashtable-ref table slot #f)
+        (let ((child (make-eqv-hashtable)))
+          (hashtable-set! table slot child)
+          child)))
 
   ;; The optional third operand is the buffer's per-vertex stride,
   ;; for a buffer wider than the program declares -- a primitive
@@ -434,13 +439,13 @@
 
   ;; The stride belongs to the VAO, not to the (program, buffer)
   ;; pair: the same program drawing the same buffer at two strides
-  ;; needs two of them.  The fixnum key already packs three slot
-  ;; numbers to its ceiling, so the stride rides in the VALUE -- a
-  ;; short alist, length 1 for every caller that does not pass one.
+  ;; needs two of them.  Each instance-buffer entry holds a short
+  ;; stride alist, length 1 for callers that use the default stride.
   (define ($fx-use-vao! prog buf-slot inst-slot stride)
     (cmd-use-program! (fx-program-slot prog))
-    (let* ((key ($fx-vao-key (fx-program-slot prog) buf-slot inst-slot))
-           (bucket (hashtable-ref $fx-vaos key '()))
+    (let* ((cache ($fx-vao-table
+                   ($fx-vao-table $fx-vaos (fx-program-slot prog)) buf-slot))
+           (bucket (hashtable-ref cache inst-slot '()))
            (hit (assv stride bucket)))
       (if hit
           (begin
@@ -448,7 +453,7 @@
             (cmd-bind-buffer! buf-slot))
           (let ((v (fx-slot!)))
             (gl-vao! v)
-            (hashtable-set! $fx-vaos key (cons (cons stride v) bucket))
+            (hashtable-set! cache inst-slot (cons (cons stride v) bucket))
             (cmd-bind-vao! v)
             (cmd-bind-buffer! buf-slot)
             (for-each (lambda (a)
