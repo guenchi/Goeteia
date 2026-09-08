@@ -1,9 +1,10 @@
 # `(lng …)` — dispatch and the relations behind it
 
-Two libraries so far: `(lng pred)` holds named classifications and the
-relations between them, `(lng generic)` dispatches on more than one
-argument. They are for game and simulation logic — rules that grow a
-case at a time — and are deliberately absent from any per-frame path.
+Three libraries so far: `(lng pred)` holds named classifications and
+the relations between them, `(lng generic)` dispatches on more than one
+argument, and `(lng machine)` keeps a state machine as data. They are
+for game and simulation logic — rules that grow a case at a time — and
+are deliberately absent from any per-frame path.
 
 There are no classes here, no inheritance, no method combination, no
 `call-next-method` and no meta-object protocol. A handler either wins
@@ -132,6 +133,135 @@ declared relation is `declare-subset!` over procedure objects.
 A predicate's identity is the **procedure object**. Two lambdas with
 identical bodies are two different predicates, and a relation declared
 about one says nothing about the other.
+
+## `(lng machine)`
+
+A state machine here is a **datum**. The states, the initial state and
+the transitions are lists of symbols; the guards and actions are
+**names**, and the procedures behind the guard names are supplied when
+the machine is made:
+
+```scheme
+(define door-spec
+  '((states (closed open locked))
+    (initial closed)
+    (transitions
+     ((closed push open) (open push closed)
+      (closed lock locked has-key)
+      (closed lock closed no-key ring-alarm)
+      (locked unlock closed has-key)))))
+
+(define m (make-machine door-spec
+                        (list (cons 'has-key (lambda (ctx) (memq 'key ctx)))
+                              (cons 'no-key (lambda (ctx) (not (memq 'key ctx)))))
+                        '(key)))
+```
+
+A transition is `(from event to)`, optionally followed by a guard name
+and then an action name. Only the **guard** names need bindings: a
+guard is a question the library asks, so a name it cannot ask through
+is refused at construction. An action name is handed back to the
+caller and never called here, so nothing has to be bound to it — the
+library does not know how your actions are performed, which is the
+point.
+
+Because the spec holds no procedures, it can be written to a file,
+read back, diffed and drawn; `machine->datum` and `datum->machine` do
+the round trip, and the bindings are supplied again on the way back in
+— a saved game carries the machine, not the code.
+
+A machine value is immutable. `machine-step` answers two values, the
+new machine and the **names** of the actions the transition asks for:
+
+```scheme
+(let-values (((m2 actions) (machine-step m 'lock '())))
+  (machine-state m2)      ; => closed  (the no-key transition)
+  actions)                ; => (ring-alarm)
+```
+
+It performs none of them. Who runs an action, in what order, and what
+happens if it fails stay in the caller's code, where they can be read.
+
+**Nothing is ordered.** Several transitions may share a
+`(state, event)` key only when every one of them carries a guard. All
+of those guards are evaluated on each step, and exactly one may hold.
+Two holding at once is an error naming the state, the event and the
+transitions — never "the first one in the file wins". The same rule
+covers the two other places a first-occurrence rule could hide: a
+clause given twice (two `initial`, two `strict`) and a name bound
+twice in the bindings alist are both refused, rather than resolved by
+position.
+
+That guarantee assumes guards are **pure**. A guard that writes the
+context, or any state its neighbours read, can make their answers
+depend on which one ran first; the library evaluates every guard that
+returns normally, but it cannot see a guard that changes the world it
+is being asked about. Keep guards to reading.
+
+**What is checked when.** `make-machine` refuses, by name: a
+transition from or to a state that is not declared, an initial state
+that is not declared, two transitions on one key where any of them is
+unguarded, a guard name with no binding, a context that is not a
+datum, and — unless told otherwise — a state that cannot be reached
+from the initial state:
+
+```scheme
+(make-machine '((states (a b c)) (initial a) (transitions ((a go b))))
+              '() #f '((strict #f)))   ; c is unreachable, and that is fine here
+```
+
+An option is exactly `(name value)`, and `strict` takes `#t` or `#f`:
+an unknown name, a missing value, an extra element and a non-boolean
+`strict` are each refused by name rather than read as some weaker
+request.
+
+Reachability is structural: an edge counts even if its guard could
+never hold. Deciding whether a guard is satisfiable is not something
+this library pretends to do.
+
+Everything that goes in is checked for being a **datum** — the spec,
+the options and the context alike, not just the one the writer
+happens to think of. The bindings alist cannot be one (it holds
+procedures) and is checked for shape and for cycles on its own.
+
+A spec may carry clauses this library does not know: it is your data,
+it round trips, and `(metadata …)` beside `(states …)` is none of the
+library's business. An **option** is the opposite — an instruction to
+the library — and one it does not recognize has no reading under
+which it still applies, so an unknown option name is refused rather
+than ignored. A procedure anywhere in a spec is refused where
+it enters rather than surviving into what `machine->datum` calls a
+datum. A structure that contains a cycle is refused by name; the
+error says which value was cyclic and does not carry the value,
+because printing it is the same endless walk that made it a problem.
+What the accessors hand back is a deep copy, mutable leaves included:
+mutating a row from `machine-transitions`, or a string inside the spec
+`machine-spec` returned, cannot reach the machine.
+
+Guard ambiguity is the one modelling error reported at the step rather
+than at construction, and for the same reason predicate mode reports
+late: guard truth is a run-time fact.
+
+**An event with no transition** leaves the machine alone and answers
+no actions. A spec that would rather hear about it says so:
+
+```scheme
+(append door-spec '((on-unknown error)))
+```
+
+**Context.** `make-machine` takes an initial context, `machine-step`
+takes one that replaces it for that step, and the context used is
+retained in the machine that comes back. It must be a datum, checked
+where it enters rather than where it is written out. The machine
+neither copies nor changes it: a context mutated behind the machine's
+back makes `machine->datum` describe something that no longer exists.
+
+**Looking at a machine without running it.** `machine-events` answers
+the events available from the current state — structurally, without
+evaluating a guard, which is what a UI disabling buttons wants.
+`machine-transitions` answers the whole table, for diagnostics and
+diagrams. `machine-state`, `machine-ctx` and `machine-spec` answer the
+parts.
 
 ## Not done
 

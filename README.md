@@ -582,6 +582,13 @@ debugging time:
   proposed set is validated, committed atomically, and the previous one
   survives a refusal.  No classes, no inheritance, no method
   combination (`docs/lng.md`).
+- `(lng machine)` — a state machine as data: states, an initial state
+  and transitions whose guards and actions are names, bound to
+  procedures when the machine is made.  A step is pure and hands back
+  the action names for the caller to run; a spec round-trips through
+  `(web sexpr)`; anything ambiguous, duplicated, unknown or cyclic is
+  refused by name at construction, never settled by where it was
+  written (`docs/lng.md`).
 - `(gfx gltf)` — real 3D assets: GLB files parse with the binary
   chunk in staging memory (the wasm f32 loads are the float decoder).
   Geometry (POSITION/NORMAL plus `TEXCOORD_0`, `TANGENT`, `COLOR_0`,
