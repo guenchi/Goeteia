@@ -23,6 +23,8 @@
 #     compiler -- a 1.5.8 compiler over a 1.5.7 prelude is a mismatch
 #     nothing reports.  Publishing them beside the compiler makes one
 #     URL prefix name one consistent version of all three.
+#   * LICENSE, in full: the terms the published bytes are under should
+#     be readable next to them, not one link away.
 #   * NOT the Node-only tools (compile, run, runjs, dev, pack, verify,
 #     repl): they import node:fs and friends, and a browser importing
 #     them fails at load, so publishing them here would only mislead.
@@ -38,6 +40,10 @@
 set -eu
 SRC=${1:?goeteia source tree}
 VER=${2:?version}
+# absolute, because the manifest below reads the source tree's git hash
+# from inside a `cd "$OUT"` subshell: a relative path resolves against
+# the wrong directory there and silently records "unknown"
+SRC=$(cd "$SRC" && pwd)
 ESBUILD=esbuild@0.24.0
 HERE="$(cd "$(dirname "$0")" && pwd)"
 OUT="$HERE/cdn/$VER"
@@ -56,6 +62,10 @@ for f in web jsbridge worker sexpr react; do
       --outfile="$STAGE/rt/$f.mjs" 2>&1 | grep -v '^$' || true
 done
 cp "$SRC/goeteia.wasm" "$STAGE/goeteia.wasm"
+# the license the published bytes are under, in full, beside them: the
+# minified runtime carries a one-line notice and the .ss sources carry
+# the header, and both point here
+cp "$SRC/LICENSE" "$STAGE/LICENSE"
 mkdir -p "$STAGE/src"; cp "$SRC/src/prelude.ss" "$STAGE/src/prelude.ss"
 ( cd "$SRC" && find lib -name '*.ss' -type f ) | while read -r f; do
   mkdir -p "$STAGE/$(dirname "$f")"; cp "$SRC/$f" "$STAGE/$f"

@@ -1,7 +1,8 @@
 {
   "version": "1.7.0",
-  "source": "unknown",
+  "source": "02b3311",
   "files": {
+    "LICENSE": {"bytes": 11337, "sha256": "b4f3a7fcfe636a8143045822e28c13c5846d0e5bd1741ad805222c8d52fe770a", "integrity": "sha384-P37PbOW7LwZIC2ocfPJMVzoyK/bBe01RLQAQdtqdjcfQMKummWFBCowDYuzmwYcW"},
     "goeteia.wasm": {"bytes": 309862, "sha256": "9cc1406600748fedf2e0cb6a18cd45aa122a3bfc8ce7b92a2316452144f24bb7", "integrity": "sha384-qicnsUkfgESQn0eXtaoxTwkbOWrHhIRPQ2D885MoRNaAG9WGxN+EPYlgd3qmeZAc"},
     "lib/aud/sfx.ss": {"bytes": 4645, "sha256": "bcfa0acfb2e829207acea03d5f09f7b7a57967002acc3e978a91952e647972ff", "integrity": "sha384-WLnpb118mb+aPTzNYKxEWaCOqQRZgQNWnPQBLWZ3IAbSZDeq94C4X6K/+GCUMQM5"},
     "lib/gfx/collide.ss": {"bytes": 21190, "sha256": "2df5de63e4daf9a270dbc32563e7df9cdb655ebb6c69e52fbda3462cf7600aad", "integrity": "sha384-JViDk5I+K4HA7VApXK3zoKG66qihEceNuXJa+4lV410U7z2C8Bm7U5q5NRYO3Chv"},
