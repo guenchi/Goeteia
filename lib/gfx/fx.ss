@@ -677,7 +677,29 @@
         (js-method (js-global) "addEventListener" "keyup"
                    (lambda (e)
                      (hashtable-set! $fx-keys (js->string (js-get e "key")) #f)
-                     (js-undefined))))
+                     (js-undefined)))
+        ;; Releases are watched on the window as well as on the
+        ;; element, because pointerup fires on whatever lies under the
+        ;; pointer when the button comes up and bubbles from there: a
+        ;; press that starts on the canvas, drags off and is released
+        ;; anywhere else never passes through the canvas at all.  With
+        ;; only the element listener the flag stayed true with the
+        ;; button physically up, until some later release happened to
+        ;; land back on the element -- a latch, not a dropped event.
+        ;; pointercancel is a release too: the browser has taken the
+        ;; pointer away and nothing further will be delivered for it.
+        ;;
+        ;; These two carry NO current-target guard, unlike every other
+        ;; element handler here.  The whole case they exist for is an
+        ;; event that is not on our element, so a guard comparing the
+        ;; two would reject exactly what this is for.  Clearing an
+        ;; already-clear flag is harmless, so the element's own
+        ;; pointerup (which arrives first, and carries offsetX/Y) is
+        ;; left in place and the two simply agree.
+        (js-method (js-global) "addEventListener" "pointerup"
+                   (lambda (e) (set! $fx-pdown #f) (js-undefined)))
+        (js-method (js-global) "addEventListener" "pointercancel"
+                   (lambda (e) (set! $fx-pdown #f) (js-undefined))))
       (unless ($fx-seen? $fx-input-seen target)
         (set! $fx-input-seen ($fx-see! $fx-input-seen target))
         (js-method target "addEventListener" "pointermove"
