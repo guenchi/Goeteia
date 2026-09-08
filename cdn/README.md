@@ -33,7 +33,3 @@ CORS headers declared for `/cdn/*` apply to both.
 ## Versions
 
     1.7.0   (lng pred), (lng generic) and (lng machine); (web reactive) on-cleanup; a procedure or primitive used as a value is one object; library-private names are namespaced, fixing the gltf/meshopt collision; the compiler is 36% smaller
-    1.6.2   glTF material model, second UV set, cameras, morph deltas; GLB writer writes them back; cofactor skinned normals; continuous crossfade interrupt; host sees why a program died; diagnostics name the right line
-    1.6.1   runners publish argv per module instance; the emitted JS module exports rt.global; goeteia.wasm rebuilt
-    1.6.0   (web css) unit fractions are digits as written, with an optional minimum width -- the (fl W F [width]) model; breaking for single-digit fractions
-    1.5.8   first published version
