@@ -82,6 +82,13 @@ game chooses. The five are independent of each other.
 - `quest-keys` — the objectives met, in the order the quest DECLARED them and never in the order the events arrived, so the same progress always reads the same
 - `quest-restore!` — clears and replays a list of objectives through quest-record!, so a save file gets exactly the checks a live event gets
 
+## `(gam save)`
+
+- `make-save-store` — a store over one localStorage key, with an exact-integer version compared for equality and a validator of the caller's own; the version travels as a wrapper around the value, so the validator never sees it and the caller's value is never written into
+- `save-available?` — whether this machine can actually save: it writes and removes a probe key, because a store that is present is not the same as one that accepts a write. It never raises, being the question a caller asks in order to avoid the raise
+- `save-load` — the saved value, or #f for any of four disappointments a caller can do only one thing about: nothing stored, a version this build cannot read, contents the validator rejected, or text no longer readable. A store that cannot be used raises instead, because that is a fact about the machine and not about the save
+- `save-write!` — answers #t; raises if the store refuses the write, and also if the caller's own validator refuses the value, which is deliberately not symmetric with save-load: on the way in a rejected value is the caller's bug, and answering #f would let a game write nothing for an hour and find out at the next launch
+
 ## `(gam stats)`
 
 - `make-stats` — pools from a table of (name max regen-per-second), with an optional level curve and an optional per-level hook; a repeated pool name is refused because the second would be unreachable
@@ -591,6 +598,23 @@ An orbit camera: a point it looks at, an angle and distance it watches from, and
 - `meshopt-filter-quat!` — undo the quaternion filter in place, stride 8, reconstructing the dropped largest component
 - `meshopt-filter-exp!` — undo the exponential filter in place: an exponent byte and a signed 24-bit mantissa per 32-bit component
 
+## `(gfx particles)`
+
+A fixed GPU pool of point sprites: a particle's whole future is written once and the vertex shader evaluates where it is at time t, so ten thousand of them cost one draw call and one upload when something changed. The pool is split into a reserve at the front for ambient particles that loop forever and a ring behind it for bursts that expire; the size of that split is a parameter, because a scene of drifting embers and a scene with one campfire want different ones.
+
+- `make-particles` — a pool of `capacity` particles, optionally followed by the ambient reserve as a ratio in [0,1] (default 0.25) and the largest point size in pixels (default 96). Each argument is refused BY NAME rather than clamped: a caller who passed 50 meaning "50 percent" has a bug in whatever computed it
+- `particles?` — whether a value is a particle pool
+- `particles-capacity` — how many particles the pool holds in total, ambient reserve included
+- `particles-ambient-capacity` — how many of those are reserved for looping ambient particles; `particle-emit!` never writes below this index and `particle-ambient!` never writes above it
+- `particles-emitted` — how many particles have been emitted since the pool was made. It counts emissions, not living particles, and it never goes down -- it is a counter for diagnostics, not an occupancy
+- `particles-clock!` — set the time the pool renders at. Time is the caller's, because a fixed-step simulation and a frame-rate render disagree about what "now" is
+- `particles-draw!` — draw the pool at the view-projection given, uploading first if anything changed. It does NOT advance the clock: a draw that quietly stepped time would answer differently depending on how often it was called
+- `particle-emit!` — one particle, born at the current clock, on the ring behind the ambient reserve. The ring overwrites its oldest entry rather than refusing, so a burst arriving at a full pool costs the oldest smoke rather than itself. A non-positive lifetime or size is refused by name, as is a pool whose reserve is the whole capacity
+- `particle-ambient!` — a looping particle in the reserve; `phase` shifts where in its loop it starts, so a field of them does not pulse in unison. Once the reserve is full it is refused by name rather than spilling into the burst ring, because silently taking a burst slot would make ambient particles disappear at a distance from the code that placed them
+- `particle-burst!` — `count` particles from one point, with speed, lifetime and size jittered so a burst does not look like a stamp. It goes through `particle-emit!`, so the same refusals apply and the same ring is consumed
+- `particles-vertex-shader` — the vertex shader as `(gfx glsl)` forms, not as a compiled program. Returned so it can be handed to a real GLSL compiler on its own: the page verifier's GL is a stub whose `compileShader` does nothing and whose `getShaderParameter` answers true, so a shader nobody can extract is a shader nobody can check
+- `particles-fragment-shader` — the fragment shader as `(gfx glsl)` forms, extractable for the same reason. Both are written in forms rather than in strings so that a constant can be substituted into them and a check can see what they name -- bare shader text is opaque to everything downstream
+
 ## `(gfx post)`
 
 - `post-quad!` — a fullscreen pass from a fragment-shader form: the floor everything else here is built on
@@ -966,6 +990,7 @@ The page: markup, styling, reactivity, transport.
 - `document` — the document object
 - `body` — the document body element
 - `get-element-by-id` — the element with an id, or a false value when there is none
+- `need-element-by-id` — the same lookup as get-element-by-id, insisting: it raises and names the id when nothing on the page has it, instead of answering a falsy handle that travels on and surfaces from the host as a complaint about setting a property of null
 - `query-selector` — the first element matching a CSS selector, or a false value when nothing matches
 - `create-element` — a new detached element of a tag name; nothing shows until it is appended
 - `make-text` — a text node, which is the safe way to put user text on a page
@@ -1080,7 +1105,7 @@ The page: markup, styling, reactivity, transport.
 - `rpc` — calls a remote procedure by sending a datum and answering the reply datum, written as a blocking call; it needs real stack switching, and code that cannot assume it uses rpc! instead
 - `rpc!` — the same call in callback form: the reply datum is handed to a procedure, with an optional failure handler, and nothing suspends
 - `rpc-get` — GETs a datum from any route serving application/sexpr, not only from an RPC endpoint -- the REST-shaped half of the same protocol
-- `rpc-serialize` — a datum as the wire text: the extended s-expression format, with no host read/write surprises, no flonums, and bytevectors as base64
+- `rpc-serialize` — a datum as the wire text: the extended s-expression format, with no host read/write surprises, flonums as their eight IEEE bytes so a signed zero survives, and bytevectors as base64
 - `rpc-parse` — reads that wire text back into a datum
 
 ## `(web scroll)`

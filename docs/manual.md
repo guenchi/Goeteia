@@ -868,7 +868,19 @@ procedure: (get-element-by-id id)
 
 func -> string -> *domElement
 ```
-`document.getElementById(id)`.
+`document.getElementById(id)`. Answers a falsy handle when nothing has
+the id.
+
+```
+procedure: (need-element-by-id id)
+
+func -> string -> *domElement
+```
+The same lookup, insisting: it raises, naming the id, when nothing has
+it. Reach for this wherever a missing element means the page is not the
+one you wrote — a falsy handle otherwise travels on into whatever was
+going to be written and surfaces from the host as a complaint about
+setting a property of `null`, which names neither the id nor the lookup.
 
 ```
 procedure: (query-selector sel)
@@ -3616,6 +3628,63 @@ Tying the two together would mean an ability could only ever be paid for
 out of one kind of thing, in one currency; an ability that costs two
 resources, or none, would stop fitting. Damage and range are absent for
 the same reason — an ability that heals or opens a door has neither.
+
+### `(gam save)`: A Saved Game, and Whether Saving Works at All
+
+```
+procedure: (make-save-store key version validator)
+
+func -> string -> int -> procedure -> *save-store
+```
+A store over one `localStorage` key. `version` is an exact integer,
+compared for equality when a save is read back — an inexact one would
+make "the same version" a question about rounding. `validator` is your
+own predicate on the value; it never sees the version, which travels as
+a wrapper around your datum rather than as a field written into it.
+
+```
+procedure: (save-available? store)
+
+func -> *save-store -> boolean
+```
+Whether this machine can actually save. It writes and removes a probe
+key, because a store that is *present* is not the same as one that
+accepts a write — a private window keeps `localStorage` in place and
+refuses `setItem`. **This never raises**: it is the question you ask in
+order to avoid the raise, once at startup.
+
+```
+procedure: (save-load store)
+
+func -> *save-store -> any
+```
+The saved value, or `#f`. Four different disappointments answer `#f` —
+nothing stored, a version this build cannot read, contents the validator
+rejected, and text no longer readable at all — because a caller has
+exactly one thing to do about any of them: start a new game.
+
+A store that cannot be used **raises** instead, naming the procedure.
+That is a fact about the machine, not about the save, and answering `#f`
+for it produces the worst failure a save system has: every launch starts
+a new game, every save appears to work, and nothing is ever written.
+
+```
+procedure: (save-write! store value)
+
+func -> *save-store -> any -> boolean
+```
+Answers `#t`. Raises if the store cannot be written, and — deliberately
+not symmetric with `save-load` — **also raises if your own validator
+refuses the value**. On the way in, a rejected value is your bug: you
+assembled the thing you are trying to store, and answering `#f` would
+let a game write nothing for an hour and find out at the next launch. On
+the way out, a rejected value is a fact about a file that an older build
+or a text editor may have produced, which is not the caller's mistake.
+
+The stored text is an s-expression through `(web sexpr)`, so exact and
+inexact numbers keep their kind and a flonum survives bit-exactly,
+signed zero included — a save file is exactly the kind of data a decimal
+round trip quietly damages.
 
 ## Current Limits and Planned Work
 
