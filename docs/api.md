@@ -219,6 +219,7 @@ An orbit camera: a point it looks at, an angle and distance it watches from, and
 - `fx-quad-program` — the linked program behind a fullscreen quad, to set further uniforms on
 - `fx-fullscreen-use!` — binds a fullscreen quad for drawing at a time t; u_time and u_resolution are set only if the fragment declares them, and anything else goes through fx-uniform! on its program
 - `fx-fullscreen-draw!` — draws the bound fullscreen quad
+- `fx-quad-shaders` — the fullscreen quad's vertex shader as an enumeration table: entries are `(name dialect vertex-forms fragment-forms)`, dialect second because it decides which renderer the other two want (`glsl->string` for `es100`, the `glsl300-*` pair for `es300`). The one entry here is `es100` and its FRAGMENT half is `#f`: `fx-fullscreen!` takes the fragment shader from the caller, so this library has no partner to offer. Supplying one is the caller's job, and a tool compiling this table must pair it with something
 
 ## `(gfx gl)`
 
@@ -407,6 +408,7 @@ An orbit camera: a point it looks at, an angle and distance it watches from, and
 - `gprim-ntex` — the GL texture slot for the normal map, or `#f`
 - `gprim-etex` — the GL texture slot for the emissive map, or `#f`
 - `gprim-otex` — the GL texture slot for the occlusion map, or `#f`
+- `gltf-shaders` — the two skinning programs as `(name dialect vertex-forms fragment-forms)`, dialect second because it decides how to render the forms: `skin-uniform-array` is `es100` (a `mat4 u_joints[32]` array) and `skin-uniform-block` is `es300` (a std140 block, which 1.00 has no syntax for). Both are paired with `mesh-tex-fs` because that is what they are built to match -- `mesh-lit-fs` declares different varyings and will not link. Both vertex shaders are derived at library init from `mesh-tex-vs` rather than written out, so they are values and not constants; going through this table is what saves a caller from knowing that
 
 ## `(gfx gpu)`
 
@@ -455,6 +457,7 @@ An orbit camera: a point it looks at, an angle and distance it watches from, and
 
 - `ibl-brdf-lut!` — bake the split-sum BRDF lookup table once; answers the texture slot to sample with (NdotV, roughness)
 - `ibl-prefilter!` — GGX-convolve the cube map in `src-slot` into a fresh cube map with `levels` mips; answers its slot
+- `ibl-shaders` — the prefilter and BRDF-lookup passes as `(name dialect vertex-forms fragment-forms)`, dialect second because it decides which renderer the forms want. Both are `es100` and both have `#f` for their vertex half: they run through `fx-fullscreen!`, which supplies the quad. `$ggx-sample` is deliberately not in this table -- it is a set of helper functions spliced into the prefilter shader, it has no `main`, and compiling it alone would fail forever; a permanently red row teaches people to ignore the whole table, so the omission is recorded rather than left to be rediscovered
 
 ## `(gfx image)`
 
@@ -588,6 +591,7 @@ An orbit camera: a point it looks at, an angle and distance it watches from, and
 - `mesh-normal-fs` — the matching fragment forms, perturbing the normal by `u_normal_map` before lighting
 - `mesh-pbr-vs` — vertex forms for the metallic-roughness model
 - `mesh-pbr-fs` — the matching fragment forms: GGX specular with `u_metallic` and `u_roughness`, and an image-based ambient term when the IBL maps are bound
+- `mesh-shaders` — the four built-in material programs (lit, textured, normal-mapped, pbr) as `(name dialect vertex-forms fragment-forms)`, all `es100`, dialect second because it decides how to render the forms. The individual constants above (`mesh-lit-vs` and its siblings) are what a person names when they want one; this table is for a tool that must enumerate them without knowing their names. It is built from those same constants, so it is a second view and not a second copy, and cannot drift from them
 
 ## `(gfx meshopt)`
 
@@ -614,6 +618,7 @@ A fixed GPU pool of point sprites: a particle's whole future is written once and
 - `particle-burst!` — `count` particles from one point, with speed, lifetime and size jittered so a burst does not look like a stamp. It goes through `particle-emit!`, so the same refusals apply and the same ring is consumed
 - `particles-vertex-shader` — the vertex shader as `(gfx glsl)` forms, not as a compiled program. Returned so it can be handed to a real GLSL compiler on its own: the page verifier's GL is a stub whose `compileShader` does nothing and whose `getShaderParameter` answers true, so a shader nobody can extract is a shader nobody can check
 - `particles-fragment-shader` — the fragment shader as `(gfx glsl)` forms, extractable for the same reason. Both are written in forms rather than in strings so that a constant can be substituted into them and a check can see what they name -- bare shader text is opaque to everything downstream
+- `particles-shaders` — the point-sprite program as one `(name dialect vertex-forms fragment-forms)` entry, `es300`, dialect second because it decides which renderer the forms want. `particles-vertex-shader` and `particles-fragment-shader` are what a person calls for one by name; this is the same pair in the shape every library's accessor returns, built by calling them rather than by holding a second copy of the forms
 
 ## `(gfx post)`
 
@@ -632,6 +637,7 @@ A fixed GPU pool of point sprites: a particle's whole future is written once and
 - `grade-run!` — grades a source texture into a target under a mode and an exposure, at the given size
 - `make-dof` — the targets a depth-of-field pass needs at a given size
 - `dof-run!` — blurs a scene by depth around a focus distance over a range, both in the depth texture's own units; target #f is the canvas
+- `post-shaders` — the six post-processing passes (blur, threshold, composite, fxaa, dof, grade) as `(name dialect vertex-forms fragment-forms)`, all `es100`, dialect second because it decides how to render the forms. Every one of them has `#f` for its vertex half: they are fragment shaders over a fullscreen quad and `fx-fullscreen!` supplies the vertex side, so a tool compiling this table must pair each with a quad vertex shader of its own
 
 ## `(gfx raster)`
 
@@ -771,6 +777,7 @@ the far plane never does.
 - `$sgl-build` — what `sgl` expands into; needs `fx-init!` first. Not called directly
 - `sgl-scene?` — whether a value is a scene built by `sgl`
 - `sgl-draw!` — draw the scene for this frame, re-reading whatever signals its holes named
+- `scene-shaders` — the four programs `sgl` builds, as `(name dialect vertex-forms fragment-forms)`, all `es300`, dialect second because it decides how to render the forms. They are the envified forms, not the source constants: `$sgl-envify` replaces four loose uniforms with a std140 block, which is why they are 3.00 and why listing the raw constants would check a shader this library never compiles. Four rather than two because a scene picks a material per mesh -- lit, textured or pbr -- and adds an instanced program for repeated geometry; the lit, textured and pbr forms come from `(gfx mesh)` and exist in this combination only here
 
 ## `(gfx sdf)`
 
@@ -809,6 +816,7 @@ the far plane never does.
 - `sheet-batch-sheet` — the sheet a sheet batch draws from
 - `sheet!` — a destination pixel rect drawn from a source pixel rect of the sheet, tinted
 - `sheet-draw!` — uploads and draws everything written into the sheet batch since it was last drawn
+- `sprite-shaders` — the two sprite programs as `(name dialect vertex-forms fragment-forms)`, both `es100` and both sharing one vertex shader: `sprite` draws single quads and `sheet` draws from an atlas, differing only in the fragment half. Dialect is second because it decides which renderer the forms want
 
 ## `(gfx stats)`
 
@@ -912,6 +920,7 @@ The half that is not drawing: who exists, what runs each tick, who hears what.
 
 - `make-entities` — a fixed-capacity store of entities; running out raises rather than growing, because the moment a simulation stopped being bounded is worth knowing
 - `entity-spawn!` — takes a free slot and answers a handle -- the slot paired with the generation it is on; raises when the store is full
+- `entity-spawn-with!` — an entity with its components already on it, or none at all: if writing one raises, the entity is destroyed and the original condition is re-raised unchanged, so a half-built entity never survives to be mistaken for a finished one. The rows are `(name . value)` pairs and not thunks on purpose -- whatever computes a value runs in the caller, before this is called -- because a host exception is not a Scheme condition and ends the program before any handler runs, so a version that took factories would lose the rollback exactly for the factories that read from the host. A name appearing twice is refused before anything is written
 - `entity-alive?` — whether a handle still names a live entity: its slot is occupied and still on the generation the handle was issued for
 - `entity-destroy!` — frees the slot and bumps its generation, so every older handle to it stops matching for good; destroying an already-dead handle is quiet
 - `entity-set!` — writes one component on a live entity; a write through a stale handle raises, because that is a mistake in the caller
