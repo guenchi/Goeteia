@@ -34,6 +34,16 @@
 // here to assert, and a check that demanded one would be red
 // everywhere and gone by morning.  What is left is small and true: a
 // section that promises a long form must find one.
+//
+// ITS SILENCE IS THE DESIGN, NOT AN OVERSIGHT.  Reading the pointed-at
+// prose to see whether it answers the question the section raises needs
+// understanding, and a check that needs understanding misfires when a
+// sentence is rewritten -- and one that misfires is switched off.  That
+// half is a person's job: on 2026-09-09 someone read all twelve claims
+// in the Simulation chapter against docs/simulation.md and found one
+// pointer that led somewhere not answering it, which this would never
+// have said a word about.  Do not strengthen this into something that
+// tries; add a reading to the round instead.
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { test } from 'node:test';

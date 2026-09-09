@@ -2,10 +2,15 @@
 ;; Print every shader this tree can emit, so that something outside
 ;; Scheme can hand them to a real GLSL compiler.
 ;;
-;; This is not a test on its own -- it is the first half of
+;; This is not a test -- it is the first half of
 ;; test/shader-compile.mjs, which runs it and compiles what it prints.
-;; It is a .ss under test/ rather than a tool because what it enumerates
-;; is exactly the accessors, and a tool would drift from them.
+;;
+;; It lives in tools/ and not in test/ because in test/ a program's whole
+;; stdout IS its verdict: this one printed twenty-two shaders where the
+;; runner expected `#t`, and failed on all three targets.  That is the
+;; same trap that made a test's own stand-down announcement fail it
+;; earlier the same night, in a second form: a directory where printing
+;; is the answer is no place for a program whose job is to print.
 ;;
 ;; The last entry is deliberately invalid.  Without it, "everything
 ;; compiled" could also mean the compiler was never reached: the page

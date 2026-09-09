@@ -9,7 +9,7 @@
 // refused by a real compiler with a line number.
 //
 // The shaders come from the libraries' own accessors, via
-// test/shader-emit.ss, and not from a list kept here: a list here would
+// tools/shader-emit.ss, and not from a list kept here: a list here would
 // be a second place to add a shader to, and the one that gets forgotten
 // is always the second one.
 //
@@ -47,7 +47,7 @@ function emitAll() {
     try {
         const wasm = join(dir, 'emit.wasm');
         execFileSync(join(root, 'bin/goeteiac'),
-                     [join(root, 'test/shader-emit.ss'), wasm], { cwd: root });
+                     [join(root, 'tools/shader-emit.ss'), wasm], { cwd: root });
         const out = execFileSync('node', [join(root, 'rt/run.mjs'), wasm],
                                  { cwd: root, encoding: 'utf8', maxBuffer: 64 << 20 });
         const entries = [];
