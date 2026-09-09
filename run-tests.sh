@@ -34,6 +34,7 @@ fi
 # past it prints a line naming the suite.  Where timeout(1) is absent
 # the run still works -- and SAYS so, loudly, because a guard that is
 # quietly not there is the shape of defect this was added for.
+ERRF="$T/stderr.txt"
 TLIMIT=${GOETEIA_TEST_TIMEOUT-180}
 if command -v timeout >/dev/null 2>&1; then CAP="timeout $TLIMIT"
 elif command -v gtimeout >/dev/null 2>&1; then CAP="gtimeout $TLIMIT"
@@ -129,20 +130,41 @@ lift_notes() { # raw-output -> prints notes, sets $got to the rest
     got=$(printf '%s\n' "$1" | grep -vE "$NOTE_RE" || true)
 }
 
-run_one() { # wasmfile testfile
+# stderr is kept, not thrown away.  ⚠️ A callback that raises cannot
+# carry the error back into the host, so lib/web/js.ss answers undefined
+# and REPORTS to the console -- deliberately, because an error on every
+# animation frame is otherwise invisible.  That report went to stderr,
+# and this script compares stdout, so the report nobody reads was being
+# printed fifty-one times a round while every test involved passed.
+# ⛔ A diagnostic that is written and never read is worse than none: it
+# costs the run its cycles and buys a belief that someone is watching.
+run_one() { # wasmfile testfile   -- stdout to the caller, stderr to $ERRF
     input="${2%.ss}.input"
     if [ -f "$input" ]; then
-        $CAP ${NODE-node} $JSPI rt/run.mjs "$1" "$input"
+        $CAP ${NODE-node} $JSPI rt/run.mjs "$1" "$input" 2>"$ERRF"
     else
-        $CAP ${NODE-node} $JSPI rt/run.mjs "$1"
+        $CAP ${NODE-node} $JSPI rt/run.mjs "$1" 2>"$ERRF"
     fi
+}
+
+# What a run wrote to stderr that is a REPORT rather than a diagnostic
+# of a failure the verdict already covers.  Counted per run and named,
+# so a residual one is attributable to the test that produced it.
+check_stderr() { # stage
+    [ -s "$ERRF" ] || return 0
+    n=$(grep -c "callback error:\|callback raise:" "$ERRF" 2>/dev/null || echo 0)
+    [ "$n" -eq 0 ] && return 0
+    echo "FAIL $t ($1: $n callback error(s) reported to the console)"
+    grep "callback error:\|callback raise:" "$ERRF" | sort -u | head -3 \
+        | sed 's/^/       /'
+    fail=1
 }
 run_js() { # jsfile testfile
     input="${2%.ss}.input"
     if [ -f "$input" ]; then
-        $CAP ${NODE-node} rt/runjs.mjs "$1" "$input"
+        $CAP ${NODE-node} rt/runjs.mjs "$1" "$input" 2>"$ERRF"
     else
-        $CAP ${NODE-node} rt/runjs.mjs "$1"
+        $CAP ${NODE-node} rt/runjs.mjs "$1" 2>"$ERRF"
     fi
 }
 # GOETEIA_TESTS narrows the loop to named files, so a change to the
@@ -171,6 +193,7 @@ for t in ${GOETEIA_TESTS-test/*.ss}; do
         echo "TIMEOUT $t (stage0 run) after ${TLIMIT}s"; fail=1; continue
     fi
     verdict stage0 "$want" "$got" "$ec"
+    check_stderr stage0
     if [ -f goeteia.wasm ]; then
         $CAP ${NODE-node} rt/compile.mjs goeteia.wasm "$t" "$T/test1.wasm" 2>/dev/null; ec=$?
         if timed_out $ec; then
@@ -183,6 +206,7 @@ for t in ${GOETEIA_TESTS-test/*.ss}; do
             echo "TIMEOUT $t (stage1 run) after ${TLIMIT}s"; fail=1; continue
         fi
         verdict stage1 "$want" "$got" "$ec"
+        check_stderr stage1
         # both hosts must emit identical bytes from identical source
         if ! cmp -s "$T/test.wasm" "$T/test1.wasm"; then
             echo "FAIL $t (cross-host: stage0/stage1 bytes differ)"; fail=1
@@ -197,6 +221,7 @@ for t in ${GOETEIA_TESTS-test/*.ss}; do
         echo "TIMEOUT $t (js run) after ${TLIMIT}s"; fail=1; continue
     fi
     verdict js "$want" "$got" "$ec"
+    check_stderr js
     if [ -f goeteia.wasm ]; then
         $CAP ${NODE-node} rt/compile.mjs --js goeteia.wasm "$t" "$T/test1.js" 2>/dev/null; ec=$?
         if timed_out $ec; then
