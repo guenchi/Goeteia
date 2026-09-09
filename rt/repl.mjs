@@ -29,13 +29,66 @@ import { compileSource } from './compile.mjs';
 import { runModule } from './run.mjs';
 
 // paren balance, aware of strings, comments and char literals
+// One place that knows what is not code.
+//
+// ⚠️ Six hand-written walkers -- four here, two in repl.mjs -- each
+// carried the same three lines for `;`, `"` and `#\`, byte for byte,
+// and none of them knew `#|`.  So an (import ...) written inside a
+// block comment was found by libraryImports and taken for the
+// library's real import list: the reader discards that clause, the
+// scanner obeys it, and the build fails on a dependency the source
+// does not have.  They had not drifted apart -- they were copied
+// already incomplete, which is why one function replaces six edits.
+//
+// Answers the index of the LAST character of the non-code token
+// starting at i, so a caller inside a `for (i...)` loop can write
+// `i = noiseEnd(...); continue;` and let its own i++ step past.
+// Answers -1 when code begins at i.
+//
+// ⛔ `#;` is deliberately not here.  Skipping a datum comment means
+// finding where a datum ends, which is a reader's job and not a
+// scanner's -- and measured, it is not reachable: `#;(import (x))`
+// compiles today.  Adding datum-skipping would be a new mechanism
+// bought for a case nobody has.
+//
+// An unclosed `#|` or `"` runs to the end of the text rather than
+// raising: these scanners only decide where forms are, and the reader
+// that comes after refuses the file by itself.
+function noiseEnd(text, i) {
+    const c = text[i];
+    if (c === ';') {
+        while (i < text.length && text[i] !== '\n') i++;
+        return i;
+    }
+    if (c === '"') {
+        i++;
+        while (i < text.length && text[i] !== '"') { if (text[i] === '\\') i++; i++; }
+        return i;
+    }
+    if (c === '#' && text[i + 1] === '\\') return i + 2;
+    if (c === '#' && text[i + 1] === '|') {
+        let depth = 1;
+        i += 2;
+        while (i < text.length && depth > 0) {
+            if (text[i] === '#' && text[i + 1] === '|') { depth++; i += 2; }
+            else if (text[i] === '|' && text[i + 1] === '#') { depth--; i += 2; }
+            else i++;
+        }
+        return i - 1;
+    }
+    if (c === '|') {
+        i++;
+        while (i < text.length && text[i] !== '|') i++;
+        return i;
+    }
+    return -1;
+}
+
 function balance(text) {
     let depth = 0;
     for (let i = 0; i < text.length; i++) {
         const c = text[i];
-        if (c === ';') { while (i < text.length && text[i] !== '\n') i++; continue; }
-        if (c === '"') { i++; while (i < text.length && text[i] !== '"') { if (text[i] === '\\') i++; i++; } continue; }
-        if (c === '#' && text[i + 1] === '\\') { i += 2; continue; }
+        { const j = noiseEnd(text, i); if (j >= 0) { i = j; continue; } }
         if (c === '(') depth++;
         else if (c === ')') depth--;
     }
@@ -48,9 +101,7 @@ function topSpans(text) {
     let depth = 0, start = -1;
     for (let i = 0; i < text.length; i++) {
         const c = text[i];
-        if (c === ';') { while (i < text.length && text[i] !== '\n') i++; continue; }
-        if (c === '"') { i++; while (i < text.length && text[i] !== '"') { if (text[i] === '\\') i++; i++; } continue; }
-        if (c === '#' && text[i + 1] === '\\') { i += 2; continue; }
+        { const j = noiseEnd(text, i); if (j >= 0) { i = j; continue; } }
         if (c === '(') { if (depth === 0) start = i; depth++; }
         else if (c === ')') { depth--; if (depth === 0) spans.push([start, i + 1]); }
     }

@@ -979,8 +979,12 @@
 ;; parens do not balance otherwise reports at its very end, which is
 ;; the least useful place it could name.
 (define (%read-list)
-  (%read-list-from $reader-line $reader-column))
-(define (%read-list-from line col)
+  (%read-list-from $reader-line $reader-column #f))
+;; `any?` is whether an element has been read yet, which the dotted-tail
+;; branch needs: a dot is a tail marker between two things, so it has to
+;; have something on its left.  A comment passes the flag through
+;; unchanged -- it is not an element.
+(define (%read-list-from line col any?)
   (%skip-blanks)
   (let ((b (%peek-byte)))
     (cond
@@ -993,23 +997,38 @@
      ((= b 35)                                     ; #
       (%next-byte)
       (if (%skip-hash-comment)
-          (%read-list-from line col)
-          (cons (%read-hash) (%read-list-from line col))))
+          (%read-list-from line col any?)
+          (cons (%read-hash) (%read-list-from line col #t))))
      ((= b 46)                                     ; . -- dotted tail
       (%next-byte)                                 ;      or dot-initial
       (if (%delimiter? (%peek-byte))               ;      symbol
-          (let ((d ($read)))
-            (%skip-blanks)
-            (if (< (%peek-byte) 0)
-                (%unclosed-list line col)
-                (%next-byte))                      ; consume )
-            d)
+          (begin
+            ;; "(. 2)" -- the dot has nothing to be the tail of
+            (unless any?
+              (errorf 'read
+                      (string-append "a dot needs an item before it at "
+                                     (%at-line $reader-line $reader-column))))
+            (let ((d ($read)))
+              (%skip-blanks)
+              ;; ⚠️ This used to consume whatever byte was here without
+              ;; looking, so "(1 . 2 3)" read as (1 . 2) and the 3 was
+              ;; gone -- a shorter answer than the text, and nothing
+              ;; said.  Only ")" may follow the tail datum.
+              (let ((n (%peek-byte)))
+                (cond
+                 ((< n 0) (%unclosed-list line col))
+                 ((= n 41) (%next-byte) d)
+                 (else
+                  (errorf 'read
+                          (string-append
+                           "more than one item found after dot at "
+                           (%at-line $reader-line $reader-column))))))))
           (cons (let ((r (%read-atom (list 46) #f)))
                   (%finish-atom (cdr r) (car r)))
-                (%read-list-from line col))))
+                (%read-list-from line col #t))))
      (else
       (let ((x ($read)))
-        (cons x (%read-list-from line col)))))))
+        (cons x (%read-list-from line col #t)))))))
 (define (%unclosed-list line col)
   (errorf 'read (string-append "list opened at " (%at-line line col)
                                " never closed")))

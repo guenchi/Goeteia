@@ -163,7 +163,15 @@
 
 (define (skip-block src i n depth)       ; past the opening #|
   (cond
-   ((>= i n) n)                          ; unclosed: `read` will say so
+   ;; ⚠️ This used to answer `n` with the note that `read` would say
+   ;; so.  It does not: skipping to end-of-input looks exactly like
+   ;; reaching the end of the file, so the driver stops reading forms
+   ;; and compiles what it had.  What is lost is not the comment -- it
+   ;; is every form after the `#|`, which the author believed was
+   ;; code, and the shorter program builds and runs.
+   ((>= i n)
+    (errorf 'goeteia
+            "a #| block comment reaches end of input with no |#"))
    ((and (< (+ i 1) n) (char=? (string-ref src i) #\#)
          (char=? (string-ref src (+ i 1)) #\|))
     (skip-block src (+ i 2) n (+ depth 1)))
