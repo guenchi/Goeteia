@@ -28,15 +28,23 @@ mentioned zero, once and once.
 
 Sound.
 
+## `(aud mix)`
+
+- `pan-gains` — answers the left and right gains for a pan in [-1,1] as a pair, equal-power so that a sound keeps its loudness as it crosses the stereo field; a pan outside the range is refused by name rather than clamped
+- `voice-weakest` — answers the weakest resident of a voice vector in each of the two kinds, as a pair of effect and loop, weakest meaning lowest priority and, at equal priority, oldest
+- `voice-evict` — decides what a new voice should do to a full pool: #f to play outright, 'reject when nothing resident is weaker than it, 'reserved when the pool is full of the other kind, or the id of the voice it should replace
+
 ## `(aud sfx)`
 
 - `audio-init!` — creates the audio context if there is none; idempotent, and worth calling from a user gesture since that is when a browser will let sound start
 - `audio-time` — the audio clock in seconds -- the one to schedule against, which is not the frame clock
 - `beep!` — an oscillator blip of a given frequency and duration, faded out linearly so it ends without a click; optional volume and wave type, answers the oscillator
 - `load-sound!` — fetches a URL, decodes it, and hands the buffer to a continuation; loading needs no user gesture, only playing does
-- `play!` — plays a decoded buffer once with an optional volume and rate, answering the source node
+- `play!` — plays a decoded buffer once with an optional volume, rate, pan and priority, answering the source node; leaving the pan out is not the same as passing 0, since absent means the chain is not built at all while 0 is a centred pan and pays the equal-power 0.707 like every other angle
 - `loop-sound!` — plays a decoded buffer on repeat with an optional volume, answering the source node to stop it with later
 - `stop-sound!` — stops a source node that play! or loop-sound! answered
+- `audio-voices!` — turns the voice pool on with a cap, an optional number of slots reserved for loops and an optional fade in seconds; lowering the cap below what is already playing takes effect at once rather than from the next sound on, and every argument is refused by name rather than clamped
+- `audio-voice-count` — how many voices the pool has allocated, which counts a voice being faded out until its ended callback arrives; it is deliberately not the number that is audible, so it can exceed the cap for the length of one fade
 
 # gam
 
