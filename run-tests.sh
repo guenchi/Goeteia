@@ -348,6 +348,18 @@ else
     head -40 "$API_OUT"
     echo "FAIL test/api-index.mjs"; fail=1
 fi
+# The cache decides whether a compile is skipped, so a defect in its key
+# hands back yesterday's artifact and calls it today's -- the one failure
+# this suite cannot see from outside, because a stale artifact and a
+# fresh one both just sit there being green.  Its own checks were not in
+# this round until now: 185 lines deciding what counts as the same
+# compile, and nothing checking them.
+if ${NODE-node} test/compile-cache.mjs >/dev/null 2>&1; then
+    echo "ok   test/compile-cache.mjs"
+else
+    ${NODE-node} test/compile-cache.mjs 2>&1 | tail -20
+    echo "FAIL test/compile-cache.mjs"; fail=1
+fi
 if ${NODE-node} test/duplicate-top-level.mjs >/dev/null 2>&1; then
     echo "ok   test/duplicate-top-level.mjs"
 else
