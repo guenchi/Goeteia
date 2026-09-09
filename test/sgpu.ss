@@ -230,15 +230,22 @@ globalThis.__gpulog = [];
 ;; upload.  ⚠️ The data structure holds the new colour and the screen
 ;; holds the old one, which is why nothing anywhere reports it.
 ;;
-;; ⚠️ OPEN, and stated as a hypothesis rather than a finding: this
-;; section also makes the run print `callback error: ->js: cannot
-;; convert to a JS value` on stderr, once.  It is not in the gate's log
-;; for this file before this section existed, so it comes from here, and
-;; the only new ingredient is a signal bound to `color-r`.  Neither
-;; signal-set! throws and the counts below are unaffected.  ⛔ What it
-;; is has not been established -- it may be a second symptom of the same
-;; missing generation, or something else entirely, and saying which
-;; without evidence would be worse than leaving the question open.
+;; ⚠️ OPEN, and much older than this section.  A round prints
+;; `callback error: ->js: cannot convert to a JS value` on stderr FIFTY
+;; ONE times, across todomvc, xr, react, sx, tail, ws-sse and others --
+;; every one of which passes.  ⛔ It is invisible to the verdict because
+;; run-tests.sh compares stdout and this goes to stderr; a callback that
+;; cannot convert its result answers undefined and the host carries on.
+;;
+;; ⛔ An earlier version of this comment said the section introduced it,
+;; on the evidence that the gate's log did not contain it.  That was a
+;; reading of the wrong file: the gate writes an AUDIT of seventy-five
+;; lines and the round's real log elsewhere, and the audit does not
+;; carry stderr.  The real logs have fifty-one, in every round stored.
+;; ⚠️ A minimal sgpu scene with no signal at all produces one, so it is
+;; not about signals and not about colour.
+;;
+;; It is recorded as its own finding rather than guessed at here.
 ;;
 ;; ⭐ The pair is the point.  A cell that only watched the colour would
 ;; not distinguish "colour signals are broken" from "signals are broken"

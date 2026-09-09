@@ -212,10 +212,17 @@
                        ((rotation-y) ($sgpu-set1! f 4 (cadr a) ds 13))
                        ((rotation-z) ($sgpu-set1! f 5 (cadr a) ds 13))
                        ((scale) ($sgpu-set1! f 6 (cadr a) ds 13))
-                       ((color-r) ($sgpu-set1! f 7 (cadr a) ds #f))
-                       ((color-g) ($sgpu-set1! f 8 (cadr a) ds #f))
-                       ((color-b) ($sgpu-set1! f 9 (cadr a) ds #f))
-                       ((color-a) ($sgpu-set1! f 10 (cadr a) ds #f))
+                       ;; ⚠️ Colour needs the generation slot exactly as
+                       ;; the transform fields do.  The instance buffer
+                       ;; is only rebuilt when $sgpu-gen changes, so a
+                       ;; setter that writes the value without bumping
+                       ;; slot 13 leaves the new colour in the vector
+                       ;; and the old one on the screen -- correct data,
+                       ;; stale upload, and nothing anywhere reports it.
+                       ((color-r) ($sgpu-set1! f 7 (cadr a) ds 13))
+                       ((color-g) ($sgpu-set1! f 8 (cadr a) ds 13))
+                       ((color-b) ($sgpu-set1! f 9 (cadr a) ds 13))
+                       ((color-a) ($sgpu-set1! f 10 (cadr a) ds 13))
                        (else (error 'sgl-gpu "unknown mesh attribute"
                                     (car a)))))
                    attrs)
