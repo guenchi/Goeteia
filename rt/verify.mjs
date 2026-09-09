@@ -433,12 +433,28 @@ export function makeWorld({ width = 800, height = 600 } = {}) {
             getAttribute(n) { return n in this.attrs ? this.attrs[n] : null; },
             hasAttribute(n) { return n in this.attrs; },
             removeAttribute(n) { delete this.attrs[n]; },
-            appendChild(c) { this.children.push(c); c.parent = this; return c; },
+            appendChild(c) {
+                if (c && c.parent && c.parent !== this)
+                    c.parent.children = c.parent.children.filter(k => k !== c);
+                this.children.push(c); c.parent = this; return c;
+            },
             removeChild(c) {
                 this.children = this.children.filter(k => k !== c);
+                // ⚠️ And the child stops pointing at us.  Leaving the
+                // parent link behind made a removed node still look
+                // mounted to anything that walks upward: a button
+                // created, appended and removed still counted as one
+                // button on the page, so an assertion resting on live
+                // DOM counts could pass about an element that is gone.
+                if (c && c.parent === this) c.parent = null;
                 return c;
             },
             insertBefore(c, ref) {
+                // a move is a removal too: without this the old parent
+                // keeps a child it no longer has, and the node is
+                // counted twice
+                if (c && c.parent && c.parent !== this)
+                    c.parent.children = c.parent.children.filter(k => k !== c);
                 const i = this.children.indexOf(ref);
                 this.children.splice(i < 0 ? this.children.length : i, 0, c);
                 c.parent = this;
@@ -677,15 +693,34 @@ export function makeWorld({ width = 800, height = 600 } = {}) {
             saved.clear();
             if (this._mathRandom) Math.random = this._mathRandom;
         },
+        // Errors raised inside callbacks the page scheduled.  They are
+        // collected rather than thrown, because throwing out of pump()
+        // would stop the frame and lose whatever the other callbacks
+        // had to say; the run is failed by them afterwards.
+        asyncErrors: [],
         // one animation frame at a fixed 60 Hz step
         pump() {
             now += 1000 / 60;
             const due = timers.filter(t => t.at <= now);
             timers = timers.filter(t => t.at > now);
-            due.forEach(t => { try { t.cb(); } catch { /* a timer's own fault */ } });
+            // ⛔ Not discarded.  A timer callback that throws used to
+            // vanish into an empty catch, so a page whose asynchronous
+            // initialisation failed went on to pass every static
+            // assertion about it -- the program was broken in the one
+            // place nothing else looks, and the verifier's answer was
+            // yes.  The error is recorded and the run is failed by it;
+            // the loop still finishes so that one bad timer does not
+            // hide what the others would have said.
+            due.forEach(t => {
+                try { t.cb(); }
+                catch (e) { world.asyncErrors.push({ where: 'setTimeout', error: e }); }
+            });
             const cbs = rafs;
             rafs = [];
-            cbs.forEach(cb => cb(now));
+            cbs.forEach(cb => {
+                try { cb(now); }
+                catch (e) { world.asyncErrors.push({ where: 'requestAnimationFrame', error: e }); }
+            });
         },
         // fire one event at every listener registered for `type` on el
         fire(el, type, ev) {
@@ -693,7 +728,11 @@ export function makeWorld({ width = 800, height = 600 } = {}) {
                 ? listeners.filter(l => l.el === el && l.type === type).map(l => l.fn)
                 : (el.listeners[type] || []);
             let n = 0;
-            for (const f of fns) { f({ type, target: el, ...ev }); n++; }
+            for (const f of fns) {
+                try { f({ type, target: el, ...ev }); }
+                catch (e) { world.asyncErrors.push({ where: `on${type}`, error: e }); }
+                n++;
+            }
             return n;
         },
     };
@@ -755,7 +794,23 @@ export async function scenario(bytes, {
         trace.gl = w.gl;
         trace.world = w;
         trace.stdout = Buffer.from(stdout).toString('utf8');
-        trace.ok = true;
+        // ⚠️ An error inside a callback the page scheduled is the
+        // program failing, not an incident: it happens after the module
+        // has returned, so nothing in the synchronous path sees it.
+        // The first one becomes the trace's error, and it says where it
+        // came from, because "the module threw as soon as it ran" would
+        // be the wrong story about a timer that fired later.
+        if (w.asyncErrors && w.asyncErrors.length) {
+            const first = w.asyncErrors[0];
+            const e = first.error instanceof Error ? first.error : new Error(String(first.error));
+            e.message = `inside ${first.where}: ${e.message}`
+                + (w.asyncErrors.length > 1 ? ` (and ${w.asyncErrors.length - 1} more)` : '');
+            trace.ok = false;
+            trace.error = e;
+            trace.asyncErrors = w.asyncErrors;
+        } else {
+            trace.ok = true;
+        }
     } catch (e) {
         trace.ok = false;
         trace.error = e;
@@ -948,8 +1003,17 @@ export const CUSTOM = {
     dom_text_matches: (s, ctx) => {
         const re = new RegExp(s.pattern, s.flags || '');
         const t = ctx.base.postText;
-        return { ok: re.test(t),
-                 detail: `page text ${re.test(t) ? 'matches' : 'does not match'} /${s.pattern}/` };
+        // ⚠️ ONE evaluation, reused.  A RegExp with the g or y flag
+        // carries lastIndex between calls, so testing twice gave the
+        // verdict and the explanation different answers: pattern
+        // `hello` with flag g against the text `hello` returned
+        // {ok: true, detail: 'page text does not match /hello/'}.  A
+        // result that contradicts its own explanation is worse than
+        // either half alone -- whichever one the reader believes, the
+        // other was there to be believed instead.
+        const hit = re.test(t);
+        return { ok: hit,
+                 detail: `page text ${hit ? 'matches' : 'does not match'} /${s.pattern}/` };
     },
     dom_text_min_length: (s, ctx) => {
         const n = ctx.base.postText.replace(/\s+/g, ' ').trim().length;
@@ -1239,7 +1303,15 @@ export async function verifyBytes(bytes, checks = DEFAULT_CHECKS, opts = {}) {
         const e = base.error;
         errors.push({
             stage: 'smoke',
-            message: `the module threw as soon as it ran: ${e && e.message}`,
+            // ⚠️ Two different stories, and the wrong one is worse than
+            // none: an error inside a callback the page scheduled did
+            // NOT happen as soon as the module ran, and telling someone
+            // it did sends them to read the wrong part of their
+            // program.  The message already carries `inside setTimeout`
+            // or the like; the frame around it has to agree.
+            message: base.asyncErrors && base.asyncErrors.length
+                ? `the module ran, and then a callback it scheduled threw: ${e && e.message}`
+                : `the module threw as soon as it ran: ${e && e.message}`,
             file: null, line: null, col: null,
             hint: trapHint(String(e && e.message)),
             excerpt: base.stdout ? base.stdout.trim().split('\n').slice(-3).join('\n') : null,
