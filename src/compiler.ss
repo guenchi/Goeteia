@@ -2103,12 +2103,30 @@
          ;; loop variables earn typed slots when the init AND every
          ;; iteration's argument stay in one context -- decided by a
          ;; demote-only fixpoint (params may depend on each other)
+         ;;
+         ;; A parameter an inner lambda can capture keeps the boxed
+         ;; slot whatever its arguments look like.  A closure's
+         ;; environment is built by a struct.new declared to hold
+         ;; eqref, so handing it a raw i32 or f64 local produces a
+         ;; module the engine refuses to instantiate -- not a wrong
+         ;; answer, a program that will not start.  compile-let has
+         ;; asked this about its own bindings since it grew typed
+         ;; slots; the loop never did, and the two now ask it the same
+         ;; way, per parameter rather than per body, so a loop that
+         ;; captures one variable does not lose the slots of the rest.
+         (lambda-free (not (contains-lambda? body)))
+         (typed-ok
+          (lambda (p) (or lambda-free (not (lambda-captures? p body)))))
          (classes
-          (let seed ((is inits) (cs '()))
+          (let seed ((is inits) (ps params) (cs '()))
             (if (pair? is)
-                (seed (cdr is)
-                      (cons (cond ((fl-expr? (car is) locals) 'f64)
-                                  ((i32-expr? (car is) locals) 'i32)
+                (seed (cdr is) (cdr ps)
+                      (cons (cond ((and (fl-expr? (car is) locals)
+                                        (typed-ok (car ps)))
+                                   'f64)
+                                  ((and (i32-expr? (car is) locals)
+                                        (typed-ok (car ps)))
+                                   'i32)
                                   (else 'eq))
                             cs))
                 (let settle ((classes (reverse cs)))
@@ -5025,6 +5043,19 @@
                       entries)))
     ;; name section (custom): top-level function names + main, so
     ;; stack traces and profilers read Scheme, not wasm-function[n]
+    ;;
+    ;; The name is the ORIGIN of the identifier, not the identifier
+    ;; itself.  A definition a macro introduced is keyed here by the
+    ;; symbol rename-introduced minted, and what that symbol PRINTS as
+    ;; is the host's business: Chez shows the bare prefix, this tree's
+    ;; own gensym appends a global counter.  Emitting it therefore made
+    ;; the two hosts disagree byte for byte on the same program, and
+    ;; the counter moved with any unrelated edit that allocated a
+    ;; gensym earlier -- a debug name nobody could rely on.  The origin
+    ;; is the symbol the programmer wrote, identical on both hosts and
+    ;; stable across edits.  Two expansions of one macro then share a
+    ;; name, which costs nothing: the index sits beside it and is what
+    ;; identifies the function.
     (section 0
              (list (name-bytes "name")
                    1                    ; the function-names subsection
@@ -5033,7 +5064,8 @@
                             (map (lambda (f)
                                    (list (uleb (cadr f))
                                          (name-bytes
-                                          (symbol->string (car f)))))
+                                          (symbol->string
+                                           (unmark (car f))))))
                                  (sort-by cadr *fns*))
                             (list (list (uleb main-idx)
                                         (name-bytes "main")))))))))))
