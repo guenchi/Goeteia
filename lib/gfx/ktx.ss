@@ -934,12 +934,33 @@
            (ulen (vector-ref lv 2))
            (w (ktx-level-width k l))
            (h (ktx-level-height k l)))
-      (if (= (ktx-scheme k) 2)
-          (let* ((blocks (fx-alloc! ulen))
-                 (sclen (+ ulen 65536))
-                 (scratch (fx-alloc! sclen)))
-            ;; bound literal staging to the real scratch size, not the
-            ;; nominal max block -- a small ulen allocates < one block
-            (zstd-decode! off clen blocks scratch ulen sclen)
-            (uastc-decode! blocks dst w h))
-          (uastc-decode! off dst w h)))))
+      ;; The decoder is handed an address and the dimensions, and reads
+      ;; the number of blocks the dimensions imply.  It has no way to
+      ;; ask how many bytes are actually there, so the level's own
+      ;; length is checked here, where it is known, before any read.
+      ;; A file can carry a length shorter than its dimensions require;
+      ;; without this the tail of the image is assembled out of
+      ;; whatever follows in linear memory.
+      ;;
+      ;; Which length is the available one differs by scheme: a raw
+      ;; level is exactly its byteLength, while a supercompressed one
+      ;; is inflated into a buffer of uncompressedByteLength and it is
+      ;; that buffer the decoder reads.
+      (let ((need (uastc-level-bytes w h)))
+        (if (= (ktx-scheme k) 2)
+            (let* ((blocks (begin
+                             (unless (>= ulen need)
+                               (error 'ktx "UASTC level shorter than its dimensions require"
+                                      ulen need))
+                             (fx-alloc! ulen)))
+                   (sclen (+ ulen 65536))
+                   (scratch (fx-alloc! sclen)))
+              ;; bound literal staging to the real scratch size, not the
+              ;; nominal max block -- a small ulen allocates < one block
+              (zstd-decode! off clen blocks scratch ulen sclen)
+              (uastc-decode! blocks dst w h))
+            (begin
+              (unless (>= clen need)
+                (error 'ktx "UASTC level shorter than its dimensions require"
+                       clen need))
+              (uastc-decode! off dst w h)))))))

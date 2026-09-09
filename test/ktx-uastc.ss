@@ -61,6 +61,12 @@
 ;; ⭐ The control above is what makes this cell mean anything.  The
 ;; unmodified fixture must still decode to the golden RGBA, so a repair
 ;; that simply refused UASTC levels would fail that and not this.
+(define (has-sub? hay needle)
+  (let ((h (string-length hay)) (n (string-length needle)))
+    (let loop ((i 0))
+      (cond ((> (+ i n) h) #f)
+            ((string=? (substring hay i (+ i n)) needle) #t)
+            (else (loop (+ i 1)))))))
 (define BAD 380000)
 (define (u8 at) (%mem-u8-ref at))
 (define (u8! at v) (%mem-u8-set! at v))
@@ -83,13 +89,62 @@
          (u8! (+ BAD 88) 1)
          (let z ((i 89)) (when (< i 96) (u8! (+ BAD i) 0) (z (+ i 1))))
          (let ((k (ktx-parse BAD (+ off 1))))
-           (guard (e (#t #t))
+           ;; ⚠️ The MESSAGE is checked, not merely that something was
+           ;; raised.  A bare (guard (e (#t #t))) would go green if
+           ;; ktx-parse threw for its own unrelated reason -- and it
+           ;; would then be reporting on a check it never reached.  The
+           ;; refusal has to be the one this cell is about.
+           (guard (e ((and (error? e) (string? (condition-message e))
+                           (has-sub? (condition-message e) "shorter than its dimensions"))
+                      #t)
+                     (else
+                      (display "  FAIL G10: refused, but not by the length check: ")
+                      (display (if (and (error? e) (string? (condition-message e)))
+                                   (condition-message e) "non-error"))
+                      (newline)
+                      #f))
              (ktx-uastc-level! k 0 DST)
              (display "  FAIL G10: a level truncated to one byte decoded anyway")
              (newline)
              #f)))))
 
+;; ⭐ And the zstd path, which is a SECOND raise site with the same
+;; message -- measured: mutating only the first of the two leaves this
+;; file green, and mutating both reds it.  So the cell above reaches one
+;; of them and this one reaches the other; without this, half the repair
+;; would have had no cell and a later edit could delete it silently.
+;;
+;; The available length differs by scheme, which is the reason there are
+;; two sites at all: for a raw level it is byteLength, and for a
+;; supercompressed one it is uncompressedByteLength -- the decoder reads
+;; the decompressed buffer, not the compressed stream.  The level index
+;; is 24 bytes from offset 80: byteOffset, byteLength, then that.
+(define ZBAD 420000)
+(let copy ((i 0))
+  (when (< i (llen ktx-zstd))
+    (u8! (+ ZBAD i) (u8 (+ ZST i)))
+    (copy (+ i 1))))
+(define zbad-ok
+  (and (u32-zero? (+ ZST 100))
+       (begin
+         (u8! (+ ZBAD 96) 255)
+         (let z ((i 97)) (when (< i 104) (u8! (+ ZBAD i) 0) (z (+ i 1))))
+         (let ((k (ktx-parse ZBAD (llen ktx-zstd))))
+           (guard (e ((and (error? e) (string? (condition-message e))
+                           (has-sub? (condition-message e) "shorter than its dimensions"))
+                      #t)
+                     (else
+                      (display "  FAIL G10-zstd: refused, but not by the length check: ")
+                      (display (if (and (error? e) (string? (condition-message e)))
+                                   (condition-message e) "non-error"))
+                      (newline)
+                      #f))
+             (ktx-uastc-level! k 0 DST)
+             (display "  FAIL G10-zstd: a short uncompressed length decoded anyway")
+             (newline)
+             #f)))))
+
 (display (and (ktx-uastc? kraw) (= (ktx-scheme kraw) 0) (run kraw)
               (ktx-uastc? kzst) (= (ktx-scheme kzst) 2) (run kzst)
-              bad-ok))
+              bad-ok zbad-ok))
 (newline)

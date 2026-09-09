@@ -28,7 +28,8 @@
 ;; across the modes its encoder emits (test/uastc.ss).
 ;;
 (library (gfx uastc)
-  (export uastc-block! uastc-decode! uastc-block-mode)
+  (export uastc-block! uastc-decode! uastc-block-mode
+          uastc-level-bytes)
   (import (rnrs))
 
   (define ($u8 at) (%mem-u8-ref at))
@@ -365,9 +366,19 @@
             (loop (+ i 1))))))
        (else (uastc-general! src dst mode)))))
 
+  ;; How many source bytes a w-by-h UASTC level occupies.  The count is
+  ;; a function of the dimensions alone -- 4x4 blocks, sixteen bytes
+  ;; each -- so a caller can ask before it reads anything, which is why
+  ;; this is exported: uastc-decode! is handed a bare address and cannot
+  ;; know how much is there, and the entry that does know the level's
+  ;; length is the one that has to refuse a short one.
+  (define ($nbx w) (quotient (+ w 3) 4))
+  (define ($nby h) (quotient (+ h 3) 4))
+  (define (uastc-level-bytes w h) (* ($nbx w) ($nby h) 16))
+
   (define (uastc-decode! src dst w h)
-    (let* ((nbx (quotient (+ w 3) 4))
-           (nby (quotient (+ h 3) 4)))
+    (let* ((nbx ($nbx w))
+           (nby ($nby h)))
       ;; Keep the clipped-block scratch in managed memory so the caller's
       ;; destination contract remains exactly w*h*4 bytes.
       (let ((scratch (make-bytevector 64 0)))
