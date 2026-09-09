@@ -163,7 +163,39 @@ export async function withBrowser(fn, { timeoutMs = 30000 } = {}) {
     } finally {
         clearTimeout(guard);
         kill();
-        fs.rmSync(profile, { recursive: true, force: true });
+        discardProfile(profile);
+    }
+}
+
+// Remove the throwaway profile directory, and never throw doing it.
+//
+// This runs in a `finally`, and a `finally` that throws replaces
+// whatever the body produced.  So a failure here does two things, and
+// the second is the worse one: it can turn a passing test red, and it
+// can swallow a real failure and report itself in its place.  A
+// teardown must not be able to author a verdict.
+//
+// `force: true` does not cover this.  It suppresses ENOENT, not the
+// EACCES/ENOTEMPTY that a just-SIGKILLed Chrome produces while the
+// kernel is still tearing down its open files -- observed once in 49
+// gate runs, on 2026-09-09, where it failed a shader test that had
+// already compiled its shaders successfully.
+export function discardProfile(profile) {
+    for (let attempt = 0; attempt < 5; attempt++) {
+        try { fs.rmSync(profile, { recursive: true, force: true }); return; }
+        catch (e) {
+            if (attempt === 4) {
+                // Loud, because the alternative to reporting this is a
+                // temp directory that quietly accumulates one copy per
+                // run, and because a reader who sees the test pass is
+                // entitled to know something did not get cleaned up.
+                process.stderr.write(
+                    `cdp: could not remove ${profile}: ${e.code || e.message}\n`);
+                return;
+            }
+            const until = Date.now() + 100;
+            while (Date.now() < until) { /* the kill is asynchronous; give it a moment */ }
+        }
     }
 }
 
