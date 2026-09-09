@@ -116,9 +116,34 @@ trap 'rm -rf "$W"; git -C "$REPO" worktree prune >/dev/null 2>&1 || true' EXIT I
 git -C "$REPO" worktree add --detach "$W/t" HEAD >/dev/null 2>&1
 # the live tree's UNCOMMITTED state too: a mutation judged against HEAD
 # while the work sits uncommitted is judging a tree nobody has.
-(cd "$REPO" && git status --porcelain | awk '{print $NF}') | while read -r f; do
-    [ -f "$REPO/$f" ] && { mkdir -p "$W/t/$(dirname "$f")"; cp "$REPO/$f" "$W/t/$f"; }
-done
+# ⚠️ Read with -z and take the path from the RECORD, not the last
+# whitespace-separated field.  `awk '{print $NF}'` loses a path with a
+# space in it (it copies the tail), takes the wrong half of a rename
+# (`R  old -> new`), and cannot say anything at all about a DELETION --
+# a file the live tree has removed stayed present in the worktree, so
+# the mutation was judged against a tree that still had it.  The status
+# letters are read too, because a delete has to be applied as a delete.
+(cd "$REPO" && git status --porcelain -z) | tr '\0' '\n' | {
+    while IFS= read -r rec; do
+        [ -n "$rec" ] || continue
+        st=$(printf '%s' "$rec" | cut -c1-2)
+        f=$(printf '%s' "$rec" | cut -c4-)
+        case "$st" in
+          R*|C*) read -r f || true ;;   # -z puts the new path in the NEXT record
+        esac
+        [ -n "$f" ] || continue
+        if [ -d "$REPO/$f" ]; then
+            # an untracked DIRECTORY is one record; its files are not
+            # listed separately, so copying only regular files here left
+            # the whole directory out of the worktree
+            mkdir -p "$W/t/$f"; cp -R "$REPO/$f." "$W/t/$f" 2>/dev/null || true
+        elif [ -f "$REPO/$f" ]; then
+            mkdir -p "$W/t/$(dirname "$f")"; cp "$REPO/$f" "$W/t/$f"
+        else
+            rm -f "$W/t/$f"        # deleted in the live tree, so deleted here
+        fi
+    done
+}
 
 # ---- THE ONE PLACE A VERDICT IS BUILT --------------------------------
 #
@@ -195,9 +220,25 @@ verdict() {  # RED|GREEN|BLOCKED  scope  kind  detail
 run_probe() { # dir -> stdout of the probe, or the word FAILED
     [ -n "$PROBE" ] || return 0
     cp "$REPO/$PROBE" "$1/__probe.ss" 2>/dev/null || cp "$PROBE" "$1/__probe.ss"
-    ( cd "$1" && rm -f __probe.wasm \
-      && ./bin/goeteiac __probe.ss __probe.wasm >/dev/null 2>&1 \
-      && ${NODE-node} rt/run.mjs __probe.wasm 2>&1 | head -1 ) || echo FAILED
+    # ⚠️ The status comes from the RUN, never from the pipeline.  Piping
+    # into `head` hands the subshell head's status, which is 0 whatever
+    # the runner did: a probe that printed `audit-crash` and exited 7
+    # came back as the reading "audit-crash" instead of FAILED, and that
+    # string was then compared against the post-mutation reading as if
+    # both were measurements.  ⛔ A crash is not a value.
+    # ⚠️ `x=$(cmd); ec=$?` does not survive `set -e`: the assignment
+    # takes the substitution's status, so a failing command kills the
+    # script before the next line can read $?.  The `if` form is what
+    # makes the status readable at all -- and losing that is how the
+    # original came to end in `|| true`, which then threw the status
+    # away for good.
+    if _out=$( cd "$1" && rm -f __probe.wasm \
+               && ./bin/goeteiac __probe.ss __probe.wasm >/dev/null 2>&1 \
+               && ${NODE-node} rt/run.mjs __probe.wasm 2>&1 ); then
+        printf '%s\n' "$_out" | head -1
+    else
+        echo FAILED
+    fi
 }
 
 cp "$W/t/$FILE" "$W/pre.keep"      # the pre-mutation file, for the clean baseline
@@ -241,8 +282,21 @@ if [ "$TARGET" = gate ]; then
     # from two different trees while being printed as a ratio.
     cp "$W/t/$FILE" "$W/mutated.keep"
     cp "$W/pre.keep" "$W/t/$FILE"
-    ( cd "$W/t" && ./run-tests.sh > "$W/clean.log" 2>&1 ) || true
+    if ( cd "$W/t" && ./run-tests.sh > "$W/clean.log" 2>&1 ); then clean_ec=0; else clean_ec=$?; fi
     M=$(grep -cE '^ok ' "$W/clean.log" || true)
+    # ⚠️ The clean run's status used to be thrown away with `|| true`,
+    # and RED was decided by the mutated run alone.  On a tree that was
+    # ALREADY failing -- a half-finished batch, an unrebuilt bootstrap
+    # snapshot, someone else's work in flight -- every mutation then
+    # came back RED, and each of those reds was an existing failure
+    # wearing the mutation's name.  ⭐ Without a green baseline there is
+    # no denominator and no attribution, so there is no reading.
+    if [ "$clean_ec" -ne 0 ]; then
+        cleanfail=$(grep -E '^FAIL|^TIMEOUT' "$W/clean.log" | grep -v nodraw \
+                    | sort -u | head -3 | tr '\n' '|' | cut -c1-200)
+        verdict BLOCKED "" "" "the tree FAILS BEFORE THE MUTATION (clean exit $clean_ec, ok=$M): ${cleanfail:-unnamed} — no baseline, so nothing here could be attributed to the mutation"
+        exit 0
+    fi
     cp "$W/mutated.keep" "$W/t/$FILE"
     ( cd "$W/t" && ./run-tests.sh > "$W/mut.log" 2>&1 ) && ec=0 || ec=$?
     N=$(grep -cE '^ok ' "$W/mut.log" || true)
@@ -291,6 +345,35 @@ else
                 exit 0
             fi ;;
         esac
+        # ⚠️ The clean run first, in this worktree, under the same
+        # conditions -- including the same rebuild.  This branch used to
+        # go straight to the mutated run and call a non-zero exit RED,
+        # so a suite that was already failing before the mutation
+        # produced a confident RED for every mutation aimed anywhere
+        # near it.  ⭐ The gate branch was given a baseline and this one
+        # was not, for two rounds, which is the same asymmetry the
+        # comment above describes: an improvement lands on the path
+        # somebody happened to be looking at.
+        cp "$W/t/$FILE" "$W/mutated.keep"
+        cp "$W/pre.keep" "$W/t/$FILE"
+        case "$FILE" in
+          src/*) ( cd "$W/t" && sh build-self.sh >/dev/null 2>&1 ) || true ;;
+        esac
+        if ( cd "$W/t" && timeout 600 ${NODE-node} --test "test/$s.mjs" > "$W/one-clean.log" 2>&1 ); then
+            base_ec=0
+        else
+            base_ec=1
+        fi
+        cp "$W/mutated.keep" "$W/t/$FILE"
+        case "$FILE" in
+          src/*) ( cd "$W/t" && sh build-self.sh >/dev/null 2>&1 ) || true ;;
+        esac
+        if [ "$base_ec" -ne 0 ]; then
+            basefail=$(grep -E '^not ok|✖' "$W/one-clean.log" | sort -u | head -3 \
+                       | tr '\n' '|' | cut -c1-200)
+            verdict BLOCKED "" "" "test/$s.mjs FAILS BEFORE THE MUTATION: ${basefail:-unnamed} — no baseline, so nothing here could be attributed to the mutation"
+            exit 0
+        fi
         # a .mjs suite reports through node:test, so the failing
         # assertion's own message is what comes back
         # The oracle here is node --test's exit status, not a word in
@@ -329,7 +412,16 @@ else
         cp "$W/pre.keep" "$W/t/$FILE"
         ( cd "$W/t" && rm -f __b.wasm && ./bin/goeteiac "test/$s.ss" __b.wasm >/dev/null 2>&1 ) || true
         base=""
-        [ -f "$W/t/__b.wasm" ] && base=$( cd "$W/t" && timeout 400 ${NODE-node} rt/run.mjs __b.wasm 2>/dev/null )
+        # ⚠️ `|| base=""` is load-bearing, not defensive.  Under
+        # `set -e` an assignment takes its substitution's status, so a
+        # baseline that CRASHES -- exactly the case this check exists to
+        # catch -- killed the script before it could say BLOCKED, and
+        # the run ended with no output and a bare non-zero exit.  A
+        # check whose failure path kills the thing that reports it has
+        # no failure path.
+        if [ -f "$W/t/__b.wasm" ]; then
+            base=$( cd "$W/t" && timeout 400 ${NODE-node} rt/run.mjs __b.wasm 2>/dev/null ) || base=""
+        fi
         if [ "$base" != "$want" ]; then
             verdict BLOCKED "" "" "BASELINE NOT GREEN — test/$s.ss answers '$(echo "$base" | head -c 40)' before any mutation, so nothing here is a reading"
             exit 0
