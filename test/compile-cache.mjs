@@ -30,6 +30,15 @@ import { fileURLToPath } from 'node:url';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'goeteia-cache-test-'));
 process.env.GOETEIA_CACHE_DIR = path.join(tmp, 'cache');
+// And the disable switch is cleared for the same reason, in the same
+// place: the gate runs the whole round with GOETEIA_NO_CACHE=1, and
+// rt/cache.mjs reads it once at load, so inheriting it would turn every
+// cell below that needs a hit into a miss.  Bare, this file passed; in
+// the gate it failed -- the environment is part of a test, and running
+// it the way the suite runs it is part of wiring it in.  The one
+// section that wants the switch on sets it for a CHILD process, so it
+// is unaffected by this.
+delete process.env.GOETEIA_NO_CACHE;
 
 const { keyFor, lookup, store, stats, resetStats, cacheDir, closureHash, compilerIdFor } =
     await import('../rt/cache.mjs');
