@@ -64,6 +64,20 @@ if (!fs.existsSync(reexport)) process.exit(1);
 // ---- structural check by an independent parser ----
 const chk = spawnSync('python3', [checker, reexport], { encoding: 'utf8' });
 require_(chk.status === 0, 'the re-export passes the structural checker', chk.stdout + chk.stderr);
+// ⚠️ And nothing in it went unchecked.  The checker declines parts it
+// cannot read -- a compressed bufferView, say -- and reports them
+// without failing, which is right for a file that is allowed to have
+// them.  A re-export produced by this probe is not: if its interesting
+// parts ever start being declined, the exit status alone would keep
+// saying yes about a file nobody looked at.
+try {
+    const j = JSON.parse(chk.stdout || '{}');
+    require_(!(j.not_checked || []).length,
+             'the checker actually checked the re-export, rather than declining parts of it',
+             (j.not_checked || []).join('\n'));
+} catch (e) {
+    require_(false, 'the checker printed readable JSON', String(e));
+}
 
 // ---- normalized JSON comparison ----
 function jsonOf(file) {
