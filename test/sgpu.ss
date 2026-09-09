@@ -216,4 +216,76 @@ globalThis.__gpulog = [];
   ;; the blend pipeline
   (= (- (count-log "drawIndexedIndirect") dii0) 2))
 
-(and init-ok frame1-ok static-ok dirty-ok tr-init-ok tr-draw-ok)
+;; ---- G06 (2026-09-06 review, still live): a colour signal changes the
+;; data and never reaches the screen ----
+;;
+;; RED ON PURPOSE.  `rotation-y` above proves the machinery works: when
+;; that signal moves, the group's generation counter moves with it and
+;; the frame carries one extra writeBuffer -- the instance upload.
+;;
+;; `color-r` and its siblings write the new value into the instance
+;; vector and pass #f where the transform attributes pass the
+;; generation slot, so the counter never moves, the group's generation
+;; sum is unchanged, and the whole group is skipped: no rebuild, no
+;; upload.  ⚠️ The data structure holds the new colour and the screen
+;; holds the old one, which is why nothing anywhere reports it.
+;;
+;; ⚠️ OPEN, and stated as a hypothesis rather than a finding: this
+;; section also makes the run print `callback error: ->js: cannot
+;; convert to a JS value` on stderr, once.  It is not in the gate's log
+;; for this file before this section existed, so it comes from here, and
+;; the only new ingredient is a signal bound to `color-r`.  Neither
+;; signal-set! throws and the counts below are unaffected.  ⛔ What it
+;; is has not been established -- it may be a second symptom of the same
+;; missing generation, or something else entirely, and saying which
+;; without evidence would be worse than leaving the question open.
+;;
+;; ⭐ The pair is the point.  A cell that only watched the colour would
+;; not distinguish "colour signals are broken" from "signals are broken"
+;; or "this scene never uploads anything"; the rotation case, in the
+;; same scene and the same frame shape, is what makes the colour case
+;; say something about colour.
+(define tint (signal 1.0))
+(define spin (signal 0.0))
+(define scg
+  (sgl-gpu
+   (camera (@ (fov 0.9) (position 0.0 2.0 8.0) (look-at 0.0 0.0 0.0)))
+   (light (@ (direction 0.0 1.0 0.0) (ambient 0.25)))
+   (group (@ (rotation-y ,(signal-ref spin)))
+     (mesh (@ (geometry (box 1 1 1)) (position 1.0 0.0 0.0)
+              (color-r ,(signal-ref tint)))))))
+(sgpu-init! scg (js-get (js-global) "__mockcanvas"))
+(define (frame!) (gpu-begin!) (gpu-clear! 0.0 0.0 0.0 1.0)
+                 (sgpu-draw! scg) (gpu-flush!))
+(frame!)                                ; settle
+(define g-quiet (count-log "writeBuffer"))
+(frame!)
+(define quiet-writes (- (count-log "writeBuffer") g-quiet))
+
+;; the control: a transform signal DOES cause the extra upload
+(signal-set! spin 1.0)
+(define g-spin (count-log "writeBuffer"))
+(frame!)
+(define spin-writes (- (count-log "writeBuffer") g-spin))
+
+;; the defect: a colour signal must cause it too
+(signal-set! tint 0.25)
+(define g-tint (count-log "writeBuffer"))
+(frame!)
+(define tint-writes (- (count-log "writeBuffer") g-tint))
+
+(define g06-control-ok
+  (or (> spin-writes quiet-writes)
+      (begin (display "  FAIL G06 control: a rotation signal did not cause an extra upload (")
+             (display quiet-writes) (display " quiet, ") (display spin-writes)
+             (display " after spin) -- this scene cannot see the defect") (newline) #f)))
+(define g06-ok
+  (or (= tint-writes spin-writes)
+      (begin (display "  FAIL G06: a colour signal caused ") (display tint-writes)
+             (display " writeBuffer(s) where a transform signal causes ")
+             (display spin-writes)
+             (display " -- the group's generation never moved, so the new")
+             (display " colour is in the data and not on the screen") (newline) #f)))
+
+(and init-ok frame1-ok static-ok dirty-ok tr-init-ok tr-draw-ok
+     g06-control-ok g06-ok)
