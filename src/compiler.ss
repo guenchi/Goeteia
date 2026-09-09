@@ -286,6 +286,36 @@
     (if o (unmark o) s)))
 (define (resolve-tag x)
   (if (symbol? x) (unmark x) x))
+
+;; Resolving a reference against a top-level table.
+;;
+;; The tables are keyed by the identifier code generation registered --
+;; marks included, the same key check-duplicate-defines! uses -- so two
+;; expansions of one macro are two bindings and not a duplicate.  A
+;; lookup that unmarks first therefore asks a question the key cannot
+;; answer, and a definition a macro introduced can never be found by
+;; the reference in its own expansion: both carry the mark, the table
+;; holds the mark, and the lookup threw it away.
+;;
+;; So look for the identifier as it stands, and only then for the one
+;; it renames, one step at a time.  That order is the whole rule:
+;;
+;;   - a reference from the template that made the definition carries
+;;     the same mark and matches on the first try;
+;;   - a reference from a template to a name the PROGRAM defined finds
+;;     nothing under its mark and matches the origin, which is what
+;;     lets a macro use the bindings visible where it was written;
+;;   - a reference the USER wrote is unmarked, so it never has a mark
+;;     to match and never reaches an introduced binding.  That last one
+;;     is hygiene, and it survives because the fallback only ever walks
+;;     from a mark towards its origin and never the other way.
+(define (assq-marked s table)
+  (let try ((x s))
+    (let ((e (assq x table)))
+      (if e
+          e
+          (let ((o (marked-origin x)))
+            (and o (try o)))))))
 (define (strip-marks x)
   (cond
    ((symbol? x) (unmark x))
@@ -1508,10 +1538,10 @@
           (list (local-get (cdr slot)) (wrap-int)))
          (else (local-get (cdr slot))))
         (let* ((r (unmark e))
-               (v (assq r *vars*)))
+               (v (assq-marked e *vars*)))
           (if v
               (global-get (cdr v))
-              (let ((f (assq r *fns*)))
+              (let ((f (assq-marked e *fns*)))
                 (if f
                     (compile-fn-value (car f) (cdr f))
                     (let ((p (assq r prim-arity)))
@@ -1887,7 +1917,7 @@
          (symbol? (car e))
          (memq (unmark (car e)) '(= <))
          (not (assq (car e) locals))
-         (not (assq (unmark (car e)) *fns*))
+         (not (assq-marked (car e) *fns*))
          (= (length (cdr e)) 2)
          (i32-expr? (cadr e) locals)
          (i32-expr? (caddr e) locals))
@@ -1900,7 +1930,7 @@
          (symbol? (car e))
          (memq (unmark (car e)) '(fl<? fl=?))
          (not (assq (car e) locals))
-         (not (assq (unmark (car e)) *fns*))
+         (not (assq-marked (car e) *fns*))
          (= (length (cdr e)) 2))
     (let* ((a (compile-f64 (cadr e) locals cell))
            (b (compile-f64 (caddr e) locals cell)))
@@ -1911,7 +1941,7 @@
          (let ((expect (assq (unmark (car e)) prim-arity)))
            (and expect (= (length (cdr e)) (cdr expect))))
          (not (assq (car e) locals))
-         (not (assq (unmark (car e)) *fns*)))
+         (not (assq-marked (car e) *fns*)))
     (pred-i32 (unmark (car e))
               (map-in-order (lambda (a) (compile-exp a locals cell #f))
                             (cdr e))
@@ -1976,7 +2006,7 @@
            (rop (and (symbol? h) (unmark h))))
       (or (and rop (memq rop fl-direct-ops)
                (not (assq h locals))
-               (not (assq rop *fns*))
+               (not (assq-marked h *fns*))
                (let ((a (assq rop prim-arity)))
                  (and a (= (length (cdr e)) (cdr a)))))
           (fl-if? e locals))))
@@ -2147,7 +2177,7 @@
 
 (define (compile-global-set e locals cell)
   (let* ((r (unmark (cadr e)))
-         (v (assq r *vars*)))
+         (v (and (symbol? (cadr e)) (assq-marked (cadr e) *vars*))))
     ;; "unbound" is a claim about a NAME, and this target may not be
     ;; one.  Reporting (set! 5 1) as an unbound variable sends the
     ;; reader looking for a missing definition that cannot exist.  The
@@ -2300,12 +2330,12 @@
         (list acode
               (map (lambda (slot) (local-set slot)) (reverse slots))
               #x0C (uleb (- *blocks* base)))))
-     ((and rop (memq rop primitives) (not (assq rop *fns*)))
+     ((and rop (memq rop primitives) (not (assq-marked op *fns*)))
       (compile-prim rop args locals cell))
-     ((and rop (assq rop *fns*))
-      (compile-direct (cdr (assq rop *fns*)) e args locals cell tail?
+     ((and rop (assq-marked op *fns*))
+      (compile-direct (cdr (assq-marked op *fns*)) e args locals cell tail?
                       (assq rop *fn-specs*)))
-     ((and rop (assq rop *vars*))
+     ((and rop (assq-marked op *vars*))
       (compile-indirect (compile-ref op locals cell) args locals cell tail?))
      ((pair? op)
       (compile-indirect (compile-exp op locals cell #f) args locals cell tail?))
@@ -2623,7 +2653,7 @@
          (rop (and (symbol? h) (unmark h))))
     (and rop
          (not (assq h locals))
-         (not (assq rop *fns*))
+         (not (assq-marked h *fns*))
          (let ((a (assq rop prim-arity)))
            (and a (= (length (cdr e)) (cdr a))))
          rop)))
@@ -2739,7 +2769,7 @@
       (cond
        ((and rop (memq rop fl-direct-ops)
              (not (assq h locals))
-             (not (assq rop *fns*))
+             (not (assq-marked h *fns*))
              (let ((a (assq rop prim-arity)))
                (and a (= (length (cdr e)) (cdr a)))))
         (direct rop))
@@ -3159,7 +3189,7 @@
     (let* ((h (car e))
            (rop (and (symbol? h) (unmark h))))
       (or (and rop (memq rop fl-direct-ops)
-               (not (assq rop *fns*))
+               (not (assq-marked h *fns*))
                (let ((a (assq rop prim-arity)))
                  (and a (= (length (cdr e)) (cdr a)))))
           (and (eq? (resolve-tag h) 'if) (= (length e) 4)
@@ -3557,8 +3587,14 @@
     (cond
      ((null? stack) acc)
      ((symbol? (car stack))
-      ;; macro-introduced identifiers reference what they renamed
-      (let ((u (unmark (car stack))))
+      ;; Identifiers go in AS WRITTEN, marks and all.  Unmarking here
+      ;; would answer for a macro-introduced reference the question its
+      ;; ORIGIN asks, and the table these names are looked up in is
+      ;; keyed by the mark -- so an introduced definition would never be
+      ;; found by the reference in its own expansion, and would be
+      ;; pruned out from under it.  assq-marked walks from the mark to
+      ;; the origin at the lookup instead, which reaches both.
+      (let ((u (car stack)))
         (walk (cdr stack) (if (memq u acc) acc (cons u acc)))))
      ((and (pair? (car stack))
            (not (eq? (resolve-tag (car (car stack))) 'quote)))
@@ -3651,13 +3687,31 @@
                            (pair? (cddr f))
                            (not (pure-init? (caddr f) known)))))
                 forms))
-       ((memq (car queue) live) (grow live (cdr queue)))
        (else
-        (let ((entry (assq (car queue) table)))
-          (if entry
-              (grow (cons (car queue) live)
-                    (form-refs (cdr entry) (cdr queue)))
-              (grow live (cdr queue))))))))))
+        ;; live records the TABLE'S key -- (car entry) -- and not the
+        ;; identifier that was in the queue.  The two differ whenever a
+        ;; reference resolved through its mark to an origin: a template
+        ;; that mentions a name the PROGRAM defined puts the marked
+        ;; symbol on the queue, while the definition it found is keyed
+        ;; by the bare one.
+        ;;
+        ;; Record the queue's identifier instead and the marked symbol
+        ;; goes into live, the filter below asks with the definition's
+        ;; own (bare) name, the membership test misses, and the
+        ;; program's definition is deleted as dead -- while the code
+        ;; that referenced it is kept.  Nothing warns: the failure
+        ;; arrives later as an unbound variable naming something the
+        ;; author can see written in the file in front of them.
+        ;;
+        ;; So the rule is: resolve with the reference, remember with
+        ;; the definition.
+        (let ((entry (assq-marked (car queue) table)))
+          (cond
+           ((not entry) (grow live (cdr queue)))
+           ((memq (car entry) live) (grow live (cdr queue)))
+           (else
+            (grow (cons (car entry) live)
+                  (form-refs (cdr entry) (cdr queue))))))))))))
 
 ;; ---- a conservative inliner ----
 ;; A small, once-defined, fixed-arity top-level function whose body

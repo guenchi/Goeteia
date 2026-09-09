@@ -409,10 +409,10 @@
     (if slot
         (cdr slot)
         (let* ((r (unmark e))
-               (v (assq r *vars*)))
+               (v (assq-marked e *vars*)))
           (if v
               (jvar-name (cdr v))
-              (let ((f (assq r *fns*)))
+              (let ((f (assq-marked e *fns*)))
                 (if f
                     (jfn-name r (cadr f))
                     (let ((p (assq r prim-arity)))
@@ -461,7 +461,7 @@
 
 (define (jx-set e env lctx)
   (let* ((r (unmark (cadr e)))
-         (v (assq r *vars*)))
+         (v (and (symbol? (cadr e)) (assq-marked (cadr e) *vars*))))
     ;; "unbound" is a claim about a NAME, and this target may not be
     ;; one.  Reporting (set! 5 1) as an unbound variable sends the
     ;; reader looking for a missing definition that cannot exist.  The
@@ -567,7 +567,10 @@
                   ((and self (eq? r (car self))
                         (= (length (cdr e)) (cdr self)))
                    #f)                       ; label rebind, no thunk
-                  ((assq r *fns*) (edge! f r))
+                  ;; the graph's node ids are unmarked names (see the
+                  ;; loop below), so the edge target stays r while the
+                  ;; table is asked with the identifier as written
+                  ((assq-marked op *fns*) (edge! f r))
                   ((memq r primitives) #f)
                   (else (hashtable-set! base f #t)))))))))))
     (define (scan-last f xs bound lnames self)
@@ -674,10 +677,10 @@
     (cond
      ((and (symbol? op) (assq op env))
       (jicall (list "(" (cdr (assq op env)) ")") args env lctx tail?))
-     ((and rop (memq rop primitives) (not (assq rop *fns*)))
+     ((and rop (memq rop primitives) (not (assq-marked op *fns*)))
       (jp rop args (map-in-order (lambda (a) (jx a env lctx)) args)))
-     ((and rop (assq rop *fns*))
-      (let* ((entry (cdr (assq rop *fns*)))
+     ((and rop (assq-marked op *fns*))
+      (let* ((entry (cdr (assq-marked op *fns*)))
              (nfixed (cadr entry))
              (variadic? (caddr entry)))
         (if variadic?
@@ -686,8 +689,8 @@
             (unless (= nfixed (length args))
               (errorf 'goeteia "wrong argument count in:" e)))
         (jcall rop (jfn-name rop (car entry)) args env lctx tail?)))
-     ((and rop (assq rop *vars*))
-      (jicall (list "(" (jvar-name (cdr (assq rop *vars*))) ")")
+     ((and rop (assq-marked op *vars*))
+      (jicall (list "(" (jvar-name (cdr (assq-marked op *vars*))) ")")
               args env lctx tail?))
      ((pair? op)
       (jicall (list "(" (jx op env lctx) ")") args env lctx tail?))
@@ -699,7 +702,7 @@
   (if (and (pair? e)
            (symbol? (car e))
            (not (assq (car e) env))
-           (not (assq (unmark (car e)) *fns*))
+           (not (assq-marked (car e) *fns*))
            (let ((expect (assq (unmark (car e)) prim-arity)))
              (and expect (= (length (cdr e)) (cdr expect)))))
       (let ((rop (unmark (car e)))
