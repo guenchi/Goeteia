@@ -16,9 +16,30 @@
 ;; implementation and Chez already agree on that -- measured, (#t #f)
 ;; from each.  A "fix" that widened real? would satisfy nothing here
 ;; but would be a worse error than the trap, so the control says so.
+;; ⚠️ THE CONTROLS PRINT ONLY WHEN THEY FAIL, and the earlier version
+;; of this file is why.  It displayed them unconditionally and then the
+;; verdict, so the file wrote two lines while `;; expect:` carries one:
+;; ⛔ no implementation could ever pass it.  Worse, it stayed red
+;; across the repair for two DIFFERENT reasons -- a trap before, a
+;; mismatched expectation after -- so the one red hid the transition
+;; from broken to fixed, and a reader watching only the runner's colour
+;; would have concluded the fix had not taken.
+;;
+;; ⇒ Passing cells are silent, exactly like every other cell in this
+;; directory, so this file can be read the same way as the rest.  A
+;; trap still ends the file, and that is still a failure: the runner
+;; sees empty output where it wanted #t.
 (import (rnrs))
 (define z (make-rectangular 1 2))
-;; controls first: whatever the trap takes with it, these are already out
-(display (list (number? z) (real? z) (= 3.0 (inexact 3))))
-(newline)
-(display (equal? (inexact z) (make-rectangular 1.0 2.0)))
+(define fails '())
+(define (want name got expect)
+  (unless (equal? got expect) (set! fails (cons (list name got expect) fails))))
+
+;; controls first: they are the ones a trap would otherwise take with it
+(want 'p06-CONTROL-number  (number? z) #t)
+(want 'p06-CONTROL-not-real (real? z) #f)
+(want 'p06-CONTROL-real-inexact (= 3.0 (inexact 3)) #t)
+(unless (null? fails) (display fails) (newline))
+
+(want 'p06-inexact-complex (equal? (inexact z) (make-rectangular 1.0 2.0)) #t)
+(if (null? fails) (display #t) (display fails))
