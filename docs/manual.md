@@ -3488,6 +3488,8 @@ state belongs in `(gam effects)`; one living in a pool would make
 `stats-damage!` depend on a clock that appears nowhere in its arguments.
 Decide immunity before you call, where the decision is visible.
 
+Long form in `docs/game.md`.
+
 ### `(gam inventory)`: Counted Things in a Stable Order
 
 ```
@@ -3521,6 +3523,8 @@ count past the checks. A key taken down to zero **keeps its row and its
 place**: dropping it would send it to the end when it is added again,
 and the listing would become a record of what the player did rather than
 of what the bag holds.
+
+Long form in `docs/game.md`.
 
 ### `(gam quest)`: Objectives That Count Once
 
@@ -3560,6 +3564,8 @@ the same answer. `quest-restore!` clears and replays through
 `quest-record!`, so a hand-edited save gets exactly the checks a live
 event gets.
 
+Long form in `docs/game.md`.
+
 ### `(gam effects)`: States That End by Themselves
 
 ```
@@ -3595,6 +3601,8 @@ while it is still running keeps its place; a name that ran out and is
 set again is a new effect and goes last. That is deliberately unlike
 `inventory-items`, and for a reason: a count of zero means the thing is
 still there, while a duration of zero means the state is gone.
+
+Long form in `docs/game.md`.
 
 ### `(gam abilities)`: Cooldowns, and Nothing Else
 
@@ -3639,6 +3647,8 @@ Tying the two together would mean an ability could only ever be paid for
 out of one kind of thing, in one currency; an ability that costs two
 resources, or none, would stop fitting. Damage and range are absent for
 the same reason — an ability that heals or opens a door has neither.
+
+Long form in `docs/game.md`.
 
 ### `(gam save)`: A Saved Game, and Whether Saving Works at All
 
@@ -3696,6 +3706,8 @@ The stored text is an s-expression through `(web sexpr)`, so exact and
 inexact numbers keep their kind and a flonum survives bit-exactly,
 signed zero included — a save file is exactly the kind of data a decimal
 round trip quietly damages.
+
+Long form in `docs/game.md`.
 
 ## Simulation
 
