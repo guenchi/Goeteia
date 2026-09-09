@@ -407,7 +407,8 @@ for m in test/macro-toplevel-hygiene.mjs \
          test/defect-library-export-unchecked.mjs \
          test/defect-r03-r04-repl.mjs \
          test/defect-r09-worker-listener-revocation.mjs \
-         test/defect-d01-doc-uv-offset.mjs; do
+         test/defect-d01-doc-uv-offset.mjs \
+         test/ascii-only.mjs; do
     if $CAP ${NODE-node} --test "$m" >/dev/null 2>&1; then
         echo "ok   $m"
     else

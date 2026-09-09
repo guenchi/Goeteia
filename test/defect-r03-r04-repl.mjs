@@ -7,9 +7,11 @@
 //        wraps the input, the trailing comment runs to end of line, and
 //        the closing paren it added is inside the comment.
 //
-//   R03  `(display "你好")` comes back as two ASCII characters.  The
-//        bytes the program wrote are decoded as latin1 before the
-//        terminal encodes them again.
+//   R03  displaying a two-character CJK string comes back as two
+//        ASCII characters: the bytes the program wrote are decoded as
+//        latin1 before the terminal encodes them again.  (The string
+//        itself is below, in the test -- it is data, and it has to be
+//        those bytes.)
 //
 // ⚠️ R04 is the one that costs trust rather than characters.  A REPL
 // that mishandles a comment tells the user their expression is
