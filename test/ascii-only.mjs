@@ -25,8 +25,20 @@
 // expect line) rather than by filename, so a new UTF-8 test needs no
 // edit here and an ordinary comment in that same file is still caught.
 //
-// ⚠️ Untracked files are out of scope by design: review/ and the
-// scratch directories are Chinese throughout and are not published.
+// ⚠️ IT READS UNTRACKED FILES TOO, and that was a defect for the first
+// few hours of this file's life.  It listed `git ls-files` only, with a
+// comment saying untracked files were "out of scope by design" because
+// review/ and the scratch directories are Chinese throughout.  ⭐ That
+// sentence described a different exclusion than the one it performed:
+// what it actually hid was every NEW SOURCE FILE IN FLIGHT -- a file
+// being ported into the tree right now is untracked, is about to be
+// committed, and was invisible.  Measured: a new library with a Chinese
+// comment passed all three cells.
+//
+// ⇒ Untracked files are read when their extension is one this rule
+// covers.  That is what keeps review/ out: it carries .md and .json,
+// which are not in the map, so the exclusion follows from the rule
+// rather than from a list of directories nobody will maintain.
 //
 // ⭐ Why a check at all, when the tree is already clean: the rule has
 // been kept by people remembering it, and a comment in the wrong
@@ -52,8 +64,13 @@ const OPENER = {
 };
 
 function tracked() {
-    return execFileSync('git', ['ls-files'], { cwd: root, encoding: 'utf8' })
+    const listed = execFileSync('git', ['ls-files'], { cwd: root, encoding: 'utf8' })
         .split('\n').filter(Boolean);
+    // ...and anything not yet added, which is where a port lives
+    const untracked = execFileSync('git', ['ls-files', '--others', '--exclude-standard'],
+                                   { cwd: root, encoding: 'utf8' })
+        .split('\n').filter(Boolean);
+    return [...listed, ...untracked];
 }
 
 test('every comment in the tree is written in English', () => {
