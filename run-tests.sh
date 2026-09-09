@@ -45,6 +45,21 @@ fi
 # 124 is timeout(1)'s own code for "the command outlived the bound".
 timed_out() { [ -n "$CAP" ] && [ "$1" -eq 124 ]; }
 
+# A run that TRAPPED did not answer the question wrongly -- it stopped.
+# Every cell after the trap silently did not run, so the failures on
+# screen are a LOWER BOUND on what is broken, and a reader who counts
+# them gets a smaller number than the truth.  This matters here because
+# a wasm type trap (`illegal cast`) is not a Scheme condition: `guard`
+# cannot catch it, a test file cannot report it, and the only outward
+# sign is a non-zero exit beside a partial transcript.  Measured once,
+# on a mutant that broke the audio graph: one FAIL line was printed and
+# four more cells never ran.
+crashed() { [ "$1" -ne 0 ] && ! timed_out "$1"; }
+say_if_crashed() {
+    crashed "$1" && echo "     ^ the run ENDED EARLY (exit $1): cells after that point did not run," \
+                 && echo "       so the failures above are a lower bound, not the whole list"
+}
+
 # A test that could not measure what it wanted says so on a line of its
 # own.  That line is a note to the reader, not part of the value under
 # test: leaving it in the captured output makes the ANNOUNCEMENT fail the
@@ -92,7 +107,9 @@ for t in ${GOETEIA_TESTS-test/*.ss}; do
     if [ "$got" = "$want" ]; then
         echo "ok   $t"
     else
-        echo "FAIL $t (stage0: want '$want', got '$got')"; fail=1
+        echo "FAIL $t (stage0: want '$want', got '$got')"
+        say_if_crashed $ec
+        fail=1
     fi
     if [ -f goeteia.wasm ]; then
         if ! ${NODE-node} rt/compile.mjs goeteia.wasm "$t" "$T/test1.wasm" 2>/dev/null; then
@@ -105,7 +122,9 @@ for t in ${GOETEIA_TESTS-test/*.ss}; do
         if [ "$got" = "$want" ]; then
             echo "ok   $t (stage1)"
         else
-            echo "FAIL $t (stage1: want '$want', got '$got')"; fail=1
+            echo "FAIL $t (stage1: want '$want', got '$got')"
+            say_if_crashed $ec
+            fail=1
         fi
         # both hosts must emit identical bytes from identical source
         if ! cmp -s "$T/test.wasm" "$T/test1.wasm"; then
@@ -123,7 +142,9 @@ for t in ${GOETEIA_TESTS-test/*.ss}; do
     if [ "$got" = "$want" ]; then
         echo "ok   $t (js)"
     else
-        echo "FAIL $t (js: want '$want', got '$got')"; fail=1
+        echo "FAIL $t (js: want '$want', got '$got')"
+        say_if_crashed $ec
+        fail=1
     fi
     if [ -f goeteia.wasm ]; then
         if ! ${NODE-node} rt/compile.mjs --js goeteia.wasm "$t" "$T/test1.js" 2>/dev/null; then
