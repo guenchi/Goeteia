@@ -483,6 +483,10 @@
                                       (loop (+ n 1) lls ofs mls dpos litpos nr0 nr1 nr2))))))))))))))))
 
   ;; =================== frame / blocks ===================
+  ;; where the last block ended, so a frame that promises a checksum
+  ;; can be asked whether it carries one
+  (define $frame-in-end 0)
+
   (define ($frame-content-at src)
     (unless (= #xFD2FB528 ($u32 src)) (error 'zstd "not a zstd frame"))
     (let* ((fhd ($u8 (+ src 4)))
@@ -528,7 +532,9 @@
               (when (< i bsize)
                 ($out-u8! (+ dpos i) ($u8 (+ bat i)))
                 (cp (+ i 1))))
-            (if (= lastblk 1) (- (+ dpos bsize) dst)
+            (if (= lastblk 1)
+                (begin (set! $frame-in-end (+ bat bsize))
+                       (- (+ dpos bsize) dst))
                 (loop (+ bat bsize) (+ dpos bsize)
                       huf llt oft mlt r0 r1 r2)))
            ((= btype 1)
@@ -537,7 +543,9 @@
                 (when (< i bsize)
                   ($out-u8! (+ dpos i) v)
                   (cp (+ i 1))))
-              (if (= lastblk 1) (- (+ dpos bsize) dst)
+              (if (= lastblk 1)
+                  (begin (set! $frame-in-end (+ bat 1))
+                         (- (+ dpos bsize) dst))
                   (loop (+ bat 1) (+ dpos bsize)
                         huf llt oft mlt r0 r1 r2))))
            ((= btype 2)
@@ -551,7 +559,9 @@
                    (sq ($sequences seqat (+ bat bsize) litbuf litlen dpos
                                    llt oft mlt r0 r1 r2))
                    (ndpos (vector-ref sq 0)))
-              (if (= lastblk 1) (- ndpos dst)
+              (if (= lastblk 1)
+                  (begin (set! $frame-in-end (+ bat bsize))
+                         (- ndpos dst))
                   (loop (+ bat bsize) ndpos nhuf
                         (vector-ref sq 1) (vector-ref sq 2) (vector-ref sq 3)
                         (vector-ref sq 4) (vector-ref sq 5) (vector-ref sq 6)))))
@@ -564,6 +574,17 @@
     (when (< slen 5) (error 'zstd "truncated frame header"))
     (set! $src-start src)
     (set! $src-end (+ src slen))
+    ;; ⚠️ The window below bounds what may be READ.  These three checks
+    ;; are a different kind: the frame makes claims about itself, and
+    ;; until now nothing compared them with the frame.  A reader that
+    ;; cannot run off the end can still believe a header that describes
+    ;; a different file.
+    (let ((fhd ($u8 (+ src 4))))
+      ;; the spec fixes this bit at zero; a frame with it set was
+      ;; written by something that does not agree with us about the
+      ;; format, and the rest of our reading of it is guesswork
+      (unless (= 0 (bitwise-and fhd 8))
+        (error 'zstd "reserved frame descriptor bit is set" fhd)))
     (set! $dst-start dst)
     (set! $scratch-start scratch)
     (set! $scratch-end
@@ -576,7 +597,20 @@
         (when (<= dlen 0)
           (error 'zstd "frame has no content size; pass a destination capacity"))
         (set! $dst-end (+ dst dlen))
+        (set! $frame-in-end 0)
         (let ((n ($zstd-decode-bounded! src dst scratch)))
+          ;; the header's content size is a claim about the frame; when
+          ;; it makes one, the frame has to keep it
+          (let ((declared (zstd-frame-size src)))
+            (when (and (> declared 0) (not (= n declared)))
+              (error 'zstd "frame content size does not match the frame"
+                     declared n)))
+          ;; and a promised checksum has to be present -- four bytes
+          ;; after the last block, inside the length the caller gave us
+          (let ((fhd ($u8 (+ src 4))))
+            (unless (= 0 (bitwise-and fhd 4))
+              (when (> (+ $frame-in-end 4) $src-end)
+                (error 'zstd "frame promises a checksum it does not carry"))))
           (set! $src-end #f)
           n))))
 )

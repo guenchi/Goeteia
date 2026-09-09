@@ -202,7 +202,6 @@
   (define $segi 0)
   (define $at 0)
   (define $atend 0)
-  (define $phantom 0)
   (define $bbuf 0)
   (define $bcnt 0)
 
@@ -212,14 +211,25 @@
     (set! $segi 0)
     (set! $at (vector-ref segs 0))
     (set! $atend (vector-ref segs 1))
-    (set! $phantom 0)
     (set! $bbuf 0)
     (set! $bcnt 0))
 
-  ;; Past the last segment this yields zeros for a short while: a
-  ;; decoder legitimately holds a few bits of lookahead at the end of
-  ;; the final block.  Past that lookahead the stream really is short,
-  ;; and saying so here beats reporting it as a bad Huffman code.
+  ;; Past the last segment there is nothing to read, and asking is an
+  ;; error.
+  ;;
+  ;; ⚠️ This used to hand back up to four zero bytes first, on the
+  ;; grounds that a decoder holds a little lookahead at the end of the
+  ;; final block.  It does not: $bit refills only when the bit buffer
+  ;; is empty, so every byte fetched has at least one bit consumed
+  ;; from it, and a well-formed stream ends inside its last real byte.
+  ;; What the allowance actually did was manufacture the bits a
+  ;; truncated stream was missing -- `(3 0)` cut to `(3)` still
+  ;; decoded, because the seven zero bits of an end-of-block symbol
+  ;; were supplied by the padding rather than by the file.
+  ;;
+  ;; Measured with the allowance at zero: image.ss, image-real.ss and
+  ;; meshopt-with-image.ss all pass on three targets, so no real
+  ;; stream in the corpus ever needed one.
   (define ($next-byte)
     (let advance ()
       (if (< $at $atend)
@@ -229,10 +239,7 @@
                      (set! $at (vector-ref $segs (* 2 $segi)))
                      (set! $atend (vector-ref $segs (+ (* 2 $segi) 1)))
                      (advance))
-              (begin (set! $phantom (+ $phantom 1))
-                     (when (> $phantom 4)
-                       (error 'image "truncated deflate stream"))
-                     0)))))
+              (error 'image "truncated deflate stream")))))
 
   (define ($bit)
     (when (= $bcnt 0)
