@@ -74,7 +74,12 @@ if (!existsSync(manualPath)) {
         if (h) { cur = { chapter, lib: h[1], points: new Set() }; sections.push(cur); continue; }
         if (/^### /.test(line)) { cur = null; continue; }
         if (!cur) continue;
-        for (const m of line.matchAll(/docs\/([a-z0-9-]+)\.md/g)) cur.points.add(m[1]);
+        // Only "Long form in `docs/X.md`" counts as a long-form pointer.
+        // Any other mention is a cross-reference to a particular passage
+        // -- "see D2a in `docs/determinism.md`" -- and demanding that the
+        // referenced file carry a heading for the LIBRARY would be wrong:
+        // what is promised there is a passage, not the library.
+        for (const m of line.matchAll(/Long form in `docs\/([a-z0-9-]+)\.md`/g)) cur.points.add(m[1]);
     }
     assert.ok(sections.length > 10, 'the manual sweep found almost no library sections');
 
@@ -97,14 +102,17 @@ if (!existsSync(manualPath)) {
             // being mentioned in passing -- a check looser than the
             // sentence describing it, which is the worse of the two
             // ways for a check and its comment to disagree.
-            const heads = [...c.points]
-                .map(p => join(root, 'docs', `${p}.md`))
-                .filter(existsSync)
-                .flatMap(f => readFileSync(f, 'utf8').split('\n'))
-                .filter(l => /^#{1,4} /.test(l))
-                .join('\n');
-            if (!heads.includes(c.lib))
-                missing.push(`${c.lib} points at ${[...c.points].join(', ')} but has no section there`);
+            // Each pointed file is checked on its own.  Joining them
+            // meant a section naming two files passed if either one
+            // carried the library, and the other pointer went unread.
+            for (const p of c.points) {
+                const f = join(root, 'docs', `${p}.md`);
+                if (!existsSync(f)) continue;          // the cell above owns that
+                const heads = readFileSync(f, 'utf8').split('\n')
+                    .filter(l => /^#{1,4} /.test(l)).join('\n');
+                if (!heads.includes(c.lib))
+                    missing.push(`${c.lib} says its long form is docs/${p}.md, which has no heading naming it`);
+            }
         }
         assert.deepStrictEqual(missing, [],
             missing.join('\n') + '\nadd a section for it there, or drop the pointer from the chapter.');
