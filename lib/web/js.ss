@@ -59,6 +59,24 @@
           (%fl->fx f)
           f)))
 
+  ;; The value a procedure returns when it returns nothing in
+  ;; particular -- what `set!`, `for-each` and a `when` with a false
+  ;; test all answer.  R6RS gives it no predicate and no name, so the
+  ;; only way to recognise it is to make one and compare.
+  (define $unspecified (if #f #f))
+
+  ;; A name for what a value IS, for a message that has to say why a
+  ;; conversion failed without carrying the value itself: values can be
+  ;; large, and they can be the user's.
+  (define ($type-name v)
+    (cond ((pair? v) "pair")
+          ((vector? v) "vector")
+          ((null? v) "empty list")
+          ((char? v) "char")
+          ((bytevector? v) "bytevector")
+          ((eq? v $unspecified) "unspecified value")
+          (else "value of an unconvertible type")))
+
   ;; Scheme value -> JS value; closures become callable JS functions
   (define (->js v)
     (cond
@@ -69,7 +87,17 @@
      ((eq? v #t) js-true)
      ((eq? v #f) js-false)
      ((procedure? v) (%js-fn v))
-     (else (error '->js "cannot convert to a JS value" v))))
+     ;; A callback that ends in a side effect returns this, which is
+     ;; the ordinary shape for an event handler -- and the host is
+     ;; given `undefined` in that case anyway, so refusing it reported
+     ;; a failure on every call while nothing was actually wrong.
+     ;; ⚠️ It is mapped, not accepted-in-general: a value of a type
+     ;; that genuinely cannot cross still raises below, which is what
+     ;; keeps this a conversion and not a silence.
+     ((eq? v $unspecified) (js-undefined))
+     (else (error '->js
+                  (string-append "cannot convert a " ($type-name v)
+                                 " to a JS value")))))
 
   ;; A raise inside a callback cannot cross back into the host --
   ;; the callback answers undefined so the host's event loop stays

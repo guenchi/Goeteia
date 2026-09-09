@@ -152,7 +152,18 @@ run_one() { # wasmfile testfile   -- stdout to the caller, stderr to $ERRF
 # so a residual one is attributable to the test that produced it.
 check_stderr() { # stage
     [ -s "$ERRF" ] || return 0
-    n=$(grep -c "callback error:\|callback raise:" "$ERRF" 2>/dev/null || echo 0)
+    # ⚠️ `grep -c` prints 0 AND exits non-zero when nothing matches, so
+    # `|| echo 0` fired as well and n became two lines -- "0\n0" -- which
+    # is not an integer, so the test below errored, did not return, and
+    # fell through to print a failure.  ⛔ The fallback triggered
+    # precisely when it was not needed, and twelve passing tests were
+    # reported as failing with `0\n0 callback error(s)`.
+    #
+    # ⭐ It survived because this path had only ever been exercised WITH
+    # a report present.  A check needs a case where it must stay silent
+    # as much as one where it must speak, and the silent case is the one
+    # nobody thinks to write.
+    n=$(grep -c "callback error:\|callback raise:" "$ERRF" 2>/dev/null) || n=0
     [ "$n" -eq 0 ] && return 0
     echo "FAIL $t ($1: $n callback error(s) reported to the console)"
     grep "callback error:\|callback raise:" "$ERRF" | sort -u | head -3 \
