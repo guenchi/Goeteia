@@ -182,4 +182,23 @@ try {
 }
 assert.equal(closureHash(), closureBefore, 'removing it again must restore the hash');
 
+// The same question one directory over, and the reason this cell exists
+// rather than being covered by the one above: the stage0 compiler
+// identity used to be a hand-written list of the five files the driver
+// reads.  A list like that does not fail when it falls behind -- a
+// sixth source is simply absent from the key, so a compile with the new
+// compiler is served the old compiler's artifact and the round goes
+// green.  Hashing the directory is what this pins.
+const stage0Before = compilerIdFor('wasm');
+const srcProbe = path.join(root, 'src', '.cache-probe.ss');
+fs.writeFileSync(srcProbe, ';; a file that exists only while this test runs\n');
+try {
+    assert.notEqual(compilerIdFor('wasm'), stage0Before,
+                    'a new file under src/ must change the stage0 compiler identity');
+} finally {
+    fs.unlinkSync(srcProbe);
+}
+assert.equal(compilerIdFor('wasm'), stage0Before,
+             'removing it again must restore the stage0 identity');
+
 fs.rmSync(tmp, { recursive: true, force: true });

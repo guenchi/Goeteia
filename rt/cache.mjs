@@ -157,15 +157,21 @@ export function closureHash() {
                      ...walk(path.join(root, 'test', 'lib'), [])]);
 }
 
-// Which compiler produces this target.  stage0 reads the same five
-// sources whichever target it emits -- the target is a separate field
-// of the key, so it does not need to be folded in here as well.
-const STAGE0 = ['src/chez-driver.ss', 'src/compiler.ss', 'src/prelude.ss',
-                'src/js-backend.ss', 'src/wasm-driver.ss'];
-
+// Which compiler produces this target.  stage0 reads the same sources
+// whichever target it emits -- the target is a separate field of the
+// key, so it does not need to be folded in here as well.
+//
+// The whole of src/ is hashed rather than a list of the files the
+// driver is known to read.  A list has to be maintained by whoever adds
+// a source, and a list that falls behind does not fail: it produces a
+// key that ignores the new file, so a compile with the new compiler
+// serves the old compiler's artifact and the round goes green.  Nothing
+// in this file, and nothing in the suite, would say a word about it.
+// Hashing the directory costs one extra read per entry today -- src/
+// holds five files -- and removes the entire class.
 export function compilerIdFor(target) {
     if (target === 'stage1') return hashTree(['goeteia.wasm', 'rt/compile.mjs']);
-    return hashTree(STAGE0);
+    return hashTree(walk(path.join(root, 'src'), []));
 }
 
 function entryPath(key) {
