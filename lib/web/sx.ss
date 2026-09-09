@@ -175,6 +175,31 @@
   (define ($sx-list-keyed thunk render key)
     (let ((host (create-element "div"))
           (state '()))
+      ;; The list's own owner has to release what is left when IT goes.
+      ;; Item effects sit under detached roots so they survive a rerun
+      ;; of the list, and the only disposer call below is in the branch
+      ;; that runs when a key disappears from the data -- so disposing
+      ;; the owner of the whole list used to leave every remaining item
+      ;; subscribed, running on every later signal write for as long as
+      ;; the signal lived.  Nothing goes wrong at the moment of the
+      ;; leak; the symptom is work done for a screen nobody is looking
+      ;; at, once more per mount.
+      ;;
+      ;; It cannot go on the list's own effect: a cleanup there runs at
+      ;; the end of every RUN, which would dispose the survivors on
+      ;; each rerun and destroy the point of keying.  It cannot be a
+      ;; bare on-cleanup either -- sx-list is also called with no run
+      ;; in progress (test/sx.ss does), and on-cleanup refuses that by
+      ;; name rather than dropping the thunk.
+      ;;
+      ;; So it hangs off an effect of its own: one that reads no
+      ;; signal, therefore never reruns, and whose cleanup fires
+      ;; exactly once, when its owner kills it.  With no owner it is
+      ;; simply never killed, which is what happens today.
+      (effect (lambda ()
+                (on-cleanup
+                 (lambda ()
+                   (for-each (lambda (ent) ((caddr ent))) state)))))
       (effect
        (lambda ()
          (let* ((items (thunk))

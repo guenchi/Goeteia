@@ -30,11 +30,28 @@
   (export react-component props-ref)
   (import (rnrs) (web js) (web dom))
 
+  ;; The registry is shared ground: every independently loaded module
+  ;; registers into the same globalThis.__goeteia, and $registry is
+  ;; module-local, so each module arrives with it at #f.  Creating a
+  ;; fresh object here and assigning it therefore threw away everything
+  ;; an earlier module had registered -- and nothing failed at load
+  ;; time: the host asked for a component that WAS registered, by a
+  ;; module that DID register it, and got undefined.
+  ;;
+  ;; So adopt what is there.  The whole decision is one JS expression
+  ;; on purpose: reading the global, judging it and installing a
+  ;; replacement are one step, and splitting them would leave a window
+  ;; in which two modules both see nothing and both install.  A value
+  ;; that is present but not an object is replaced, which is what
+  ;; happened to it before and is the only thing left to do with it.
   (define $registry #f)
   (define ($ensure-registry)
     (unless $registry
-      (set! $registry (js-eval "({})"))
-      (js-set! (js-global) "__goeteia" $registry))
+      (set! $registry
+            (js-eval
+             (string-append
+              "(globalThis.__goeteia && typeof globalThis.__goeteia === 'object')"
+              " ? globalThis.__goeteia : (globalThis.__goeteia = {})"))))
     $registry)
 
   (define (react-component name mount)

@@ -150,15 +150,40 @@
     (let ((jv (->js v)))
       ($send-name name)
       (%js-set! obj jv)))
+  ;; Convert every argument BEFORE staging any of them.
+  ;;
+  ;; ->js raises on a value that cannot cross, and %js-push writes a
+  ;; stack the NEXT call through the FFI reads.  Converting as we push
+  ;; therefore leaves the arguments already pushed behind for whoever
+  ;; calls next, and the damage lands on a call that did nothing wrong:
+  ;; a JS function reading arguments.length, or one with optional
+  ;; parameters, silently takes another branch.  js-set! above has
+  ;; converted first since it was written, for this reason spelled out
+  ;; in its own comment; these three pushed as they went.
+  ;;
+  ;; Conversion stays left to right -- ->js is not pure (a procedure
+  ;; argument registers a callback), so the order arguments are
+  ;; converted in is observable, and it must be the order they were
+  ;; written in whether or not one of them fails.
+  (define ($stage-args args)
+    (let convert ((as args) (out '()))
+      (if (pair? as)
+          (convert (cdr as) (cons (->js (car as)) out))
+          (let push ((vs (reverse out)))
+            (when (pair? vs)
+              (%js-push (car vs))
+              (push (cdr vs)))))))
   (define (js-call f thisv . args)
-    (for-each (lambda (a) (%js-push (->js a))) args)
+    ($stage-args args)
     (%js-call f thisv))
   (define (js-method obj name . args)
+    ;; the method is fetched first: js-get consumes the name buffer, so
+    ;; a conversion that raises below leaves no name staged either
     (let ((m (js-get obj name)))
-      (for-each (lambda (a) (%js-push (->js a))) args)
+      ($stage-args args)
       (%js-call m obj)))
   (define (js-new ctor . args)
-    (for-each (lambda (a) (%js-push (->js a))) args)
+    ($stage-args args)
     (%js-new ctor))
   (define (js-index obj i)
     (js-get obj (number->string i)))

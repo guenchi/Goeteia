@@ -54,10 +54,42 @@
         (set! $styled (cons (cons sty cls) $styled))
         cls))))
 
+  ;; Fold a caller's class attribute into the one styled emits.
+  ;;
+  ;; Emitting both is not merely invalid markup: a duplicate attribute
+  ;; is a parse error and every browser keeps the FIRST, so the class
+  ;; the author wrote is discarded and their styling does nothing on an
+  ;; element that reads correctly in the source.
+  ;;
+  ;; #f is how this renderer spells an absent attribute, so a caller
+  ;; who wrote (class #f) asked for no class of their own and gets
+  ;; styled's alone.  Anything that is not a string, a symbol or #f is
+  ;; refused by name -- #t would mean a boolean `class`, which is not a
+  ;; thing -- because the two silent alternatives are the defect being
+  ;; fixed and dropping the caller's class instead.
+  (define ($class-join acc v)
+    (cond
+     ((eq? v #f) acc)
+     ((string? v) (if (string=? v "") acc (string-append acc " " v)))
+     ((symbol? v) ($class-join acc (symbol->string v)))
+     (else (error 'styled "a class attribute must be a string" v))))
+
   (define (styled tag name sty . kids)
     (let ((cls (intern-style! name sty)))
       (if (and (pair? kids) (pair? (car kids)) (eq? (car (car kids)) '@))
-          `(,tag (@ (class ,cls) ,@(cdr (car kids))) ,@(cdr kids))
+          (let ((attrs (cdr (car kids))))
+            ;; every class the caller wrote folds in, in the order they
+            ;; wrote them, after styled's own.  ⛔ That order is not a
+            ;; contract: attribute-internal order does not affect CSS,
+            ;; and pinning it would refuse a correct fix that ordered
+            ;; them the other way.  What IS a contract is that there is
+            ;; one class attribute and every name is in it.
+            `(,tag (@ (class ,(fold-left (lambda (acc a) ($class-join acc (cadr a)))
+                                         cls
+                                         (filter (lambda (a) (eq? (car a) 'class))
+                                                 attrs)))
+                      ,@(filter (lambda (a) (not (eq? (car a) 'class))) attrs))
+                   ,@(cdr kids)))
           `(,tag (@ (class ,cls)) ,@kids))))
 
   ;; every interned rule, in registration order, ready for css->string
