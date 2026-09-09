@@ -1,4 +1,4 @@
-;; expect: (mine 99.0 99 mine)
+;; expect: (mine mine mine 99.0 99.0 99 99 mine)
 ;; The primitive guards and the dispatcher must read the top-level
 ;; tables the same way.
 ;;
@@ -18,6 +18,20 @@
 ;;   fl+           a float context
 ;;   bitwise-and   an i32 context
 ;;   <             the =/< path in compile-test
+;;   fl<?          the fl<?/fl=? branch of compile-test
+;;   (fl* (fl+ ..)) a nested float context, which is compile-f64
+;;   nested bitwise a nested i32 context
+;;   mvp           ⭐ a VARIABLE holding a procedure, called -- this is
+;;                 the *vars* arm of compile-app and of jx-app, which
+;;                 the procedure cases above never reach
+;;
+;; ⚠️ THE FIRST VERSION OF THIS CELL COVERED FOUR OF TWELVE SUCH
+;; LOOKUPS.  That was not visible from the cell: it was red before the
+;; fix and green after, which is what a working cell looks like.  It
+;; took reverting each lookup one at a time and asking whether anything
+;; shouted -- eight of them did not.  ⇒ "This cell goes red when the
+;; code is wrong" is a claim about the ways it was tried, and the four
+;; positions above were added because a mutation matrix named them.
 ;;
 ;; `mine` / 99.0 / 99 mean the definition won; `builtin` / 3.0 / 8 mean
 ;; the guard did.
@@ -34,6 +48,22 @@
 ;; 'never)` arm is what keeps each call alive long enough to be
 ;; dispatched.
 ;;
+;; ⛔ FOUR LOOKUPS REMAIN THAT NO BEHAVIOURAL CELL CAN REACH, and they
+;; are named rather than left as "covered": fl-expr?, $i32-prim-of,
+;; fl-expr-in?, and the JS trampoline's tail scan.  Reverting any of
+;; them changes which optimisation fires, not what is computed -- the
+;; module comes out a different size with byte-identical output.  ⇒
+;; Only an assertion about the BUILD PRODUCT can see them (slot types,
+;; the function-spec table, the bouncy-frame flag), and there is no
+;; such assertion in this tree.  A cell cannot be written for them
+;; here, so this comment is what stands in for one.
+;;
+;; ⚠️ One of those four carries a measured price: with $i32-prim-of
+;; reading the tables the old way the module is 53 bytes SMALLER,
+;; because a marked shadow then keeps the i32 specialisation it is not
+;; entitled to.  Resolving the name correctly costs those bytes.  That
+;; is the right trade and it is not a free one.
+;;
 ;; ⚠️ This is NOT the C02 shadowing case.  These names are introduced
 ;; by a macro and referenced from the same template, so they carry the
 ;; same marks and must meet.  A top-level definition the USER wrote
@@ -46,10 +76,17 @@
      (begin
        (define (zero? x) (if (eq? x 'never) (zero? x) #f))
        (define (fl+ a b) (if (eq? a 'never) (fl+ a b) 99.0))
+       (define (fl* a b) (if (eq? a 'never) (fl* a b) 99.0))
+       (define (fl<? a b) (if (eq? a 'never) (fl<? a b) #f))
        (define (bitwise-and a b) (if (eq? a 'never) (bitwise-and a b) 99))
        (define (< a b) (if (eq? a 'never) (< a b) #f))
+       (define mvp (lambda (x) (if (eq? x 'never) (mvp x) 'mine)))
        (display (list (if (zero? 0) 'builtin 'mine)
+                      (if (< 1 2) 'builtin 'mine)
+                      (if (fl<? 1.0 2.0) 'builtin 'mine)
                       (fl+ 1.0 2.0)
+                      (fl* (fl+ 1.0 2.0) 1.0)
                       (bitwise-and 12 10)
-                      (if (< 1 2) 'builtin 'mine)))))))
+                      (bitwise-and (bitwise-and 12 10) 255)
+                      (mvp 0)))))))
 (m)
