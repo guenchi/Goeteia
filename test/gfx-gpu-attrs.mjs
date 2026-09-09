@@ -68,4 +68,87 @@ for (const f of ['float32', 'float32x2,float32,float32x2', 'uint32,sint32']) {
     for (const o of offsets(f))
         assert.ok(Number.isFinite(o), `offset ${o} for "${f}" is not a finite number`);
 }
+
+// ---- every width, not just the 32-bit ones ----
+//
+// ⭐ The original `* 4` assumed four bytes per component, so it was
+// wrong for EVERY format that is not 32-bit -- `float16x2` came out 8
+// bytes instead of 4, `uint8x4` came out 16 instead of 4.  That half
+// was invisible because everything in this tree today uses float32*,
+// and the cells above are all float32 too: they would have passed a
+// repair that fixed the scalar case and kept the four.
+//
+// ⚠️ These are here rather than left in the repair's own probe on
+// purpose.  A fix verified only by the assertions its author wrote is
+// verified by someone who already knows what they built; the suite has
+// to carry the dimension independently, or the coverage disappears when
+// that probe does.
+for (const [fmts, want] of [
+    ['float16x2,float32', [0, 4]],
+    ['float16x4,float32', [0, 8]],
+    ['uint8x2,float32', [0, 2]],
+    ['uint8x4,float32', [0, 4]],
+    ['unorm8x4,float32', [0, 4]],
+    ['snorm16x2,float32', [0, 4]],
+    ['uint16x4,float32', [0, 8]],
+    ['sint32x3,float32', [0, 12]],
+    // a run that changes width three times, which is what a packed
+    // vertex actually looks like
+    ['unorm8x4,float16x2,float32x3,uint16x2', [0, 4, 8, 20]],
+]) {
+    assert.deepEqual(offsets(fmts), want, `offsets for "${fmts}"`);
+}
+
+// ---- the whole legal set, enumerated ----
+//
+// ⭐ The implementation DERIVES sizes from the format's structure; this
+// list is copied from the specification.  Two different routes to the
+// same thirty answers, which is the point: a rule with a mistake in it
+// and a table with a mistake in it are unlikely to have the same
+// mistake, and neither is checking itself.
+//
+// ⛔ The list must not be generated from the same rule the code uses.
+// It would then agree by construction and say nothing.
+const LEGAL = {
+    'uint8x2': 2, 'uint8x4': 4, 'uint16x2': 4, 'uint16x4': 8,
+    'uint32': 4, 'uint32x2': 8, 'uint32x3': 12, 'uint32x4': 16,
+    'sint8x2': 2, 'sint8x4': 4, 'sint16x2': 4, 'sint16x4': 8,
+    'sint32': 4, 'sint32x2': 8, 'sint32x3': 12, 'sint32x4': 16,
+    'unorm8x2': 2, 'unorm8x4': 4, 'unorm16x2': 4, 'unorm16x4': 8,
+    'snorm8x2': 2, 'snorm8x4': 4, 'snorm16x2': 4, 'snorm16x4': 8,
+    'float16x2': 4, 'float16x4': 8,
+    'float32': 4, 'float32x2': 8, 'float32x3': 12, 'float32x4': 16,
+};
+assert.equal(Object.keys(LEGAL).length, 30, 'the enumerated set is the thirty of the spec');
+for (const [fmt, size] of Object.entries(LEGAL)) {
+    assert.deepEqual(offsets(`${fmt},${fmt}`), [0, size],
+                     `"${fmt}" must advance the offset by ${size}`);
+}
+
+// ---- what must be refused, by name ----
+//
+// ⛔ Not silently treated as zero.  A layout whose offsets are all zero
+// and one whose offsets are NaN both put nothing recognisable on the
+// screen, and the first is harder to find, because zero looks like a
+// number somebody meant.
+const refused = (fmt) => {
+    try { parseAttrs(fmt, 0); return null; }
+    catch (e) { return String(e.message || e); }
+};
+for (const bad of [
+    'float64',        // not a vertex format at all
+    'float32x5',      // no such component count
+    'wobble',         // not a format
+    'uint8',          // 8-bit exists only as x2 and x4
+    'float16',        // likewise 16-bit
+    'float8x2',       // there is no 8-bit float
+    'unorm32x2',      // normalized formats are 8- and 16-bit only
+    'unorm10-10-10-2',// real, and deliberately out of scope
+    '',               // the empty string is not a format
+]) {
+    const msg = refused(bad);
+    assert.ok(msg, `"${bad}" was accepted`);
+    assert.ok(msg.includes(bad) || bad === '',
+              `the refusal of "${bad}" does not name it: ${msg}`);
+}
 console.log('gfx-gpu-attrs: ok');
