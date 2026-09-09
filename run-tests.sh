@@ -330,6 +330,7 @@ fi
 run_mjs test/compile-cache.mjs quiet
 # The two 2026-09-06 defects whose counterexample is a compile-time
 # fact rather than a wrong value.  RED until they are fixed.
+run_mjs test/gfx-gpu-attrs.mjs
 run_mjs test/defect-c01-c04-compile-time.mjs quiet
 if $CAP ${NODE-node} test/duplicate-top-level.mjs >/dev/null 2>&1; then
     echo "ok   test/duplicate-top-level.mjs"
