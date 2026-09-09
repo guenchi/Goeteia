@@ -17,6 +17,13 @@
 ;; that is carried but not enforced is the shape where a malformed asset
 ;; stops being a rendering problem.
 ;;
+;; ⚠️ KNOWN LIMITATION, recorded so nobody later tries to close it: a
+;; slen that is too LARGE is not detectable here.  The format allows
+;; slack between the data and the tail, so a caller who reports more
+;; bytes than the stream really has is indistinguishable from one whose
+;; stream simply has more slack.  The bound below is about the data not
+;; fitting, which is a different and checkable thing.
+;;
 ;; Reported location: lib/gfx/meshopt.ss (the three entry points).
 (import (rnrs) (gfx meshopt))
 
@@ -66,8 +73,30 @@
 (load! SRC ok-comp)
 (check "G11-TWIN: a complete stream at its real length still decodes"
        (not (refuses? (lambda () (meshopt-vertex! SRC (llen ok-comp) DST 24 4)))))
-;; one byte short of the real length must NOT decode
+;; ⭐ The bound, from BOTH sides.  The first version of this cell asked
+;; for "one byte short is refused" and was wrong -- not too weak, wrong.
+;;
+;; Slack is normal in this format: this sixty-byte stream's data ends at
+;; offset 28 and its tail sits at 56, so twenty-eight bytes in the
+;; middle are spare, and the canonical stream in test/meshopt.ss has
+;; twenty-four spare the same way.  A length one byte short therefore
+;; still contains every byte the decoder reads; what shrank was the
+;; slack.  ⇒ It is not a truncated stream, it is a length reported one
+;; too large -- and this format carries nothing that could tell the
+;; difference.  A rule that demanded the data reach the tail exactly
+;; would refuse the suite's own known-good stream, which was measured
+;; rather than supposed.
+;;
+;; So the cell asks where the bound actually is.  28 bytes of data plus
+;; a 4-byte tail is 32, and the decoder refuses at 31 and decodes at 32
+;; -- measured across the whole range, on all three targets.  ⛔ Both
+;; halves are needed: without the 32, a decoder that refused everything
+;; short of the full sixty would pass; without the 31, one with no bound
+;; at all would.
 (load! SRC ok-comp)
-(check "G11-SHORT: the same stream one byte short is refused"
-       (refuses? (lambda () (meshopt-vertex! SRC (- (llen ok-comp) 1) DST 24 4))))
+(check "G11-BOUND: 31 bytes cannot hold the data and the tail, and are refused"
+       (refuses? (lambda () (meshopt-vertex! SRC 31 DST 24 4))))
+(load! SRC ok-comp)
+(check "G11-BOUND: 32 bytes exactly can, and still decode"
+       (not (refuses? (lambda () (meshopt-vertex! SRC 32 DST 24 4)))))
 (display (= failed 0))

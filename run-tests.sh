@@ -148,7 +148,17 @@ run_js() { # jsfile testfile
 # GOETEIA_TESTS narrows the loop to named files, so a change to the
 # verdict machinery can be exercised on one test instead of all of
 # them.  Unset -- which is how the gate runs it -- it is every test.
+# ⚠️ A name in GOETEIA_TESTS that is not a file used to reach the
+# compiler, which failed to open it, and the round printed
+# `(stage0 compile error)` -- so a test that DOES NOT EXIST read exactly
+# like a test that failed.  Measured: a session put an invented filename
+# in this variable and spent time reading the resulting red as a defect.
+# The two are different facts and now say different things.
 for t in ${GOETEIA_TESTS-test/*.ss}; do
+    if [ ! -f "$t" ]; then
+        echo "FAIL $t (no such file -- named in GOETEIA_TESTS but not on disk)"
+        fail=1; continue
+    fi
     want=$(head -1 "$t" | sed 's/^;; expect: //')
     $CAP ./bin/goeteiac "$t" "$T/test.wasm"; ec=$?
     if timed_out $ec; then

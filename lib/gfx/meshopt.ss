@@ -41,6 +41,45 @@
 
   (define ($u8 at) (%mem-u8-ref at))
   (define ($u8! at v) (%mem-u8-set! at (bitwise-and v 255)))
+
+  ;; ---- the source window ----
+  ;;
+  ;; Every entry point is handed `slen`, the number of bytes the caller
+  ;; actually has.  Threading that bound down through the group and
+  ;; plane readers would mean changing every signature between here and
+  ;; there, so it is set once at the entry point and checked in the one
+  ;; place every source byte passes through.
+  ;;
+  ;; The check happens BEFORE the read.  Checking afterwards would be
+  ;; too late in the way that matters: in linear memory, reading past
+  ;; the end of a buffer does not trap, it returns whatever the next
+  ;; buffer holds, so the decode would carry on and produce a mesh made
+  ;; of someone else's data.  The observable failure is not a crash, it
+  ;; is a plausible result.
+  ;;
+  ;; Module state rather than a parameter because these decoders are
+  ;; already non-reentrant -- the plane vectors below are shared the
+  ;; same way -- so one decode runs at a time.
+  ;;
+  ;; Destination reads (the filters, and the previous vertex a block
+  ;; reads back out of dst) deliberately do NOT go through here: dst is
+  ;; the caller's own output buffer, and its size is a different fact
+  ;; from slen.
+  (define $mo-lo 0)
+  (define $mo-hi 0)                     ; exclusive
+
+  (define ($src-window! src slen)
+    (set! $mo-lo src)
+    (set! $mo-hi (+ src slen)))
+
+  (define ($src-u8 at)
+    (when (or (< at $mo-lo) (>= at $mo-hi))
+      (error 'meshopt "source read out of bounds" at $mo-lo $mo-hi))
+    (%mem-u8-ref at))
+
+  (define ($mo-need who slen n)
+    (when (< slen n)
+      (error who "source is shorter than the format requires" slen n)))
   (define ($unzig v)                    ; (-(v&1)) ^ (v>>1)
     (bitwise-xor (- 0 (bitwise-and v 1))
                  (bitwise-arithmetic-shift-right v 1)))
@@ -62,7 +101,7 @@
      ((= bits 8)
       (let c ((i 0))
         (when (< i 16)
-          (vector-set! out i ($u8 (+ src i))) (c (+ i 1))))
+          (vector-set! out i ($src-u8 (+ src i))) (c (+ i 1))))
       (+ src 16))
      (else
       (let* ((fixed (quotient (* bits 16) 8))
@@ -73,15 +112,15 @@
               ov
               (let* ((bi (+ src (quotient i per)))
                      (byte (if (= bits 1)
-                               ($mo-rev8 ($u8 bi))
-                               ($u8 bi)))
+                               ($mo-rev8 ($src-u8 bi))
+                               ($src-u8 bi)))
                      (slot (remainder i per))
                      (shift (- 8 bits (* slot bits)))
                      (enc (bitwise-and
                            (bitwise-arithmetic-shift-right byte shift)
                            sentinel)))
                 (if (= enc sentinel)
-                    (begin (vector-set! out i ($u8 ov))
+                    (begin (vector-set! out i ($src-u8 ov))
                            (val (+ i 1) (+ ov 1)))
                     (begin (vector-set! out i enc)
                            (val (+ i 1) ov))))))))))
@@ -106,7 +145,7 @@
       (let g ((gi 0) (data (+ src hsize)))
         (if (= gi ngroups)
             data
-            (let* ((hb ($u8 (+ src (quotient gi 4))))
+            (let* ((hb ($src-u8 (+ src (quotient gi 4))))
                    (sel (bitwise-and
                          (bitwise-arithmetic-shift-right
                           hb (* (remainder gi 4) 2))
@@ -120,12 +159,18 @@
               (g (+ gi 1) data2))))))
 
   (define (meshopt-vertex! src slen dst count stride)
-    (let* ((header ($u8 src))
+    (unless (and (> stride 0) (= 0 (remainder stride 4)) (<= stride 256))
+      (error 'meshopt-vertex! "stride must be a positive multiple of 4, at most 256" stride))
+    (when (< count 0) (error 'meshopt-vertex! "negative count" count))
+    ($mo-need 'meshopt-vertex! slen 1)
+    ($src-window! src slen)
+    (let* ((header ($src-u8 src))
            (version (bitwise-and header 15)))
       (unless (= (bitwise-and header #xF0) #xA0)
         (error 'meshopt "bad vertex header"))
       (unless (<= version 1) (error 'meshopt "vertex version" version))
       (let* ((tail-size (+ stride (if (= version 0) 0 (quotient stride 4))))
+             (ignore ($mo-need 'meshopt-vertex! slen (+ 1 tail-size)))
              (tail (+ src slen tail-size (- 0 tail-size) (- slen slen)))
              (tail-at (+ src (- slen tail-size)))
              (last (make-vector stride 0))
@@ -133,13 +178,28 @@
              (blk (min (bitwise-and (quotient 8192 stride) -16) 256)))
         ;; seed the last vertex (and channels for v1) from the tail
         (let s ((i 0)) (when (< i stride)
-                         (vector-set! last i ($u8 (+ tail-at i)))
+                         (vector-set! last i ($src-u8 (+ tail-at i)))
                          (s (+ i 1))))
         (when (= version 1)
           (let c ((i 0)) (when (< i (quotient stride 4))
                            (vector-set! chans i
-                                        ($u8 (+ tail-at stride i)))
+                                        ($src-u8 (+ tail-at stride i)))
                            (c (+ i 1)))))
+        ;; The tail has been read; from here the data region is all the
+        ;; decoder may touch.  Narrowing the window to end where the
+        ;; tail begins is what makes a truncated stream fail: with one
+        ;; byte missing the tail simply sits one byte earlier, every
+        ;; read stays inside the buffer, and only the data's own extent
+        ;; is wrong.
+        ($src-window! (+ src 1) (- tail-at src 1))
+        ;; ⚠️ What is NOT checked, and cannot be: that the data ends
+        ;; exactly where the tail begins.  These streams carry slack --
+        ;; the suite's canonical vertex stream decodes correctly with
+        ;; its data ending 24 bytes before the tail -- so requiring
+        ;; exact consumption refuses streams that are known good.  The
+        ;; half that can be enforced is the window: no read reaches the
+        ;; tail.  A stream whose slen is merely LARGER than it needs is
+        ;; therefore indistinguishable from a correct one here.
         (let block ((voff 0) (data (+ src 1)))
           (if (>= voff count)
               #t
@@ -171,7 +231,7 @@
             ;; version 0: four independent byte-planes, each type 0.
             ;; version 1: a control byte per column drives the four
             ;; planes, then the column's channel type reconstitutes
-            (let* ((cb (if (= version 0) 0 ($u8 (+ ctrl-at (quotient k 4))))))
+            (let* ((cb (if (= version 0) 0 ($src-u8 (+ ctrl-at (quotient k 4))))))
               (let plane ((j 0) (data data))
                 (if (= j 4)
                     ;; the four planes are filled; delta-decode them
@@ -194,7 +254,7 @@
                         (plane (+ j 1) data))
                        ((and (= version 1) (= ctrl 3)) ; literal
                         (let c ((i 0)) (when (< i bs)
-                                         (vector-set! pl i ($u8 (+ data i)))
+                                         (vector-set! pl i ($src-u8 (+ data i)))
                                          (c (+ i 1))))
                         (plane (+ j 1) (+ data bs)))
                        (else
@@ -293,7 +353,14 @@
 
   ;; ---- the index codec (TRIANGLES) ----
   (define (meshopt-index! src slen dst count stride)
-    (let* ((header ($u8 src))
+    (unless (or (= stride 2) (= stride 4))
+      (error 'meshopt-index! "stride must be 2 or 4" stride))
+    (when (< count 0) (error 'meshopt-index! "negative count" count))
+    ;; one header byte, one code byte per triangle, and the sixteen-byte
+    ;; aux block the codes index into
+    ($mo-need 'meshopt-index! slen (+ 1 (quotient count 3) 16))
+    ($src-window! src slen)
+    (let* ((header ($src-u8 src))
            (version (bitwise-and header 15)))
       (unless (= (bitwise-and header #xF0) #xE0)
         (error 'meshopt "bad index header"))
@@ -330,7 +397,11 @@
           (vector-ref vfifo (bitwise-and (- (vector-ref voff 0) 1 i) 15))))
                  (decodev (lambda ()                 ; LEB128 + zigzag delta
           (let loop ((v 0) (sh 0))
-            (let ((b ($u8 (vector-ref data 0))))
+            ;; a LEB128 value wider than 32 bits cannot be an index, and
+            ;; without this an all-0x80 run walks the whole window while
+            ;; the shift grows without limit
+            (when (>= sh 35) (error 'meshopt "varint too long"))
+            (let ((b ($src-u8 (vector-ref data 0))))
               (vector-set! data 0 (+ (vector-ref data 0) 1))
               (let ((v (bitwise-ior
                         v (bitwise-arithmetic-shift-left
@@ -341,7 +412,7 @@
                     (loop v (+ sh 7))))))))) ; close decodev lambda+binding
         (let tri ((t 0))
           (when (< t (quotient count 3))
-            (let ((ct ($u8 (+ code t))))
+            (let ((ct ($src-u8 (+ code t))))
               (cond
                ((< ct #xF0)
                 (let* ((fe (bitwise-arithmetic-shift-right ct 4))
@@ -369,7 +440,7 @@
                              (let ((c (decodev))) (pushv c) c)))))
                     (pushe c b) (pushe a c) (emit a b c))))
                ((< ct #xFE)
-                (let* ((codeaux ($u8 (+ aux (bitwise-and ct 15))))
+                (let* ((codeaux ($src-u8 (+ aux (bitwise-and ct 15))))
                        (feb (bitwise-arithmetic-shift-right codeaux 4))
                        (fec (bitwise-and codeaux 15))
                        (a (vector-ref state 0)))
@@ -388,7 +459,7 @@
                     (when (= fec 0) (pushv c))
                     (pushe b a) (pushe c b) (pushe a c))))
                (else
-                (let ((codeaux ($u8 (vector-ref data 0))))
+                (let ((codeaux ($src-u8 (vector-ref data 0))))
                   (vector-set! data 0 (+ (vector-ref data 0) 1))
                   (when (= codeaux 0)
                     (vector-set! state 0 0)
@@ -428,12 +499,21 @@
 
   ;; the dual-baseline index sequence (INDICES)
   (define (meshopt-index-sequence! src slen dst count stride)
+    (unless (or (= stride 2) (= stride 4))
+      (error 'meshopt-index-sequence! "stride must be 2 or 4" stride))
+    (when (< count 0) (error 'meshopt-index-sequence! "negative count" count))
+    ($mo-need 'meshopt-index-sequence! slen 2)
+    ($src-window! src slen)
     (let ((last (vector 0 0))
           (data (vector (+ src 1))))
       (let each ((i 0))
         (when (< i count)
           (let loop ((v 0) (sh 0))
-            (let ((b ($u8 (vector-ref data 0))))
+            ;; a LEB128 value wider than 32 bits cannot be an index, and
+            ;; without this an all-0x80 run walks the whole window while
+            ;; the shift grows without limit
+            (when (>= sh 35) (error 'meshopt "varint too long"))
+            (let ((b ($src-u8 (vector-ref data 0))))
               (vector-set! data 0 (+ (vector-ref data 0) 1))
               (let ((v (bitwise-ior v (bitwise-arithmetic-shift-left
                                        (bitwise-and b 127) sh))))
