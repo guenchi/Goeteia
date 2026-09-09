@@ -1,0 +1,345 @@
+// Copyright 2026 guenchi
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+// Drive a real browser over the DevTools protocol, so that a shader can
+// be handed to a real GLSL compiler and a page can be made to really
+// draw.
+//
+// Why this exists: the page verifier's GL is a recording stub --
+// rt/verify.mjs has `compileShader() {}` and `getShaderParameter: () =>
+// true` -- so every shader "compiles" there and an invalid one passes
+// every page test with draws counted and frames animated.  A check that
+// answers yes to everything is worse than no check: without one people
+// stay careful.  What a real browser adds over a shader compiler alone
+// is the other half of the question -- it links the program and runs
+// the draw, so "does this compile" and "does this page produce pixels"
+// are answered by one instrument.
+//
+// Measured on this machine (2026-09-09), which is why the probe order
+// below is what it is:
+//
+//   Google Chrome 152 / Chrome for Testing 141, --headless=new
+//       -> webgl2, ANGLE Metal on the real GPU; a legal shader
+//          compiles, a program links, a triangle reads back green
+//   chrome-headless-shell 141
+//       -> getContext('webgl2') returns NULL: no context at all
+//
+// !! The smallest, fastest binary is the one that does not work.  Do
+// not "simplify" this to chrome-headless-shell: it would not fail, it
+// would pass everything, which is the stub all over again.
+//
+// No npm dependency: node's built-in WebSocket speaks CDP directly.
+//
+// Usage:
+//   node tools/cdp.mjs            run the self-check
+//   GOETEIA_CHROME=/path/to/bin   use that binary instead of probing
+//   GOETEIA_CHROME=none           force the absent path (for testing it)
+
+import { spawn, execFileSync } from 'child_process';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
+
+// ---- which browser, and saying so ----
+//
+// The version is printed on every run rather than asserted.  An
+// assertion on it would turn every browser update into a false red;
+// printing it makes an update show up as CHANGED TEXT in the log, the
+// way the gate reader derives its counts from the log instead of
+// keeping expected constants that silently stop matching.
+export function findChrome() {
+    const override = process.env.GOETEIA_CHROME;
+    if (override === 'none') return null;
+    if (override) {
+        return isExecutable(override) ? describe(override) : null;
+    }
+    for (const c of candidates()) if (isExecutable(c)) return describe(c);
+    return null;
+}
+
+function candidates() {
+    const home = os.homedir();
+    const out = [];
+    // A pinned version first: it is decoupled from the browser the
+    // person is using and from its updates.  It is only ever a
+    // preference, never a requirement -- it lives in a cache directory
+    // that nothing maintains, so its absence must cost nothing.
+    const cache = path.join(home, '.cache', 'puppeteer', 'chrome');
+    if (fs.existsSync(cache)) {
+        for (const v of fs.readdirSync(cache).sort().reverse()) {
+            const app = path.join(cache, v);
+            for (const dir of safeReaddir(app)) {
+                out.push(path.join(app, dir, 'Google Chrome for Testing.app',
+                                   'Contents', 'MacOS', 'Google Chrome for Testing'));
+                out.push(path.join(app, dir, 'chrome'));           // linux layout
+            }
+        }
+    }
+    out.push('/Applications/Google Chrome.app/Contents/MacOS/Google Chrome');
+    out.push(path.join(home, 'Applications', 'Google Chrome.app',
+                       'Contents', 'MacOS', 'Google Chrome'));
+    out.push('/usr/bin/google-chrome');
+    out.push('/usr/bin/chromium');
+    // deliberately NOT chrome-headless-shell -- see the header
+    return out;
+}
+
+const safeReaddir = d => { try { return fs.readdirSync(d); } catch { return []; } };
+const isExecutable = p => { try { fs.accessSync(p, fs.constants.X_OK); return true; } catch { return false; } };
+
+function describe(bin) {
+    // The version is the whole of the drift-visibility rule, so a
+    // failure to read it is REPORTED, not smoothed over: an earlier
+    // draft caught the error and printed "(version unavailable)", which
+    // read like a harmless quirk while the log quietly stopped carrying
+    // the one thing that makes a browser update visible.
+    let version;
+    try {
+        version = execFileSync(bin, ['--version'],
+                               { encoding: 'utf8', timeout: 10000 }).trim();
+    } catch (e) {
+        version = `!! could not read --version: ${e.message}`;
+    }
+    return { path: bin, version };
+}
+
+// ---- one browser process, many pages ----
+//
+// Launching costs 0.6s (installed Chrome) to 2.1s (Chrome for Testing)
+// on this machine, and that is PER PROCESS.  A caller with twenty
+// shaders to check opens twenty pages on one browser, not twenty
+// browsers.
+export async function withBrowser(fn, { timeoutMs = 30000 } = {}) {
+    const found = findChrome();
+    if (!found) throw new NoBrowser();
+    const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'goeteia-cdp-'));
+    const proc = spawn(found.path, [
+        '--headless=new', '--remote-debugging-port=0',
+        `--user-data-dir=${profile}`, '--no-first-run',
+        '--no-default-browser-check', '--disable-extensions',
+        'about:blank',
+    ]);
+    // An instrument that hangs is worse than one that fails: it stalls
+    // whatever is waiting on it and reads as "still going".  Every wait
+    // below is bounded.
+    const kill = () => { try { proc.kill('SIGKILL'); } catch { /* already gone */ } };
+    const guard = setTimeout(kill, timeoutMs);
+    try {
+        const endpoint = await readEndpoint(proc, timeoutMs);
+        const session = await connect(endpoint, timeoutMs);
+        try {
+            return await fn({ ...session, browser: found });
+        } finally {
+            session.close();
+        }
+    } finally {
+        clearTimeout(guard);
+        kill();
+        fs.rmSync(profile, { recursive: true, force: true });
+    }
+}
+
+export class NoBrowser extends Error {
+    constructor() { super('no Chrome binary found'); this.name = 'NoBrowser'; }
+}
+
+function readEndpoint(proc, timeoutMs) {
+    return new Promise((resolve, reject) => {
+        let buf = '';
+        const t = setTimeout(
+            () => reject(new Error('the browser printed no DevTools endpoint')), timeoutMs);
+        proc.stderr.on('data', d => {
+            buf += d;
+            const m = buf.match(/ws:\/\/\S+/);
+            if (m) { clearTimeout(t); resolve(m[0]); }
+        });
+        proc.on('exit', code => {
+            clearTimeout(t);
+            reject(new Error(`the browser exited before listening (code ${code})`));
+        });
+    });
+}
+
+async function connect(endpoint, timeoutMs) {
+    const sock = new WebSocket(endpoint);
+    await withTimeout(new Promise((res, rej) => {
+        sock.addEventListener('open', res);
+        sock.addEventListener('error', () => rej(new Error('could not open the DevTools socket')));
+    }), timeoutMs, 'opening the DevTools socket');
+    let nextId = 0;
+    const waiting = new Map();
+    sock.addEventListener('message', ev => {
+        const m = JSON.parse(ev.data);
+        if (m.id && waiting.has(m.id)) { waiting.get(m.id)(m); waiting.delete(m.id); }
+    });
+    const send = (method, params = {}, sessionId) => withTimeout(
+        new Promise(res => {
+            const id = ++nextId;
+            waiting.set(id, res);
+            sock.send(JSON.stringify({ id, method, params, ...(sessionId ? { sessionId } : {}) }));
+        }), timeoutMs, method);
+
+    // Each page is its own target on this one browser process.
+    async function evaluateInNewPage(expression) {
+        const { result: target } = await send('Target.createTarget', { url: 'about:blank' });
+        try {
+            const { result: att } = await send(
+                'Target.attachToTarget', { targetId: target.targetId, flatten: true });
+            const reply = await send('Runtime.evaluate', {
+                expression, returnByValue: true, awaitPromise: true,
+            }, att.sessionId);
+            if (reply.result?.exceptionDetails) {
+                throw new Error('the page threw: ' +
+                    (reply.result.exceptionDetails.exception?.description ??
+                     reply.result.exceptionDetails.text));
+            }
+            return reply.result?.result?.value;
+        } finally {
+            await send('Target.closeTarget', { targetId: target.targetId })
+                .catch(() => { /* the browser is about to be killed anyway */ });
+        }
+    }
+    return { evaluateInNewPage, close: () => sock.close() };
+}
+
+function withTimeout(p, ms, what) {
+    return Promise.race([
+        p,
+        new Promise((_, rej) => setTimeout(
+            () => rej(new Error(`timed out after ${ms}ms: ${what}`)), ms)),
+    ]);
+}
+
+// ---- the question this tool exists to answer ----
+//
+// Returns, for one vertex/fragment pair: whether each shader compiled,
+// the compiler's own log, whether the program linked, and -- when it
+// did -- the pixel at the centre after drawing a full-screen triangle.
+export function shaderProbe(vertexSrc, fragmentSrc) {
+    return `(() => {
+  const c = document.createElement('canvas'); c.width = 8; c.height = 8;
+  const gl = c.getContext('webgl2') || c.getContext('webgl');
+  if (!gl) return { context: null };
+  const dbg = gl.getExtension('WEBGL_debug_renderer_info');
+  const build = (kind, src) => {
+    const s = gl.createShader(kind);
+    gl.shaderSource(s, src); gl.compileShader(s);
+    return { shader: s,
+             ok: !!gl.getShaderParameter(s, gl.COMPILE_STATUS),
+             log: (gl.getShaderInfoLog(s) || '').trim() };
+  };
+  const vs = build(gl.VERTEX_SHADER, ${JSON.stringify(vertexSrc)});
+  const fs = build(gl.FRAGMENT_SHADER, ${JSON.stringify(fragmentSrc)});
+  const out = {
+    context: (typeof WebGL2RenderingContext !== 'undefined' &&
+              gl instanceof WebGL2RenderingContext) ? 'webgl2' : 'webgl1',
+    renderer: dbg ? gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL)
+                  : gl.getParameter(gl.RENDERER),
+    vertex: { ok: vs.ok, log: vs.log },
+    fragment: { ok: fs.ok, log: fs.log },
+    linked: false, pixel: null,
+  };
+  if (!vs.ok || !fs.ok) return out;
+  const p = gl.createProgram();
+  gl.attachShader(p, vs.shader); gl.attachShader(p, fs.shader); gl.linkProgram(p);
+  out.linked = !!gl.getProgramParameter(p, gl.LINK_STATUS);
+  out.linkLog = (gl.getProgramInfoLog(p) || '').trim();
+  if (!out.linked) return out;
+  gl.useProgram(p);
+  const b = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, b);
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1, 3,-1, -1,3]), gl.STATIC_DRAW);
+  const loc = gl.getAttribLocation(p, 'a_pos');
+  if (loc >= 0) {
+    gl.enableVertexAttribArray(loc);
+    gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
+  }
+  gl.viewport(0, 0, 8, 8);
+  gl.clearColor(0, 0, 0, 1); gl.clear(gl.COLOR_BUFFER_BIT);
+  gl.drawArrays(gl.TRIANGLES, 0, 3);
+  const px = new Uint8Array(4);
+  gl.readPixels(4, 4, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px);
+  out.pixel = Array.from(px);
+  return out;
+})()`;
+}
+
+export async function checkShader(page, vertexSrc, fragmentSrc) {
+    return page.evaluateInNewPage(shaderProbe(vertexSrc, fragmentSrc));
+}
+
+// ---- the self-check ----
+//
+// The first case is the reason the tool exists: a shader that MUST be
+// refused.  If it ever passes, what we are talking to is a stub again,
+// and every other green here means nothing.  The second is its
+// opposite: legal source that must compile, link and put pixels on the
+// screen -- without it, "refused everything" would also look like
+// success.
+const LEGAL_VS = 'attribute vec2 a_pos; void main(){ gl_Position = vec4(a_pos, 0.0, 1.0); }';
+const LEGAL_FS = 'void main(){ gl_FragColor = vec4(0.0, 1.0, 0.0, 1.0); }';
+const TYPE_ERROR_VS = 'void main(){ int n = 1.0; gl_Position = vec4(0.0); }';
+
+async function selfCheck() {
+    const found = findChrome();
+    if (!found) {
+        // Absence is announced in the vocabulary run-tests.sh lifts out
+        // of a test's output and the gate reader counts, so a stood-down
+        // check appears in the summary instead of vanishing.
+        console.log('NOT EXERCISED HERE (no Chrome binary beside this tree; ' +
+                    'the shader-compile and render checks stand down)');
+        return 0;
+    }
+    console.log(`browser: ${found.path}`);
+    console.log(`version: ${found.version}`);
+    const problems = [];
+    await withBrowser(async page => {
+        const legal = await checkShader(page, LEGAL_VS, LEGAL_FS);
+        console.log(`context: ${legal.context}   renderer: ${legal.renderer}`);
+        if (!legal.context) problems.push('no WebGL context at all');
+        if (!legal.vertex.ok) problems.push(`a legal vertex shader was refused: ${legal.vertex.log}`);
+        if (!legal.fragment.ok) problems.push(`a legal fragment shader was refused: ${legal.fragment.log}`);
+        if (!legal.linked) problems.push(`a legal program did not link: ${legal.linkLog}`);
+        const px = legal.pixel;
+        if (!px || px[0] !== 0 || px[1] !== 255 || px[2] !== 0) {
+            problems.push(`the drawn pixel was ${JSON.stringify(px)}, not green`);
+        } else {
+            console.log(`drew a triangle and read back ${JSON.stringify(px)}`);
+        }
+
+        const bad = await checkShader(page, TYPE_ERROR_VS, LEGAL_FS);
+        if (bad.vertex.ok) {
+            problems.push('`int n = 1.0;` COMPILED -- this is a stub, not a compiler');
+        } else if (!/\d+:\d+|\d+/.test(bad.vertex.log)) {
+            problems.push(`the refusal carried no line number: ${bad.vertex.log}`);
+        } else {
+            console.log(`refused \`int n = 1.0;\` -- ${bad.vertex.log.split('\n')[0]}`);
+        }
+    });
+    if (problems.length) {
+        for (const p of problems) console.log(`  FAIL ${p}`);
+        return 1;
+    }
+    console.log('self-check ok');
+    return 0;
+}
+
+if (import.meta.url === `file://${process.argv[1]}`) {
+    // Exit with the VERDICT.  A script that ends on its last incidental
+    // command reports that command's status, and a caller reading it
+    // gets a green that means "the cleanup worked".
+    process.exitCode = await selfCheck().catch(e => {
+        console.log(`  FAIL ${e.message}`);
+        return 1;
+    });
+}
