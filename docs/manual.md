@@ -3771,6 +3771,13 @@ func -> *entities -> procedure -> void
 skipped, and entities spawned during it are visited on the **next** walk.
 Without that, spawning from inside a walk could extend it forever.
 
+Components are a small association per entity: right for hundreds of
+entities, wrong for hundreds of thousands. That is a sizing question,
+and it is here rather than in the long form because a reader answers it
+when choosing the library, not when reading about it. If someone
+measures a need for an index, adding one does not change this
+interface.
+
 Long form in `docs/simulation.md`.
 
 ### `(sim schedule)`: What Runs Each Tick
@@ -3854,7 +3861,9 @@ Runs the body once per whole step that is now due. **The count is
 derived from the total elapsed time every call, not accumulated**, so
 one frame's rounding is never carried into the next. `max-steps` caps
 how many steps one advance may run: without it a stall produces a burst
-of catch-up steps whose cost produces the next stall.
+of catch-up steps whose cost produces the next stall. **The body always
+receives the configured step**, never a partial one, so a system may
+treat its argument as a constant.
 
 ```
 procedure: (fixed-step-alpha c)
@@ -3890,12 +3899,22 @@ positive fixnum bound; `random-range!` refuses a range that is empty in
 flonum precision rather than answering its own upper end. Every draw
 advances the state exactly once.
 
+`make-rng` refuses a seed that is not a fixnum: a seed is what a replay
+is written down as, and one that cannot be written down is a mistake
+worth hearing about at the call.
+
 The generator is MINSTD, period 2147483646, and **it is not
 cryptographic**: two successive draws determine the state. The algorithm
 is written out in `docs/simulation.md` in enough detail to implement
-again, along with a published check value for the bare recurrence. For
-what is and is not bit-identical across the two compiler targets, see
-`docs/determinism.md`.
+again, along with a published check value for the bare recurrence.
+
+Every draw this generator makes is the same on both compiler targets: it
+uses only exact integer arithmetic, and `random-real!`'s division has
+both operands inside 2^31 where a flonum is exact. That is a property of
+the arithmetic, not a promise this file is making on behalf of another.
+(The one place the two targets do differ — `eq?` on separately computed
+bignums — has nothing to do with this generator; see D2a in
+`docs/determinism.md`.)
 
 Long form in `docs/simulation.md`.
 
@@ -3924,6 +3943,9 @@ every other and cell `-1` an address that never occurs — and nothing
 raises, so the world simply has one seam where objects pile up. Floor
 and truncation agree on the positive side, which is why the bug survives
 every test written in the first quadrant.
+
+A cell size of zero or less is refused by name; the index that comes
+back is an exact integer, because callers address something with it.
 
 **Cells are half-open**, `[origin, origin + size)`, so a point exactly on
 an edge belongs to the cell it *opens* and has exactly one owner. Under
