@@ -405,7 +405,8 @@ for m in test/macro-toplevel-hygiene.mjs \
          test/defect-r02-driver-block-comment.mjs \
          test/cdp-teardown.mjs \
          test/defect-library-export-unchecked.mjs \
-         test/defect-r03-r04-repl.mjs; do
+         test/defect-r03-r04-repl.mjs \
+         test/defect-r09-worker-listener-revocation.mjs; do
     if $CAP ${NODE-node} --test "$m" >/dev/null 2>&1; then
         echo "ok   $m"
     else
