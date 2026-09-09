@@ -48,12 +48,14 @@
           audio-now audio-advance!
           audio-log-length audio-op audio-time-at audio-arg audio-arg-num audio-arg-count
           audio-find audio-find-from audio-fire-ended!
-          audio-node-field)
+          audio-node-field
+          audio-target-of audio-path-from audio-node-kind audio-path-kinds
+          audio-newest-of-kind audio-nodes-created)
   (import (rnrs) (web js))
 
   (define (audio-mock-install!)
     (js-eval "
-globalThis.__audio = { log: [], now: 0, ids: 0, nodes: {} };
+globalThis.__audio = { log: [], now: 0, ids: 0, nodes: {}, edges: {} };
 (function () {
   const A = globalThis.__audio;
   // 'absent' is a distinct reading from 0: see the file header.
@@ -77,12 +79,25 @@ globalThis.__audio = { log: [], now: 0, ids: 0, nodes: {} };
       id: id, kind: kind,
       started: 'absent', stopped: 'absent', onended: null,
       connect(dst, out, inp) {
-        rec('connect', [id, (dst && dst.id) || String(dst), arg(out), arg(inp)]);
+        const to = (dst && dst.id) || String(dst);
+        rec('connect', [id, to, arg(out), arg(inp)]);
+        // ⭐ The edge is ALSO kept outside the log, and survives a
+        // reset.  The log is what happened in this section; the graph
+        // is a structure that persists, and reading one out of the
+        // other made every path assertion depend on where the section
+        // breaks fell.  Measured: inserting one harmless
+        // audio-mock-reset! between two sections turned a cell about
+        // the library red, because the bus's edge to the destination is
+        // recorded once, when the bus is born.
+        (A.edges[id] = A.edges[id] || []).push(to);
         return dst;
       },
       disconnect(dst, out, inp) {
-        rec('disconnect', [id, (dst && dst.id) || (dst === undefined ? 'absent' : String(dst)),
-                           arg(out), arg(inp)]);
+        const to = (dst && dst.id) || (dst === undefined ? 'absent' : String(dst));
+        rec('disconnect', [id, to, arg(out), arg(inp)]);
+        if (A.edges[id]) {
+          A.edges[id] = (dst === undefined) ? [] : A.edges[id].filter(d => d !== to);
+        }
       },
       start(t) { n.started = arg(t); rec('start', [id, arg(t)]) },
       stop(t) { n.stopped = arg(t); rec('stop', [id, arg(t)]) },
@@ -96,6 +111,16 @@ globalThis.__audio = { log: [], now: 0, ids: 0, nodes: {} };
   // Scheme: (web js) exports no type predicates, so a Scheme-side
   // reader would have to guess what a recorded argument is, and guess
   // wrong exactly where an argument is 'absent'.
+  // The node a given node currently feeds: the last edge added and not
+  // removed.  ⚠️ A node with several live outputs (the pan branch feeds
+  // two gains) answers with the last of them -- the same answer the
+  // log-scanning version gave, kept deliberately so that this change
+  // fixes the reset dependence without also changing what any existing
+  // cell means.  A cell that needs every output needs a new reader.
+  A.targetOf = (id) => {
+    const es = A.edges[id];
+    return (es && es.length) ? es[es.length - 1] : '';
+  };
   A.argStr = (i, k) => { const v = A.log[i].args[k]; return v === undefined ? 'absent' : String(v) };
   A.argNum = (i, k) => { const v = A.log[i].args[k]; return typeof v === 'number' ? v : NaN };
   A.field = (id, name) => {
@@ -154,6 +179,27 @@ globalThis.__audio = { log: [], now: 0, ids: 0, nodes: {} };
   (define (call2 name a b)
     (js-call (js-get (A) name) (A) a b))
 
+  ;; How many nodes the mock has made, ever.  ⭐ This deliberately
+  ;; SURVIVES audio-mock-reset!, and that is the whole reason it exists:
+  ;; counting nodes out of the log counts only the ones whose connect is
+  ;; still in the log, so a node made before a reset stops existing as
+  ;; far as that count is concerned.  A cell asserting "this many nodes
+  ;; were made" over a reset then answers about a smaller world than the
+  ;; one it means, and it answers it confidently.
+  ;;
+  ;; ⚠️ Measured, not argued: a cell counting connect-sources could not
+  ;; see a mutant that built the bus during audio-init! -- the bus's
+  ;; connect was cleared by the reset, so the count came out at exactly
+  ;; the number the cell expected.  Counting creations sees it (5, not
+  ;; 4).  Take a mark and subtract; do not reset.
+  (define (audio-nodes-created) (js->number (js-get (A) "ids")))
+
+  ;; ⚠️ Empties the log AND the clock.  In this instrument the log IS
+  ;; the graph -- audio-target-of reads edges out of it -- so an edge
+  ;; made before a reset is not merely unlisted, it is gone, and a path
+  ;; that crosses it stops early with no sign that anything was lost.
+  ;; ⇒ A section that wants a fresh count and a whole graph must take a
+  ;; mark (audio-log-length) and count from it, not reset.
   (define (audio-mock-reset!)
     (js-eval "globalThis.__audio.log.length = 0; globalThis.__audio.now = 0;"))
 
@@ -197,4 +243,53 @@ globalThis.__audio = { log: [], now: 0, ids: 0, nodes: {} };
   ;; both would let a cell about a node that does not exist read as a
   ;; cell about a node that was never started.
   (define (audio-node-field id name)
-    (js->string (call2 "field" (string->js id) (string->js name)))))
+    (js->string (call2 "field" (string->js id) (string->js name))))
+
+  ;; ---- reading the graph, not just the log ----
+  ;; These live here rather than in each test because two files need
+  ;; them, and a copied instrument is two instruments that drift.
+  ;;
+  ;; A node's current target is the destination of its LAST connect that
+  ;; no later disconnect has undone.  ⚠️ A graph that is rewired -- a
+  ;; bus switched between two downstreams, say -- legitimately has more
+  ;; than one connect per node over its life, and only the last one is
+  ;; the graph as it now stands.  Reading the FIRST would make every
+  ;; assertion after a rewire describe the graph before it, and it would
+  ;; do so quietly: the answer is a real node id either way.
+  ;; #f rather than "" for a node that feeds nothing: the empty string
+  ;; would be a node id as far as every caller here is concerned, and
+  ;; audio-path-from would follow it.
+  (define (audio-target-of id)
+    (let ((v (js->string (js-call (js-get (A) "targetOf") (A) (string->js id)))))
+      (if (string=? v "") #f v)))
+
+  ;; The chain of node ids from one node onwards.  Bounded, and a run
+  ;; that hits the bound answers "runaway" rather than looping: a cycle
+  ;; is something these tests should report, not hang on.
+  (define (audio-path-from id)
+    (let loop ((id id) (n 0) (out '()))
+      (cond ((> n 12) (reverse (cons "runaway" out)))
+            ((not id) (reverse out))
+            (else (loop (audio-target-of id) (+ n 1) (cons id out))))))
+
+  (define (audio-node-kind id)          ; "GAIN#7" -> "GAIN"
+    (let loop ((i 0))
+      (cond ((= i (string-length id)) id)
+            ((char=? (string-ref id i) #\#) (substring id 0 i))
+            (else (loop (+ i 1))))))
+
+  (define (audio-path-kinds id) (map audio-node-kind (audio-path-from id)))
+
+  ;; The most recently created node of a kind that has been connected to
+  ;; something.  Tests ask this because the library, not the test, makes
+  ;; the nodes: there is no other way to name "the source play! just
+  ;; started".  Answers "no-such-node" rather than #f so that a cell
+  ;; asking about a node that was never made fails with a readable
+  ;; comparison instead of a type error.
+  (define (audio-newest-of-kind kindname)
+    (let loop ((i 0) (found "no-such-node"))
+      (cond ((>= i (audio-log-length)) found)
+            ((and (string=? (audio-op i) "connect")
+                  (string=? (audio-node-kind (audio-arg i 0)) kindname))
+             (loop (+ i 1) (audio-arg i 0)))
+            (else (loop (+ i 1) found))))))

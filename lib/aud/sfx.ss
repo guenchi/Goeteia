@@ -33,7 +33,8 @@
 (library (aud sfx)
   (export audio-init! audio-time
           beep! load-sound! play! loop-sound! stop-sound!
-          audio-voices! audio-voice-count)
+          audio-voices! audio-voice-count
+          audio-limiter!)
   (import (rnrs) (web js) (aud mix))
 
   (define $audio-ctx #f)
@@ -217,9 +218,108 @@
   ;; gain is 1".  A node inserted at unity changes no sample and every
   ;; graph, which is why the compatibility check reads the graph.
   (define $audio-bus #f)
+  (define $audio-limiter #f)            ; the compressor, or #f when off
 
   (define ($audio-out)
     (or $audio-bus (js-get ($audio-ctx!) "destination")))
+
+  ;; The master bus: one gain at unity that everything but beep! plays
+  ;; through, so that turning the limiter on or off is ONE rewiring and
+  ;; not one per voice.  Every sound already playing is on the bus, so
+  ;; both directions take effect at once -- which matters because
+  ;; loop-sound! never ends on its own, and a switch that only affects
+  ;; later sounds would never reach the music it exists to hold down.
+  ;;
+  ;; It is created by whichever arrives first, a first sound or a first
+  ;; limiter call.  It is deliberately NOT created with the context: a
+  ;; program that only ever calls beep! must not grow a node it never
+  ;; uses, and the compatibility whitelist reads the graph of exactly
+  ;; that program.
+  (define ($audio-bus!)
+    (or $audio-bus
+        (let* ((ctx ($audio-ctx!))
+               (bus (js-method ctx "createGain")))
+          (js-set! (js-get bus "gain") "value" 1.0)
+          (js-method bus "connect" ($bus-target))
+          (set! $audio-bus bus)
+          bus)))
+
+  ;; Where the bus feeds: the compressor when there is one, the
+  ;; destination when there is not.  ONE place answers it, so the two
+  ;; directions of the switch cannot drift apart.
+  (define ($bus-target)
+    (or $audio-limiter (js-get ($audio-ctx!) "destination")))
+
+  ;; Moving an EXISTING bus.  A newly built one is connected outright
+  ;; instead of going through here: disconnecting a node that has never
+  ;; been connected asks the host to undo something that never
+  ;; happened, and it is not what "rewire" means.
+  (define ($audio-rewire!)
+    (when $audio-bus
+      (js-method $audio-bus "disconnect")
+      (js-method $audio-bus "connect" ($bus-target))))
+
+  ;; NaN passes every range test: fl<? answers false for both bounds.
+  ;; It has to be excluded by asking whether the value equals itself,
+  ;; not by widening the comparisons.
+  (define ($lim-check who name v lo hi)
+    (let ((x (if (flonum? v) v (exact->inexact v))))
+      (when (not (fl=? x x))
+        (error who "a limiter setting may not be NaN" name))
+      (when (or (fl<? x lo) (fl<? hi x))
+        (error who "a limiter setting is out of range" name x lo hi))
+      x))
+
+  ;; (audio-limiter!) with the defaults, (audio-limiter! #f) to turn it
+  ;; off, or all five settings.  There is no "just the first three":
+  ;; allowing a short list would turn one missing argument into a
+  ;; silent shift of every later one, which is the single mistake the
+  ;; parameter check exists to catch.
+  ;;
+  ;; The defaults are a LIMITER (-6/0/20), not the platform's
+  ;; compressor defaults (-24/30/12).  That divergence is deliberate
+  ;; and documented; a reader comparing against the platform's numbers
+  ;; would otherwise reasonably conclude we had copied them wrong.
+  (define (audio-limiter! . opt)
+    (let ((n (length opt)))
+      (cond
+       ((and (= n 1) (eq? (car opt) #f))
+        (set! $audio-limiter #f)
+        ($audio-rewire!)
+        #f)
+       ((or (= n 0) (= n 5))
+        (let ((threshold ($lim-check 'audio-limiter! "threshold"
+                                     (if (= n 0) -6.0 (list-ref opt 0)) -100.0 0.0))
+              (knee ($lim-check 'audio-limiter! "knee"
+                                (if (= n 0) 0.0 (list-ref opt 1)) 0.0 40.0))
+              (ratio ($lim-check 'audio-limiter! "ratio"
+                                 (if (= n 0) 20.0 (list-ref opt 2)) 1.0 20.0))
+              (attack ($lim-check 'audio-limiter! "attack"
+                                  (if (= n 0) 0.003 (list-ref opt 3)) 0.0 1.0))
+              (release ($lim-check 'audio-limiter! "release"
+                                   (if (= n 0) 0.25 (list-ref opt 4)) 0.0 1.0))
+              (ctx ($audio-ctx!)))
+          ;; every setting is validated before anything is built, so a
+          ;; refused call leaves the graph exactly as it was
+          (let ((comp (or $audio-limiter
+                          (let ((c (js-method ctx "createDynamicsCompressor")))
+                            (js-method c "connect" (js-get ctx "destination"))
+                            c))))
+            (js-set! (js-get comp "threshold") "value" threshold)
+            (js-set! (js-get comp "knee") "value" knee)
+            (js-set! (js-get comp "ratio") "value" ratio)
+            (js-set! (js-get comp "attack") "value" attack)
+            (js-set! (js-get comp "release") "value" release)
+            (set! $audio-limiter comp)
+            ;; a first configuration builds the bus, and building it
+            ;; wires it; an existing one is only rewired.  Either way
+            ;; the bus is connected exactly once per call.
+            (if $audio-bus ($audio-rewire!) ($audio-bus!))
+            comp)))
+       (else
+        (error 'audio-limiter!
+               "expected no arguments, #f, or all five settings"
+               n)))))
 
   ;; Two gains and a merger, wired by INDEX.  Connecting both gains
   ;; straight at the destination does not pan: they sum, and hard left
@@ -289,6 +389,7 @@
                                (js-method panned "connect" fg)
                                fg)
                              panned)))
+              ($audio-bus!)                    ; a first sound builds it
               (js-method tail "connect" ($audio-out))
               (when $audio-cap
                 (let ((v (vector $audio-next-id

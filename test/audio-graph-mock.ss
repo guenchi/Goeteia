@@ -105,4 +105,81 @@
        (equal? (audio-node-field (id g1) "started") "absent"))
 (check "MOCK-STATE: and a node that does not exist says so -- a different fact"
        (equal? (audio-node-field "GAIN#9999" "started") "no-such-node"))
+
+;; ---- the graph reader, calibrated on a rewire ----
+;; audio-target-of has to answer with the CURRENT target, and the only
+;; case where "current" differs from "first" is a node that has been
+;; rewired.  A reader that took the first connect passes every graph
+;; that is built once and never changed -- which is every graph in this
+;; file until here -- and then quietly describes the old graph forever
+;; after the first switch.  That is the shape this cell exists for.
+(audio-mock-reset!)
+(define r1 (make "createGain"))
+(define r2 (make "createGain"))
+(define r3 (make "createGain"))
+(js-call (js-get r1 "connect") r1 r2)
+(check "MOCK-GRAPH: a fresh node's target is what it was connected to"
+       (equal? (audio-target-of (id r1)) (id r2)))
+(js-call (js-get r1 "disconnect") r1)
+(check "MOCK-GRAPH: after a bare disconnect it has no target"
+       (not (audio-target-of (id r1))))
+(js-call (js-get r1 "connect") r1 r3)
+(check "MOCK-GRAPH: after a rewire the target is the NEW one, not the first"
+       (equal? (audio-target-of (id r1)) (id r3)))
+;; ⚠️ The cell above does NOT catch a reader that keeps the first
+;; connect -- the disconnect before it clears the answer either way, so
+;; "first after the disconnect" and "last" agree.  Measured: with the
+;; reader mutated to keep the first, that cell stays green and the one
+;; below reds.  A rewire with no disconnect is the discriminating shape,
+;; and it is the shape a bus switch actually has when the library
+;; reconnects without tearing down first.
+(check "MOCK-GRAPH: a rewire with no disconnect also reads as the last connect"
+       (begin (js-call (js-get r1 "connect") r1 r2)
+              (equal? (audio-target-of (id r1)) (id r2))))
+;; and the chain, including its refusal to loop
+(js-call (js-get r2 "connect") r2 (js-get ctx "destination"))
+(check "MOCK-GRAPH: a path runs to the destination and stops"
+       (equal? (audio-path-kinds (id r1)) '("GAIN" "GAIN" "DEST")))
+(js-call (js-get r2 "connect") r2 r1)   ; r1 -> r2 -> r1
+(check "MOCK-GRAPH: a cycle is reported rather than hung on"
+       (let ((p (audio-path-kinds (id r1))))
+         (and (> (length p) 2)
+              (string=? "runaway" (list-ref p (- (length p) 1))))))
+
+;; ---- the graph outlives the log ----
+;; ⭐ The reader used to scan the log for edges, which made every path
+;; assertion depend on where the section breaks fell: an edge recorded
+;; once, when a node was born, vanished from the graph the moment a
+;; later section called audio-mock-reset!.  Measured before the change:
+;; inserting one harmless reset between two sections of test/audio.ss
+;; turned "music takes the same path as an effect" red -- ⚠️ a red
+;; pointing at the library while the instrument was what broke.
+;;
+;; So the edges live outside the log now.  This cell is the acceptance
+;; criterion for that, and it is written as the thing that used to
+;; happen: build a path, reset, and ask again.
+(audio-mock-reset!)
+(define s1 (make "createGain"))
+(define s2 (make "createGain"))
+(js-call (js-get s1 "connect") s1 s2)
+(js-call (js-get s2 "connect") s2 (js-get ctx "destination"))
+(check "MOCK-PERSIST: the path is there before the reset"
+       (equal? (audio-path-kinds (id s1)) '("GAIN" "GAIN" "DEST")))
+(audio-mock-reset!)
+(check "MOCK-PERSIST: and it is still there after one"
+       (equal? (audio-path-kinds (id s1)) '("GAIN" "GAIN" "DEST")))
+(audio-mock-reset!)
+(audio-mock-reset!)
+(check "MOCK-PERSIST: and after several"
+       (equal? (audio-path-kinds (id s1)) '("GAIN" "GAIN" "DEST")))
+;; the log itself must still be cleared -- that is what reset is for,
+;; and a fix that made reset stop clearing anything would pass the three
+;; cells above and quietly break every count-from-zero in every file
+(check "MOCK-PERSIST: while the log itself is still emptied"
+       (= 0 (audio-log-length)))
+;; a disconnect after a reset still takes the edge away: the structure
+;; is live, not a snapshot taken when the log was last cleared
+(js-call (js-get s1 "disconnect") s1)
+(check "MOCK-PERSIST: and the surviving graph is live, not frozen"
+       (equal? (audio-path-kinds (id s1)) '("GAIN")))
 (display (= failed 0))
