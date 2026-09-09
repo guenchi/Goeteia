@@ -47,7 +47,8 @@ A `*`-prefixed name is a *pointer to a host object*: `*jsObject` (a Wasm
 17. [Porting from JavaScript/TypeScript](#porting-from-javascripttypescript)
 18. [Dispatch and Rules](#dispatch-and-rules)
 19. [Game Scaffolding](#game-scaffolding)
-20. [Current Limits and Planned Work](#current-limits-and-planned-work)
+20. [Simulation](#simulation)
+21. [Current Limits and Planned Work](#current-limits-and-planned-work)
 
 ## Toolchain and Workflow
 
@@ -3282,9 +3283,14 @@ Every transition, for diagnostics and diagrams.
 
 ```
 procedure: (machine->datum m)
-procedure: (datum->machine d bindings)
 
 func -> *machine -> list
+```
+
+```
+procedure: (datum->machine d bindings)
+
+func -> list -> list -> *machine
 ```
 The round trip. The datum carries the spec, the current state, the
 context and the strictness — everything but the procedures, which are
@@ -3423,9 +3429,14 @@ refuses anything else by name rather than reading a stranger's slots.
 
 ```
 procedure: (stat s name)          (stat-max s name)
-procedure: (stat-set! s name v)   (stat-add! s name d)
 
 func -> *stats -> symbol -> number
+```
+
+```
+procedure: (stat-set! s name v)   (stat-add! s name d)
+
+func -> *stats -> symbol -> number -> number
 ```
 Read and write one pool. Writes clamp into `[0, max]`. **A name that is
 not a pool raises; it does not answer `0` or `#f`** — a typo that reads
@@ -3685,6 +3696,243 @@ The stored text is an s-expression through `(web sexpr)`, so exact and
 inexact numbers keep their kind and a flonum survives bit-exactly,
 signed zero included — a save file is exactly the kind of data a decimal
 round trip quietly damages.
+
+## Simulation
+
+Six libraries for the part of a program that is not drawing: who exists,
+what runs each tick, who hears what, how time is divided, where the
+randomness comes from, and which cell a coordinate falls in. None of
+them touches the host — they verify headlessly, and a server or a test
+can use them with no browser in sight.
+
+**Where the rest of it is.** This chapter carries the interface and, for
+each name, the one thing about it that is easy to get wrong. The
+reasoning behind each decision, the measurements, and the alternatives
+that were rejected are in `docs/simulation.md`, and every section below
+ends with a pointer to it. The split is deliberate: an argument gets
+rewritten as it is understood better, an interface does not, so keeping
+both in one place would guarantee that the two copies drifted.
+
+### `(sim entity)`: Who Exists
+
+```
+procedure: (make-entities capacity)
+
+func -> int -> *entities
+```
+A store of at most `capacity` entities. Running out **raises** rather
+than growing: the moment a simulation stops being bounded is worth
+knowing about.
+
+```
+procedure: (entity-spawn! w)
+procedure: (entity-spawn-with! w rows)
+
+func -> *entities -> list -> pair
+```
+A handle: the slot, paired with the generation that slot was on.
+`entity-spawn-with!` takes `((name . value) …)` and makes an entity
+carrying all of them; the row shapes, the names and any repeat among
+them are checked **before anything is created**, so a refusal costs no
+entity. It takes **values, not factories** — a factory reaches the host,
+and a host exception is not a Scheme condition here, so a rollback
+wrapped around factories would fail exactly when it was needed.
+
+```
+procedure: (entity-alive? w h)
+procedure: (entity-destroy! w h)
+
+func -> *entities -> pair -> boolean
+```
+Destroying advances the generation of the slot, so **every copy of the
+old handle stops matching permanently** — the one in a scheduler, the
+one in an event payload, the one someone saved. This is the thing an
+index cannot do: an index into a live array is always "valid", so the
+day its slot is reused every stale copy starts addressing a stranger,
+with no error and nothing to notice. Destroying twice is quiet.
+
+```
+procedure: (entity-set! w h key value)
+procedure: (entity-ref w h key default)
+
+func -> *entities -> pair -> symbol -> any -> any
+```
+**Writing through a dead handle raises; reading through one answers the
+default.** Writing to something that no longer exists is a mistake in
+the caller; asking whether something is still there is not.
+
+```
+procedure: (entity-each w proc)
+procedure: (entity-count w)   (entity-capacity w)
+
+func -> *entities -> procedure -> void
+```
+`entity-each` walks a snapshot: entities destroyed during the walk are
+skipped, and entities spawned during it are visited on the **next** walk.
+Without that, spawning from inside a walk could extend it forever.
+
+Long form in `docs/simulation.md`.
+
+### `(sim schedule)`: What Runs Each Tick
+
+```scheme
+(define s (make-schedule))
+(schedule-add! s 'input 0 (lambda (ctx dt) ...))
+(schedule-add! s 'physics 10 (lambda (ctx dt) ...))
+(schedule-run! s world 0.016)
+```
+
+```
+procedure: (make-schedule)
+procedure: (schedule-add! s id priority proc)
+procedure: (schedule-remove! row)
+procedure: (schedule-systems s)
+
+func -> *schedule -> symbol -> int -> procedure -> *system
+```
+**Order comes from the priority number, never from load order**, and
+equal priorities keep the order they were added in — including across
+removals, because the tie is broken by a stored sequence number rather
+than by position in a list. An order that comes from load order is
+invisible in the source and changes when someone renames a file.
+`schedule-add!` answers a row token for `schedule-remove!`; a second
+live system under an id already in use is an error. Removal takes effect
+immediately, even inside a tick that is already walking the list.
+
+```
+procedure: (schedule-run! s context dt)
+
+func -> *schedule -> any -> number -> void
+```
+**A system that raises stops the tick**, and the condition reaches the
+caller — a tick is one transition of the whole world, and continuing
+past a failed system leaves a half-updated state that looks complete.
+Running the schedule from inside a system is an error by name, and the
+flag is restored if a system raises, so one bad tick does not wedge the
+schedule forever.
+
+Long form in `docs/simulation.md`.
+
+### `(sim events)`: Who Hears What
+
+```
+procedure: (make-bus)
+procedure: (bus-on! b topic proc)
+procedure: (bus-off! token)
+procedure: (bus-clear! b)
+
+func -> *bus -> symbol -> procedure -> *subscription
+```
+Listeners hear a topic in the order they subscribed. `bus-on!` answers a
+token; `bus-off!` takes effect **inside a running emit**, which is
+exactly when a caller unsubscribes.
+
+```
+procedure: (bus-emit! b topic payload)
+
+func -> *bus -> symbol -> any -> void
+```
+**Emit walks a snapshot**: the set of listeners that hears one emit is
+fixed before the first of them runs, so a listener that subscribes from
+inside a handler hears the *next* event and not the one that created it.
+Emitting from inside a listener is allowed and bounded — past
+`bus-depth-limit` it raises, naming the topic, because the natural
+mistake is a listener that emits the topic it listens to and a stack
+overflow does not say which two topics were feeding each other.
+
+Long form in `docs/simulation.md`.
+
+### `(sim step)`: Fixed Steps, Advanced by the Caller
+
+```
+procedure: (make-fixed-step step max-steps)
+procedure: (fixed-step-advance! c elapsed proc)
+
+func -> *step -> number -> procedure -> void
+```
+Runs the body once per whole step that is now due. **The count is
+derived from the total elapsed time every call, not accumulated**, so
+one frame's rounding is never carried into the next. `max-steps` caps
+how many steps one advance may run: without it a stall produces a burst
+of catch-up steps whose cost produces the next stall.
+
+```
+procedure: (fixed-step-alpha c)
+procedure: (fixed-step-time c)
+procedure: (fixed-step-reset! c)
+
+func -> *step -> number
+```
+`fixed-step-alpha` is where the caller stands between the last simulated
+state and the next, in `[0,1)`, for interpolating what is drawn.
+**`fixed-step-time` is the simulated clock — steps taken times the step —
+and not the sum of the frame times**; the two differ by whatever a stall
+dropped, and the simulation ran on this one. `fixed-step-reset!` throws
+the remainder away, so time that passed while nothing was simulated is
+not owed after a pause.
+
+Long form in `docs/simulation.md`.
+
+### `(sim random)`: Draws a Replay Can Reproduce
+
+```
+procedure: (make-rng seed)
+procedure: (random-integer! r n)
+procedure: (random-real! r)
+procedure: (random-range! r lo hi)
+
+func -> *rng -> number -> number -> number
+```
+**The whole state is one integer the caller holds** — nothing reads a
+clock, a device or a global — so the same seed replays the same
+sequence and two generators never interfere. `random-integer!` takes a
+positive fixnum bound; `random-range!` refuses a range that is empty in
+flonum precision rather than answering its own upper end. Every draw
+advances the state exactly once.
+
+The generator is MINSTD, period 2147483646, and **it is not
+cryptographic**: two successive draws determine the state. The algorithm
+is written out in `docs/simulation.md` in enough detail to implement
+again, along with a published check value for the bare recurrence. For
+what is and is not bit-identical across the two compiler targets, see
+`docs/determinism.md`.
+
+Long form in `docs/simulation.md`.
+
+### `(sim grid)`: Which Cell Owns a Coordinate
+
+```
+procedure: (grid-cell x size)
+
+func -> number -> number -> int
+```
+
+```
+procedure: (grid-origin i size)
+
+func -> int -> number -> number
+```
+
+```
+procedure: (grid-in-cell? cx cy size x y)
+
+func -> int -> int -> number -> number -> number -> boolean
+```
+**The index is a floor, not a truncation.** Truncating toward zero maps
+`-0.5` and `0.5` into the same cell, which makes cell 0 twice as wide as
+every other and cell `-1` an address that never occurs — and nothing
+raises, so the world simply has one seam where objects pile up. Floor
+and truncation agree on the positive side, which is why the bug survives
+every test written in the first quadrant.
+
+**Cells are half-open**, `[origin, origin + size)`, so a point exactly on
+an edge belongs to the cell it *opens* and has exactly one owner. Under
+a closed interval an object on a seam is loaded twice by a streamer that
+unions cells and not at all by one that partitions them. The same choice
+makes `grid-origin` an exact inverse: the origin of a cell is always
+inside that cell, on both sides of zero.
+
+Long form in `docs/simulation.md`.
 
 ## Current Limits and Planned Work
 
