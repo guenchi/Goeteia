@@ -990,13 +990,35 @@ async function sectionD(ref) {
           'D: every pixel of a nearest render is the atlas read at the '
           + 'texel frame-texel names, on 8630 triangles');
 
-    let backendsAgree = true;
-    for (const k of g.pix.keys())
-        if (g.pix.get(k) !== gj.pix.get(k)) backendsAgree = false;
-    for (const k of g.loss.keys())
-        if (JSON.stringify(g.loss.get(k)) !== JSON.stringify(gj.loss.get(k)))
-            backendsAgree = false;
-    check(backendsAgree,
+    // ⚠️ A loop over an empty map runs zero times and leaves the flag
+    // true, so "neither backend produced anything" used to read exactly
+    // like "the two backends agree".  For a differential check that is
+    // the worst possible failure: the whole point is that two
+    // independent things were compared, and an empty comparison
+    // compares nothing while reporting the strongest result it has.
+    // So the key sets are asserted before the values are looked at, and
+    // an empty one is a failure rather than a vacuous pass.
+    const agreeOn = (name, A, B, eq) => {
+        if (A.size === 0 || B.size === 0) {
+            console.log(`     ${name}: nothing to compare `
+                        + `(wasm ${A.size} entries, js ${B.size}) -- `
+                        + 'an empty comparison is not an agreement');
+            return false;
+        }
+        const ka = [...A.keys()].sort().join(','), kb = [...B.keys()].sort().join(',');
+        if (ka !== kb) {
+            console.log(`     ${name}: the two backends reported different keys`);
+            return false;
+        }
+        let ok = true;
+        for (const k of A.keys()) if (!eq(A.get(k), B.get(k))) ok = false;
+        return ok;
+    };
+    const backendsAgree =
+        agreeOn('pixels', g.pix, gj.pix, (x, y) => x === y)
+        & agreeOn('loss', g.loss, gj.loss,
+                  (x, y) => JSON.stringify(x) === JSON.stringify(y));
+    check(!!backendsAgree,
           'D: the Wasm backend and the JS backend shade the same bytes '
           + 'and measure the same loss');
 
@@ -1045,14 +1067,24 @@ async function sectionD(ref) {
     // ---- against the Python reference, byte for byte ----
     for (const mode of ['nearest', 'bilinear']) {
         let same = 0, total = 0, worst = 0, diff = 0;
+        // ⛔ Separate from `diff`, and fatal on its own.  A camera whose
+        // two sides had different lengths -- or whose reference side was
+        // empty because the oracle never ran -- used to be noted in
+        // `where` and skipped, leaving diff at 0, so the check reported
+        // "identical byte for byte" about bytes that were never
+        // compared.  ⭐ A differential test that passes when one side is
+        // missing has inverted its own purpose: the absence of the
+        // reference is the one thing it must never call agreement.
+        let broken = 0;
         const where = [];
         for (let i = 0; i < o.cams.length; i++) {
             const py = Buffer.from(o.pix.get(`${i}${mode}`) || '', 'hex');
             const gs = Buffer.from(g.pix.get(`${i}${mode}`) || '', 'hex');
             if (py.length !== gs.length || py.length === 0) {
                 where.push(`${o.cams[i].name}: ${py.length} vs ${gs.length}`
-                           + ' bytes -- not comparable');
+                           + ' bytes -- NOT COMPARABLE');
                 total += Math.max(py.length, gs.length);
+                broken++;
                 continue;
             }
             let camDiff = 0;
@@ -1067,10 +1099,16 @@ async function sectionD(ref) {
             if (camDiff)
                 where.push(`${o.cams[i].name}: ${camDiff} of ${py.length}`);
         }
-        if (diff)
+        if (diff || broken)
             console.log(`     ${mode}: ${diff} bytes of ${total} differ `
-                        + `(worst by ${worst}) -- ${where.join('; ')}`);
-        check(diff === 0,
+                        + `(worst by ${worst})`
+                        + (broken ? `, and ${broken} camera(s) could not be `
+                                    + 'compared at all' : '')
+                        + ` -- ${where.join('; ')}`);
+        // every camera must have been compared, and every compared byte
+        // must have matched: two conditions, because one of them used
+        // to be able to hold vacuously
+        check(diff === 0 && broken === 0 && total > 0,
               `D: the ${mode} render is identical to rasterlib.py byte for `
               + `byte (${total} bytes over ${o.cams.length} cameras)`);
     }
