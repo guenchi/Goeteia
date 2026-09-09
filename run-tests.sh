@@ -398,4 +398,39 @@ if $CAP ${NODE-node} test/trig-single-supply.mjs >/dev/null 2>&1; then
 else
     echo "FAIL test/trig-single-supply.mjs"; fail=1
 fi
+
+# Three cells added on 2026-09-09.  ⚠️ They sat in test/ for hours
+# without running, which is what the check below is for.
+for m in test/macro-toplevel-hygiene.mjs \
+         test/defect-r02-driver-block-comment.mjs \
+         test/cdp-teardown.mjs; do
+    if $CAP ${NODE-node} --test "$m" >/dev/null 2>&1; then
+        echo "ok   $m"
+    else
+        echo "FAIL $m"; fail=1
+    fi
+done
+
+# ⭐ EVERY test/*.mjs MUST BE NAMED IN THIS FILE.
+#
+# The .ss cells are a glob and a new one runs the moment it lands.  The
+# .mjs cells are named one at a time, and a list by name cannot shout
+# for what is missing from it: on 2026-09-09 three .mjs cells were
+# written, committed, reported as delivered, and never run.  One of
+# them was the hygiene guard -- the cell whose whole job is to fail if
+# a fix reaches too far -- so for several hours a fix could have broken
+# hygiene and nothing in the gate would have said a word.
+#
+# ⚠️ This checks that each file is MENTIONED, not that it ran.  That is
+# weaker than it sounds only in a way nobody does by accident: naming a
+# file here without running it takes deliberate effort, while adding a
+# file to test/ and forgetting this list is one keystroke.  ⇒ It covers
+# the failure that happened, and it says which one it covers.
+for m in test/*.mjs; do
+    grep -q "$m" "$0" || {
+        echo "FAIL $m (exists in test/ but is not named in run-tests.sh -- it never runs)"
+        fail=1
+    }
+done
+
 exit $fail
