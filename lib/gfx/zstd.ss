@@ -605,8 +605,30 @@
             (when (and (> declared 0) (not (= n declared)))
               (error 'zstd "frame content size does not match the frame"
                      declared n)))
-          ;; and a promised checksum has to be present -- four bytes
-          ;; after the last block, inside the length the caller gave us
+          ;; A promised checksum has to be present: four bytes after the
+          ;; last block, within the length the caller gave us.
+          ;;
+          ;; ⚠️ PREMISE, and it is load-bearing: this only decides
+          ;; anything when `slen` IS the frame's length.  Hand it a
+          ;; roomy buffer -- the whole file, say -- and four bytes are
+          ;; always "there", so a frame that carries no checksum
+          ;; passes.  Measured: the same checksum-promising frame is
+          ;; refused at slen 10 and accepted at slen 18.
+          ;;
+          ;; The premise holds on the one path that reaches here:
+          ;; ktx.ss passes `clen`, the byteLength the KTX2 level index
+          ;; declares for that level, range-checked against the file
+          ;; before use -- an exact frame length, not a buffer size.  A
+          ;; future caller that passes a buffer size instead gets no
+          ;; protection from this line and no warning that it lost it.
+          ;;
+          ;; ⛔ KNOWN GAP, not a trade-off: this asks whether four
+          ;; bytes are present, never whether they are the right four.
+          ;; Four wrong bytes pass.  And presence is not a question
+          ;; that can be answered at all under a roomy buffer -- any
+          ;; four slack bytes are present -- so the only thing that
+          ;; would turn this into a real check is computing xxhash64
+          ;; over the output and comparing. That is not written.
           (let ((fhd ($u8 (+ src 4))))
             (unless (= 0 (bitwise-and fhd 4))
               (when (> (+ $frame-in-end 4) $src-end)
