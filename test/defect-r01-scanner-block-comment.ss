@@ -12,11 +12,38 @@
 ;; Measured directly against the scanner's own loop: it returns
 ;; "(import (nonexistent lib))".
 ;;
-;; ⚠️ The failure is a refusal, which is the lucky half.  The same gap
-;; runs the other way in the mount and top-level-span scans, where an
-;; unmatched paren inside a block comment moves the depth counter and
-;; the scanner then slices somewhere else entirely -- and slicing the
-;; wrong span does not announce itself.
+;; ⚠️ The failure is a refusal, which is the lucky half.
+;;
+;; ⭐ SIX SCANNERS, ONE GAP, AND ONE REACHABLE CASE -- the last part
+;; measured, not reasoned.  rt/compile.mjs and rt/repl.mjs hold six
+;; hand-written walkers (topLevelSpans, libraryImports, listDatumEnd,
+;; embedBlocks, balance, topSpans) whose comment/string/char handling
+;; is byte-identical in all six and knows only `;`, `"` and `#\`.
+;; They did not drift apart; they were copied already incomplete.
+;;
+;; ⛔ But the consequences do NOT follow from the gap.  An earlier
+;; draft of this comment claimed that an unmatched paren inside a block
+;; comment moves the depth counter and makes a scanner slice the wrong
+;; span.  Measured through the library path, one form at a time:
+;;
+;;     #| a ( in prose |#            compiles
+;;     #| a ) in prose |#            compiles
+;;     #| (import (nope lib)) |#     REFUSED   ⇐ the only one
+;;     #;(import (nope lib))         compiles
+;;     #| out #| in |# out |#        compiles
+;;     ; (import (nope lib))         compiles  (control)
+;;
+;; ⇒ The reachable failure is a block comment containing a literal
+;; import CLAUSE, because that is what libraryImports pattern-matches
+;; for.  Stray parens shift the depth without changing which clause
+;; matches.  ⚠️ A nine-cell file asserting the other forms was written
+;; from reading the source, passed every cell, and was deleted: it
+;; tested nothing, and would have read as coverage.
+;;
+;; ⭐ The six copies still matter, and they are why this is one finding
+;; rather than two: patching the reported scanner leaves five, and the
+;; next report names a different one.  What the tree lacks is not a
+;; case in a switch, it is one scanner.
 ;;
 ;; ⭐ This is a degeneracy failure, not a parsing bug: there are two
 ;; readers of this source and they disagree.  The tree HAS a correct
