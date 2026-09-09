@@ -2796,16 +2796,45 @@
   (define (gltf-parse base len)
     (unless (= ($glb-u32 base) #x46546C67)     ; "glTF"
       (error 'gltf "not a GLB file"))
+    ;; The container is checked before a single chunk is walked, and in
+    ;; this order, because each check reads bytes the one before it
+    ;; proved were there: the header fields are only safe to read once
+    ;; the file is known to be long enough to hold them.
+    ;;
+    ;; ⚠️ What these prevent is not a crash.  A chunk whose declared
+    ;; length runs past the end reads whatever is after the buffer, so
+    ;; the JSON handed to the parser is part file, part neighbour, and
+    ;; what comes out is a scene -- a plausible one.  The input is a
+    ;; file off the network.
+    (when (< len 12)
+      (error 'gltf "GLB is shorter than its own header" len))
+    (let ((version ($glb-u32 (+ base 4)))
+          (declared ($glb-u32 (+ base 8))))
+      (unless (= version 2)
+        (error 'gltf "unsupported GLB container version" version))
+      ;; The length in the header and the length the caller has are two
+      ;; independent statements about the same file; when they disagree
+      ;; there is no way to tell which is right, so neither is used.
+      (unless (= declared len)
+        (error 'gltf "GLB declared length is not the number of bytes present"
+               declared len)))
     (let chunk ((at (+ base 12)) (json-str #f) (bin #f))
       (if (< at (+ base len))
-          (let ((clen ($glb-u32 at))
-                (ctype ($glb-u32 (+ at 4))))
-            (cond
-             ((= ctype #x4E4F534A)             ; "JSON"
-              (chunk (+ at 8 clen) ($glb-str (+ at 8) clen) bin))
-             ((= ctype #x004E4942)             ; "BIN\0"
-              (chunk (+ at 8 clen) json-str (+ at 8)))
-             (else (chunk (+ at 8 clen) json-str bin))))
+          (let ()
+            (when (> (+ at 8) (+ base len))
+              (error 'gltf "a GLB chunk header runs past the end of the file"
+                     (- at base) len))
+            (let ((clen ($glb-u32 at))
+                  (ctype ($glb-u32 (+ at 4))))
+              (when (> (+ at 8 clen) (+ base len))
+                (error 'gltf "a GLB chunk runs past the end of the file"
+                       (- at base) clen len))
+              (cond
+               ((= ctype #x4E4F534A)           ; "JSON"
+                (chunk (+ at 8 clen) ($glb-str (+ at 8) clen) bin))
+               ((= ctype #x004E4942)           ; "BIN\0"
+                (chunk (+ at 8 clen) json-str (+ at 8)))
+               (else (chunk (+ at 8 clen) json-str bin)))))
           (let ((json (string->json json-str))
                 (prims '()))
             (define (walk-node idx parent)
