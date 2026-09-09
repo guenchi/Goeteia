@@ -306,6 +306,106 @@ export async function checkShader(page, vertexSrc, fragmentSrc) {
     return page.evaluateInNewPage(shaderProbe(vertexSrc, fragmentSrc));
 }
 
+// ---- reading a whole frame back, and comparing two of them ----
+//
+// The pixel above is one pixel: enough to say "something was drawn",
+// not enough to say "this render and that one differ, and here".  The
+// questions parked as deferred -- an occlusion query that must actually
+// hide something, a reflection that must change when the surface moves,
+// a screen-space effect that must darken a corner -- are all of the
+// form "render, change one thing, render again, and see the
+// difference".  Until something could read a frame back, none of them
+// had a criterion, and writing the effect first would have been writing
+// code nobody could judge.
+//
+// ⚠️ The comparison happens INSIDE the page.  Two 256x256 frames are
+// half a megabyte of JSON if they come back raw, and -- the part that
+// matters more -- two frames read back separately have travelled
+// through two different moments of GPU and driver state.  Drawing both
+// into one context and subtracting there asks the question that was
+// meant.
+//
+// What comes back is deliberately small and deliberately not just a
+// verdict: a fingerprint for identity, a count and a maximum for size,
+// and a coarse map for location.  A probe that answered only "they
+// differ" would be unable to tell a real difference from a broken
+// probe, and there would be nothing to calibrate.
+//
+// ⚠️ Each of the three has a different floor, and a cell should say
+// which one it is leaning on:
+//
+//   fingerprint  changes for ANY changed byte.  One pixel, one channel,
+//                one unit -- it moves.  ⛔ It says nothing about how
+//                much or where, and two different frames could in
+//                principle collide (this is FNV-1a, a fingerprint, not
+//                a cryptographic hash: crypto.subtle is async and this
+//                probe is a single synchronous expression).
+//   differing    exact count of pixels that differ at all.  Its floor
+//                is one pixel -- measured, in the self-check below.
+//   grid         a coarse map, 8x8 cells of mean absolute difference.
+//                Its resolution is (delta / cell area): in a 64x64
+//                frame a cell covers 64 pixels, so ONE pixel changed by
+//                d shows as round(d/64) -- a full-contrast pixel reads
+//                4 (measured in the self-check, which prints it), and
+//                anything under d = 32 rounds to 0 and disappears.
+//                ⛔ So the grid LOCATES a difference that `differing`
+//                has already established; it must not be used to decide
+//                whether there is one.
+// The fingerprint FUNCTION, not an application of it: the first
+// version took the byte expression as an argument and produced
+// `((b) => ...)(b)`, which the page evaluated as a self-reference and
+// refused.  It is a function here because both frames are hashed.
+const FNV1A = `((b) => { let h = 0x811c9dc5;
+  for (let i = 0; i < b.length; i++) { h ^= b[i]; h = (h * 0x01000193) >>> 0; }
+  return h.toString(16).padStart(8, '0'); })`;
+
+export function frameDiffProbe(drawA, drawB, { width = 64, height = 64 } = {}) {
+    return `(() => {
+  const W = ${width}, H = ${height};
+  const c = document.createElement('canvas'); c.width = W; c.height = H;
+  const gl = c.getContext('webgl2') || c.getContext('webgl');
+  if (!gl) return { context: null };
+  const read = () => { const p = new Uint8Array(W * H * 4);
+                       gl.readPixels(0, 0, W, H, gl.RGBA, gl.UNSIGNED_BYTE, p); return p; };
+  const hash = ${FNV1A};
+  const draw = (src) => {
+    gl.viewport(0, 0, W, H);
+    gl.clearColor(0, 0, 0, 1); gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+    (new Function('gl', 'W', 'H', src))(gl, W, H);
+    return read();
+  };
+  let a, b;
+  try { a = draw(${JSON.stringify(drawA)}); b = draw(${JSON.stringify(drawB)}); }
+  catch (e) { return { context: 'error', error: String(e && e.message || e) }; }
+  let differing = 0, maxDelta = 0;
+  const G = 8, grid = new Array(G * G).fill(0), cells = new Array(G * G).fill(0);
+  for (let y = 0; y < H; y++) {
+    for (let x = 0; x < W; x++) {
+      const i = (y * W + x) * 4;
+      let d = 0;
+      for (let k = 0; k < 4; k++) { const v = Math.abs(a[i+k] - b[i+k]); if (v > d) d = v; }
+      if (d > 0) differing++;
+      if (d > maxDelta) maxDelta = d;
+      const g = ((y * G / H) | 0) * G + ((x * G / W) | 0);
+      grid[g] += d; cells[g]++;
+    }
+  }
+  return {
+    context: (typeof WebGL2RenderingContext !== 'undefined' &&
+              gl instanceof WebGL2RenderingContext) ? 'webgl2' : 'webgl1',
+    width: W, height: H, pixels: W * H,
+    hashA: hash(a), hashB: hash(b),
+    same: hash(a) === hash(b),
+    differing, maxDelta,
+    grid: grid.map((s, i) => Math.round(s / cells[i])),
+  };
+})()`;
+}
+
+export async function diffFrames(page, drawA, drawB, opts) {
+    return page.evaluateInNewPage(frameDiffProbe(drawA, drawB, opts));
+}
+
 // ---- the self-check ----
 //
 // The first case is the reason the tool exists: a shader that MUST be
@@ -344,6 +444,53 @@ async function selfCheck() {
         } else {
             console.log(`drew a triangle and read back ${JSON.stringify(px)}`);
         }
+
+        // ---- the frame probe, calibrated ----
+        //
+        // ⭐ Three cases, because the useful thing about this probe is
+        // not that it can say "different" -- it is the SIZE of the
+        // smallest difference it can see, and that is a measurement,
+        // not a design claim.
+        const CLEAR = (r, g_, b) => `gl.clearColor(${r},${g_},${b},1);`
+            + ' gl.clear(gl.COLOR_BUFFER_BIT);';
+        const ONE_PIXEL = CLEAR(0, 1, 0)
+            + ' gl.enable(gl.SCISSOR_TEST); gl.scissor(3,3,1,1);'
+            + ' gl.clearColor(1,0,0,1); gl.clear(gl.COLOR_BUFFER_BIT);'
+            + ' gl.disable(gl.SCISSOR_TEST);';
+        const same = await diffFrames(page, CLEAR(0, 1, 0), CLEAR(0, 1, 0));
+        if (!same.context) problems.push('the frame probe got no WebGL context');
+        else if (!same.same || same.differing !== 0)
+            problems.push(`two identical draws came back as ${same.differing} `
+                          + 'differing pixel(s) -- the probe sees changes that are not there');
+        const one = await diffFrames(page, CLEAR(0, 1, 0), ONE_PIXEL);
+        if (one.differing !== 1 || one.same)
+            problems.push(`a one-pixel change read as ${one.differing} differing `
+                          + `pixel(s) and same=${one.same}; the floor is not one pixel`);
+        else
+            console.log(`frame diff: one changed pixel is visible `
+                        + `(${one.width}x${one.height}, max delta ${one.maxDelta})`);
+        const all = await diffFrames(page, CLEAR(0, 0, 0), CLEAR(1, 1, 1));
+        if (all.differing !== all.pixels || all.maxDelta !== 255)
+            problems.push(`black against white read as ${all.differing} of `
+                          + `${all.pixels} pixels, max delta ${all.maxDelta}`);
+        // ⚠️ The grid's resolution, printed rather than asserted -- and
+        // then a case that measures where it gives up.  `differing`
+        // exists separately precisely because the grid has a floor, and
+        // the number belongs next to the claim rather than in a comment
+        // that could drift away from it.
+        const FAINT = CLEAR(0, 1, 0)
+            + ' gl.enable(gl.SCISSOR_TEST); gl.scissor(3,3,1,1);'
+            + ' gl.clearColor(0,0.996,0,1); gl.clear(gl.COLOR_BUFFER_BIT);'
+            + ' gl.disable(gl.SCISSOR_TEST);';
+        const faint = await diffFrames(page, CLEAR(0, 1, 0), FAINT);
+        console.log(`frame diff: one full-contrast pixel reads `
+                    + `${Math.max(...one.grid)} in its 8x8 cell; a faint one `
+                    + `(delta ${faint.maxDelta}) reads `
+                    + `${Math.max(...faint.grid)} while differing says `
+                    + `${faint.differing}`);
+        if (faint.differing < 1)
+            problems.push('a faint one-pixel change was invisible to `differing` too, '
+                          + 'so the exact count has a floor above one unit');
 
         const bad = await checkShader(page, TYPE_ERROR_VS, LEGAL_FS);
         if (bad.vertex.ok) {
