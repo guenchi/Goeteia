@@ -50,7 +50,9 @@ Sound.
 # gam
 
 Game scaffolding: the bookkeeping a game repeats, without the numbers a
-game chooses. The five are independent of each other.
+game chooses. Most stand alone; `(gam party)` is over the handles from
+`(sim entity)`, `(gam state)` is a mutable owner for `(lng machine)`, and
+`(gam save)` writes through `(web js)`.
 
 ## `(gam abilities)`
 
@@ -74,6 +76,22 @@ game chooses. The five are independent of each other.
 - `effects-clear!` — drops every effect
 - `effects-names` — the running names in the order they were set; a name refreshed while running keeps its place, a name set again after running out is a new effect and goes last
 
+## `(gam fields)`
+
+- `make-field` — a region on the ground plane from a kind, a centre, a radius, a half-length, a yaw, a duration and a rate, with an optional settling period defaulting to 0.25; a zero radius or duration is refused
+- `field?` — whether a value is a field
+- `field-kind` — the kind the field carries; nothing here interprets it, so a caller's own table is keyed by it
+- `field-x` — the x coordinate of the centre of the field
+- `field-z` — the z coordinate of the centre of the field
+- `field-radius` — the radius, which is the distance from the axis that still counts as inside, and the roundness of the end caps
+- `field-half-length` — half the length of the capsule's axis; zero makes the region a circle, which is why there is no separate circle
+- `field-yaw` — the angle of the axis on the ground plane, in radians
+- `field-life` — how much life is LEFT, not what it started with; it reaches zero and stays there
+- `field-rate` — the rate the field carries, per unit of time; the amount settled is this multiplied by the time accumulated
+- `field-period` — how much time accumulates before the field settles up; zero settles on every step
+- `field-contains?` — whether a point on the ground plane lies in the region. This is a 2D test on x and z; the capsule tests in `(gfx collide)` are 3D and are not another implementation of it
+- `field-step!` — advances the life by an elapsed time and calls the caller's procedure with the field and the amount owed whenever a period has accumulated, and once more at expiry so the last partial period is paid rather than dropped; the elapsed time is clamped to the life remaining, a dead field is quiet, and a negative time is refused
+
 ## `(gam inventory)`
 
 - `make-inventory` — an empty bag
@@ -81,6 +99,17 @@ game chooses. The five are independent of each other.
 - `inventory-add!` — adds a positive exact count and answers the count afterwards; zero is refused as well as a negative, since adding nothing means the arithmetic that produced it went wrong
 - `inventory-take!` — all or nothing: enough, and it is removed with #t; not enough, and #f with not one removed
 - `inventory-items` — the rows as fresh pairs, in the order their keys were FIRST added, on both compiler targets; a key taken down to zero keeps its row and its place, so putting it back does not move it to the end and make the listing a record of what the player did
+
+## `(gam party)`
+
+- `make-party` — an empty roster with nobody selected
+- `party?` — whether a value is a party
+- `party-members` — the handles in the order they joined; the list is never altered in place, so one already handed out stays as it was
+- `party-selected` — the selected handle, or #f for nobody
+- `party-add!` — enrols a live entity at the end of the roster; adding an existing member is quiet, and a handle whose entity is not alive is refused because no later call would report it
+- `party-remove!` — drops a handle from the roster and clears the selection if it was that one; removing a non-member is quiet
+- `party-select!` — selects a live member, or #f for nobody; anything else raises rather than joining them, so a typo cannot grow the roster
+- `party-prune!` — drops every member whose entity is no longer alive. Nothing tells this library about a death, so pruning is a call the caller makes at a moment it chooses rather than a hook firing inside whatever did the destroying
 
 ## `(gam quest)`
 
@@ -91,12 +120,35 @@ game chooses. The five are independent of each other.
 - `quest-keys` — the objectives met, in the order the quest DECLARED them and never in the order the events arrived, so the same progress always reads the same
 - `quest-restore!` — clears and replays a list of objectives through quest-record!, so a save file gets exactly the checks a live event gets
 
+## `(gam recovery)`
+
+- `make-recovery` — a recovery with no claim open
+- `recovery?` — whether a value is a recovery
+- `recovery-open?` — whether a claim is outstanding. Not the same question as pending being zero: a claim for zero is open and will be consumed, while no claim cannot be
+- `recovery-pending` — what is on the table right now, and 0 when no claim is open
+- `recovery-loss!` — records what was ACTUALLY taken and opens a claim for it, answering the amount recorded. It removes nothing from anywhere: the caller subtracts from its own store and reports what came out, because a demand larger than the store leaves a claim for points that never existed. A second loss REPLACES the first, so an unclaimed amount is gone
+- `recovery-claim!` — answers that fraction of what is pending and closes the claim for good, even for a fraction of zero, since the operation settles a claim rather than collecting what is available; it gives nothing back to anything, does not round, and a fraction outside 0 to 1 is refused
+
 ## `(gam save)`
 
 - `make-save-store` — a store over one localStorage key, with an exact-integer version compared for equality and a validator of the caller's own; the version travels as a wrapper around the value, so the validator never sees it and the caller's value is never written into
 - `save-available?` — whether this machine can actually save: it writes and removes a probe key, because a store that is present is not the same as one that accepts a write. It never raises, being the question a caller asks in order to avoid the raise
 - `save-load` — the saved value, or #f for any of four disappointments a caller can do only one thing about: nothing stored, a version this build cannot read, contents the validator rejected, or text no longer readable. A store that cannot be used raises instead, because that is a fact about the machine and not about the save
 - `save-write!` — answers #t; raises if the store refuses the write, and also if the caller's own validator refuses the value, which is deliberately not symmetric with save-load: on the way in a rejected value is the caller's bug, and answering #f would let a game write nothing for an hour and find out at the next launch
+
+## `(gam state)`
+
+- `make-state-machine` — a machine from an adjacency table of (from to ...) rows, in which every event is named after its destination; it cannot express an event whose name differs from its destination, two events from one state to the same destination, or any guard or action, all of which want the spec form
+- `make-event-state-machine` — a machine from a full `(lng machine)` spec, bindings for the guard and action names, and an optional context; this is the general constructor
+- `state?` — whether a value is a state
+- `state-machine` — the machine value inside, for the questions `(lng machine)` answers and this does not; it is immutable, so handing it out is not a second way to alter the cell
+- `state-current` — the state it is in right now
+- `state-events` — the events available from the current state
+- `state-ctx` — the context the machine is carrying
+- `state-send!` — steps on an event and answers the actions the transition named, writing the cell only with a machine the step returned; a step that raises -- two guards holding, or an unknown event on a spec that says (on-unknown error) -- leaves the previous machine in place, so nothing is half applied
+- `state-transition!` — sends the event if it is available and answers whether it went. On a spec that does not make unknown events an error this is the only way to tell "it went" from "there was no such event", because empty actions are what both answer
+- `state->datum` — the machine as a datum, which can be written out and read back
+- `datum->state` — a state from such a datum and bindings for its names
 
 ## `(gam stats)`
 
@@ -114,6 +166,16 @@ game chooses. The five are independent of each other.
 - `stats-level` — the current level, which starts at 1
 - `stats-xp` — the experience accumulated toward the next level
 - `stats-gain-xp!` — adds experience and answers how many levels were gained; with no curve it is always 0, and a curve answering a cost of zero or less is refused because believing it would raise levels for free and never terminate
+
+## `(gam timeline)`
+
+- `make-timeline` — an empty timeline whose clock starts at an inexact zero, so the first tick does not change the exactness the deadlines were computed in
+- `timeline?` — whether a value is a timeline
+- `timeline-time` — the timeline's own clock, which moves only when the caller ticks it
+- `timeline-empty?` — whether nothing at all is scheduled
+- `timeline-schedule!` — queues a payload at now plus a delay; equal deadlines keep insertion order, a zero delay means the next tick rather than this instant, and a negative delay is refused rather than clamped
+- `timeline-tick!` — advances the clock and answers the payloads now due, earliest first, as data for the caller to interpret; the queue is written back before they are answered, so scheduling from inside the handling adds to a timeline that no longer holds what is being handled
+- `timeline-clear!` — drops everything queued and leaves the timeline usable; there is no way to cancel one payload, which would need a name for it that only the caller has
 
 # gfx
 
