@@ -403,7 +403,8 @@ fi
 # without running, which is what the check below is for.
 for m in test/macro-toplevel-hygiene.mjs \
          test/defect-r02-driver-block-comment.mjs \
-         test/cdp-teardown.mjs; do
+         test/cdp-teardown.mjs \
+         test/defect-library-export-unchecked.mjs; do
     if $CAP ${NODE-node} --test "$m" >/dev/null 2>&1; then
         echo "ok   $m"
     else
