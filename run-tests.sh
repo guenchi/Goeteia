@@ -162,7 +162,10 @@ for t in ${GOETEIA_TESTS-test/*.ss}; do
     fi
     verdict stage0 "$want" "$got" "$ec"
     if [ -f goeteia.wasm ]; then
-        if ! ${NODE-node} rt/compile.mjs goeteia.wasm "$t" "$T/test1.wasm" 2>/dev/null; then
+        $CAP ${NODE-node} rt/compile.mjs goeteia.wasm "$t" "$T/test1.wasm" 2>/dev/null; ec=$?
+        if timed_out $ec; then
+            echo "TIMEOUT $t (stage1 compile) after ${TLIMIT}s"; fail=1; continue
+        elif [ $ec -ne 0 ]; then
             echo "FAIL $t (stage1 compile error)"; fail=1; continue
         fi
         raw=$(run_one "$T/test1.wasm" "$t"); ec=$?; lift_notes "$raw"
@@ -211,47 +214,47 @@ run_mjs test/js-backend-i31-types.mjs
 run_mjs test/js-backend-collection-types.mjs
 run_mjs test/js-backend-tco.mjs
 run_mjs test/js-backend-jspi.mjs
-if ${NODE-node} test/jsbridge-instance.mjs >/dev/null 2>&1; then
+if $CAP ${NODE-node} test/jsbridge-instance.mjs >/dev/null 2>&1; then
     echo "ok   test/jsbridge-instance.mjs"
 else
     echo "FAIL test/jsbridge-instance.mjs"; fail=1
 fi
-if ${NODE-node} test/fx-loop-generation.mjs >/dev/null 2>&1; then
+if $CAP ${NODE-node} test/fx-loop-generation.mjs >/dev/null 2>&1; then
     echo "ok   test/fx-loop-generation.mjs"
 else
     echo "FAIL test/fx-loop-generation.mjs"; fail=1
 fi
-if ${NODE-node} test/fx-loop-coexistence.mjs >/dev/null 2>&1; then
+if $CAP ${NODE-node} test/fx-loop-coexistence.mjs >/dev/null 2>&1; then
     echo "ok   test/fx-loop-coexistence.mjs"
 else
     echo "FAIL test/fx-loop-coexistence.mjs"; fail=1
 fi
-if ${NODE-node} test/web-compile-diagnostics.mjs >/dev/null 2>&1; then
+if $CAP ${NODE-node} test/web-compile-diagnostics.mjs >/dev/null 2>&1; then
     echo "ok   test/web-compile-diagnostics.mjs"
 else
     echo "FAIL test/web-compile-diagnostics.mjs"; fail=1
 fi
-if ${NODE-node} test/reader-diagnostics.mjs >/dev/null 2>&1; then
+if $CAP ${NODE-node} test/reader-diagnostics.mjs >/dev/null 2>&1; then
     echo "ok   test/reader-diagnostics.mjs"
 else
     echo "FAIL test/reader-diagnostics.mjs"; fail=1
 fi
-if ${NODE-node} test/web-external-fallback-fresh.mjs >/dev/null 2>&1; then
+if $CAP ${NODE-node} test/web-external-fallback-fresh.mjs >/dev/null 2>&1; then
     echo "ok   test/web-external-fallback-fresh.mjs"
 else
     echo "FAIL test/web-external-fallback-fresh.mjs"; fail=1
 fi
-if ${NODE-node} test/glyphs-listener-cleanup.mjs >/dev/null 2>&1; then
+if $CAP ${NODE-node} test/glyphs-listener-cleanup.mjs >/dev/null 2>&1; then
     echo "ok   test/glyphs-listener-cleanup.mjs"
 else
     echo "FAIL test/glyphs-listener-cleanup.mjs"; fail=1
 fi
-if ${NODE-node} test/glyphs-loop-generation.mjs >/dev/null 2>&1; then
+if $CAP ${NODE-node} test/glyphs-loop-generation.mjs >/dev/null 2>&1; then
     echo "ok   test/glyphs-loop-generation.mjs"
 else
     echo "FAIL test/glyphs-loop-generation.mjs"; fail=1
 fi
-if ${NODE-node} test/glyphs-scope-dispose.mjs >/dev/null 2>&1; then
+if $CAP ${NODE-node} test/glyphs-scope-dispose.mjs >/dev/null 2>&1; then
     echo "ok   test/glyphs-scope-dispose.mjs"
 else
     echo "FAIL test/glyphs-scope-dispose.mjs"; fail=1
@@ -264,7 +267,7 @@ run_mjs test/raster-diff.mjs
 run_mjs test/verify.mjs
 run_mjs test/pack.mjs
 run_mjs test/llm-substrate.mjs
-if ${NODE-node} --test test/sexpr-mjs.mjs >/dev/null 2>&1; then
+if $CAP ${NODE-node} --test test/sexpr-mjs.mjs >/dev/null 2>&1; then
     echo "ok   test/sexpr-mjs.mjs"
 else
     echo "FAIL test/sexpr-mjs.mjs"; fail=1
@@ -281,27 +284,27 @@ DOCS_OUT="$T/docs-mjs.out"
 # machine that has one, this is the only thing between an invalid
 # shader and a release -- the GL that test/pages/* runs against accepts
 # every shader it is shown.
-if ${NODE-node} --test test/shader-compile.mjs > "$DOCS_OUT" 2>&1; then
+if $CAP ${NODE-node} --test test/shader-compile.mjs > "$DOCS_OUT" 2>&1; then
     grep -E 'NOT EXERCISED HERE|^EXERCISED HERE' "$DOCS_OUT"
     echo "ok   test/shader-compile.mjs"
 else
     cat "$DOCS_OUT"
     echo "FAIL test/shader-compile.mjs"; fail=1
 fi
-if ${NODE-node} --test test/manual-long-form.mjs > "$DOCS_OUT" 2>&1; then
+if $CAP ${NODE-node} --test test/manual-long-form.mjs > "$DOCS_OUT" 2>&1; then
     grep -E 'NOT EXERCISED HERE|^EXERCISED HERE' "$DOCS_OUT"
     echo "ok   test/manual-long-form.mjs"
 else
     cat "$DOCS_OUT"
     echo "FAIL test/manual-long-form.mjs"; fail=1
 fi
-if ${NODE-node} --test test/shader-accessors.mjs > "$DOCS_OUT" 2>&1; then
+if $CAP ${NODE-node} --test test/shader-accessors.mjs > "$DOCS_OUT" 2>&1; then
     echo "ok   test/shader-accessors.mjs"
 else
     cat "$DOCS_OUT"
     echo "FAIL test/shader-accessors.mjs"; fail=1
 fi
-if ${NODE-node} --test test/docs.mjs > "$DOCS_OUT" 2>&1; then
+if $CAP ${NODE-node} --test test/docs.mjs > "$DOCS_OUT" 2>&1; then
     grep -E 'NOT EXERCISED HERE|^EXERCISED HERE' "$DOCS_OUT"
     echo "ok   test/docs.mjs"
 else
@@ -312,7 +315,7 @@ fi
 # useful part IS the list of names, and a pipe here would report the
 # exit status of the pager instead of the test.
 API_OUT="$T/api-index.out"
-if ${NODE-node} test/api-index.mjs > "$API_OUT" 2>&1; then
+if $CAP ${NODE-node} test/api-index.mjs > "$API_OUT" 2>&1; then
     echo "ok   test/api-index.mjs"
 else
     head -40 "$API_OUT"
@@ -328,12 +331,12 @@ run_mjs test/compile-cache.mjs quiet
 # The two 2026-09-06 defects whose counterexample is a compile-time
 # fact rather than a wrong value.  RED until they are fixed.
 run_mjs test/defect-c01-c04-compile-time.mjs quiet
-if ${NODE-node} test/duplicate-top-level.mjs >/dev/null 2>&1; then
+if $CAP ${NODE-node} test/duplicate-top-level.mjs >/dev/null 2>&1; then
     echo "ok   test/duplicate-top-level.mjs"
 else
     echo "FAIL test/duplicate-top-level.mjs"; fail=1
 fi
-if ${NODE-node} test/trig-single-supply.mjs >/dev/null 2>&1; then
+if $CAP ${NODE-node} test/trig-single-supply.mjs >/dev/null 2>&1; then
     echo "ok   test/trig-single-supply.mjs"
 else
     echo "FAIL test/trig-single-supply.mjs"; fail=1
