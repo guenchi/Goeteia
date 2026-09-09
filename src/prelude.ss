@@ -1512,8 +1512,21 @@
           (else (let ((fast (cdr (cdr fast))) (slow (cdr slow)))
                   (and (not (eq? fast slow)) (loop slow fast)))))))
 
-(define (memv x ls) (memq x ls))
-(define (assv x ls) (assq x ls))
+;; ⚠️ NOT memq/assq.  eq? on a flonum, a bignum or a ratio compares
+;; identity, so (memv 2.0 '(1.0 2.0)) answered #f -- the number was in
+;; the list and the search said it was not.  eqv? is the comparison
+;; these two are defined by.
+(define (memv x ls)
+  (cond
+   ((null? ls) #f)
+   ((eqv? (car ls) x) ls)
+   (else (memv x (cdr ls)))))
+
+(define (assv x ls)
+  (cond
+   ((null? ls) #f)
+   ((eqv? (caar ls) x) (car ls))
+   (else (assv x (cdr ls)))))
 (define (member x ls)
   (cond
    ((null? ls) #f)
@@ -1581,9 +1594,16 @@
            (eqv? (%cx-im a) (%cx-im b)))))
 (define (number? x)
   (or (fixnum? x) (flonum? x) (%bignum? x) (%ratio? x) (%complex? x)))
+;; x - x is 0.0 for every finite flonum, and NaN for an infinity or a
+;; NaN -- so this is false exactly for the values that are not a
+;; position on the number line.  (NaN was already excluded by the
+;; floor test below, since NaN is not equal to itself; the infinities
+;; were not, because flfloor of an infinity is that infinity.)
+(define ($fl-finite? x) (fl=? (fl- x x) (fixnum->flonum 0)))
+
 (define (integer? x)
   (or (fixnum? x) (%bignum? x)
-      (and (flonum? x) (fl=? x (flfloor x)))))
+      (and (flonum? x) ($fl-finite? x) (fl=? x (flfloor x)))))
 (define (exact? x)
   (or (fixnum? x) (%bignum? x) (%ratio? x)
       (and (%complex? x) (exact? (%cx-re x)) (exact? (%cx-im x)))))
@@ -2312,8 +2332,15 @@
    (else
     ($make-rat ($mul2 (numerator a) (denominator b))
                ($mul2 (denominator a) (numerator b))))))
-(define (exact->inexact x) ($->fl x))
-(define (inexact x) ($->fl x))
+;; ⚠️ $->fl has no complex case: it falls through to the bignum path
+;; and the cast traps -- and a wasm trap is not a condition, so a
+;; caller cannot even catch it.  A complex converts component-wise.
+(define ($->inexact x)
+  (if (%complex? x)
+      ($cx ($->fl (%cx-re x)) ($->fl (%cx-im x)))
+      ($->fl x)))
+(define (exact->inexact x) ($->inexact x))
+(define (inexact x) ($->inexact x))
 (define ($fl->exact-integer m)
   ;; integral non-negative flonum -> exact, in 2^24 chunks
   (let ((two24 (fixnum->flonum 16777216)))
@@ -2335,8 +2362,27 @@
               (loop (fl* m (fixnum->flonum 2)) (* k 2)))))
       x))
 (define (exact x) (inexact->exact x))
-(define (floor x) (if (flonum? x) (flfloor x) x))
-(define (truncate x) (if (flonum? x) (fltruncate x) x))
+;; ⚠️ A ratio used to be returned unchanged, so (floor 7/2) was 7/2.
+;; $make-rat keeps the denominator positive and collapses d = 1 to an
+;; integer, so a live ratio is never integral -- which is why the
+;; negative case always steps down by one rather than testing for it.
+;;
+;; ⭐ floor and truncate differ ONLY on negatives: (floor -7/2) is -4
+;; and (truncate -7/2) is -3.  A version that rounded both toward zero
+;; would agree with this one on every positive input.
+(define (floor x)
+  (cond
+   ((flonum? x) (flfloor x))
+   ((%ratio? x)
+    (let ((q (quotient (%ratio-num x) (%ratio-den x))))
+      (if (< (%ratio-num x) 0) (- q 1) q)))
+   (else x)))
+
+(define (truncate x)
+  (cond
+   ((flonum? x) (fltruncate x))
+   ((%ratio? x) (quotient (%ratio-num x) (%ratio-den x)))
+   (else x)))
 (define (sqrt x)
   (if (and (real? x) (< x 0))
       ($cx 0 (flsqrt ($->fl (- 0 x))))
@@ -2624,8 +2670,11 @@
     (if ($eq2 d 1) n (%make-ratio n d))))
 (define (numerator x) (if (%ratio? x) (%ratio-num x) x))
 (define (denominator x) (if (%ratio? x) (%ratio-den x) 1))
+;; ⚠️ Fixing integer? does not fix this one: the flonum? arm answered
+;; #t for an infinity on its own.  A rational is a ratio of integers,
+;; and an infinity is not one.
 (define (rational? x)
-  (or (integer? x) (%ratio? x) (flonum? x)))
+  (or (integer? x) (%ratio? x) (and (flonum? x) ($fl-finite? x))))
 (define (real? x) (and (number? x) (not (%complex? x))))
 (define (complex? x) (number? x))
 
