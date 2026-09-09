@@ -3576,6 +3576,52 @@
 ;; and not a duplicate; a program's own `define' is unmarked and can
 ;; never collide with an introduced one.  Duplicate define-syntax is
 ;; not checked here: expansion has already consumed those forms.
+;; ---- every exported name must be defined ----
+;; The top-level (export ...) path has had this check since it existed:
+;; emitting the export section asks *fns* for the name and refuses when
+;; the answer is no.  A library's export clause never had one, and the
+;; two failures a missing definition produces are both bad in their own
+;; way -- the name is called and the message names the IMPORTER's file,
+;; or the name is never called and the build succeeds in silence, so a
+;; library ships with an export nothing provides.
+;;
+;; The comparison is between identifiers AS WRITTEN, not their origins.
+;; A definition a macro's template introduced carries a fresh name, and
+;; that is exactly the case worth catching: the export clause names one
+;; identifier and the template defined another.  Unmarking here would
+;; make the two look equal and the check would pass on the one program
+;; it exists for.  (Chez refuses the same library, for the same reason.)
+;;
+;; Runs after expansion because most exports are defined BY expansion:
+;; define-record-type alone provides the predicate and every accessor
+;; in nearly every library in this tree.
+;;
+;; A library may also export a MACRO, and expansion consumes those --
+;; (web sx), (web component), (gfx scene) and (gfx sgpu) all do -- so
+;; the macro table answers for them.  ⚠️ That arm is looser than the
+;; other one: *macros* is keyed by the UNMARKED name, so a macro a
+;; template introduced would satisfy an export clause naming its
+;; origin.  Nobody in this tree writes that, and tightening the macro
+;; table is a separate change with its own hygiene questions; the
+;; looseness is recorded rather than left to be discovered.
+(define (check-library-exports! forms)
+  (let ((defined (fold-left (lambda (acc f)
+                              (if (define-form? f)
+                                  (cons (def-name f) acc)
+                                  acc))
+                            '()
+                            forms)))
+    (for-each
+     (lambda (lib)
+       (for-each
+        (lambda (n)
+          (unless (or (memq n defined) (assq n *macros*))
+            (errorf 'goeteia "library exports a name nothing defines:"
+                    n 'in (car lib))))
+        (cdr lib)))
+     *lib-exports*))
+  forms)
+
 (define (check-duplicate-defines! forms)
   (let loop ((fs forms) (seen '()))
     (cond
@@ -3970,6 +4016,12 @@
 ;; can say WHICH library, not just which file
 (define *lib-origins* '())
 
+;; (library-name-string . exported-names) for every library in the
+;; stream, collected before expansion because expansion splices a
+;; library into a begin and its export clause stops existing.  Read by
+;; check-library-exports! once the definitions exist.
+(define *lib-exports* '())
+
 (define (lib-name-string spec)
   (let loop ((l spec) (acc ""))
     (if (or (null? l) (not (pair? l)))
@@ -4191,6 +4243,11 @@
                                              a)))
                                  acc
                                  (bound-names (car fs))))))))
+        ;; recorded here rather than where the check runs, because this
+        ;; is the last pass that sees the export clause: expansion
+        ;; turns the library into a begin and the clause is gone.
+        (set! *lib-exports*
+              (cons (cons (lib-name-string (cadr f)) exports) *lib-exports*))
         (if (null? table)
             f
             (cons (car f)
@@ -4208,6 +4265,7 @@
   (set! *renames* '())
   (set! *macros* '())
   (set! *form-locs* '())
+  (set! *lib-exports* '())
   ;; library privates get their namespace before anything reads the
   ;; forms -- collect-macros! descends into libraries and would
   ;; otherwise register a library's macros under their bare names
@@ -4232,11 +4290,12 @@
          ;; one definition per name, checked before inlining and DCE
          ;; read the forms -- both of them have their own idea of what
          ;; a name means, and neither should see a name twice
-         (checked (check-duplicate-defines!
-                   (filter (lambda (f)
-                             (not (and (pair? f) (symbol? (car f))
-                                       (eq? (unmark (car f)) 'export))))
-                           expanded)))
+         (checked (check-library-exports!
+                   (check-duplicate-defines!
+                    (filter (lambda (f)
+                              (not (and (pair? f) (symbol? (car f))
+                                        (eq? (unmark (car f)) 'export))))
+                            expanded))))
          (forms (prune-dead
                  (map-in-order (lambda (f)
                                  (let ((nf (convert-assignments f)))
