@@ -32,9 +32,89 @@ Sound.
 - `stop-sound!` — stops a source node that play! or loop-sound! answered
 
 
+# gam
+
+Game scaffolding: the bookkeeping a game repeats, without the numbers a
+game chooses. The five are independent of each other.
+
+## `(gam abilities)`
+
+- `make-ability` — an ability from an identifier, a cost and a cooldown length; the cooldown must be positive, and the ability is ready the moment it is made
+- `ability?` — whether a value is an ability
+- `ability-id` — the identifier the ability carries; this library does not interpret it, so a caller's own table of ability data is keyed by it
+- `ability-cost` — the cost the ability carries. Nothing here spends it: it is a number for the caller to subtract wherever its resources live
+- `ability-cooldown` — the LENGTH of the cooldown, fixed when the ability was made; this is configuration, not state
+- `ability-remaining` — how much of the cooldown is left; this is the state, and zero means ready
+- `ability-ready?` — whether the cooldown has run out
+- `ability-tick!` — counts the cooldown down by an elapsed time and clamps it at zero; a negative time is refused
+- `ability-use!` — if ready, sets the cooldown to its full length and answers #t; otherwise #f and nothing changes, so a refused use never restarts a cooldown that is still running
+
+## `(gam effects)`
+
+- `make-effects` — an empty set of timed states
+- `effect-set!` — starts a name for a positive duration, REPLACING any duration that name already had; it does not take the larger of the two, because refreshing, extending and letting the longer one win are three different rules a game can want
+- `effect-ref` — how long a name has left, or #f when it is not running; never 0, which is a duration this library does not store
+- `effect-active?` — whether a name is running
+- `effects-tick!` — takes an elapsed time off every effect and THEN drops what has run out, so an effect with exactly that much left is gone after the tick that consumed it; reaching zero is running out
+- `effects-clear!` — drops every effect
+- `effects-names` — the running names in the order they were set; a name refreshed while running keeps its place, a name set again after running out is a new effect and goes last
+
+## `(gam inventory)`
+
+- `make-inventory` — an empty bag
+- `inventory-count` — how many of a key the bag holds, 0 when it holds none
+- `inventory-add!` — adds a positive exact count and answers the count afterwards; zero is refused as well as a negative, since adding nothing means the arithmetic that produced it went wrong
+- `inventory-take!` — all or nothing: enough, and it is removed with #t; not enough, and #f with not one removed
+- `inventory-items` — the rows as fresh pairs, in the order their keys were FIRST added, on both compiler targets; a key taken down to zero keeps its row and its place, so putting it back does not move it to the end and make the listing a record of what the player did
+
+## `(gam quest)`
+
+- `make-quest` — a quest from the objectives it requires; a repeated objective is refused, since it would make the completion denominator larger than the numerator can ever reach
+- `quest-count` — how many DISTINCT objectives have been met
+- `quest-complete?` — whether every required objective has been met
+- `quest-record!` — records an objective and answers whether THIS call advanced the quest; recording one already recorded answers #f and changes nothing, and an objective this quest does not require is #f rather than an error
+- `quest-keys` — the objectives met, in the order the quest DECLARED them and never in the order the events arrived, so the same progress always reads the same
+- `quest-restore!` — clears and replays a list of objectives through quest-record!, so a save file gets exactly the checks a live event gets
+
+## `(gam stats)`
+
+- `make-stats` — pools from a table of (name max regen-per-second), with an optional level curve and an optional per-level hook; a repeated pool name is refused because the second would be unreachable
+- `stats?` — whether a value is a stats value
+- `stat` — the current value of a named pool; an unknown name raises rather than answering 0, so a typo is found at the call and not in a playtest
+- `stat-max` — the maximum of a named pool
+- `stat-set!` — sets a pool, clamped into [0, max]
+- `stat-add!` — moves a pool by a delta, clamped into [0, max]
+- `stats-spend!` — spends if the pool holds enough, answering #t; otherwise #f with nothing at all deducted, since a partial spend leaves the caller having paid less than it asked to
+- `stats-damage!` — lowers a pool and answers what was ACTUALLY removed, which stops short at the floor; a negative amount is refused
+- `stats-heal!` — raises a pool and answers what was actually restored, which stops short at the maximum
+- `stats-regenerate!` — moves every pool by its own rate for an elapsed time, each clamped at its maximum; a negative time is refused rather than draining everything
+- `stats-refill!` — every pool to its maximum
+- `stats-level` — the current level, which starts at 1
+- `stats-xp` — the experience accumulated toward the next level
+- `stats-gain-xp!` — adds experience and answers how many levels were gained; with no curve it is always 0, and a curve answering a cost of zero or less is refused because believing it would raise levels for free and never terminate
+
 # gfx
 
 Drawing, and the geometry and assets behind it.
+
+## `(gfx camera)`
+
+An orbit camera: a point it looks at, an angle and distance it watches from, and an eye that follows rather than snaps. It decides none of the things that belong to the caller -- mouse sensitivity (pass changes already in radians and world units), how high above a character the target sits (pass a target that includes it), or whether the world has ground at all.
+
+- `make-orbit-camera` — a camera with gentle defaults: pitch limited to 0.08..1.12 radians so it never goes under the floor or straight down, distance 1..30, and the eye placed outright on the first `camera-follow!` rather than flown in from the origin
+- `orbit-camera?` — whether a value is an orbit camera
+- `camera-yaw` — the accumulated heading in radians. NOT folded into one turn: folding would erase the fact that the player spun three times, and there is no seam to fold for, because the following happens in position space rather than angle space
+- `camera-pitch` — the elevation in radians, always within the limits
+- `camera-distance` — how far the eye sits from the target, always within the limits
+- `camera-limits!` — set the pitch and distance bounds, and bring the current values inside them at once. A reversed pair is refused by name rather than silently swapped, because a caller that passed them the wrong way round has a bug in whatever computed them
+- `camera-orbit!` — add to yaw, pitch and distance. The changes are ALREADY in radians and world units: a pixels-per-radian factor belongs to the input layer, and burning one in here would make every caller with a different device divide it back out. Pitch and distance clamp; yaw does not
+- `camera-target!` — the point the camera looks at, as a v3. It is the caller's job to include a character's eye height in it
+- `camera-follow!` — advance the follow by `dt` seconds. The damping is per unit time, so sixty steps of 1/60 land where six steps of 1/6 land -- a property a test can check, unlike "looks smooth". The ground lift happens AFTER the damping: lifting the damping's target instead would let the eye dip into a hillside at a terrain edge and climb back out every time
+- `camera-floor!` — give a `(x z) -> y` ground function and a clearance to stay above it, or `#f` for a world with no ground
+- `camera-shake!` — add an impulse, scaled by `power`, that decays back to zero. The clamp is on the accumulated result rather than on each addend, so a stack of hits in one frame cannot throw the eye across the level
+- `camera-eye` — where a renderer should put the eye: the followed position displaced by whatever shake is still ringing
+- `camera-target` — the point being looked at, as last set
+- `camera-view` — the view matrix, built from `camera-eye` and `camera-target` through `m4-look-at`, so there is one definition of what this camera sees rather than two that can drift
 
 ## `(gfx collide)`
 
@@ -60,6 +140,9 @@ Drawing, and the geometry and assets behind it.
 - `character-jump!` — gives the character an upward speed, but only while it is grounded
 - `make-aabb-grid` — a broadphase: hashes static boxes into xz cells of a given size, so a query touches a handful instead of all of them
 - `grid-near` — every box whose cells the sphere at pos with radius r touches, each box once
+- `circle-circle?` — do two circles in a plane overlap? The arguments are a pair of numbers (x, y) per circle; this library does not say which two world axes they are, so a top-down game passes (x, z)
+- `segment-circle?` — does the SEGMENT a-b come within `r` of a circle centred at (cx, cy)? Unlike `ray-sphere` this stops at b: a circle beyond the far end does not hit, which is what a swing's reach means. A degenerate segment (a = b) asks whether that point is inside the circle
+- `move-circle` — move a circle by (dx, dy), pushed out of every solid it would end inside, and answer the new x and y as two values; `solids` is a vector of `#(x y r)`. Sliding falls out of pushing rather than stopping. It steps at `r/2`, so a displacement within an integer number of those hops cannot tunnel -- but this is NOT general continuous collision detection: a large displacement past a SMALL solid can still step over it, because the step comes from the moving circle's radius, not the solid's. Solids are applied in order, so the landing spot between two overlapping solids depends on the vector's order
 
 ## `(gfx fx)`
 

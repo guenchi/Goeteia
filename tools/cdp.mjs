@@ -128,15 +128,32 @@ export async function withBrowser(fn, { timeoutMs = 30000 } = {}) {
         '--headless=new', '--remote-debugging-port=0',
         `--user-data-dir=${profile}`, '--no-first-run',
         '--no-default-browser-check', '--disable-extensions',
+        // Without these the browser asks the macOS Keychain for its
+        // password-encryption key, and that ASKS THE USER: the launch
+        // sits behind a GUI prompt nobody is there to answer, prints
+        // `Keychain lookup failed ... userCanceledErr (-128)`, and
+        // reaches the DevTools line late or never.  Measured here as a
+        // launch that produced no endpoint inside 30s -- an instrument
+        // that stalls on a dialog is not one a gate can wait on.
+        '--use-mock-keychain', '--password-store=basic',
+        // it is a shader compiler to us, not a browser: no first-run
+        // network chatter to sit behind either
+        '--disable-sync', '--disable-background-networking',
         'about:blank',
     ]);
+    // Everything the browser says is kept, so that a launch which never
+    // reaches the endpoint can be diagnosed from the error instead of
+    // being written off as flaky.  An unexplained intermittent red
+    // teaches people to ignore the gate.
+    let chatter = '';
     // An instrument that hangs is worse than one that fails: it stalls
     // whatever is waiting on it and reads as "still going".  Every wait
     // below is bounded.
     const kill = () => { try { proc.kill('SIGKILL'); } catch { /* already gone */ } };
     const guard = setTimeout(kill, timeoutMs);
+    if (guard.unref) guard.unref();   // a watchdog must not itself keep node alive
     try {
-        const endpoint = await readEndpoint(proc, timeoutMs);
+        const endpoint = await readEndpoint(proc, timeoutMs, t => { chatter += t; });
         const session = await connect(endpoint, timeoutMs);
         try {
             return await fn({ ...session, browser: found });
@@ -154,16 +171,21 @@ export class NoBrowser extends Error {
     constructor() { super('no Chrome binary found'); this.name = 'NoBrowser'; }
 }
 
-function readEndpoint(proc, timeoutMs) {
+function readEndpoint(proc, timeoutMs, note = () => {}) {
     return new Promise((resolve, reject) => {
         let buf = '';
-        const t = setTimeout(
-            () => reject(new Error('the browser printed no DevTools endpoint')), timeoutMs);
-        proc.stderr.on('data', d => {
-            buf += d;
+        const t = setTimeout(() => reject(new Error(
+            'the browser printed no DevTools endpoint in ' + timeoutMs + 'ms; it said: ' +
+            (buf.trim().split('\n').slice(-4).join(' | ') || '(nothing at all)'))), timeoutMs);
+        const take = d => {
+            buf += d; note(String(d));
             const m = buf.match(/ws:\/\/\S+/);
             if (m) { clearTimeout(t); resolve(m[0]); }
-        });
+        };
+        proc.stderr.on('data', take);
+        // some builds put the line on stdout; watching one stream only
+        // is a failure mode that looks exactly like a slow launch
+        proc.stdout.on('data', take);
         proc.on('exit', code => {
             clearTimeout(t);
             reject(new Error(`the browser exited before listening (code ${code})`));
@@ -213,12 +235,18 @@ async function connect(endpoint, timeoutMs) {
     return { evaluateInNewPage, close: () => sock.close() };
 }
 
+// The timer is CLEARED once the race is decided.  Leaving it pending
+// keeps node's event loop alive until it fires, so every run sat for
+// the full timeout after its work was done: the self-check printed
+// "ok" and then the process hung about for 30s.  Nothing failed, so
+// nothing said anything -- it just looked like a slow instrument, and
+// a slow gate is one people stop running.
 function withTimeout(p, ms, what) {
-    return Promise.race([
-        p,
-        new Promise((_, rej) => setTimeout(
-            () => rej(new Error(`timed out after ${ms}ms: ${what}`)), ms)),
-    ]);
+    let timer;
+    const bell = new Promise((_, rej) => {
+        timer = setTimeout(() => rej(new Error(`timed out after ${ms}ms: ${what}`)), ms);
+    });
+    return Promise.race([p, bell]).finally(() => clearTimeout(timer));
 }
 
 // ---- the question this tool exists to answer ----

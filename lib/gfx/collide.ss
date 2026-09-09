@@ -59,7 +59,8 @@
           sphere-aabb-push sweep-sphere-aabb move-and-slide
           make-character character? character-pos character-grounded?
           character-move! character-jump!
-          make-aabb-grid grid-near)
+          make-aabb-grid grid-near
+          circle-circle? segment-circle? move-circle)
   (import (rnrs) (gfx mat) (gfx mesh))
 
   (define $col-eps 0.000000001)
@@ -463,5 +464,116 @@
                                          (dedup (cdr bs) acc))
                                         (else (dedup (cdr bs)
                                                      (cons (car bs)
-                                                           acc))))))))))))))
+                                                           acc)))))))))))))
+  ;; ---- circles in a plane ----
+  ;;
+  ;; The arguments are a PAIR OF NUMBERS (x, y); this library does not
+  ;; say which two world axes they are.  A top-down game passes (x, z).
+  ;; They are not named x/z, because that would burn one convention
+  ;; into the names and leave every other caller translating.
+  ;;
+  ;; These are not conveniences over the 3D pieces above.  Each answers
+  ;; a question the 3D piece answers WRONGLY for this use:
+  ;;   * ray-sphere reports a distance along an INFINITE ray, so a
+  ;;     circle beyond the far end of a sweep still "hits";
+  ;;   * move-and-slide resolves against an AABB, and a circle is
+  ;;     pushed along the line of centres, not along an axis;
+  ;;   * sphere-sphere? is three-dimensional, so using it here builds
+  ;;     two v3s per pair per frame on a hot path.
+
+  (define (circle-circle? x1 y1 r1 x2 y2 r2)
+    (let* ((dx (fl- ($col-fl x2) ($col-fl x1)))
+           (dy (fl- ($col-fl y2) ($col-fl y1)))
+           (rr (fl+ ($col-fl r1) ($col-fl r2))))
+      (fl<? (fl+ (fl* dx dx) (fl* dy dy)) (fl* rr rr))))
+
+  ;; Does the SEGMENT a->b come within r of c?  The clamp on t is the
+  ;; whole difference from a ray: without it this answers "does the
+  ;; line through a and b pass near c", which is true for circles the
+  ;; swing never reaches.  A degenerate segment (a = b) is a point, and
+  ;; the answer is then whether that point lies inside the circle.
+  (define (segment-circle? ax ay bx by cx cy r)
+    (let* ((ax ($col-fl ax)) (ay ($col-fl ay))
+           (bx ($col-fl bx)) (by ($col-fl by))
+           (cx ($col-fl cx)) (cy ($col-fl cy)) (r ($col-fl r))
+           (ex (fl- bx ax)) (ey (fl- by ay))
+           (len2 (fl+ (fl* ex ex) (fl* ey ey)))
+           (t (if (fl=? len2 0.0)
+                  0.0
+                  (let ((raw (fl/ (fl+ (fl* (fl- cx ax) ex)
+                                       (fl* (fl- cy ay) ey))
+                                  len2)))
+                    (if (fl<? raw 0.0) 0.0 (if (fl<? 1.0 raw) 1.0 raw)))))
+           (px (fl+ ax (fl* ex t)))
+           (py (fl+ ay (fl* ey t)))
+           (dx (fl- cx px)) (dy (fl- cy py)))
+      (fl<? (fl+ (fl* dx dx) (fl* dy dy)) (fl* r r))))
+
+  ;; Push one circle out of another, along the line of centres.  When
+  ;; the centres coincide there is no such line, so the direction is +x:
+  ;; arbitrary, but FIXED -- normalising a zero vector would answer NaN,
+  ;; and choosing by iteration order would make the result depend on how
+  ;; the solids happen to be listed.
+  (define ($circle-push x y r sx sy sr)
+    (let* ((dx (fl- x sx)) (dy (fl- y sy))
+           (d2 (fl+ (fl* dx dx) (fl* dy dy)))
+           (rr (fl+ r sr)))
+      (if (fl<? d2 (fl* rr rr))
+          (if (fl=? d2 0.0)
+              (cons (fl+ sx rr) sy)
+              (let* ((d (flsqrt d2))
+                     (k (fl/ rr d)))
+                (cons (fl+ sx (fl* dx k)) (fl+ sy (fl* dy k)))))
+          (cons x y))))
+
+  ;; Move a circle by (dx, dy), pushed out of every solid it would end
+  ;; up inside; answers the new x and y as two values.  `solids' is a
+  ;; vector of #(x y r).
+  ;;
+  ;; Sliding is what falls out of pushing rather than stopping: a
+  ;; diagonal move into a wall keeps the component along the wall.
+  ;;
+  ;; WHAT IS GUARANTEED, AND WHERE IT STOPS.  The move is taken in
+  ;; ceil(|d| / (r/2)) steps, each resolved against every solid, so a
+  ;; call whose displacement is within an integer number of r/2 hops
+  ;; cannot pass through a solid it should have hit.
+  ;; !! This is NOT general continuous collision detection.  A
+  ;; displacement far larger than a SMALL solid's radius can still step
+  ;; over it: the step length is chosen from the MOVING circle's radius,
+  ;; not from the radii of what it might hit.  A "cannot tunnel" with no
+  ;; stated boundary is the next incident, so the boundary is stated.
+  ;;
+  ;; Solids are applied in order, so the final position depends on the
+  ;; order of the vector.  That is a deliberate, recorded trade -- doing
+  ;; better means solving the constraints jointly -- and it means a
+  ;; caller (or a test) must not depend on where a circle lands between
+  ;; two overlapping solids, only on it ending up outside both.
+  (define (move-circle x y dx dy r solids)
+    (let* ((x ($col-fl x)) (y ($col-fl y))
+           (dx ($col-fl dx)) (dy ($col-fl dy)) (r ($col-fl r))
+           (dist (flsqrt (fl+ (fl* dx dx) (fl* dy dy))))
+           (step (if (fl<? 0.0 r) (fl/ r 2.0) r))
+           (n (if (or (fl=? dist 0.0) (not (fl<? 0.0 step)))
+                  1
+                  (let loop ((k 1))
+                    (if (fl<? dist (fl* step (fixnum->flonum k)))
+                        k
+                        (loop (+ k 1))))))
+           (fx (fl/ dx (fixnum->flonum n)))
+           (fy (fl/ dy (fixnum->flonum n)))
+           (m (vector-length solids)))
+      (let step-loop ((i 0) (px x) (py y))
+        (if (= i n)
+            (values px py)
+            (let ((nx (fl+ px fx)) (ny (fl+ py fy)))
+              (let solid-loop ((j 0) (cx nx) (cy ny))
+                (if (= j m)
+                    (step-loop (+ i 1) cx cy)
+                    (let* ((s (vector-ref solids j))
+                           (p ($circle-push cx cy r
+                                            ($col-fl (vector-ref s 0))
+                                            ($col-fl (vector-ref s 1))
+                                            ($col-fl (vector-ref s 2)))))
+                      (solid-loop (+ j 1) (car p) (cdr p))))))))))
+)
 
