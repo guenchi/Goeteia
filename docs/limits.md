@@ -574,6 +574,71 @@ from a string or file port gets the real line and column of its own
 input (no file name — nothing told it one), and a port that is read
 from more than once keeps counting where it left off.
 
+## Inside a transformer
+
+The expander runs transformer bodies in a small interpreter of its own,
+and two of its properties are worth knowing before writing a macro that
+computes anything.
+
+### A fixed-arity primitive discards surplus arguments, having evaluated them
+
+`car`, `cdr` and their fixed-arity siblings take the arguments they
+expect and drop the rest.  Nothing is reported:
+
+```scheme
+(define-syntax m
+  (lambda (x) (datum->syntax x (car '(1) 'extra))))
+(m)                                   ; 1
+```
+
+The surplus argument is not merely ignored — it is evaluated first, and
+its value is thrown away.  An expression that fails still fails:
+
+```scheme
+(define-syntax m
+  (lambda (x) (datum->syntax x (car '(1) (car '())))))
+(m)              ; Exception in car: () is not a pair
+```
+
+So a call with too many arguments can raise from an argument whose
+result no one wanted, and a call with too many *harmless* arguments
+raises nothing at all and quietly means something narrower than it
+says.
+
+This is a sibling of the wrong-value case rather than the same defect:
+there, an over-applied primitive answers the wrong number; here it
+answers the right one while ignoring part of what it was given.  The
+failure shapes differ, so a test written for one does not see the
+other.
+
+It is unfixed as of this writing, and the reason is worth stating: a
+correct check needs to know how many arguments each meta-primitive
+takes, and a hand-written table of that is exactly the kind of
+by-name list that never announces its own omissions.  One wrong row
+refuses a call that works today, at expansion time.  The table has to
+be derived from the dispatch itself, which is a change of
+representation rather than an added check.
+
+### Argument evaluation order is unspecified, and is not left to right
+
+R6RS does not fix the order in which a procedure's argument
+expressions are evaluated, and the expander's interpreter takes
+advantage of it.  With three failing arguments, the third reports:
+
+```scheme
+(define-syntax m
+  (lambda (x) (datum->syntax x (list 'quote (list (car 11) (car 22) (car 33))))))
+(m)              ; Exception in car: 33 is not a pair
+```
+
+Pairwise the measured order is third, first, second.  This is not a
+defect and no test pins it: doing so would promote an unspecified
+implementation detail into a contract and stand in the way of any
+later reordering.  It is written down because "unspecified" is read by
+most people as "left to right in practice", and a transformer whose
+argument expressions have side effects on each other will behave in a
+way its author did not predict.
+
 ## Source encoding
 
 Source files are read bytewise as latin-1: each byte of a UTF-8
