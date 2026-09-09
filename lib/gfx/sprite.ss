@@ -247,15 +247,31 @@
        (layout-lines lay))))
 
   ;; ---- image sprites: a sheet is a premultiplied texture ----
-  ;; the fragment multiplies the premultiplied texel by the tint;
-  ;; sheet-draw! selects (cmd-blend! 'premul) to match
+  ;; The texel is premultiplied and sheet-draw! selects
+  ;; (cmd-blend! 'premul), i.e. (ONE, ONE_MINUS_SRC_ALPHA).  Under that
+  ;; blend the fragment must hand over colour that is ALREADY scaled by
+  ;; its own alpha, so tinting by (r,g,b,a) means rgb * a, not rgb:
+  ;;
+  ;;   src.rgb = texel.rgb * tint.rgb * tint.a
+  ;;   src.a   = texel.a   * tint.a
+  ;;
+  ;; ⚠️ A plain component-wise (* texel v_tint) gets the alpha channel
+  ;; right and the colour channels wrong, and the error is invisible
+  ;; until the tint alpha is low: at tint.a = 0 the ONE factor still
+  ;; contributes full colour, so a sprite faded out to nothing paints
+  ;; its colour over the frame at full strength.  What made that
+  ;; measurable was rendering two frames and requiring them equal --
+  ;; "drawing something invisible changes nothing" needs no knowledge
+  ;; of what the right colour would have been.
   (define $sheet-fs
     '((precision mediump float)
       (uniform sampler2D u_tex)
       (varying vec2 v_uv)
       (varying vec4 v_tint)
       (define (main) void
-        (set! gl_FragColor (* (texture2D u_tex v_uv) v_tint)))))
+        (set! gl_FragColor
+              (* (texture2D u_tex v_uv)
+                 (vec4 (* v_tint.rgb v_tint.a) v_tint.a))))))
 
   ;; (load-image! "sprites.png" (lambda (img) ...)): k runs when the
   ;; browser has the pixels; feed the img to make-sheet there
