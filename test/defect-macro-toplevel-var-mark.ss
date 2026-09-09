@@ -1,34 +1,33 @@
 ;; expect: #t
-;; RED ON PURPOSE: a non-pure initialiser.
-;; A macro that expands to a top-level definition produces a name the
-;; program cannot use.  *vars* (and *fns*) are keyed by the definition's
-;; ORIGINAL name, which carries the mark an expansion puts on it, while
-;; every later lookup strips the mark -- so the two never meet.
+;; RED ON PURPOSE: a top-level value definition introduced by a macro
+;; cannot be read by the macro's OWN expansion.
 ;;
-;; ⚠️ Three symptoms, three files, because each fails at compile time
-;; and would otherwise hide the others.  All three are the same
-;; mismatch; only the downstream consequence differs.
+;; The definition and the reference below both come out of the same
+;; template, so they carry the same marks and must denote the same
+;; thing.  They do not: *vars* is keyed by the definition's marked name
+;; while the lookup strips the mark, so the two never meet, and the
+;; expansion fails on a name nobody wrote:
 ;;
-;;   value with a non-pure initialiser   set! of unbound variable:
-;;                                       #{mv <mark>}  -- names a
-;;                                       variable nobody wrote
-;;   value with a constant initialiser   unbound variable: mc
-;;                                       -- pure-init? lets dead-code
-;;                                       elimination delete the whole
-;;                                       definition, and nothing says so
-;;   function definition                 cannot call: mf, the same way
+;;   set! of unbound variable: #{mv <mark>}
 ;;
-;; ⭐ The two "constant" and "function" cases were reported as WORKING.
-;; They compile -- as long as nothing uses the name.  ⇒ "it compiles"
-;; and "it works" are different questions, and the mildest-looking case
-;; is the one that is hardest to notice: the definition is simply not
-;; there.
+;; ⚠️ THIS CELL WAS WRONG UNTIL 2026-09-09 and its earlier shape must
+;; not come back.  It used to write the reference OUTSIDE the macro --
+;; `(m)` and then a bare `mv` -- and demand that it resolve.  ⛔ That is
+;; a demand to BREAK HYGIENE: a name a macro introduces is fresh, and a
+;; reference the user wrote must not see it.  Chez refuses that program
+;; and so does this compiler, correctly.  The old cell would have been
+;; satisfied by exactly the change that makes the compiler worse.
 ;;
-;; The one shape that does work is a name handed in as a macro ARGUMENT:
-;; it was never renamed, so both sides agree.  That is
-;; test/macro-toplevel-var-argument.ss, and it is green for a reason
-;; that cannot quietly change -- unlike these three.
+;; ⭐ Which is why test/macro-toplevel-hygiene.mjs exists: it fails if
+;; the fix reaches one inch further than this file's shape.
+;;
+;; The procedure case is NOT broken -- *fns* agrees with its lookup --
+;; and is a green control in test/macro-toplevel-hygiene.ss, not a
+;; defect file.  Measured 2026-09-09; three shapes were assumed broken
+;; and only these two are.
 (import (rnrs))
-(define-syntax m (syntax-rules () ((_) (define mv (car '(7))))))
+(define-syntax m
+  (syntax-rules ()
+    ((_) (begin (define mv (car (list 7)))
+                (display (= 7 mv))))))
 (m)
-(display (= 7 mv))
