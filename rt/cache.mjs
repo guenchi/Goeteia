@@ -126,8 +126,15 @@ function hashTree(files) {
     // not see that would serve one file's entry for another's.
     for (const rel of files.slice().sort()) {
         const abs = path.join(root, rel);
-        let body;
-        try { body = fs.readFileSync(abs); } catch { continue; }
+        // NOT caught.  A file that is named here and cannot be read
+        // hashes to nothing if it is skipped, which is byte for byte
+        // what a file that does not exist hashes to -- so a permission
+        // error, a half-written checkout or a vanished dependency would
+        // all produce a key that looks complete and stands for less
+        // than it claims.  Failing to build a key is recoverable; a key
+        // that quietly covers less than its name says is the false
+        // green this whole file exists to prevent.
+        const body = fs.readFileSync(abs);
         for (const p of field(rel)) h.update(p);
         for (const p of field(body)) h.update(p);
     }
@@ -135,8 +142,10 @@ function hashTree(files) {
 }
 
 function walk(dir, out) {
-    let entries;
-    try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return out; }
+    // Also not caught, for the same reason one level up: a directory
+    // that cannot be read contributes nothing, and nothing is exactly
+    // what an empty directory contributes.
+    const entries = fs.readdirSync(dir, { withFileTypes: true });
     for (const e of entries.sort((a, b) => (a.name < b.name ? -1 : 1))) {
         const abs = path.join(dir, e.name);
         if (e.isDirectory()) walk(abs, out);
@@ -145,16 +154,39 @@ function walk(dir, out) {
     return out;
 }
 
-// Every library a compile could read.  test/lib/** is in it because
-// tests import each other through it, and leaving it out would be the
-// same hole one directory over.
+// Every .ss under lib/ and test/ -- which is wider than the two named
+// directories it replaces, and still NOT everything a compile could
+// resolve.  Both halves of that sentence matter.
+//
+// Wider, because the resolver searches [the source's own directory,
+// that directory's lib/, the bundled lib/] (rt/compile.mjs), so ANY .ss
+// beside a source can become a library the moment someone imports it --
+// test/tmac/lib.ss already is one, and a list of two directories was
+// wrong the day a third appeared with nothing to announce it.
+//
+// Still not everything, and these are the gaps rather than an
+// assurance: a source compiled from outside the tree resolves siblings
+// this never sees; an import can climb out with `..`; and walk() below
+// does not follow a DIRECTORY symlink, so a library reached through one
+// is invisible here (measured: editing a .ss behind such a link leaves
+// this hash unchanged).  None of those exist under lib/ or test/ today
+// -- `find lib test -type l` is empty -- so the gaps are latent, and
+// they are why nothing may treat this as a dependency tracker.  A
+// caller that compiles sources from arbitrary directories must not use
+// this cache at all.
+//
+// Hashing all of lib/ and all of test/ is deliberately wider than the
+// dependency graph.  The direction is what matters: too wide only costs
+// misses, too narrow is a false green.  A per-source closure would be
+// narrower and much faster, and it is a separate change with a failure
+// mode of its own -- see docs in archive/goeteia-compile-cache-design.md.
 //
 // Computed fresh on every call rather than memoised: a caller that
 // changes a library and asks again must be told, and the runner calls
 // it once per suite run anyway.
 export function closureHash() {
     return hashTree([...walk(path.join(root, 'lib'), []),
-                     ...walk(path.join(root, 'test', 'lib'), [])]);
+                     ...walk(path.join(root, 'test'), [])]);
 }
 
 // Which compiler produces this target.  stage0 reads the same sources
@@ -168,10 +200,27 @@ export function closureHash() {
 // serves the old compiler's artifact and the round goes green.  Nothing
 // in this file, and nothing in the suite, would say a word about it.
 // Hashing the directory costs one extra read per entry today -- src/
-// holds five files -- and removes the entire class.
+// holds a handful of files -- and removes the entire class.
+//
+// The runtime glue is read and spliced into EVERY compile by both
+// drivers -- rt/compile.mjs prepends conjureGlueDirective() on the wasm
+// and the js path alike, and src/chez-driver.ss reads the same two
+// files -- with no test for whether the program has a mount point.  So
+// a byte changed in either one changes every artifact this tree can
+// produce, and until it was in the key nothing did.
+const GLUE = ['rt/jsbridge.mjs', 'rt/web.mjs'];
+
 export function compilerIdFor(target) {
-    if (target === 'stage1') return hashTree(['goeteia.wasm', 'rt/compile.mjs']);
-    return hashTree(walk(path.join(root, 'src'), []));
+    // src/prelude.ss is prepended to every program by both stages.
+    // stage0 hashes the whole of src/ and so already carries it;
+    // stage1 reads it directly (rt/compile.mjs) and has to name it.
+    // The asymmetry is the point: a key that covers the prelude on one
+    // stage and not the other makes a warm stage1 and a cold stage0
+    // disagree, and that disagreement arrives looking like a
+    // cross-host failure rather than like a cache bug.
+    if (target === 'stage1')
+        return hashTree(['goeteia.wasm', 'rt/compile.mjs', 'src/prelude.ss', ...GLUE]);
+    return hashTree([...walk(path.join(root, 'src'), []), ...GLUE]);
 }
 
 function entryPath(key) {

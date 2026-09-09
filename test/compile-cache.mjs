@@ -262,17 +262,35 @@ assert.equal(compilerIdFor('wasm'), stage0Before,
 // shape where a warm stage1 and a cold stage0 disagree, and the
 // disagreement arrives looking like a cross-host failure.
 const KEYS = () => ({
-    closure: closureHash(), stage0: compilerIdFor('wasm'), stage1: compilerIdFor('stage1'),
+    closure: closureHash(), stage0: compilerIdFor('wasm'),
+    ...(haveWasm ? { stage1: compilerIdFor('stage1') } : {}),
 });
+// stage1's identity hashes goeteia.wasm, and this tree deliberately
+// runs without one: run-tests.sh:97 and :128 both guard the stage1
+// column with `[ -f goeteia.wasm ]`, because a fresh clone before a
+// bootstrap has no self-hosted compiler.  Asking for that identity
+// there now RAISES, which is the intended behaviour of the read-error
+// change and would be a crash in this file rather than a verdict.
+//
+// ⭐ So the missing case is an assertion of its own rather than a skip.
+// A skip here would be invisible: run-tests.sh sends this file's output
+// to /dev/null, so a printed "not measured" note would reach nobody,
+// and the row would silently stop being checked on exactly the trees
+// where the compiler is being brought up.  Both arms below assert.
+const haveWasm = fs.existsSync(path.join(root, 'goeteia.wasm'));
+if (!haveWasm) {
+    assert.throws(() => compilerIdFor('stage1'), /ENOENT|no such file/i,
+                  'with no goeteia.wasm the stage1 identity must raise, not answer');
+}
 const inputs = [
     ['rt/jsbridge.mjs', ['stage0', 'stage1'], 'runtime glue, inlined into every compile'],
     ['rt/web.mjs', ['stage0', 'stage1'], 'runtime glue, inlined into every compile'],
     ['src/prelude.ss', ['stage0', 'stage1'], 'prepended to every program, on both stages'],
     ['test/tmac/lib.ss', ['closure'], 'a library test/macro-lib.ss imports'],
 ];
-// The four are collected and reported together rather than asserted one
+// The rows are collected and reported together rather than asserted one
 // at a time.  Stopping at the first would show a reader one missing
-// input where there are four, and the natural response to one missing
+// input where there are six, and the natural response to one missing
 // input is to add one path -- which is how the list got short in the
 // first place.  A defect list that reveals itself an item at a time
 // gets fixed an item at a time.
@@ -289,6 +307,7 @@ for (const [rel, mustMove, why] of inputs) {
         fs.writeFileSync(abs, orig);
     }
     for (const k of mustMove) {
+        if (!(k in before)) continue;          // stage1, on a tree with no wasm
         if (before[k] === after[k]) blind.push(`${rel} -> ${k}   (${why})`);
     }
     assert.deepEqual(KEYS(), before, `restoring ${rel} must restore every key`);
@@ -296,4 +315,40 @@ for (const [rel, mustMove, why] of inputs) {
 assert.deepEqual(blind, [],
                  'read on every compile, and absent from the key that should carry it:\n  '
                  + blind.join('\n  '));
+
+// ---- a file that is named and cannot be read must raise ----
+//
+// This is the other half of the same property, and the half that is
+// easy to leave out: hashTree used to catch a read error and skip the
+// file, which hashes byte for byte the same as a file that was never
+// there.  A permission error, a half-finished checkout or a vanished
+// dependency would all produce a key that looked complete.
+//
+// The probe is a file this test creates, under src/, and never the
+// tree's own sources -- another session may be compiling in this
+// worktree, and making a real source unreadable for the length of an
+// assertion would break their round rather than this one's.
+const unreadable = path.join(root, 'src', '.cache-unreadable-probe.ss');
+fs.writeFileSync(unreadable, ';; unreadable for the length of one assertion\n');
+let enforced = true;
+try {
+    fs.chmodSync(unreadable, 0o000);
+    try { fs.readFileSync(unreadable); enforced = false; } catch { /* as intended */ }
+    if (enforced) {
+        assert.throws(() => compilerIdFor('wasm'), /EACCES|permission/i,
+                      'a file under src/ that cannot be read must fail the key, not be skipped');
+    }
+} finally {
+    fs.chmodSync(unreadable, 0o644);
+    fs.unlinkSync(unreadable);
+}
+// Not a silent skip: the one environment where the check above cannot
+// run is one where this process can read a mode-000 file (running as
+// root, or a filesystem that does not enforce modes), and that has to
+// be said out loud rather than passing quietly.  run-tests.sh discards
+// this file's output when it succeeds, so the note is made to fail
+// instead -- a check that cannot run is not a check that passed.
+assert.ok(enforced,
+          'this process can read a mode-000 file (root? a filesystem without modes?), '
+          + 'so the unreadable-file property was NOT checked here');
 fs.rmSync(tmp, { recursive: true, force: true });
