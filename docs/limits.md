@@ -323,6 +323,48 @@ it.
 integer id you already have, a symbol, a string through
 `make-hashtable` with `string-hash` — rather than by the object.
 
+## A record accessor checks the record's type, and that costs something
+
+`define-record-type` gives every accessor and every mutator an identity
+check: the field is read only if the value really is a record of that
+type. Without it an accessor compiled for a one-field record happily
+reads field 0 of *any* one-field record, because the generated code
+carries a field count and an index and not the type they belong to — so
+`(a-x (make-b 7))` answered `7` instead of raising. Two records with the
+same shape are exactly where a caller most needs the check (a position
+and a velocity; a health and a mana), and there the wrong answer is a
+plausible number rather than a crash.
+
+**What it costs, with its range.** On a path that does nothing but touch
+record fields, measured over three million iterations: reads **+33%**,
+writes **+50%**. That is the cost of the check against an operation that
+was otherwise a single struct access, and it is the worst case by
+construction.
+
+On real work the cost appears **only where records are used, and only in
+proportion**. Measured with `bench/perf.ss`, three runs each side:
+
+| benchmark | record types in its library | change |
+|---|---|---|
+| `typeset layout` | 4 | **+15%** (13 → 15 µs per ~1 KB paragraph) |
+| `typeset prepare` | 4 | **+9%** (55 → 60 µs) |
+| `v3-normalize`, `m4-mul` | 0 | none measurable |
+| `js-get` | 0 | none measurable |
+
+⚠️ **Read the +15% with its range: it is 15% of typeset, not 15% of
+anything else.** In absolute terms one prepared and laid-out paragraph
+costs about **7 µs more** — 0.04% of a 16.7 ms frame, and typeset runs
+per message rather than per frame (`bench/perf.ss` says so where it
+measures it). A burst of twenty paragraphs reflowed in one frame pays
+about 0.14 ms.
+
+There is no unchecked variant, deliberately: an accessor that skips the
+check would be a second public spelling of the same operation, and the
+default has to be the safe one. Removing the cost where the type is
+already known is a compiler question — eliding the check when the value
+provably came from the matching constructor — and it is written up
+separately rather than solved by handing callers a sharp edge.
+
 ## Capacity limits in the graphics stack
 
 - **Index width is per-geometry, and follows the vertex count.** A u16

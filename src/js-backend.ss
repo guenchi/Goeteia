@@ -1267,9 +1267,13 @@
           "{const p=(a>>1)*b;if(((p<<1)>>1)===p)return p;}return "
           (jgeneric-tr '$mul2 "a,b") ";};"))
    ((string=? name "JQUO")
+    ;; d===-1 goes to the generic path for the reason the wasm side
+    ;; sends it there: |a/b| <= |a| with equality only at |b|=1, so the
+    ;; single overflowing quotient is the most negative fixnum over -1,
+    ;; and W would wrap that one back to itself instead of promoting.
     (list "const JQUO=(a,b)=>{if(typeof a==='number'&&typeof b==='number')"
           "{const d=b>>1;if(d===0)throw new RangeError('divide by zero');"
-          "return W(Math.trunc((a>>1)/d));}return "
+          "if(d!==-1)return W(Math.trunc((a>>1)/d));}return "
           (jgeneric-tr '$quot2 "a,b") ";};"))
    ((string=? name "JREM")
     ;; operands stay tagged (2a % 2b = 2(a%b)); renormalize to i31

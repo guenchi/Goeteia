@@ -449,13 +449,37 @@
                                        '()
                                        (let ((f (car fs)))
                                          (cons
+                                          ;; The rtd is checked here and
+                                          ;; not inside %record-ref: the
+                                          ;; primitive casts to the struct
+                                          ;; type for a field COUNT, so two
+                                          ;; records with the same number of
+                                          ;; fields pass its cast and it
+                                          ;; hands back a field of a
+                                          ;; stranger -- a plausible number
+                                          ;; rather than a failure.  The
+                                          ;; predicate already knows the
+                                          ;; identity; this makes the
+                                          ;; accessor ask it too, so the two
+                                          ;; can no longer disagree about
+                                          ;; what a record of this type is.
                                           `(define (,(caddr f) r)
-                                             (%record-ref r ,nf ,i))
+                                             (if (%record? r ,rtd)
+                                                 (%record-ref r ,nf ,i)
+                                                 (error ',(unmark (caddr f))
+                                                        "not a record of this type" r)))
                                           (append
                                            (if (cadr f)
                                                (list
+                                                ;; The check precedes the
+                                                ;; write, so a refused
+                                                ;; mutation leaves the object
+                                                ;; exactly as it was.
                                                 `(define (,(cadddr f) r v)
-                                                   (%record-set! r ,nf ,i v)))
+                                                   (if (%record? r ,rtd)
+                                                       (%record-set! r ,nf ,i v)
+                                                       (error ',(unmark (cadddr f))
+                                                              "not a record of this type" r))))
                                                '())
                                            (accs (cdr fs) (+ i 1))))))))))))))
 (define (parse-field fs rec-name)
@@ -2453,9 +2477,23 @@
                      (p64) #xA7 (gc-op #x1C)
                      #x05 slow #x0B)))
             ((quotient)
-             (list (local-get ta) (unwrap-int)
+             ;; A quotient of two fixnums is in range except for one
+             ;; case: |a/b| <= |a| always, with equality only when
+             ;; |b| = 1, and dividing by 1 cannot leave the range.  So
+             ;; the only overflow is the most negative fixnum over -1,
+             ;; whose quotient is one past the top.  Divisor -1 is
+             ;; therefore sent to the generic path, which promotes;
+             ;; the fast path is wrong for that one input and would
+             ;; wrap it back to itself rather than raise.  Division by
+             ;; zero still traps in the divide below, as before.
+             (list (local-get tb) (unwrap-int) (i32const -1) #x46
+                   #x04 T-EQREF
+                   slow
+                   #x05
+                   (local-get ta) (unwrap-int)
                    (local-get tb) (unwrap-int)
-                   #x6D (wrap-int)))
+                   #x6D (wrap-int)
+                   #x0B))
             (else                       ; remainder
              (list (local-get ta) (untag)
                    (local-get tb) (untag)
