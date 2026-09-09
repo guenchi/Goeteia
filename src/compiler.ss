@@ -463,6 +463,25 @@
                                           ;; accessor ask it too, so the two
                                           ;; can no longer disagree about
                                           ;; what a record of this type is.
+                                          ;;
+                                          ;; SIZE: inlinable-body? admits
+                                          ;; this body and rejects the
+                                          ;; mutator's below -- $inline-cap
+                                          ;; is 16 pairs and the two land on
+                                          ;; opposite sides of it.  Nobody
+                                          ;; chose that; it fell out of the
+                                          ;; mutator carrying one more
+                                          ;; argument.  Measured, the
+                                          ;; difference is not worth
+                                          ;; recovering: hoisting the error
+                                          ;; call into a helper puts the
+                                          ;; mutator back under the cap and
+                                          ;; buys at most 13% of the check's
+                                          ;; cost, with the run ranges
+                                          ;; overlapping.  It is written down
+                                          ;; because the next edit that
+                                          ;; lengthens either body crosses
+                                          ;; the same line silently.
                                           `(define (,(caddr f) r)
                                              (if (%record? r ,rtd)
                                                  (%record-ref r ,nf ,i)
@@ -475,6 +494,12 @@
                                                 ;; write, so a refused
                                                 ;; mutation leaves the object
                                                 ;; exactly as it was.
+                                                ;;
+                                                ;; This body is over
+                                                ;; $inline-cap and the
+                                                ;; accessor's is under it --
+                                                ;; see the note there before
+                                                ;; making either one longer.
                                                 `(define (,(cadddr f) r v)
                                                    (if (%record? r ,rtd)
                                                        (%record-set! r ,nf ,i v)
