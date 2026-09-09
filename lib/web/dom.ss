@@ -15,7 +15,8 @@
 ;; DOM sugar over (web js).
 (library (web dom)
   (export window document body
-          get-element-by-id query-selector create-element make-text
+          get-element-by-id need-element-by-id
+          query-selector create-element make-text
           append-child! replace-child! insert-before! remove-child!
           remove-all-children!
           set-inner-html! inner-text set-text!
@@ -29,6 +30,24 @@
   (define (body) (js-get (document) "body"))
   (define (get-element-by-id id)
     (js-method (document) "getElementById" id))
+  ;; The same lookup, insisting.  get-element-by-id answers a falsy
+  ;; handle when nothing has the id, which is the right answer where
+  ;; absence is expected and the wrong one where it is not: the handle
+  ;; travels on into whatever was going to be written, and the failure
+  ;; arrives from the host as a complaint about a PROPERTY -- setting
+  ;; textContent of null -- naming neither the id that was missing nor
+  ;; the lookup that failed to find it.  This one refuses at the lookup
+  ;; and names the id.
+  ;;
+  ;; Both spellings are kept, and the weaker one keeps the plainer name
+  ;; on purpose: it is the older export, and renaming it would break
+  ;; every caller for whom a missing element is an ordinary answer.
+  (define (need-element-by-id id)
+    (let ((el (get-element-by-id id)))
+      (if (js-truthy? el)
+          el
+          (error 'need-element-by-id "no element on the page has this id" id))))
+
   (define (query-selector sel)
     (js-method (document) "querySelector" sel))
   (define (create-element tag)

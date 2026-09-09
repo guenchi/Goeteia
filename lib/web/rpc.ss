@@ -35,8 +35,10 @@
   (import (rnrs) (web js) (web fetch) (web sexpr))
 
   ;; (web sexpr) is the restricted, depth-limited codec -- Igropyr's
-  ;; extended wire format, not the host read/write (no #-syntax
-  ;; surprises, no flonums, bytevectors as #vu8"<base64>").
+  ;; extended wire format, not the host read/write: no #-syntax
+  ;; surprises, flonums as #f8"<base64>" (their eight IEEE bytes, so a
+  ;; signed zero and a NaN's payload cross intact), bytevectors as
+  ;; #vu8"<base64>".
   (define (rpc-serialize datum) (sexpr->string datum))
 
   (define (rpc-parse text) (string->sexpr text))
