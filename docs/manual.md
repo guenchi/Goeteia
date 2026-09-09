@@ -46,7 +46,8 @@ A `*`-prefixed name is a *pointer to a host object*: `*jsObject` (a Wasm
 16. [Testing](#testing)
 17. [Porting from JavaScript/TypeScript](#porting-from-javascripttypescript)
 18. [Dispatch and Rules](#dispatch-and-rules)
-19. [Current Limits and Planned Work](#current-limits-and-planned-work)
+19. [Game Scaffolding](#game-scaffolding)
+20. [Current Limits and Planned Work](#current-limits-and-planned-work)
 
 ## Toolchain and Workflow
 
@@ -3353,6 +3354,268 @@ The round trip, so a run can be replayed. `effect->datum` refuses a
 payload that is not a datum — a procedure, a cycle — which is where
 that has to be checked; `datum->effect` refuses anything that is not
 an effect datum.
+
+## Game Scaffolding
+
+The `(gam …)` libraries hold the bookkeeping a game repeats and none of
+the numbers a game chooses. Each of the five is independent — they
+import nothing but `(rnrs)`, and none of them knows the others exist, so
+a project takes the two it wants and leaves the rest.
+
+What they deliberately leave out is as much of the design as what they
+keep. There is no experience curve, no level reward, no damage figure,
+no range, and no fixed set of pools: every one of those is a decision
+about a particular game, and a library that held them could only be used
+by the game it was cut from. What is here instead is the part that is
+the same everywhere and easy to get subtly wrong — spending that must
+not half-succeed, an objective that must not count twice, a listing
+whose order must not depend on what the player happened to do.
+
+Two rules run through all five. **Names, not indices**: a pool, an item,
+an objective and an effect are all named, because an index is an
+unwritten agreement between library and caller that fails silently when
+it is off by one. **Every listing is in a maintained order**, never one
+computed from a hash table, because byte-for-byte agreement between the
+two compiler targets is a tested property of this system and an order
+that came out of a table would break it invisibly.
+
+Keys and names must be values `eq?` is dependable on — symbols,
+characters, booleans, fixnums. Anything else is refused by name rather
+than accepted and then silently never matched; on large integers this is
+not hypothetical, since `eq?` on two separately computed equal ones
+answers differently on the two targets.
+
+### `(gam stats)`: Named Pools and Experience
+
+```
+procedure: (make-stats pools)
+procedure: (make-stats pools curve)
+procedure: (make-stats pools curve on-level)
+
+func -> list -> procedure -> procedure -> *stats
+```
+`pools` is `((name max regen-per-second) …)`, in the order you want them
+back. `curve` maps a level to the experience needed to leave it;
+**without a curve nothing ever levels up** and `stats-gain-xp!` only
+accumulates. `on-level` is called as `(on-level stats new-level)` once
+per level gained — whatever a level grants is written there, not here. A
+repeated pool name is an error: the second one would be unreachable.
+
+```
+procedure: (stats? s)
+
+func -> any -> boolean
+```
+Whether a value came from `make-stats`. Every other procedure here
+refuses anything else by name rather than reading a stranger's slots.
+
+```
+procedure: (stat s name)          (stat-max s name)
+procedure: (stat-set! s name v)   (stat-add! s name d)
+
+func -> *stats -> symbol -> number
+```
+Read and write one pool. Writes clamp into `[0, max]`. **A name that is
+not a pool raises; it does not answer `0` or `#f`** — a typo that reads
+as an empty pool is a bug found in a playtest instead of at the call.
+
+```
+procedure: (stats-spend! s name amount)
+
+func -> *stats -> symbol -> number -> boolean
+```
+Spend if the pool holds enough: `#t` and the amount is gone, or `#f`
+and **nothing at all is deducted**. There is no partial spend — the
+caller would go ahead having paid less than it asked to.
+
+```
+procedure: (stats-damage! s name amount)
+procedure: (stats-heal! s name amount)
+
+func -> *stats -> symbol -> number -> number
+```
+Both answer **what actually happened**, which is not the amount asked
+for once the pool hits its floor or its maximum. That is the number to
+report or to feed a counter with. A negative amount is an error in
+either direction.
+
+```
+procedure: (stats-regenerate! s dt)   (stats-refill! s)
+
+func -> *stats -> number -> void
+```
+Each pool moves by its own rate for `dt` seconds and clamps at its
+maximum; a rate of `0` is a pool that only ever refills explicitly. A
+negative `dt` is refused rather than quietly draining everything.
+
+```
+procedure: (stats-level s)   (stats-xp s)
+procedure: (stats-gain-xp! s amount)
+
+func -> *stats -> number -> int
+```
+Levels start at `1`. `stats-gain-xp!` answers **how many levels were
+gained**, `0` when there is no curve. A curve that answers a cost of
+zero or less is refused: believing it would raise a level for free and
+never terminate, and a hang is far harder to diagnose than a named
+error.
+
+There is deliberately **no invulnerability timer here**. A temporary
+state belongs in `(gam effects)`; one living in a pool would make
+`stats-damage!` depend on a clock that appears nowhere in its arguments.
+Decide immunity before you call, where the decision is visible.
+
+### `(gam inventory)`: Counted Things in a Stable Order
+
+```
+procedure: (make-inventory)
+procedure: (inventory-count bag key)
+procedure: (inventory-add! bag key n)
+
+func -> *inventory -> symbol -> int -> int
+```
+`inventory-add!` answers the count after adding. `n` must be a positive
+exact integer — **zero is refused too**, since adding nothing means the
+arithmetic that produced the count went wrong somewhere the caller can
+still find.
+
+```
+procedure: (inventory-take! bag key n)
+
+func -> *inventory -> symbol -> int -> boolean
+```
+All or nothing: `#t` and the items are gone, or `#f` and **not one is
+removed**.
+
+```
+procedure: (inventory-items bag)
+
+func -> *inventory -> alist
+```
+`((key . n) …)` in the order the keys were **first added**, always, on
+both targets. The pairs are copies, so writing to them cannot move a
+count past the checks. A key taken down to zero **keeps its row and its
+place**: dropping it would send it to the end when it is added again,
+and the listing would become a record of what the player did rather than
+of what the bag holds.
+
+### `(gam quest)`: Objectives That Count Once
+
+```
+procedure: (make-quest required)
+procedure: (quest-count q)   (quest-complete? q)
+
+func -> list -> *quest
+```
+`required` is the objectives, and a repeated one is an error — it would
+make the denominator of `quest-complete?` larger than the numerator can
+ever reach, which shows up only when a player gets all the way to the
+end.
+
+```
+procedure: (quest-record! q key)
+
+func -> *quest -> symbol -> boolean
+```
+Answers whether **this call** advanced the quest, so a sound or a line
+plays exactly once. Recording an objective already recorded answers `#f`
+and changes nothing: the event behind it is usually a trigger volume or
+a bus, and neither promises to fire once. An objective this quest does
+not require is `#f`, not an error — a shared bus carries everything to
+everyone.
+
+```
+procedure: (quest-keys q)
+procedure: (quest-restore! q keys)
+
+func -> *quest -> list -> void
+```
+`quest-keys` answers the objectives met **in the order the quest
+declared them**, never in the order the events arrived. Two players with
+the same objectives met get the same answer, and a save file reloads to
+the same answer. `quest-restore!` clears and replays through
+`quest-record!`, so a hand-edited save gets exactly the checks a live
+event gets.
+
+### `(gam effects)`: States That End by Themselves
+
+```
+procedure: (make-effects)
+procedure: (effect-set! fx name duration)
+procedure: (effect-ref fx name)     (effect-active? fx name)
+
+func -> *effects -> symbol -> number -> void
+```
+`effect-ref` answers the time left, or `#f` when the name is not
+running — not `0`, which is a duration this library never stores.
+**Setting a name that is already running replaces its duration**: it
+does not take the larger of the two and it does not add them. Refreshing,
+extending and letting the longer win are three different rules a game
+can want and a player can feel; read `effect-ref` first and set the
+maximum yourself if that is the one you want. A duration of zero is
+refused.
+
+```
+procedure: (effects-tick! fx dt)
+procedure: (effects-clear! fx)
+procedure: (effects-names fx)
+
+func -> *effects -> number -> void
+```
+Every effect loses `dt`, **and then** what has run out is removed — in
+that order, so an effect with exactly `dt` left is gone after the tick
+that consumed it rather than one tick later. Reaching zero is running
+out. A negative `dt` is refused.
+
+`effects-names` is in the order the names were set. A name refreshed
+while it is still running keeps its place; a name that ran out and is
+set again is a new effect and goes last. That is deliberately unlike
+`inventory-items`, and for a reason: a count of zero means the thing is
+still there, while a duration of zero means the state is gone.
+
+### `(gam abilities)`: Cooldowns, and Nothing Else
+
+```
+procedure: (make-ability id cost cooldown)
+procedure: (ability? a)   (ability-id a)
+procedure: (ability-cost a)   (ability-cooldown a)
+
+func -> any -> number -> number -> *ability
+```
+`ability-cooldown` is the **length** of the cooldown, fixed when the
+ability is made; `ability-remaining` below is **how much is left**. One
+is configuration and the other is state, and code that confuses them
+reads as though it works. A cooldown of zero is refused — an ability
+that is instantly ready again has no cooldown, and saying so with this
+type only hides that every call around it does nothing. A cost of zero
+is fine.
+
+```
+procedure: (ability-remaining a)   (ability-ready? a)
+procedure: (ability-tick! a dt)
+procedure: (ability-use! a)
+
+func -> *ability -> number -> boolean
+```
+`ability-use!` answers whether the use happened: ready, and the cooldown
+is set to its full length; not ready, and **nothing changes** — a
+refused use does not restart a cooldown that is still running.
+`ability-tick!` counts down and clamps at zero.
+
+**`ability-use!` does not spend the cost.** It does not touch a pool and
+does not know pools exist; `cost` is a number the ability carries, for
+you to subtract wherever your resources live:
+
+```scheme
+(when (and (ability-ready? fireball)
+           (stats-spend! player 'mana (ability-cost fireball)))
+  (ability-use! fireball)
+  ...)
+```
+Tying the two together would mean an ability could only ever be paid for
+out of one kind of thing, in one currency; an ability that costs two
+resources, or none, would stop fitting. Damage and range are absent for
+the same reason — an ability that heals or opens a door has neither.
 
 ## Current Limits and Planned Work
 
