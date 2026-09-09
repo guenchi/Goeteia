@@ -381,6 +381,14 @@ else
     ${NODE-node} test/compile-cache.mjs 2>&1 | tail -20
     echo "FAIL test/compile-cache.mjs"; fail=1
 fi
+# The two 2026-09-06 defects whose counterexample is a compile-time
+# fact rather than a wrong value.  RED until they are fixed.
+if ${NODE-node} test/defect-c01-c04-compile-time.mjs >/dev/null 2>&1; then
+    echo "ok   test/defect-c01-c04-compile-time.mjs"
+else
+    ${NODE-node} test/defect-c01-c04-compile-time.mjs 2>&1 | tail -12
+    echo "FAIL test/defect-c01-c04-compile-time.mjs"; fail=1
+fi
 if ${NODE-node} test/duplicate-top-level.mjs >/dev/null 2>&1; then
     echo "ok   test/duplicate-top-level.mjs"
 else
