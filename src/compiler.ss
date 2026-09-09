@@ -756,9 +756,38 @@
    ((mv? mv-prim f) (meta-prim-apply (cdr f) args))
    (else (errorf 'goeteia "transformer applied a non-procedure"))))
 
+;; The n-ary primitives a transformer can call.  They used to be
+;; written (+ (a) (b)) and friends, which is not "n-ary with a limit":
+;; it silently EVALUATES the extra arguments and then drops them, so
+;; (+ 1 2 3) expanded to 3 and the macro produced a program that
+;; compiles, runs, and is wrong.  A dropped argument leaves no trace at
+;; all -- there is no arity error, no warning, and the expansion looks
+;; exactly like one the author meant to write.
+;;
+;; fold-left rather than the host's apply: the order the arguments are
+;; combined in is then written here rather than left to whichever host
+;; is running the expander, and a transformer whose arguments came from
+;; side-effecting code sees the same order on both.
+(define (meta-fold f init args) (fold-left f init args))
+(define (meta-chain ok? args)
+  ;; (< a b c) is (and (< a b) (< b c)) -- every adjacent pair, which is
+  ;; what R6RS says and what a two-argument version quietly was not.
+  (let scan ((xs args))
+    (or (null? xs) (null? (cdr xs))
+        (and (ok? (car xs) (cadr xs)) (scan (cdr xs))))))
+
 (define (meta-prim-apply name args)
-  (define (a) (car args))
-  (define (b) (cadr args))
+  ;; Too few arguments used to reach the host as (car '()), which
+  ;; arrives as a host error with no mention of the transformer or the
+  ;; primitive.  It is a mistake in a macro, and it says so.
+  (define (a)
+    (if (pair? args)
+        (car args)
+        (errorf 'goeteia "too few arguments to a transformer primitive:" name)))
+  (define (b)
+    (if (and (pair? args) (pair? (cdr args)))
+        (cadr args)
+        (errorf 'goeteia "too few arguments to a transformer primitive:" name)))
   (case name
     ((car) (car (a))) ((cdr) (cdr (a)))
     ((caar) (caar (a))) ((cadr) (cadr (a)))
@@ -766,7 +795,12 @@
     ((caddr) (caddr (a))) ((cdddr) (cdddr (a))) ((cadddr) (cadddr (a)))
     ((cons) (cons (a) (b)))
     ((list) args)
-    ((append) (if (null? args) '() (append (a) (if (pair? (cdr args)) (b) '()))))
+    ((append)
+     (if (null? args)
+         '()
+         ;; the last argument is returned as it is, so it may be improper
+         (let join ((xs args))
+           (if (null? (cdr xs)) (car xs) (append (car xs) (join (cdr xs)))))))
     ((reverse) (reverse (a)))
     ((length) (length (a)))
     ((list-ref) (list-ref (a) (b)))
@@ -781,11 +815,14 @@
     ((not) (not (a)))
     ((eq?) (eq? (a) (b))) ((eqv?) (eqv? (a) (b))) ((equal?) (equal? (a) (b)))
     ((zero?) (zero? (a)))
-    ((+) (+ (a) (b))) ((-) (- (a) (b))) ((*) (* (a) (b)))
+    ((+) (meta-fold + 0 args))
+    ((*) (meta-fold * 1 args))
+    ((-) (if (null? (cdr args)) (- (a)) (meta-fold - (a) (cdr args))))
     ((quotient) (quotient (a) (b))) ((remainder) (remainder (a) (b)))
-    ((<) (< (a) (b))) ((>) (> (a) (b)))
-    ((<=) (<= (a) (b))) ((>=) (>= (a) (b))) ((=) (= (a) (b)))
-    ((max) (max (a) (b)))
+    ((<) (meta-chain < args)) ((>) (meta-chain > args))
+    ((<=) (meta-chain <= args)) ((>=) (meta-chain >= args))
+    ((=) (meta-chain = args))
+    ((max) (meta-fold max (a) (cdr args)))
     ;; map-in-order, not the host's map: transformers mutate through
     ;; their mapped closures (hole counters, gensyms), and the hosts
     ;; disagree on map's traversal order
