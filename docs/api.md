@@ -837,6 +837,7 @@ the far plane never does.
 - `uastc-block!` — decode one 16-byte UASTC block at `src` into 16 RGBA texels at `dst`, row-major
 - `uastc-decode!` — decode a whole UASTC image, `w` by `h`, block by block; partial edge blocks are clipped so the destination is exactly `w*h*4` bytes
 - `uastc-block-mode` — the block's mode number, read from its first byte -- the shape of everything else in it
+- `uastc-level-bytes` — how many bytes a `w` by `h` UASTC level occupies: whole 4x4 blocks in each direction, sixteen bytes each. A caller holding a buffer that claims to be such a level can compare before decoding, which is the check that refuses a level shorter than its own dimensions require
 
 ## `(gfx wgsl)`
 
