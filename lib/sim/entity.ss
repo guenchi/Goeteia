@@ -30,8 +30,9 @@
 ;; thousands; when someone measures that, the fix is an index, and the
 ;; interface here does not have to change for it.
 (library (sim entity)
-  (export make-entities entity-spawn! entity-alive? entity-destroy!
-          entity-set! entity-ref entity-each entity-count entity-capacity)
+  (export make-entities entity-spawn! entity-spawn-with! entity-alive?
+          entity-destroy! entity-set! entity-ref entity-each
+          entity-count entity-capacity)
   (import (rnrs))
 
   ;; #(components generations free count capacity); components is a
@@ -112,6 +113,64 @@
   ;; visited until the next one -- both stated, because a caller that
   ;; spawns from inside a walk otherwise cannot tell whether it just
   ;; wrote a loop that never ends.
+  ;; Spawn an entity carrying a whole set of components, or leave the
+  ;; store as it was.
+  ;;
+  ;; IT TAKES VALUES, NOT FACTORIES.  The obvious shape for this is a
+  ;; table of procedures that each build a component, called from in
+  ;; here -- and that shape cannot keep the promise the procedure is
+  ;; for.  A factory that reads a file, a document or a saved game
+  ;; reaches the host, and a host exception is not a Scheme condition
+  ;; in this system: no handler here runs, and the program ends.  A
+  ;; rollback that only survives Scheme conditions, wrapped around
+  ;; calls that mostly raise host ones, is a promise that is false
+  ;; exactly when it matters.  Taking values moves every factory OUT,
+  ;; into the caller's own code, where it runs before this procedure is
+  ;; entered: if one of them fails there, no entity was created, so
+  ;; there is no half-built one to find.
+  ;;
+  ;; THE RANGE OF THE ROLLBACK.  It covers conditions raised INSIDE
+  ;; this procedure, which are Scheme conditions and which `guard'
+  ;; sees.  It does not cover a host exception, and nothing here could:
+  ;; that ends the program before any handler runs.  That is a property
+  ;; of the runtime, not of this procedure, and it is written down
+  ;; because an atomicity claim with no stated edge gets read as the
+  ;; widest one the words allow.
+  ;;
+  ;; AND WHAT IS ACTUALLY REACHABLE TODAY.  The shape of the rows, the
+  ;; component names and any repeat among them are all checked BEFORE
+  ;; anything is created, so by the time the writing starts there is
+  ;; nothing left that raises: the guard below is insurance, not a
+  ;; thing that happens.  It stays because it is what makes the
+  ;; property hold BY CONSTRUCTION rather than by coincidence -- the
+  ;; day entity-set! grows a check of its own, a half-built entity
+  ;; would otherwise start surviving and nothing would say so.
+  ;;
+  ;; A repeated component name is refused rather than letting the later
+  ;; write win: silently, "what I passed" and "what the entity carries"
+  ;; would stop matching, and the caller would be reading a list that no
+  ;; longer describes the thing it made.
+  (define (entity-spawn-with! w rows)
+    (unless (list? rows)
+      (error 'entity-spawn-with! "the components are a list of (name . value)" rows))
+    (let check ((rs rows) (seen '()))
+      (unless (null? rs)
+        (let ((row (car rs)))
+          (unless (pair? row)
+            (error 'entity-spawn-with! "a component is (name . value)" row))
+          (unless (symbol? (car row))
+            (error 'entity-spawn-with! "a component name is a symbol" (car row)))
+          (when (memq (car row) seen)
+            (error 'entity-spawn-with! "that component name appears twice" (car row)))
+          (check (cdr rs) (cons (car row) seen)))))
+    (let ((h (entity-spawn! w)))
+      (guard (e (#t (entity-destroy! w h) (raise e)))
+        (let fill ((rs rows))
+          (if (null? rs)
+              h
+              (begin (entity-set! w h (car (car rs)) (cdr (car rs)))
+                     (fill (cdr rs))))))))
+
   (define (entity-each w proc)
     (let* ((cs ($ents-components w))
            (gs ($ents-generations w))

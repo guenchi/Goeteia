@@ -305,6 +305,32 @@ fi
 # line has to reach the log or the skip is silent -- and a red run's
 # output is the part worth reading.
 DOCS_OUT="$T/docs-mjs.out"
+# The only check here that leaves the machine.  It stands down loudly
+# when no browser is present rather than failing, because a suite that
+# cannot run without Chrome is a suite people stop running; but on a
+# machine that has one, this is the only thing between an invalid
+# shader and a release -- the GL that test/pages/* runs against accepts
+# every shader it is shown.
+if ${NODE-node} --test test/shader-compile.mjs > "$DOCS_OUT" 2>&1; then
+    grep -E 'NOT EXERCISED HERE|^EXERCISED HERE' "$DOCS_OUT"
+    echo "ok   test/shader-compile.mjs"
+else
+    cat "$DOCS_OUT"
+    echo "FAIL test/shader-compile.mjs"; fail=1
+fi
+if ${NODE-node} --test test/manual-long-form.mjs > "$DOCS_OUT" 2>&1; then
+    grep -E 'NOT EXERCISED HERE|^EXERCISED HERE' "$DOCS_OUT"
+    echo "ok   test/manual-long-form.mjs"
+else
+    cat "$DOCS_OUT"
+    echo "FAIL test/manual-long-form.mjs"; fail=1
+fi
+if ${NODE-node} --test test/shader-accessors.mjs > "$DOCS_OUT" 2>&1; then
+    echo "ok   test/shader-accessors.mjs"
+else
+    cat "$DOCS_OUT"
+    echo "FAIL test/shader-accessors.mjs"; fail=1
+fi
 if ${NODE-node} --test test/docs.mjs > "$DOCS_OUT" 2>&1; then
     grep -E 'NOT EXERCISED HERE|^EXERCISED HERE' "$DOCS_OUT"
     echo "ok   test/docs.mjs"

@@ -40,7 +40,8 @@
           make-blur blur-run! blur-texture
           make-bloom bloom-run! bloom-texture bloom-composite!
           make-fxaa fxaa-run! make-grade grade-run!
-          make-dof dof-run!)
+          make-dof dof-run!
+          post-shaders)
   (import (rnrs) (gfx gl) (gfx glsl) (gfx fx))
 
   ;; ---- the floor: one fullscreen pass ----
@@ -359,4 +360,29 @@
                                  (fx-height))))
                     (fx-uniform! p 'u_texel
                                  (fl/ 1.0 (fixnum->flonum cv))
-                                 (fl/ 1.0 (fixnum->flonum ch))))))))
+                                 (fl/ 1.0 (fixnum->flonum ch)))))))
+  ;; ---- the shaders this library compiles, as data ----
+  ;;
+  ;; Each entry is (name dialect vertex-forms fragment-forms): the name
+  ;; is a symbol, the dialect is es100 or es300 and says which renderer
+  ;; to use (glsl->string, or the glsl300-* pair), and either shader
+  ;; may be #f where this library does not supply one.
+  ;;
+  ;; The dialect travels IN THE DATA rather than in a comment, because
+  ;; a caller that has to look up which renderer a shader wants is a
+  ;; caller that will eventually look up the wrong one.
+  ;;
+  ;; These exist so a shader can be handed to a real GLSL compiler
+  ;; without going through a GL context: the page verifier's GL is a
+  ;; stub whose compileShader does nothing, so a shader that is only
+  ;; ever compiled there is never compiled at all.
+  ;; Every one of these is a fragment shader over the fullscreen quad,
+  ;; so all six have #f for their vertex half.
+  (define (post-shaders)
+    (list (list 'blur 'es100 #f $blur-fs)
+          (list 'threshold 'es100 #f $threshold-fs)
+          (list 'composite 'es100 #f $composite-fs)
+          (list 'fxaa 'es100 #f $fxaa-fs)
+          (list 'dof 'es100 #f $dof-fs)
+          (list 'grade 'es100 #f $grade-fs)))
+)

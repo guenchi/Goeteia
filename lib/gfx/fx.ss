@@ -63,7 +63,8 @@
           fx-init-input! key-down? pointer-x pointer-y pointer-down?
           pointer-lock! pointer-locked? pointer-motion!
           fx-fullscreen! fx-quad-program
-          fx-fullscreen-use! fx-fullscreen-draw!)
+          fx-fullscreen-use! fx-fullscreen-draw!
+          fx-quad-shaders)
   (import (rnrs) (web js) (gfx gl) (gfx glsl) (gfx mat) (gfx mesh) (sim step))
 
   (define ($fx-fl v) (if (flonum? v) v (exact->inexact v)))
@@ -844,4 +845,24 @@
         (fx-uniform! prog 'u_resolution (fx-width) (fx-height)))))
 
   (define (fx-fullscreen-draw! q)
-    (cmd-draw-arrays! GL-TRIANGLE-STRIP 0 4)))
+    (cmd-draw-arrays! GL-TRIANGLE-STRIP 0 4))
+  ;; ---- the shaders this library compiles, as data ----
+  ;;
+  ;; Each entry is (name dialect vertex-forms fragment-forms): the name
+  ;; is a symbol, the dialect is es100 or es300 and says which renderer
+  ;; to use (glsl->string, or the glsl300-* pair), and either shader
+  ;; may be #f where this library does not supply one.
+  ;;
+  ;; The dialect travels IN THE DATA rather than in a comment, because
+  ;; a caller that has to look up which renderer a shader wants is a
+  ;; caller that will eventually look up the wrong one.
+  ;;
+  ;; These exist so a shader can be handed to a real GLSL compiler
+  ;; without going through a GL context: the page verifier's GL is a
+  ;; stub whose compileShader does nothing, so a shader that is only
+  ;; ever compiled there is never compiled at all.
+  ;; The fragment half is the CALLER's -- fx-fullscreen! takes it as an
+  ;; argument -- so this vertex shader has no partner of its own here.
+  (define (fx-quad-shaders)
+    (list (list 'fullscreen-quad 'es100 $fx-quad-vs #f)))
+)

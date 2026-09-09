@@ -49,7 +49,8 @@
           mesh-plane mesh-box mesh-sphere mesh-cylinder mesh-torus
           mesh-heightmap
           mesh-lit-vs mesh-lit-fs mesh-tex-vs mesh-tex-fs
-          mesh-normal-vs mesh-normal-fs mesh-pbr-vs mesh-pbr-fs)
+          mesh-normal-vs mesh-normal-fs mesh-pbr-vs mesh-pbr-fs
+          mesh-shaders)
   (import (rnrs) (gfx mat))
 
   (define $mesh-pi 3.141592653589793)
@@ -1036,4 +1037,23 @@
         (set! c (/ c (+ c one)))          ; Reinhard
         (set! gl_FragColor
               (vec4 (pow c (vec3 "0.4545" "0.4545" "0.4545"))
-                    u_albedo.a))))))
+                    u_albedo.a)))))
+  ;; ---- the same shaders, as data ----
+  ;;
+  ;; The constants above are what a person writes against: name the one
+  ;; you want and hand it to fx-program!.  This table is for a TOOL
+  ;; that has to enumerate them without knowing their names -- a check
+  ;; that compiles every shader in the tree, say.  They are two views
+  ;; of one set of values, not two supplies: the table is built from
+  ;; the same constants, so it cannot drift from them.
+  ;;
+  ;; Each entry is (name dialect vertex-forms fragment-forms), the same
+  ;; shape every other library's accessor returns; the dialect travels
+  ;; in the data because a caller that has to look up which renderer a
+  ;; shader wants will eventually look up the wrong one.
+  (define (mesh-shaders)
+    (list (list 'lit 'es100 mesh-lit-vs mesh-lit-fs)
+          (list 'textured 'es100 mesh-tex-vs mesh-tex-fs)
+          (list 'normal-mapped 'es100 mesh-normal-vs mesh-normal-fs)
+          (list 'pbr 'es100 mesh-pbr-vs mesh-pbr-fs)))
+)

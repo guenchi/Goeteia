@@ -1228,6 +1228,73 @@ source rectangles under `'premul` blending. Example:
 `examples/breakout.html` (bricks, ball, paddle, and the score text in a
 single draw).
 
+### `(gfx collide)` — intersection, sweeping and resolution
+
+Three kinds of question, and they are not variations on one another.
+*Does this overlap that* is a predicate over pairs (`sphere-sphere?`,
+`aabb-aabb?`, `sphere-aabb?`, the three capsule forms) and answers a
+boolean, which is what a trigger volume or a damage check wants. *What
+does this ray meet* returns a distance (`ray-sphere`, `ray-aabb`,
+`ray-plane`, `ray-triangle`, `ray-mesh`), which is what a picker or a
+line of sight wants. *Where does this end up* resolves a movement
+against the world (`sphere-aabb-push`, `sweep-sphere-aabb`,
+`move-and-slide`, and the `character-*` group over them), which is what
+a body being walked around a level wants. Mixing them up is the usual
+source of collision bugs: a predicate cannot tell you how far to back
+out, and a ray distance cannot tell you whether the swing reached.
+
+`make-aabb-grid` and `grid-near` are the broad phase — a uniform grid
+keyed by cell, returning each candidate box once — so the narrow-phase
+pairs above run over a handful of neighbours rather than the level.
+
+**The 2D circle group is not a convenience wrapper over the 3D one.**
+`circle-circle?`, `segment-circle?` and `move-circle` exist because the
+three-dimensional pieces answer a *different question* for a top-down
+game, and answer it wrongly:
+
+* `ray-sphere` reports a distance along an **infinite** ray. A sword
+  swing is a segment: the arc has an end, and a circle beyond that end
+  is not hit. Used as a swing test, `ray-sphere` connects with enemies
+  standing behind the target, in the right direction and out of reach.
+  `segment-circle?` clamps the parameter to the segment, which is the
+  whole difference; a degenerate segment (both ends equal) becomes a
+  point-in-circle test rather than a division by zero.
+* `move-and-slide` resolves against an **AABB**, and pushes along an
+  axis. A circle is pushed along the line of centres, which is a
+  different direction and a different resting position — visible as a
+  body that slides along an invisible square corner when it should be
+  rounding a pillar.
+* `sphere-sphere?` is three-dimensional, so using it per pair per frame
+  in a plane builds two `v3`s for every test on the hottest path there
+  is.
+
+The coordinates are a **pair of numbers**, `(x, y)`. This library does
+not say which two world axes they are: a top-down game passes `(x, z)`
+and reads the answers the same way. They are deliberately not named
+`x`/`z`, because that would burn one game's convention into the API and
+leave every other caller translating.
+
+**What `move-circle` guarantees, and where that stops.** It takes the
+move in `ceil(|d| / (r/2))` steps and resolves every solid at each one,
+so a displacement within an integer number of half-radius hops cannot
+pass through a solid it should have hit. That is the guarantee, and it
+has an edge: **the step length comes from the moving circle's radius,
+not from the radii of what it might hit**, so a large displacement past
+a *small* solid can still step over it. This is not general continuous
+collision detection, and a "cannot tunnel" with no stated boundary is
+the next incident rather than a feature.
+
+Two more properties worth knowing before they surprise someone. Solids
+are resolved **in order**, so with two overlapping solids the final
+position depends on the order of the vector — doing better means
+solving the constraints jointly, and the trade is recorded rather than
+hidden; a caller (or a test) may depend on ending up outside both, but
+not on *where*. And when two centres coincide there is no line of
+centres to push along, so the direction is `+x`: arbitrary, but fixed,
+because normalising a zero vector answers NaN and choosing by iteration
+order would make the result depend on how the solids happened to be
+listed.
+
 ## 7. How much of a reflection needs drawing
 
 `(gfx reflect)` is the arithmetic in front of a planar reflection pass.

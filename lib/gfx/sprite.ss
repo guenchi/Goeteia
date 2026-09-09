@@ -55,7 +55,8 @@
           batch-begin! sprite! rect! draw-text! batch-draw!
           load-image! sheet? make-sheet sheet-width sheet-height
           sheet-batch? make-sheet-batch sheet-batch-sheet
-          sheet! sheet-draw!)
+          sheet! sheet-draw!
+          sprite-shaders)
   (import (rnrs) (web js) (gfx gl) (gfx glsl) (gfx fx) (web typeset))
 
   (define ($spr-fl v) (if (flonum? v) v (exact->inexact v)))
@@ -330,4 +331,23 @@
         (fx-uniform! ($batch-prog bt) 'u_texsize
                      ($atlas-dim at) ($atlas-dim at))
         (cmd-draw-arrays! GL-TRIANGLES 0 (* 6 n))
-        ($batch-n! bt 0)))))
+        ($batch-n! bt 0))))
+  ;; ---- the shaders this library compiles, as data ----
+  ;;
+  ;; Each entry is (name dialect vertex-forms fragment-forms): the name
+  ;; is a symbol, the dialect is es100 or es300 and says which renderer
+  ;; to use (glsl->string, or the glsl300-* pair), and either shader
+  ;; may be #f where this library does not supply one.
+  ;;
+  ;; The dialect travels IN THE DATA rather than in a comment, because
+  ;; a caller that has to look up which renderer a shader wants is a
+  ;; caller that will eventually look up the wrong one.
+  ;;
+  ;; These exist so a shader can be handed to a real GLSL compiler
+  ;; without going through a GL context: the page verifier's GL is a
+  ;; stub whose compileShader does nothing, so a shader that is only
+  ;; ever compiled there is never compiled at all.
+  (define (sprite-shaders)
+    (list (list 'sprite 'es100 $sprite-vs $sprite-fs)
+          (list 'sheet 'es100 $sprite-vs $sheet-fs)))
+)

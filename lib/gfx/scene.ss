@@ -75,7 +75,7 @@
 ;; falls outside contributes nothing, uniforms included.
 ;;
 (library (gfx scene)
-  (export sgl $sgl-build sgl-scene? sgl-draw!)
+  (export sgl $sgl-build sgl-scene? sgl-draw! scene-shaders)
   (import (rnrs) (web js) (gfx gl) (gfx glsl) (gfx fx) (gfx mat)
           (gfx mesh) (web reactive))
 
@@ -1566,4 +1566,41 @@
                                      nd)
                                acc))))
                  acc))
-           '() nodes)))))))
+           '() nodes))))))
+  ;; ---- the shaders this library compiles, as data ----
+  ;;
+  ;; Each entry is (name dialect vertex-forms fragment-forms): the name
+  ;; is a symbol, the dialect is es100 or es300 and says which renderer
+  ;; to use (glsl->string, or the glsl300-* pair), and either shader
+  ;; may be #f where this library does not supply one.
+  ;;
+  ;; The dialect travels IN THE DATA rather than in a comment, because
+  ;; a caller that has to look up which renderer a shader wants is a
+  ;; caller that will eventually look up the wrong one.
+  ;;
+  ;; These exist so a shader can be handed to a real GLSL compiler
+  ;; without going through a GL context: the page verifier's GL is a
+  ;; stub whose compileShader does nothing, so a shader that is only
+  ;; ever compiled there is never compiled at all.
+  ;; What this library compiles is the ENVIFIED form, not the source
+  ;; constants: $sgl-envify replaces four loose uniforms with a std140
+  ;; block, which is why these are es300 and why listing the raw
+  ;; constants would check a shader that is never built.  The lit pair
+  ;; comes from (gfx mesh) and is envified here, so this is the only
+  ;; place that combination exists.
+  ;; All FOUR of the programs sgl builds, not just the two written by
+  ;; hand here: a scene picks between the lit, textured and pbr
+  ;; materials per mesh, and each is envified separately.  The first
+  ;; version of this table listed two, which is what a list written
+  ;; from memory does -- nothing about the omission was visible,
+  ;; because a table cannot report a row nobody wrote.
+  (define (scene-shaders)
+    (list (list 'sgl-lit 'es300
+                ($sgl-envify mesh-lit-vs) ($sgl-envify mesh-lit-fs))
+          (list 'sgl-textured 'es300
+                ($sgl-envify mesh-tex-vs) ($sgl-envify mesh-tex-fs))
+          (list 'sgl-pbr 'es300
+                ($sgl-envify mesh-pbr-vs) ($sgl-envify mesh-pbr-fs))
+          (list 'sgl-instanced 'es300
+                ($sgl-envify $sgl-inst-vs) ($sgl-envify $sgl-inst-fs))))
+)

@@ -39,7 +39,8 @@
           particles-ambient-capacity particles-emitted
           particles-clock! particles-draw!
           particle-emit! particle-ambient! particle-burst!
-          particles-vertex-shader particles-fragment-shader)
+          particles-vertex-shader particles-fragment-shader
+          particles-shaders)
   (import (rnrs) (gfx fx) (gfx gl) (gfx mat) (sim random))
 
   (define ($p-fl v) (if (flonum? v) v (exact->inexact v)))
@@ -254,4 +255,14 @@
       (fx-uniform! program 'u_time ($p-clock f))
       (fx-uniform! program 'u_height ($p-fl (fx-height)))
       (fx-uniform! program 'u_size_max ($p-size-max f))
-      (cmd-draw-arrays! GL-POINTS 0 (particles-capacity f)))))
+      (cmd-draw-arrays! GL-POINTS 0 (particles-capacity f))))
+  ;; The two procedures above are what a person calls when they want
+  ;; one of these shaders by name.  This table is the same pair in the
+  ;; shape every library's accessor returns, for a tool enumerating the
+  ;; tree's shaders without knowing what they are called.  It is built
+  ;; from those procedures rather than from a second copy of the forms,
+  ;; so there is nothing here that can drift.
+  (define (particles-shaders)
+    (list (list 'points 'es300
+                (particles-vertex-shader) (particles-fragment-shader))))
+)

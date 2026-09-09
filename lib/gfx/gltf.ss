@@ -167,7 +167,8 @@
           gprim-world gltf-prim-world
           gprim-stride gprim-layout gprim-tex gprim-textured?
           gprim-normal-img gprim-emissive-img gprim-occlusion-img
-          gprim-emissive gprim-ntex gprim-etex gprim-otex)
+          gprim-emissive gprim-ntex gprim-etex gprim-otex
+          gltf-shaders)
   (import (rnrs) (web js) (gfx gl) (gfx glsl) (gfx fx) (gfx mat)
           (gfx mesh) (web json) (gfx meshopt))
 
@@ -3257,4 +3258,29 @@
            (if (gprim-index-u32? p)
                (cmd-draw-elements32! GL-TRIANGLES (gprim-icount p))
                (cmd-draw-elements! GL-TRIANGLES (gprim-icount p))))))
-     (gltf-prims g))))
+     (gltf-prims g)))
+  ;; ---- the shaders this library compiles, as data ----
+  ;;
+  ;; Each entry is (name dialect vertex-forms fragment-forms): the name
+  ;; is a symbol, the dialect is es100 or es300 and says which renderer
+  ;; to use (glsl->string, or the glsl300-* pair), and either shader
+  ;; may be #f where this library does not supply one.
+  ;;
+  ;; The dialect travels IN THE DATA rather than in a comment, because
+  ;; a caller that has to look up which renderer a shader wants is a
+  ;; caller that will eventually look up the wrong one.
+  ;;
+  ;; These exist so a shader can be handed to a real GLSL compiler
+  ;; without going through a GL context: the page verifier's GL is a
+  ;; stub whose compileShader does nothing, so a shader that is only
+  ;; ever compiled there is never compiled at all.
+  ;; The skinning vertex shaders are paired with mesh-tex-fs because
+  ;; that is what they are built to match -- mesh-lit-fs declares
+  ;; different varyings and will not link.  Both are derived at library
+  ;; init from mesh-tex-vs, so they are values rather than constants;
+  ;; going through this accessor is what keeps a caller from having to
+  ;; know that.
+  (define (gltf-shaders)
+    (list (list 'skin-uniform-array 'es100 gltf-skin-vs mesh-tex-fs)
+          (list 'skin-uniform-block 'es300 gltf-skin-vs3 mesh-tex-fs)))
+)

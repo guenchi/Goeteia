@@ -34,7 +34,7 @@
 ;; mesh-pbr-vs/-fs in (gfx mesh) consume exactly these two.
 ;;
 (library (gfx ibl)
-  (export ibl-brdf-lut! ibl-prefilter!)
+  (export ibl-brdf-lut! ibl-prefilter! ibl-shaders)
   (import (rnrs) (gfx gl) (gfx glsl) (gfx fx))
 
   ;; GGX importance sample k of n around +z, for alpha = r*r:
@@ -168,4 +168,31 @@
       (fx-fullscreen-draw! q)
       (cmd-bind-canvas!)
       (cmd-flush!)
-      (fx-target-texture tgt))))
+      (fx-target-texture tgt)))
+  ;; ---- the shaders this library compiles, as data ----
+  ;;
+  ;; Each entry is (name dialect vertex-forms fragment-forms): the name
+  ;; is a symbol, the dialect is es100 or es300 and says which renderer
+  ;; to use (glsl->string, or the glsl300-* pair), and either shader
+  ;; may be #f where this library does not supply one.
+  ;;
+  ;; The dialect travels IN THE DATA rather than in a comment, because
+  ;; a caller that has to look up which renderer a shader wants is a
+  ;; caller that will eventually look up the wrong one.
+  ;;
+  ;; These exist so a shader can be handed to a real GLSL compiler
+  ;; without going through a GL context: the page verifier's GL is a
+  ;; stub whose compileShader does nothing, so a shader that is only
+  ;; ever compiled there is never compiled at all.
+  ;; Both run through fx-fullscreen!, which supplies the quad vertex
+  ;; shader, so the vertex half is #f here.
+  ;;
+  ;; !! $ggx-sample is deliberately NOT listed.  It is a set of helper
+  ;; FUNCTIONS spliced into the shaders below, not a shader: it has no
+  ;; main, and compiling it on its own would fail forever.  A permanent
+  ;; red in a checking table teaches people to ignore the table, so the
+  ;; omission is recorded here instead of being discovered later.
+  (define (ibl-shaders)
+    (list (list 'prefilter 'es100 #f $prefilter-fs)
+          (list 'brdf-lut 'es100 #f $lut-fs)))
+)

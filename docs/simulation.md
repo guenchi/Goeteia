@@ -54,6 +54,44 @@ this library exists; the rest is bookkeeping.
   measures a need for an index, adding one does not change this
   interface.
 
+### Spawning a whole entity, or none of it
+
+```scheme
+(entity-spawn-with! w `((pos . ,p) (hp . 100) (name . hero)))
+```
+
+Makes an entity carrying a whole set of components. The row shapes, the
+component names and any repeat among them are checked **before anything
+is created**, so a refusal costs no entity and leaves the store exactly
+as it was. A repeated name is refused rather than letting the later
+write win: otherwise "what I passed" and "what the entity carries" stop
+matching, quietly, and the caller is reading a list that no longer
+describes the thing it made.
+
+**It takes values, not factories.** A table of procedures that each
+build a component looks like the more useful interface, and it is the
+one shape that cannot keep this procedure's promise. A factory that
+reads a file, a document or a saved game reaches the host, and *a host
+exception is not a Scheme condition here*: no handler runs and the
+program ends. A rollback that survives only Scheme conditions, wrapped
+around calls that mostly raise host ones, is a guarantee that fails
+exactly when it is needed. Taking values moves every factory out into
+the caller's own code, where it runs *before* this is entered — if one
+fails there, no entity was created, so there is no half-built one.
+
+**The range of the rollback**, stated because an atomicity claim with no
+edge gets read as the widest one the words allow: it covers conditions
+raised inside this procedure, and the original condition is re-raised
+unchanged after the entity is destroyed. It does not cover a host
+exception, and nothing here could — that ends the program before any
+handler runs. That is a property of the runtime, not of this procedure.
+
+Today the rollback is insurance rather than something that happens: once
+the checks above have passed, none of the writes that follow can fail.
+It stays so the property holds by construction — the day `entity-set!`
+grows a check of its own, a half-built entity would otherwise start
+surviving with nothing to say so.
+
 ## `(sim schedule)` — what runs each tick
 
 ```scheme
