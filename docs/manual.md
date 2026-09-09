@@ -2360,6 +2360,8 @@ correctly, and `gltf-skin-normals!` computes the same expression on the
 CPU. See `examples/fx-fox.html`: a rigged Fox, Survey / Walk / Run
 crossfading on keys 1–3.
 
+Long form in `docs/graphics.md`.
+
 ### `(gfx glb)`: Writing GLB
 
 The inverse of `(gfx gltf)`. A mesh built or edited in staging memory
@@ -2407,6 +2409,8 @@ anything but nodes and animation clips, `alphaMode` / `doubleSided` and
 the `KHR_materials_*` extensions, `extras` of any kind, and one mesh
 instanced by several nodes — the reader flattens that sharing away, so
 two nodes on one mesh come back as two meshes with the same contents.
+
+Long form in `docs/graphics.md`.
 
 ### `(gfx collide)`: Collision and Raycasts
 
@@ -3168,8 +3172,9 @@ the tuple, every candidate signature in registration order, and the
 winner's signature or `#f`. A diagnostic, so it never runs a handler.
 
 Predicate mode (`'predicates` in place of the classifier list) takes
-open-ended predicates and can only report ambiguity at the call; see
-`docs/lng.md`.
+open-ended predicates and can only report ambiguity at the call.
+
+Long form in `docs/lng.md`.
 
 ### `(lng machine)`: State Machines as Data
 
