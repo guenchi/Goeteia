@@ -42,10 +42,14 @@
 // Both of those came out of running the matrix rather than out of the
 // report, which is the argument for running it.
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { compileToBytes } from '../rt/compile.mjs';
+
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'goeteia-c01-c04-'));
 const write = (name, src) => {
@@ -54,12 +58,35 @@ const write = (name, src) => {
     return f;
 };
 // every combination the compiler offers, named, so a failure says which
+// ⚠️ TWO compilers, and the difference is the point.  compileToBytes
+// with no compilerWasm uses goeteia.wasm -- the SNAPSHOT -- so a change
+// to src/ cannot move a single line of this file until the snapshot is
+// rebuilt.  ⛔ That cuts both ways: a fix does not show, and neither
+// does a BREAKAGE, so this harness on its own would report the same
+// thing about a repaired compiler and a wrecked one.
+//
+// bin/goeteiac is the Chez-hosted compiler reading src/ directly, so it
+// answers about the source as it stands now.  Every case runs through
+// both, and every message says which, because "it still fails" means
+// two completely different things depending on which one said it.
 const COMBOS = [
-    ['wasm -O2', {}],
-    ['wasm -O0', { script: true }],
-    ['js   -O2', { target: 'js' }],
-    ['js   -O0', { target: 'js', script: true }],
+    ['snapshot wasm -O2', {}],
+    ['snapshot wasm -O0', { script: true }],
+    ['snapshot js   -O2', { target: 'js' }],
+    ['snapshot js   -O0', { target: 'js', script: true }],
 ];
+
+// Compile with the Chez-hosted compiler, which reads src/.  Returns the
+// output path on success and null on refusal.
+function compileFromSource(file, out) {
+    try {
+        execFileSync(path.join(root, 'bin/goeteiac'), [file, out],
+                     { cwd: root, stdio: 'pipe' });
+        return out;
+    } catch {
+        return null;
+    }
+}
 
 const problems = [];
 const note = (m) => problems.push(m);
@@ -120,6 +147,10 @@ for (const [name, src] of illFormed) {
                  + `arity is not checked before elimination`);
         }
     }
+    if (compileFromSource(f, path.join(dir, `${name}-src.wasm`))) {
+        note(`C04 ${name} (from source): \`(cons 1)\` was accepted -- `
+             + `arity is not checked before elimination`);
+    }
 }
 // the twin
 {
@@ -127,6 +158,24 @@ for (const [name, src] of illFormed) {
     for (const [combo, opts] of COMBOS) {
         try { await compileToBytes(f, opts); }
         catch (e) { note(`C04 twin (${combo}): a WELL-formed unused initialiser was refused: ${e.message}`); }
+    }
+    if (!compileFromSource(f, path.join(dir, 'twin-src.wasm'))) {
+        note('C04 twin (from source): a WELL-formed unused initialiser was refused');
+    }
+    // ⭐ And the elimination must still HAPPEN.  A repair that stopped
+    // removing anything satisfies every refusal above while costing the
+    // tree its dead-code elimination, and nothing else here would say
+    // so.  Measured by bytes: the unused binding must leave no trace.
+    const bare = path.join(dir, 'bare.ss');
+    fs.writeFileSync(bare, '(import (rnrs))\n(display 42)\n', 'utf8');
+    const a = compileFromSource(bare, path.join(dir, 'bare.wasm'));
+    const b = compileFromSource(f, path.join(dir, 'twin2.wasm'));
+    if (a && b) {
+        const sa = fs.statSync(a).size, sb = fs.statSync(b).size;
+        if (sa !== sb) {
+            note(`C04 twin (from source): the unused (cons 1 2) left ${sb - sa} `
+                 + 'bytes behind -- dead-code elimination stopped eliminating');
+        }
     }
 }
 
