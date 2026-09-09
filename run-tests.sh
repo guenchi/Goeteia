@@ -291,6 +291,16 @@ else
     cat "$DOCS_OUT"
     echo "FAIL test/shader-compile.mjs"; fail=1
 fi
+# The first check that judges a shader by what it PUTS ON THE SCREEN
+# rather than by whether it compiles.  Stands down loudly without a
+# browser, like the one above.
+if $CAP ${NODE-node} --test test/gfx-tint-alpha.mjs > "$DOCS_OUT" 2>&1; then
+    grep -E 'NOT EXERCISED HERE' "$DOCS_OUT" || true
+    echo "ok   test/gfx-tint-alpha.mjs"
+else
+    cat "$DOCS_OUT"
+    echo "FAIL test/gfx-tint-alpha.mjs"; fail=1
+fi
 if $CAP ${NODE-node} --test test/manual-long-form.mjs > "$DOCS_OUT" 2>&1; then
     grep -E 'NOT EXERCISED HERE|^EXERCISED HERE' "$DOCS_OUT"
     echo "ok   test/manual-long-form.mjs"
