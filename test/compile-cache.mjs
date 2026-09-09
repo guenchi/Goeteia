@@ -210,4 +210,90 @@ try {
 assert.equal(compilerIdFor('wasm'), stage0Before,
              'removing it again must restore the stage0 identity');
 
+// ---- the key must see everything the compiler reads ----
+//
+// RED ON PURPOSE, 2026-09-09.  These three assertions fail today.  They
+// are here before the fix rather than after it, because the claim they
+// pin ("the key is complete") is exactly the claim that was believed
+// for two design rounds on the strength of this file's comments and
+// never checked against what the drivers actually open.
+//
+// Each file below is read by the compiler on every compile, and moving
+// a byte in it moves the emitted artifact.  None of them is hashed:
+//
+//   rt/jsbridge.mjs, rt/web.mjs  the runtime glue.  Both drivers inline
+//     it into the compiler's input stream -- rt/compile.mjs:320-322 and
+//     src/chez-driver.ss:421,423 -- and it is NOT conditional on a
+//     mount point: compileToBytes puts conjureGlueDirective() into the
+//     stream of every compile.  So an edit here changes all 185 sources
+//     on both stages and changes nothing in any key.  It is the widest
+//     of the three.
+//
+//   src/prelude.ss  prepended to every program.  It sits under src/, so
+//     compilerIdFor('wasm') sees it; compilerIdFor('stage1') hashes
+//     goeteia.wasm and rt/compile.mjs and stops, so stage1 does not.
+//     An asymmetry between the two stages' keys is worse than a hole in
+//     both: it is the shape where warm stage1 and cold stage0 disagree
+//     and the disagreement reads as a cross-host failure.
+//
+//   test/tmac/lib.ss  a library, imported by test/macro-lib.ss:5.
+//     closureHash() walks lib/** and test/lib/**, and this one is in
+//     neither.  The rule was written down as a list of two directories
+//     instead of as the resolver's search path (rt/compile.mjs:386,
+//     which is [sourceDir, sourceDir/lib, bundled lib]), and a list
+//     cannot notice a third place.  Fixing this by appending
+//     'test/tmac' to the list would reproduce the defect one directory
+//     further on; what belongs in the key is the search path.
+//
+// The compiler is not consulted here, only the key: these are cheap,
+// and a cell that had to compile to notice a missing input would be too
+// slow to keep.  What that costs is that they check the key against a
+// reading of the drivers rather than against the drivers -- so the
+// citations above are load-bearing, and a driver that stops reading one
+// of these files leaves a cell asserting something that no longer
+// matters.  That is the better failure of the two available.
+// Each row says which key components must move, not merely that one
+// must: the prelude is the case that makes the difference.  It sits
+// under src/, so the stage0 identity already sees it, and an assertion
+// that asked only for "some key changed" would call that a pass while
+// stage1 -- which reads the same file at rt/compile.mjs:387 and hashes
+// only goeteia.wasm and rt/compile.mjs -- stayed blind.  An asymmetry
+// between the two stages' keys is worse than a hole in both: it is the
+// shape where a warm stage1 and a cold stage0 disagree, and the
+// disagreement arrives looking like a cross-host failure.
+const KEYS = () => ({
+    closure: closureHash(), stage0: compilerIdFor('wasm'), stage1: compilerIdFor('stage1'),
+});
+const inputs = [
+    ['rt/jsbridge.mjs', ['stage0', 'stage1'], 'runtime glue, inlined into every compile'],
+    ['rt/web.mjs', ['stage0', 'stage1'], 'runtime glue, inlined into every compile'],
+    ['src/prelude.ss', ['stage0', 'stage1'], 'prepended to every program, on both stages'],
+    ['test/tmac/lib.ss', ['closure'], 'a library test/macro-lib.ss imports'],
+];
+// The four are collected and reported together rather than asserted one
+// at a time.  Stopping at the first would show a reader one missing
+// input where there are four, and the natural response to one missing
+// input is to add one path -- which is how the list got short in the
+// first place.  A defect list that reveals itself an item at a time
+// gets fixed an item at a time.
+const blind = [];
+for (const [rel, mustMove, why] of inputs) {
+    const abs = path.join(root, rel);
+    const orig = fs.readFileSync(abs);
+    const before = KEYS();
+    let after;
+    try {
+        fs.appendFileSync(abs, '\n');
+        after = KEYS();
+    } finally {
+        fs.writeFileSync(abs, orig);
+    }
+    for (const k of mustMove) {
+        if (before[k] === after[k]) blind.push(`${rel} -> ${k}   (${why})`);
+    }
+    assert.deepEqual(KEYS(), before, `restoring ${rel} must restore every key`);
+}
+assert.deepEqual(blind, [],
+                 'read on every compile, and absent from the key that should carry it:\n  '
+                 + blind.join('\n  '));
 fs.rmSync(tmp, { recursive: true, force: true });
