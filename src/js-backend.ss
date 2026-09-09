@@ -762,23 +762,47 @@
                            ";"))
                  (jt-body (cddr e) env2 lctx) "}")))
         ((%loop)
+         ;; Two sets of names, and the split is the whole point.
+         ;;
+         ;; The parameters used to be one `let` outside the for, which
+         ;; the self-call assigned to and the body read.  One binding
+         ;; for the whole loop means a closure made in iteration 1 and
+         ;; one made in iteration 2 capture the SAME variable, so after
+         ;; the loop every one of them reads the last value written --
+         ;; three closures over i answered 3, 3, 3 where the wasm
+         ;; backend answered 0, 1, 2.  Nothing raises; the program just
+         ;; computes something else.
+         ;;
+         ;; So: the CARRIERS live outside and are what the self-call
+         ;; writes, and each iteration opens fresh bindings from them
+         ;; for the body to read and to capture.  The loop is still a
+         ;; for(;;) driven by `continue`, so a tail call is still a
+         ;; jump and the stack does not grow -- the fix costs one
+         ;; binding per iteration, not a frame.
          (let* ((name (cadr e))
                 (params (caddr e))
                 (inits (cadddr e))
                 (body (cdr (cdddr e)))
                 (pnames (map-in-order (lambda (p) (jfresh!)) params))
+                (cnames (map-in-order (lambda (p) (jfresh!)) params))
                 (label (jlabel!))
                 (icode (map-in-order (lambda (i) (jx i env lctx)) inits))
                 (env2 (append (map2* cons params pnames) env))
-                (lctx2 (cons (list name label pnames) lctx)))
+                (lctx2 (cons (list name label cnames) lctx)))
            (list "{"
                  (if (null? pnames)
                      '()
-                     (list "let " (jsep "," (map2* (lambda (n i)
-                                                     (list n "=(" i ")"))
-                                                   pnames icode))
+                     (list "let " (jsep "," (map2* (lambda (c i)
+                                                     (list c "=(" i ")"))
+                                                   cnames icode))
                            ";"))
-                 label ":for(;;){" (jt-body body env2 lctx2) "}}")))
+                 label ":for(;;){"
+                 (if (null? pnames)
+                     '()
+                     (list "let " (jsep "," (map2* (lambda (n c) (list n "=" c))
+                                                   pnames cnames))
+                           ";"))
+                 (jt-body body env2 lctx2) "}}")))
         ((quote lambda set! call/cc call-with-current-continuation)
          (list "return " (jx e env lctx) ";"))
         ((apply)
