@@ -55,6 +55,62 @@ timed_out() { [ -n "$CAP" ] && [ "$1" -eq 124 ]; }
 # on a mutant that broke the audio graph: one FAIL line was printed and
 # four more cells never ran.
 crashed() { [ "$1" -ne 0 ] && ! timed_out "$1"; }
+
+# The verdict for one run of one test, from BOTH of the things a run
+# produces.  ⚠️ Matching stdout used to be the whole test: a program
+# that printed the expected answer and then exited 7 was reported ok,
+# and the round exited 0.  A process that answers correctly and dies is
+# not a process that passed -- it is one whose answer arrived before
+# whatever killed it, and the two are only the same if nothing after the
+# answer mattered.  So the exit code is a second, independent condition,
+# and the message says which of the two failed.
+verdict() { # stage want got exitcode -> prints, sets fail
+    _stage=$1; _want=$2; _got=$3; _ec=$4
+    if [ "$_got" = "$_want" ] && [ "$_ec" -eq 0 ]; then
+        # stage0's ok line carries no suffix, as it always has.  ⛔ Not
+        # cosmetic: the gate's reader and three months of logs are
+        # written against these exact lines, and a refactor that made
+        # every passing line different would be a change to the output
+        # of the whole suite smuggled in with a change to one condition.
+        if [ "$_stage" = stage0 ]; then echo "ok   $t"; else echo "ok   $t ($_stage)"; fi
+        return 0
+    fi
+    if [ "$_got" = "$_want" ]; then
+        echo "FAIL $t ($_stage: the answer was right and the process exited $_ec)"
+    else
+        echo "FAIL $t ($_stage: want '$_want', got '$_got')"
+        say_if_crashed "$_ec"
+    fi
+    fail=1
+}
+
+# Every .mjs test goes through here, and through $CAP.  Thirty copies of
+# the same four lines is how two thirds of this script's surface came to
+# have no timeout on it at all: the bound was added to the .ss runs, and
+# each new .mjs check was written by copying the block above it, which
+# did not have one.  ⚠️ A hanging .mjs test STALLED the whole round
+# rather than failing it -- the exact failure the cap exists for.
+#
+# Some of these print a transcript worth seeing when they fail and
+# nothing worth seeing when they pass; `quiet` is that case.
+run_mjs() { # testfile [quiet]
+    if [ "$2" = quiet ]; then
+        $CAP ${NODE-node} "$1" >/dev/null 2>&1; ec=$?
+    else
+        $CAP ${NODE-node} "$1"; ec=$?
+    fi
+    if [ $ec -eq 0 ]; then
+        echo "ok   $1"
+    else
+        if [ "$2" = quiet ]; then $CAP ${NODE-node} "$1" 2>&1 | tail -20; fi
+        if timed_out $ec; then
+            echo "TIMEOUT $1 after ${TLIMIT}s"
+        else
+            echo "FAIL $1"
+        fi
+        fail=1
+    fi
+}
 say_if_crashed() {
     crashed "$1" && echo "     ^ the run ENDED EARLY (exit $1): cells after that point did not run," \
                  && echo "       so the failures above are a lower bound, not the whole list"
@@ -104,13 +160,7 @@ for t in ${GOETEIA_TESTS-test/*.ss}; do
     if timed_out $ec; then
         echo "TIMEOUT $t (stage0 run) after ${TLIMIT}s"; fail=1; continue
     fi
-    if [ "$got" = "$want" ]; then
-        echo "ok   $t"
-    else
-        echo "FAIL $t (stage0: want '$want', got '$got')"
-        say_if_crashed $ec
-        fail=1
-    fi
+    verdict stage0 "$want" "$got" "$ec"
     if [ -f goeteia.wasm ]; then
         if ! ${NODE-node} rt/compile.mjs goeteia.wasm "$t" "$T/test1.wasm" 2>/dev/null; then
             echo "FAIL $t (stage1 compile error)"; fail=1; continue
@@ -119,35 +169,26 @@ for t in ${GOETEIA_TESTS-test/*.ss}; do
         if timed_out $ec; then
             echo "TIMEOUT $t (stage1 run) after ${TLIMIT}s"; fail=1; continue
         fi
-        if [ "$got" = "$want" ]; then
-            echo "ok   $t (stage1)"
-        else
-            echo "FAIL $t (stage1: want '$want', got '$got')"
-            say_if_crashed $ec
-            fail=1
-        fi
+        verdict stage1 "$want" "$got" "$ec"
         # both hosts must emit identical bytes from identical source
         if ! cmp -s "$T/test.wasm" "$T/test1.wasm"; then
             echo "FAIL $t (cross-host: stage0/stage1 bytes differ)"; fail=1
         fi
     fi
     # the JS target answers to the same oracle
-    if ! ./bin/goeteiac --js "$t" "$T/test.js"; then
+    if ! $CAP ./bin/goeteiac --js "$t" "$T/test.js"; then
         echo "FAIL $t (js compile error)"; fail=1; continue
     fi
     raw=$(run_js "$T/test.js" "$t"); ec=$?; lift_notes "$raw"
     if timed_out $ec; then
         echo "TIMEOUT $t (js run) after ${TLIMIT}s"; fail=1; continue
     fi
-    if [ "$got" = "$want" ]; then
-        echo "ok   $t (js)"
-    else
-        echo "FAIL $t (js: want '$want', got '$got')"
-        say_if_crashed $ec
-        fail=1
-    fi
+    verdict js "$want" "$got" "$ec"
     if [ -f goeteia.wasm ]; then
-        if ! ${NODE-node} rt/compile.mjs --js goeteia.wasm "$t" "$T/test1.js" 2>/dev/null; then
+        $CAP ${NODE-node} rt/compile.mjs --js goeteia.wasm "$t" "$T/test1.js" 2>/dev/null; ec=$?
+        if timed_out $ec; then
+            echo "TIMEOUT $t (stage1 js compile) after ${TLIMIT}s"; fail=1; continue
+        elif [ $ec -ne 0 ]; then
             echo "FAIL $t (stage1 js compile error)"; fail=1; continue
         fi
         if ! cmp -s "$T/test.js" "$T/test1.js"; then
@@ -155,81 +196,21 @@ for t in ${GOETEIA_TESTS-test/*.ss}; do
         fi
     fi
 done
-if ${NODE-node} test/js-backend-division.mjs; then
-    echo "ok   test/js-backend-division.mjs"
-else
-    echo "FAIL test/js-backend-division.mjs"; fail=1
-fi
-if ${NODE-node} test/js-backend-bounds.mjs; then
-    echo "ok   test/js-backend-bounds.mjs"
-else
-    echo "FAIL test/js-backend-bounds.mjs"; fail=1
-fi
-if ${NODE-node} test/run-errors.mjs; then
-    echo "ok   test/run-errors.mjs"
-else
-    echo "FAIL test/run-errors.mjs"; fail=1
-fi
-if ${NODE-node} test/gltf-p1.mjs; then
-    echo "ok   test/gltf-p1.mjs"
-else
-    echo "FAIL test/gltf-p1.mjs"; fail=1
-fi
-if ${NODE-node} test/glb-p1.mjs; then
-    echo "ok   test/glb-p1.mjs"
-else
-    echo "FAIL test/glb-p1.mjs"; fail=1
-fi
-if ${NODE-node} test/js-backend-arity.mjs; then
-    echo "ok   test/js-backend-arity.mjs"
-else
-    echo "FAIL test/js-backend-arity.mjs"; fail=1
-fi
-if ${NODE-node} test/js-backend-exports.mjs; then
-    echo "ok   test/js-backend-exports.mjs"
-else
-    echo "FAIL test/js-backend-exports.mjs"; fail=1
-fi
-if ${NODE-node} test/js-backend-memory-bounds.mjs; then
-    echo "ok   test/js-backend-memory-bounds.mjs"
-else
-    echo "FAIL test/js-backend-memory-bounds.mjs"; fail=1
-fi
-if ${NODE-node} test/js-backend-fl-conversion.mjs; then
-    echo "ok   test/js-backend-fl-conversion.mjs"
-else
-    echo "FAIL test/js-backend-fl-conversion.mjs"; fail=1
-fi
-if ${NODE-node} test/js-backend-flonum-types.mjs; then
-    echo "ok   test/js-backend-flonum-types.mjs"
-else
-    echo "FAIL test/js-backend-flonum-types.mjs"; fail=1
-fi
-if ${NODE-node} test/js-backend-pair-types.mjs; then
-    echo "ok   test/js-backend-pair-types.mjs"
-else
-    echo "FAIL test/js-backend-pair-types.mjs"; fail=1
-fi
-if ${NODE-node} test/js-backend-i31-types.mjs; then
-    echo "ok   test/js-backend-i31-types.mjs"
-else
-    echo "FAIL test/js-backend-i31-types.mjs"; fail=1
-fi
-if ${NODE-node} test/js-backend-collection-types.mjs; then
-    echo "ok   test/js-backend-collection-types.mjs"
-else
-    echo "FAIL test/js-backend-collection-types.mjs"; fail=1
-fi
-if ${NODE-node} test/js-backend-tco.mjs; then
-    echo "ok   test/js-backend-tco.mjs"
-else
-    echo "FAIL test/js-backend-tco.mjs"; fail=1
-fi
-if ${NODE-node} test/js-backend-jspi.mjs; then
-    echo "ok   test/js-backend-jspi.mjs"
-else
-    echo "FAIL test/js-backend-jspi.mjs"; fail=1
-fi
+run_mjs test/js-backend-division.mjs
+run_mjs test/js-backend-bounds.mjs
+run_mjs test/run-errors.mjs
+run_mjs test/gltf-p1.mjs
+run_mjs test/glb-p1.mjs
+run_mjs test/js-backend-arity.mjs
+run_mjs test/js-backend-exports.mjs
+run_mjs test/js-backend-memory-bounds.mjs
+run_mjs test/js-backend-fl-conversion.mjs
+run_mjs test/js-backend-flonum-types.mjs
+run_mjs test/js-backend-pair-types.mjs
+run_mjs test/js-backend-i31-types.mjs
+run_mjs test/js-backend-collection-types.mjs
+run_mjs test/js-backend-tco.mjs
+run_mjs test/js-backend-jspi.mjs
 if ${NODE-node} test/jsbridge-instance.mjs >/dev/null 2>&1; then
     echo "ok   test/jsbridge-instance.mjs"
 else
@@ -275,46 +256,14 @@ if ${NODE-node} test/glyphs-scope-dispose.mjs >/dev/null 2>&1; then
 else
     echo "FAIL test/glyphs-scope-dispose.mjs"; fail=1
 fi
-if ${NODE-node} test/dev-nocache.mjs; then
-    echo "ok   test/dev-nocache.mjs"
-else
-    echo "FAIL test/dev-nocache.mjs"; fail=1
-fi
-if ${NODE-node} test/web-fs-nofs.mjs; then
-    echo "ok   test/web-fs-nofs.mjs"
-else
-    echo "FAIL test/web-fs-nofs.mjs"; fail=1
-fi
-if ${NODE-node} test/args.mjs; then
-    echo "ok   test/args.mjs"
-else
-    echo "FAIL test/args.mjs"; fail=1
-fi
-if ${NODE-node} test/determinism.mjs; then
-    echo "ok   test/determinism.mjs"
-else
-    echo "FAIL test/determinism.mjs"; fail=1
-fi
-if ${NODE-node} test/raster-diff.mjs; then
-    echo "ok   test/raster-diff.mjs"
-else
-    echo "FAIL test/raster-diff.mjs"; fail=1
-fi
-if ${NODE-node} test/verify.mjs; then
-    echo "ok   test/verify.mjs"
-else
-    echo "FAIL test/verify.mjs"; fail=1
-fi
-if ${NODE-node} test/pack.mjs; then
-    echo "ok   test/pack.mjs"
-else
-    echo "FAIL test/pack.mjs"; fail=1
-fi
-if ${NODE-node} test/llm-substrate.mjs; then
-    echo "ok   test/llm-substrate.mjs"
-else
-    echo "FAIL test/llm-substrate.mjs"; fail=1
-fi
+run_mjs test/dev-nocache.mjs
+run_mjs test/web-fs-nofs.mjs
+run_mjs test/args.mjs
+run_mjs test/determinism.mjs
+run_mjs test/raster-diff.mjs
+run_mjs test/verify.mjs
+run_mjs test/pack.mjs
+run_mjs test/llm-substrate.mjs
 if ${NODE-node} --test test/sexpr-mjs.mjs >/dev/null 2>&1; then
     echo "ok   test/sexpr-mjs.mjs"
 else
@@ -375,20 +324,10 @@ fi
 # fresh one both just sit there being green.  Its own checks were not in
 # this round until now: 185 lines deciding what counts as the same
 # compile, and nothing checking them.
-if ${NODE-node} test/compile-cache.mjs >/dev/null 2>&1; then
-    echo "ok   test/compile-cache.mjs"
-else
-    ${NODE-node} test/compile-cache.mjs 2>&1 | tail -20
-    echo "FAIL test/compile-cache.mjs"; fail=1
-fi
+run_mjs test/compile-cache.mjs quiet
 # The two 2026-09-06 defects whose counterexample is a compile-time
 # fact rather than a wrong value.  RED until they are fixed.
-if ${NODE-node} test/defect-c01-c04-compile-time.mjs >/dev/null 2>&1; then
-    echo "ok   test/defect-c01-c04-compile-time.mjs"
-else
-    ${NODE-node} test/defect-c01-c04-compile-time.mjs 2>&1 | tail -12
-    echo "FAIL test/defect-c01-c04-compile-time.mjs"; fail=1
-fi
+run_mjs test/defect-c01-c04-compile-time.mjs quiet
 if ${NODE-node} test/duplicate-top-level.mjs >/dev/null 2>&1; then
     echo "ok   test/duplicate-top-level.mjs"
 else
