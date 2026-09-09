@@ -44,6 +44,52 @@
 (define kraw (ktx-parse RAW (llen ktx-raw)))
 (define kzst (ktx-parse ZST (llen ktx-zstd)))
 (define (run k) (ktx-uastc-level! k 0 DST) (cmp rgba-gold))
+;; ---- G10 (2026-09-06 review, still live 2026-09-09): a level whose
+;; payload has been truncated is decoded anyway ----
+;;
+;; RED ON PURPOSE.  The same real fixture, with the level's byteLength
+;; rewritten to 1 and the file cut to match, still comes out as a full
+;; 16x16 image: the decoder computes how many blocks the DIMENSIONS
+;; imply and reads that many, without asking whether the level it was
+;; handed contains them.
+;;
+;; ⚠️ The bytes after the first one are whatever is next in linear
+;; memory, so this is not a crash -- it is a texture assembled partly
+;; from another buffer, out of a file off the network.  The same shape
+;; as the meshopt and GLB defects: a length is carried and not enforced.
+;;
+;; ⭐ The control above is what makes this cell mean anything.  The
+;; unmodified fixture must still decode to the golden RGBA, so a repair
+;; that simply refused UASTC levels would fail that and not this.
+(define BAD 380000)
+(define (u8 at) (%mem-u8-ref at))
+(define (u8! at v) (%mem-u8-set! at v))
+;; the level's byteOffset and byteLength are 64-bit at 80 and 88; this
+;; fixture's values fit in 32 bits, and the high halves are checked
+;; rather than assumed -- reading them as one number would build a
+;; bignum, and a bitwise operation on one traps in this tree.
+(define (u32 at)
+  (+ (u8 at) (* 256 (u8 (+ at 1))) (* 65536 (u8 (+ at 2))) (* 16777216 (u8 (+ at 3)))))
+(define (u32-zero? at) (and (= 0 (u8 at)) (= 0 (u8 (+ at 1)))
+                            (= 0 (u8 (+ at 2))) (= 0 (u8 (+ at 3)))))
+(let copy ((i 0))
+  (when (< i (llen ktx-raw))
+    (u8! (+ BAD i) (u8 (+ RAW i)))
+    (copy (+ i 1))))
+(define bad-ok
+  (and (u32-zero? (+ RAW 84)) (u32-zero? (+ RAW 92))   ; the fixture is small
+       (let ((off (u32 (+ RAW 80))))
+         ;; byteLength := 1, and the file ends one byte into the payload
+         (u8! (+ BAD 88) 1)
+         (let z ((i 89)) (when (< i 96) (u8! (+ BAD i) 0) (z (+ i 1))))
+         (let ((k (ktx-parse BAD (+ off 1))))
+           (guard (e (#t #t))
+             (ktx-uastc-level! k 0 DST)
+             (display "  FAIL G10: a level truncated to one byte decoded anyway")
+             (newline)
+             #f)))))
+
 (display (and (ktx-uastc? kraw) (= (ktx-scheme kraw) 0) (run kraw)
-              (ktx-uastc? kzst) (= (ktx-scheme kzst) 2) (run kzst)))
+              (ktx-uastc? kzst) (= (ktx-scheme kzst) 2) (run kzst)
+              bad-ok))
 (newline)
