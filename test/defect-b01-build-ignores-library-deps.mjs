@@ -60,6 +60,15 @@ function makePage(d) {
     fs.writeFileSync(path.join(d, 'lib', 'sb', 'shared.ss'),
         '(library (sb shared)\n  (export answer)\n  (import (rnrs))\n' +
         '  (define (answer) 1))\n', 'utf8');
+    // A second library the page does NOT import.  Without it, "rebuild
+    // when any library changed" satisfies every other assertion in
+    // this file, and that answer degrades the dependency closure into
+    // the whole tree: on a dev server it turns "save and rebuild" into
+    // "save and rebuild everything".  Over-repair is invisible to a
+    // cell that only ever asks whether a rebuild happened.
+    fs.writeFileSync(path.join(d, 'lib', 'sb', 'unrelated.ss'),
+        '(library (sb unrelated)\n  (export unused)\n  (import (rnrs))\n' +
+        '  (define (unused) 1))\n', 'utf8');
     const page = path.join(d, 'page.ss');
     fs.writeFileSync(page, ';; expect: 1\n(import (rnrs) (sb shared))\n(display (answer))\n', 'utf8');
     return page;
@@ -119,5 +128,50 @@ test('a page whose imported library is newer is rebuilt', () => {
         // ... and the library newer than the artifact
         assert.match(build(d), /compile/,
                      'the library changed and the page kept its old artifact');
+    } finally { fs.rmSync(d, { recursive: true, force: true }); }
+});
+
+test('a page is NOT rebuilt when a library it does not import changes', () => {
+    const d = sandbox();
+    try {
+        const page = makePage(d);
+        const wasm = page.replace(/\.ss$/, '.wasm');
+        fs.writeFileSync(wasm, '');
+        ageBy(page, 120);
+        // The library the page DOES import has to be aged too.  It was
+        // written moments ago by makePage, so leaving it alone makes it
+        // newer than the artifact and the rebuild is then correct --
+        // this assertion would fail against a correct implementation,
+        // for a reason that has nothing to do with the unrelated file.
+        ageBy(path.join(d, 'lib', 'sb', 'shared.ss'), 120);
+        ageBy(wasm, 60);
+        const other = path.join(d, 'lib', 'sb', 'unrelated.ss');
+        fs.writeFileSync(other, fs.readFileSync(other, 'utf8').replace('1', '2'));
+        assert.doesNotMatch(build(d), /compile/,
+                            'a library the page never imports forced a rebuild');
+    } finally { fs.rmSync(d, { recursive: true, force: true }); }
+});
+
+test('a transitive dependency counts', () => {
+    const d = sandbox();
+    try {
+        const page = makePage(d);
+        // shared imports leaf, so the page reaches leaf through it
+        fs.writeFileSync(path.join(d, 'lib', 'sb', 'leaf.ss'),
+            '(library (sb leaf)\n  (export base)\n  (import (rnrs))\n' +
+            '  (define (base) 1))\n', 'utf8');
+        fs.writeFileSync(path.join(d, 'lib', 'sb', 'shared.ss'),
+            '(library (sb shared)\n  (export answer)\n' +
+            '  (import (rnrs) (sb leaf))\n' +
+            '  (define (answer) (base)))\n', 'utf8');
+        const wasm = page.replace(/\.ss$/, '.wasm');
+        fs.writeFileSync(wasm, '');
+        ageBy(page, 120);
+        ageBy(path.join(d, 'lib', 'sb', 'shared.ss'), 120);
+        ageBy(wasm, 60);
+        const leaf = path.join(d, 'lib', 'sb', 'leaf.ss');
+        fs.writeFileSync(leaf, fs.readFileSync(leaf, 'utf8').replace('1', '2'));
+        assert.match(build(d), /compile/,
+                     'a library reached through another was not counted');
     } finally { fs.rmSync(d, { recursive: true, force: true }); }
 });

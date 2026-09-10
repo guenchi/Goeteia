@@ -205,3 +205,28 @@ globalThis.__gpulog = [];
 (step 20)
 (step 34)
 (step 35)
+
+;; WHAT THIS CELL DOES NOT SEE, measured rather than reasoned.
+;;
+;; It pins whether the group walk COLLIDED with the reserved slots.
+;; It does not pin how much room was left.  Shortening the reservation
+;; by one or by two goes unnoticed here; three is where it is caught:
+;;
+;;     top - 1   passes      top - 2   passes      top - 3   caught
+;;
+;; So the highest slot the last group actually writes is three below
+;; where the reservation is placed, and two slots of slack sit between
+;; them.  A reservation one short of correct is still correct in
+;; effect, and this cell would report every count passing.
+;;
+;; The obvious repair does not work and was measured before being
+;; discarded: a group takes an extra slot when it carries a texture, so
+;; a textured mesh in the last group ought to reach further up.  Adding
+;; one moved the boundary not at all -- top-1 and top-2 still passed --
+;; which says the extra slot is not written on this path, not that the
+;; scene was built wrong.  Closing this needs something that makes the
+;; last group use its whole stride, and nothing here does.
+;;
+;; The margin is real and it comes from the reservation being derived
+;; from the walk rather than placed near it.  That derivation is an
+;; argument in lib/gfx/sgpu.ss, and this cell is not evidence for it.
