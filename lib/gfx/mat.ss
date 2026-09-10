@@ -45,7 +45,8 @@
           m4-inverse m4-unproject
           m4-frustum-planes sphere-in-frustum? sphere-in-frustum-xyz?
           fl-clamp fl-lerp fl-damp fl-turn fl-smooth
-          fl-pi fl-tau fl-length2 fl-dist2 fl-heading)
+          fl-pi fl-tau fl-length2 fl-dist2 fl-heading
+          mat-shader-functions)
   (import (rnrs))
 
   (define ($mat-fl v) (if (flonum? v) v (exact->inexact v)))
@@ -908,4 +909,44 @@
               (v3-z x) (v3-z y) (v3-z z) 0.0
               (fl- 0.0 (v3-dot x eye))
               (fl- 0.0 (v3-dot y eye))
-              (fl- 0.0 (v3-dot z eye)) 1.0))))
+              (fl- 0.0 (v3-dot z eye)) 1.0)))
+  ;; ---- the same arithmetic on the GPU ------------------------------
+  ;;
+  ;; A library can carry both halves of its subject: (gfx ibl) computes
+  ;; on the CPU and hands out shader source for the part that has to run
+  ;; per fragment.  These two are the vector arithmetic above, in the
+  ;; place where it cannot be written as a procedure call.  A caller
+  ;; splices the list into its own shader forms.
+  (define $mat-shader-functions
+    '((define (safe_unit (vec3 a)) vec3
+        (return (/ a (max (length a) (fl 0 1 5)))))
+      (define (rot_axis (vec3 p) (vec3 angular)) vec3
+        (local float angle (length angular))
+        (if (< angle (fl 0 1 6)) (return p))
+        (local vec3 axis (/ angular angle))
+        (local float c (cos angle))
+        (return (+ (* p c)
+                   (* (cross axis p) (sin angle))
+                   (* axis (dot axis p) (- (fl 1) c)))))))
+
+  ;; safe_unit is normalize with the zero case removed.  GLSL normalize
+  ;; divides by the length, so a zero vector yields inf or NaN, and on a
+  ;; GPU there is no way to test for that and no error to raise: the NaN
+  ;; travels through the rest of the frame.  Dividing by max(length, 1e-5)
+  ;; keeps the direction wherever there is one and hands back a short
+  ;; vector where there is not.
+  ;;
+  ;; This is deliberately NOT offered on the CPU side.  There,
+  ;; v3-normalize divides and hands back what division gives, which the
+  ;; caller can test for, and the several reasonable answers for a zero
+  ;; vector -- a zero direction, the previous heading, a refusal -- are
+  ;; the caller's to choose between.  Only on the GPU is a direction
+  ;; that does not explode the single available answer rather than one
+  ;; of several.
+  ;;
+  ;; rot_axis is Rodrigues' rotation: a point turned about an axis by
+  ;; the length of the vector that gives the axis.  The small-angle
+  ;; branch returns the point untouched, because normalizing the axis
+  ;; needs a length to divide by and there is not one.
+  (define (mat-shader-functions) $mat-shader-functions)
+)
