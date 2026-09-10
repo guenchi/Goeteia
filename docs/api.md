@@ -280,6 +280,9 @@ An orbit camera: a point it looks at, an angle and distance it watches from, and
 - `fx-loop-fixed!` — a frame loop with a fixed simulation step: the simulation runs whole steps and the render gets what is between them, so one call is the loop and the drawing and nothing else
 - `fx-init-input!` — starts tracking keys on the window and pointer events on an element, defaulting to the canvas `fx-init!` was given. Calling it again RETARGETS: the new element drives the pointer and the old one stops, without a second set of handlers being added anywhere (a duplicate handler is invisible on this surface, since writing `#t` twice is still `#t`, but it doubles anything that accumulates)
 - `key-down?` — whether a key is held right now, named by the event's `key` -- the CHARACTER the key produced (`"w"`, `" "`, `"Shift"`), not the physical key `e.code` would name, so a binding written for one keyboard layout does not name the same physical key on another
+- `key-went-down?` — whether a key went down since the last `keys-consume-edges!`, which is a different question from `key-down?`: a key tapped and released inside one frame answers #f to that and #t to this. Reading does not consume, so several questions in one step all get answered and their order does not matter
+- `key-went-up?` — the same for releases, which are lost between reads exactly as presses are; a caller given only the press edge would have to install a second keyup listener to get this, putting two owners on one event
+- `keys-consume-edges!` — forgets every latched edge, both directions. Called once per simulation step, after the step has read the edges it cares about; the level `key-down?` reports is untouched, so a key still held is still down
 - `pointer-x` — the pointer's x in element pixels as of the last event on the element that is CURRENTLY the input target; after `fx-init-input!` retargets, events on the old element no longer move it
 - `pointer-y` — the pointer's y in element pixels as of the last event on the element that is currently the input target, as with `pointer-x`
 - `pointer-down?` — whether a pointer button is held right now on the element that is currently the input target; a button pressed on an element `fx-init-input!` has since retargeted away from does not set it
@@ -1083,6 +1086,9 @@ The page: markup, styling, reactivity, transport.
 - `set-inner-html!` — sets an element's markup from a string -- it PARSES, so a string that came from a user belongs in make-text or set-text! instead
 - `inner-text` — the element's rendered text, as the reader sees it rather than as the markup holds it
 - `set-text!` — replaces an element's contents with a text node, which never parses markup
+- `make-element-cache` — a cache the CALLER owns, holding resolved elements by id and the last text written through it; it is a value rather than state inside this library so that stale handles, after a view is torn down and rebuilt, have a scope the caller can see and end by dropping the cache
+- `cached-element` — the element with that id, looked up once and remembered. It insists like `need-element-by-id`, because a cache that stored a falsy handle would answer it for the life of the page and turn one missing id into writes that silently do nothing
+- `set-text-if-changed!` — sets an element's text only when it differs from what THIS cache last wrote there, answering whether it wrote. A write to textContent costs layout even when the string is identical, which is what a readout driven from a running loop pays every frame. It remembers what it wrote and not what is there, so one element must have one writer: a change made behind the cache's back is not seen and the next matching write is skipped
 - `set-attribute!` — sets an attribute by name
 - `set-style!` — sets one inline style property by its JavaScript spelling
 - `computed-style` — a resolved style value as a string, after the cascade rather than as written
