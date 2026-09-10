@@ -302,8 +302,17 @@
 (define (unmark s)
   (let ((o (marked-origin s)))
     (if o (unmark o) s)))
+;; The tag a form is dispatched on.  An intrinsic head answers with the
+;; operation it names, so every pass that asks this question keeps
+;; seeing the primitive it saw before the lowering replaced the symbol
+;; with a record -- the record-type and arity scans, the dead-code seed
+;; table, and the rest.  Without this each of them would have to learn
+;; the record separately, and the ones that did not would fail far from
+;; the cause: a pruned generic helper, a missing record type.
 (define (resolve-tag x)
-  (if (symbol? x) (unmark x) x))
+  (cond ((symbol? x) (unmark x))
+        ((intrinsic? x) (intrinsic-op x))
+        (else x)))
 
 ;; Resolving a reference against a top-level table.
 ;;
@@ -363,6 +372,19 @@
 ;; survives the traversals that rebuild forms.
 (define-record-type (intrinsic make-intrinsic intrinsic?)
   (fields (immutable op intrinsic-op)))
+
+;; Which primitive a head names, or #f when it names none.  A symbol
+;; answers with its lookup name, an intrinsic with the operation it
+;; carries.  Every emission fast path that recognises a primitive asks
+;; through this, so a lowered head takes exactly the path the written
+;; one took.  Without it those paths see a record where they expected a
+;; symbol and fall through to the generic "evaluate, then test
+;; truthiness" -- eight instructions per predicate test, and eleven
+;; kilobytes of snapshot, for heads that name the same primitive.
+(define (head-op h)
+  (cond ((symbol? h) (unmark h))
+        ((intrinsic? h) (intrinsic-op h))
+        (else #f)))
 
 (define *intrinsics* '())
 (define (intrinsic-for op)
@@ -498,6 +520,7 @@
          ;; is the last point at which the library's own names are
          ;; separable from the top level it splices into
          (close-library-scope (strip-marks (cadr e))
+                              (cadddr e)
                               (xpand* (cdr (cdddr e)))))
         ((case)
          ;; (case E ((d ...) body ...) ... (else body ...))
@@ -625,17 +648,36 @@
 
 ;; case compiles to eq? chains; fixnums, characters, symbols and
 ;; booleans are all eq-comparable in goeteia
+;; A datum for which eq? is exact, so case can compare with the
+;; intrinsic and stay inline.  Anything else -- a flonum, a bignum, a
+;; string, a list -- needs eqv?, which is a prelude procedure and so a
+;; real call at every clause.  R6RS specifies eqv? for case; deciding
+;; per clause keeps the answer right while leaving the common clause
+;; (symbols, small integers) as cheap as the eq? it used to compile to.
+;; Compiling every clause through eqv? instead cost 8 KB of snapshot.
+(define (eq-exact-datum? d)
+  (or (symbol? d)
+      (boolean? d)
+      (char? d)
+      (null? d)
+      (and (integer? d) (exact? d) (fits-fixnum? d))))
+
 (define (build-case t clauses)
   (if (null? clauses)
       '(begin)
       (let ((c (car clauses)))
         (if (eq? (resolve-tag (car c)) 'else)
             (cons 'begin (cdr c))
-            (list 'if
-                  (cons 'or (map (lambda (d) (list 'eq? t (list 'quote d)))
-                                 (car c)))
-                  (cons 'begin (cdr c))
-                  (build-case t (cdr clauses)))))))
+            ;; the head is an intrinsic or an introduced identifier, so
+            ;; neither spelling is one the program can capture
+            (let ((cmp (if (all-true? eq-exact-datum? (car c))
+                           (intrinsic-for 'eq?)
+                           (compiler-introduced 'eqv?))))
+              (list 'if
+                    (cons 'or (map (lambda (d) (list cmp t (list 'quote d)))
+                                   (car c)))
+                    (cons 'begin (cdr c))
+                    (build-case t (cdr clauses))))))))
 ;; quasiquote, with unquote-splicing via append
 (define (xpand-qq t level)
   (cond
@@ -645,10 +687,10 @@
        ((and (eq? tag 'unquote) (pair? (cdr t)) (null? (cddr t)))
         (if (= level 0)
             (xpand (cadr t))
-            (list 'cons ''unquote
+            (list (compiler-introduced 'cons) ''unquote
                   (xpand-qq (cdr t) (- level 1)))))
        ((and (eq? tag 'quasiquote) (pair? (cdr t)) (null? (cddr t)))
-        (list 'cons ''quasiquote
+        (list (compiler-introduced 'cons) ''quasiquote
               (xpand-qq (cdr t) (+ level 1))))
        ((and (= level 0)
              (pair? (car t))
@@ -658,7 +700,7 @@
               (xpand (cadr (car t)))
               (xpand-qq (cdr t) level)))
        (else
-        (list 'cons (xpand-qq (car t) level)
+        (list (compiler-introduced 'cons) (xpand-qq (car t) level)
               (xpand-qq (cdr t) level))))))
    (else (list 'quote t))))
 (define (xpand* es)
@@ -726,11 +768,24 @@
 ;; registration builds from base-meta-env and application saves and
 ;; restores only the rename table, which is why the scope had nowhere
 ;; to live.
+;; A macro's defining scope is where it is WRITTEN, not where the
+;; expander happens to be when it meets the definition.  It meets it
+;; twice: collect-macros! registers a library's macros with that
+;; library in force, and expansion reaches the same definition again
+;; through expand-spliced with no scope in force -- and the later
+;; registration wins the assq.  Keeping the scope the first one
+;; recorded is what stops a library's macro from being treated as if
+;; the program had written it, which would put the program's own
+;; definitions in its scope.
 (define (add-macro! f)
-  (set! *macros* (cons (cons (unmark (cadr f))
-                             (cons (make-transformer (caddr f))
-                                   *collecting-scope*))
-                       *macros*)))
+  (let* ((name (unmark (cadr f)))
+         (prior (assq name *macros*))
+         (scope (if (and prior (not *collecting-scope*))
+                    (macro-scope (cdr prior))
+                    *collecting-scope*)))
+    (set! *macros* (cons (cons name
+                               (cons (make-transformer (caddr f)) scope))
+                         *macros*))))
 (define (macro-transformer m) (car m))
 (define (macro-scope m) (cdr m))
 
@@ -769,12 +824,20 @@
 ;; lexically nor defines belongs to the library's imports, not to
 ;; whatever the user defines later at top level.  This slice protects
 ;; written car and nothing else, matching the resolver's reach.
+;; A written call-position identifier the scope neither binds
+;; lexically nor defines belongs to the scope's imports.  The set is
+;; every primitive, not a chosen few: a library body calls vector-set!
+;; by bare name exactly as the prelude calls car, and any name left out
+;; is a name a program can capture.  No name here is also a prelude
+;; procedure -- the intersection of `primitives' with the prelude's
+;; top-level definitions is empty -- so nothing changes meaning by
+;; being lowered.
 (define (written-head-visit op bound scope)
   (and (symbol? op)
        (not (memq op bound))
        (not (intro-context op))
-       (eq? (unmark op) 'car)
-       (not (scope-binds? scope 'car))
+       (memq (unmark op) primitives)
+       (not (scope-binds? scope (unmark op)))
        (rename-introduced op)))
 
 ;; Close a library's scope over its expanded body.
@@ -790,9 +853,9 @@
 ;; between here and the resolver, and a wrong decision made this early
 ;; could not be taken back; a token the resolver declines still reads
 ;; as car, because assq-marked walks its origin.
-(define (close-scope scope body)
+(define (close-scope scope body extra-bound)
   (set! *scope-defines*
-        (cons (cons scope (expanded-defined-names body))
+        (cons (cons scope (append (expanded-defined-names body) extra-bound))
               (filter (lambda (e) (not (equal? (car e) scope)))
                       *scope-defines*)))
   (let ((saved-renames *renames*)
@@ -811,8 +874,31 @@
       (set! *defining-scope* saved-scope)
       out)))
 
-(define (close-library-scope name body)
-  (cons 'begin (close-scope name body)))
+;; The names a library's import clause brings into its scope: the
+;; exports of each library it names.  namespace-library recorded those
+;; before expansion, which is the last pass that sees an export clause.
+;; (rnrs) contributes nothing here and must not -- the primitives are
+;; exactly what this scope wants lowered; a name a SISTER LIBRARY
+;; exports is the opposite, a definition the program wrote and this
+;; library asked for by name.
+(define (import-spec-target spec)
+  (if (and (pair? spec) (memq (unmark (car spec)) '(only except rename prefix)))
+      (cadr spec)
+      spec))
+
+(define (imported-names import-clause)
+  (if (not (pair? import-clause))
+      '()
+      (let loop ((specs (cdr import-clause)) (acc '()))
+        (if (not (pair? specs))
+            acc
+            (let ((e (assoc (lib-name-string (import-spec-target (car specs)))
+                            *lib-exports*)))
+              (loop (cdr specs) (if e (append (cdr e) acc) acc)))))))
+
+(define (close-library-scope name import-clause body)
+  (cons 'begin
+        (close-scope name body (imported-names import-clause))))
 
 ;; The prelude is not a library: no header, no exports, no imports, and
 ;; its marker is consumed before preparation.  What it does have is a
@@ -881,6 +967,18 @@
        (let ((name (strip-marks (cadr f)))
              (body (cdr (cdddr f)))
              (saved *collecting-scope*))
+         ;; Record the export clause here as well as in
+         ;; namespace-library, which only sees a library written at top
+         ;; level: an inline one arrives inside a (begin ...), and this
+         ;; is the pass that descends into it.  A sister library's
+         ;; exports are what tell a scope that a primitive-spelled name
+         ;; it uses is a definition the program wrote, not the
+         ;; primitive.
+         (unless (assoc (lib-name-string name) *lib-exports*)
+           (set! *lib-exports*
+                 (cons (cons (lib-name-string name)
+                             (library-export-names f))
+                       *lib-exports*)))
          (set! *scope-defines*
                (cons (cons name (library-defined-names body)) *scope-defines*))
          (set! *collecting-scope* name)
@@ -1353,14 +1451,14 @@
   (cond
    ((symbol? e)
     (let ((s (assq e scope)))
-      (if (and s (cdr s)) `(car ,e) e)))
+      (if (and s (cdr s)) (list (intrinsic-for 'car) e) e)))
    ((pair? e)
     (case (resolve-tag (car e))
       ((quote) e)
       ((set!)
        (let ((v (avc (caddr e) scope assigned)))
          (if (assq (cadr e) scope)
-             `(set-car! ,(cadr e) ,v)
+             (list (intrinsic-for 'set-car!) (cadr e) v)
              `(set! ,(cadr e) ,v))))
       ((lambda)
        (let* ((formals (cadr e))
@@ -1430,11 +1528,11 @@
                                 scope names)))
         (list
          (cons 'let
-               (cons (map (lambda (n) (list n (list 'cons '(begin) ''())))
+               (cons (map (lambda (n) (list n (list (intrinsic-for 'cons) '(begin) ''())))
                           names)
                      (append
                       (map (lambda (d)
-                             (list 'set-car! (internal-def-name d)
+                             (list (intrinsic-for 'set-car!) (internal-def-name d)
                                    (avc (internal-def-value d) scope* assigned)))
                            defs)
                       (avc-body rest scope* assigned))))))
@@ -1817,7 +1915,7 @@
          (zero (nary-zero name))
          (body
           (list
-           (list 'if (list 'null? a)
+           (list 'if (list (intrinsic-for 'null?) a)
                  ;; no zero-argument answer means the call must fail
                  ;; rather than invent one.  KNOWN GAP: this failure is
                  ;; not equivalent to the direct call's.  `(-)' written
@@ -1828,17 +1926,19 @@
                  ;; an oversight: naming it would need the name to
                  ;; survive into the lifted body.
                  (if zero zero (list '%unreachable))
-                 (list 'if (list 'null? (list 'cdr a))
+                 (list 'if (list (intrinsic-for 'null?)
+                                 (list (intrinsic-for 'cdr) a))
                        (if (eq? (nary-unary name) 'negate)
-                           (list '- 0 (list 'car a))
-                           (list 'car a))
+                           (list (intrinsic-for '-) 0 (list (intrinsic-for 'car) a))
+                           (list (intrinsic-for 'car) a))
                        (list '%loop lp (list acc l)
-                             (list (list 'car a) (list 'cdr a))
-                             (list 'if (list 'null? l)
+                             (list (list (intrinsic-for 'car) a)
+                                   (list (intrinsic-for 'cdr) a))
+                             (list 'if (list (intrinsic-for 'null?) l)
                                    acc
                                    (list lp
-                                         (list name acc (list 'car l))
-                                         (list 'cdr l)))))))))
+                                         (list name acc (list (intrinsic-for 'car) l))
+                                         (list (intrinsic-for 'cdr) l)))))))))
     (lift-variadic! idx '() a body '())
     (set! *wrappers* (cons (list name idx idx 0 #t) *wrappers*))
     (global-get (intern! 'fn name))))
@@ -2138,8 +2238,7 @@
   (cond
    ;; fixnum =/< over i32 expressions: compare raw, no boxing
    ((and (pair? e)
-         (symbol? (car e))
-         (memq (unmark (car e)) '(= <))
+         (memq (head-op (car e)) '(= <))
          (not (assq (car e) locals))
          (not (assq-marked (car e) *fns*))
          (= (length (cdr e)) 2)
@@ -2147,26 +2246,24 @@
          (i32-expr? (caddr e) locals))
     (let* ((a (compile-i32 (cadr e) locals cell))
            (b (compile-i32 (caddr e) locals cell)))
-      (list a b (if (eq? (unmark (car e)) '=) #x46 #x48))))
+      (list a b (if (eq? (head-op (car e)) '=) #x46 #x48))))
    ;; flonum comparisons compare in the f64 context and land i32
    ;; directly -- no boolean box, and f64-slotted arguments never box
    ((and (pair? e)
-         (symbol? (car e))
-         (memq (unmark (car e)) '(fl<? fl=?))
+         (memq (head-op (car e)) '(fl<? fl=?))
          (not (assq (car e) locals))
          (not (assq-marked (car e) *fns*))
          (= (length (cdr e)) 2))
     (let* ((a (compile-f64 (cadr e) locals cell))
            (b (compile-f64 (caddr e) locals cell)))
-      (list a b (if (eq? (unmark (car e)) 'fl=?) #x61 #x63))))
+      (list a b (if (eq? (head-op (car e)) 'fl=?) #x61 #x63))))
    ((and (pair? e)
-         (symbol? (car e))
-         (memq (unmark (car e)) i32-predicates)
-         (let ((expect (assq (unmark (car e)) prim-arity)))
+         (memq (head-op (car e)) i32-predicates)
+         (let ((expect (assq (head-op (car e)) prim-arity)))
            (and expect (= (length (cdr e)) (cdr expect))))
          (not (assq (car e) locals))
          (not (assq-marked (car e) *fns*)))
-    (pred-i32 (unmark (car e))
+    (pred-i32 (head-op (car e))
               (map-in-order (lambda (a) (compile-exp a locals cell #f))
                             (cdr e))
               cell))
@@ -2227,7 +2324,7 @@
       (and slot (memv (cdr slot) *f64-slots*) #t)))
    ((pair? e)
     (let* ((h (car e))
-           (rop (and (symbol? h) (unmark h))))
+           (rop (head-op h)))
       (or (and rop (memq rop fl-direct-ops)
                (not (assq h locals))
                (not (assq-marked h *fns*))
@@ -2897,7 +2994,7 @@
 
 (define ($i32-prim-of e locals)         ; the op, when e is a direct form
   (let* ((h (car e))
-         (rop (and (symbol? h) (unmark h))))
+         (rop (head-op h)))
     (and rop
          (not (assq h locals))
          (not (assq-marked h *fns*))
@@ -3010,7 +3107,7 @@
           (list (compile-exp e locals cell #f) (unwrap-fl)))))
    ((pair? e)
     (let* ((h (car e))
-           (rop (and (symbol? h) (unmark h))))
+           (rop (head-op h)))
       ;; direct only when the head really is the primitive: not
       ;; lexically bound, not redefined at top level, arity right
       (cond
@@ -3434,7 +3531,7 @@
    ((symbol? e) (and (memq e f64names) #t))
    ((pair? e)
     (let* ((h (car e))
-           (rop (and (symbol? h) (unmark h))))
+           (rop (head-op h)))
       (or (and rop (memq rop fl-direct-ops)
                (not (assq-marked h *fns*))
                (let ((a (assq rop prim-arity)))
@@ -4024,6 +4121,16 @@
             ;; assq-marked walks from the mark to the origin at the
             ;; lookup instead, which reaches both.
             (walk rest (if (memq x acc) acc (cons x acc))))
+           ;; An intrinsic head names its operation directly, and the
+           ;; seed table below keys on the bare symbol: (cons '< '(begin
+           ;; $lt2)) keeps the generic helper alive only while something
+           ;; still refers to `<'.  Once the lowering puts a record where
+           ;; that symbol was, the reference disappears, the helper is
+           ;; pruned, and emission fails with "missing generic helper".
+           ;; So an intrinsic contributes its operation's name.
+           ((intrinsic? x)
+            (let ((u (intrinsic-op x)))
+              (walk rest (if (memq u acc) acc (cons u acc)))))
            ((not (pair? x)) (walk rest acc))
            ((and expression? (eq? (resolve-tag (car x)) 'quote))
             (walk rest acc))
@@ -4112,6 +4219,22 @@
    ((symbol? e)
     (or (memq (unmark e) known) (memq (unmark e) primitives)))
    (else #t)))
+;; Names whose use pulls in machinery the program never mentions:
+;; call/cc reaches the escape pair, and arithmetic reaches the generic
+;; helpers.  Kept out of the definition table so a program that defines
+;; one of these names cannot shadow the entry and prune the helper.
+(define $behind-the-scenes
+  (list (cons 'call/cc '(begin $escape $winders))
+        (cons 'call-with-current-continuation '(begin $escape $winders))
+        (cons '+ '(begin $add2))
+        (cons '- '(begin $sub2))
+        (cons '* '(begin $mul2))
+        (cons 'quotient '(begin $quot2))
+        (cons 'remainder '(begin $rem2))
+        (cons '= '(begin $eq2))
+        (cons '< '(begin $lt2))
+        (cons 'zero? '(begin $eq2))))
+
 (define (prune-dead forms extra-roots)
   (let ((table (fold-left (lambda (acc f)
                             (if (define-form? f)
@@ -4120,17 +4243,7 @@
                           ;; call/cc expands to code that calls the
                           ;; escape machinery behind the scenes, and
                           ;; arithmetic reaches the generic helpers
-                          (list (cons 'call/cc '(begin $escape $winders))
-                                (cons 'call-with-current-continuation
-                                      '(begin $escape $winders))
-                                (cons '+ '(begin $add2))
-                                (cons '- '(begin $sub2))
-                                (cons '* '(begin $mul2))
-                                (cons 'quotient '(begin $quot2))
-                                (cons 'remainder '(begin $rem2))
-                                (cons '= '(begin $eq2))
-                                (cons '< '(begin $lt2))
-                                (cons 'zero? '(begin $eq2)))
+                          $behind-the-scenes
                           forms)))
     (let ((known (map-in-order (lambda (e) (unmark (car e))) table)))
       (let grow ((live '())
@@ -4175,13 +4288,24 @@
         ;;
         ;; So the rule is: resolve with the reference, remember with
         ;; the definition.
-        (let ((entry (assq-marked (car queue) table)))
+        ;; The behind-the-scenes entries are consulted IN ADDITION to
+        ;; the table entry, never instead of it.  They used to seed the
+        ;; table itself, where a program's own (define (< a b) ...) was
+        ;; consed on top and won the assq -- so the helper the emitter
+        ;; still needs was pruned, and compilation failed with "missing
+        ;; generic helper" naming something the program never wrote.
+        (let* ((name (car queue))
+               (behind (assq (unmark name) $behind-the-scenes))
+               (rest (if behind
+                         (form-refs (cdr behind) (cdr queue))
+                         (cdr queue)))
+               (entry (assq-marked name table)))
           (cond
-           ((not entry) (grow live (cdr queue)))
-           ((memq (car entry) live) (grow live (cdr queue)))
+           ((not entry) (grow live rest))
+           ((memq (car entry) live) (grow live rest))
            (else
             (grow (cons (car entry) live)
-                  (form-refs (cdr entry) (cdr queue))))))))))))
+                  (form-refs (cdr entry) rest)))))))))))
 
 ;; ---- a conservative inliner ----
 ;; A small, once-defined, fixed-arity top-level function whose body
@@ -4686,8 +4810,8 @@
        (not (memq op bound))
        (let ((ctx (intro-context op)))
          (and ctx
-              (eq? (car ctx) 'car)
-              (not (scope-binds? (cdr ctx) 'car))))))
+              (memq (car ctx) primitives)
+              (not (scope-binds? (cdr ctx) (car ctx)))))))
 
 (define (binder-names formals)
   (let loop ((f formals) (acc '()))
@@ -4768,9 +4892,14 @@
                   (map-tail (lambda (a) (walk-heads a bound visit)) (cdr f)))))))))
 
 (define (lower-intrinsics f bound)
+  ;; the operation is the identifier's own lookup name, not a constant
+  (walk-intrinsics f bound))
+
+(define (walk-intrinsics f bound)
   (walk-heads f bound
               (lambda (op bnd)
-                (and (lowerable-head? op bnd) (intrinsic-for 'car)))))
+                (and (lowerable-head? op bnd)
+                     (intrinsic-for (car (intro-context op)))))))
 
 ;; Map over a possibly improper list, keeping the tail.
 ;;
@@ -4815,7 +4944,8 @@
                        (append (close-scope
                                 *prelude-scope*
                                 (expand-forms (first-n forms pre-n)
-                                              (first-n locs pre-n)))
+                                              (first-n locs pre-n))
+                                '())
                                (expand-forms (list-tail forms pre-n)
                                              (list-tail locs pre-n)))
                        (expand-forms forms locs)))
@@ -4838,6 +4968,21 @@
                               (not (and (pair? f) (symbol? (car f))
                                         (eq? (unmark (car f)) 'export))))
                             expanded))))
+         ;; The top level is a scope too, and it is the defining scope
+         ;; of every macro the program itself writes.  Without an entry
+         ;; here, scope-binds? answers "defines nothing" for #f, and a
+         ;; head a top-level macro introduced is lowered to the
+         ;; primitive even when the program defines that very name --
+         ;; so the program's own definition is bypassed by its own
+         ;; macro.  This is the point where the top-level name set is
+         ;; first complete, which is why the entry is made here.
+         (top-level-names (expanded-defined-names checked))
+         (ignored (begin
+                    (set! *scope-defines*
+                          (cons (cons #f top-level-names)
+                                (filter (lambda (e) (car e))
+                                        *scope-defines*)))
+                    #f))
          ;; introduced heads are resolved here, where the top-level
          ;; name set is first complete and before inlining reads the
          ;; forms

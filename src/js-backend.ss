@@ -558,11 +558,15 @@
           (else
            (let ((op (car e)))
              (cond
-              ((not (symbol? op)) (hashtable-set! base f #t))
-              ((memq op bound) (hashtable-set! base f #t))
-              ((memq op lnames) #f)          ; loop rebind, no thunk
+              ;; an intrinsic head is a primitive by construction: it
+              ;; cannot be a bound variable, a loop label or a function
+              ;; that might hand back a trampoline thunk, so it takes
+              ;; the same path its written spelling took
+              ((not (head-op op)) (hashtable-set! base f #t))
+              ((and (symbol? op) (memq op bound)) (hashtable-set! base f #t))
+              ((and (symbol? op) (memq op lnames)) #f)
               (else
-               (let ((r (unmark op)))
+               (let ((r (head-op op)))
                  (cond
                   ((and self (eq? r (car self))
                         (= (length (cdr e)) (cdr self)))
@@ -706,12 +710,12 @@
 ;; backend fast-paths lands here too, everything else is !==FALSE
 (define (jb e env lctx)
   (if (and (pair? e)
-           (symbol? (car e))
+           (head-op (car e))
            (not (assq (car e) env))
            (not (assq-marked (car e) *fns*))
-           (let ((expect (assq (unmark (car e)) prim-arity)))
+           (let ((expect (assq (head-op (car e)) prim-arity)))
              (and expect (= (length (cdr e)) (cdr expect)))))
-      (let ((rop (unmark (car e)))
+      (let ((rop (head-op (car e)))
             (a (lambda (i) (list "(" (jx (list-ref (cdr e) i) env lctx) ")"))))
         (jkernel-for-op! rop)
         (case rop

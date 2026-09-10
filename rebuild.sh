@@ -28,24 +28,41 @@ ${NODE-node} rt/compile.mjs goeteia.wasm "$T/self-src.ss" "$T/candidate.wasm"
 echo "verify: candidate compiling the source..."
 ${NODE-node} rt/compile.mjs "$T/candidate.wasm" "$T/self-src.ss" "$T/verify.wasm"
 
+# A change that alters how the compiler compiles ITS OWN source moves
+# the fixpoint one stage further out.  The old snapshot builds a
+# candidate that already behaves the new way but was laid out by the old
+# compiler; the candidate rebuilding the source then produces something
+# different, and two stages are not enough to tell "the change has not
+# converged" from "the change is self-affecting".  A third stage
+# separates them: if verify and stage3 agree, the fixpoint exists and it
+# is verify -- the first artifact both built BY the new behaviour and
+# built to produce it.
+PUBLISH="$T/candidate.wasm"
 if cmp -s "$T/candidate.wasm" "$T/verify.wasm"; then
     echo "fixpoint: candidate == verify"
 else
-    echo "FIXPOINT FAILED: candidate and verify differ; snapshot unchanged"
-    exit 1
+    echo "candidate != verify; a self-affecting change looks like this, so trying a third stage..."
+    ${NODE-node} rt/compile.mjs "$T/verify.wasm" "$T/self-src.ss" "$T/stage3.wasm"
+    if cmp -s "$T/verify.wasm" "$T/stage3.wasm"; then
+        echo "fixpoint at the second stage: verify == stage3"
+        PUBLISH="$T/verify.wasm"
+    else
+        echo "FIXPOINT FAILED: candidate, verify and stage3 all differ; snapshot unchanged"
+        exit 1
+    fi
 fi
 
 # Publish the candidate that was just compared, staging it beside the
 # snapshot so the rename happens within one filesystem and is atomic.
-cp "$T/candidate.wasm" "./goeteia.wasm.new.$$"
+cp "$PUBLISH" "./goeteia.wasm.new.$$"
 mv "./goeteia.wasm.new.$$" goeteia.wasm
 
 # The published file must be the compared one.  Binding verification to
 # publication by construction is the intent; this checks it happened,
 # because "verified A, shipped B" costs one wrong filename and leaves no
 # other trace.
-if cmp -s goeteia.wasm "$T/candidate.wasm"; then
-    echo "published: goeteia.wasm is the verified candidate ($(wc -c < goeteia.wasm) bytes)"
+if cmp -s goeteia.wasm "$PUBLISH"; then
+    echo "published: goeteia.wasm is the verified artifact ($(wc -c < goeteia.wasm) bytes)"
 else
     echo "PUBLISH FAILED: goeteia.wasm is not the artifact that was verified"
     exit 1
