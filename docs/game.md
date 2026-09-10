@@ -349,6 +349,13 @@ fraction answers zero and closes the claim, because the operation is
 available". A caller deciding whether it can afford to settle asks
 `recovery-pending` first, which changes nothing.
 
+**A refused claim is not a consumed one.** A fraction outside 0 to 1 is
+rejected, and the claim is left open with its amount intact, so a caller
+that catches the error can settle again on terms it can defend. The two
+outcomes are worth keeping apart precisely because the successful path
+consumes so readily: everything that *reaches* the arithmetic closes the
+claim, and only what never got there does not.
+
 `recovery-open?` is not the same question as `recovery-pending` being
 zero, and the difference is the reason both exist: a claim for zero is
 open and will be consumed, while no claim at all cannot be. A caller
@@ -392,6 +399,12 @@ without telling this library, and every such list has to be pruned by
 someone who knows when its entries died — see §12, where that problem
 is solved for the one case that can be solved.
 
+The region is a capsule and its ends are round rather than square: a
+point past the end of the axis is inside when it is within the radius of
+the end cap, so the shape has no corners to fall out of as it turns.
+Turning it turns the whole region, which is why the yaw is part of the
+field and not part of the question asked of it.
+
 The containment test is two-dimensional, on x and z with a yaw, and
 `(gfx collide)` has capsule tests in three. They are not two
 implementations of one thing, and unifying them would make a library
@@ -428,6 +441,12 @@ would simulate more time than has passed — once per second, forever.
 Same arithmetic, opposite right answer. **Neither file should be changed
 to match the other**, and a reader who knows one of them should not
 assume the other behaves the same way.
+
+A zero delay is queued rather than run: the earliest anything can come
+back is the next tick, because nothing here happens between ticks. That
+is the same rule as everything else in the library and not a special
+case, but it is the one a caller is most likely to expect an exception
+to.
 
 The tolerance is absolute rather than proportional, because the quantity
 it corrects is absolute: it is the residue of adding ordinary elapsed
@@ -480,6 +499,13 @@ missed hit — a bug that presents as bad feel rather than as an error,
 and that gets diagnosed as timing or as geometry long before anyone
 looks at a ledger.
 
+`window-marked?` asks without recording, which is the half of the pair
+that makes the other half safe to have: a caller can display what has
+been touched, or decide something about it, without that inspection
+being the touch. And `from` may equal `to`, for an action live at a
+single instant; the step that crosses it reports that instant rather
+than pretending it never happened.
+
 What counts as the same thing is the caller's: marks are compared with
 `equal?`, so a handle from `(sim entity)` — a pair of two numbers —
 works. `eq?` would fail silently on exactly those handles, because the
@@ -506,6 +532,18 @@ whatever the caller does to members. A roster of handles cannot, because
 the generation the handle was issued for is not the generation the slot
 is on any more. Every question here that a stale handle could answer
 wrongly is asked of the store instead of assumed.
+
+**A handle is a pair of numbers, and membership is judged by its
+value.** A handle rebuilt from the same slot and generation is not the
+same object as the one the store issued, and it names the same entity to
+every question here: it selects, it removes, and removing by it clears a
+selection that was made with the original. That is what makes a handle
+worth writing down -- a caller can persist the two numbers, rebuild them
+after a restart, and still be talking about the entity it meant, so long
+as the generation still matches. Comparison by identity rather than by
+value would fail on exactly the handle most likely to be handed back,
+and fail silently, since a stranger's handle and a rebuilt one look the
+same at the call site.
 
 **It does not notice death by itself.** Nothing tells this library when
 an entity is destroyed, so a destroyed member stays on the list until
@@ -564,16 +602,48 @@ the mistake raise puts `(on-unknown error)` in the spec.
 **`state->datum` carries the spec, the current state, the context and
 the strictness. It does not carry the bindings, and it cannot.** Those
 are procedures; the spec names them, and `datum->state` takes them
-again. Reading a datum back with bindings that do not cover the names in
-its spec raises rather than producing a machine with holes in it. This
-is the part to plan for when a saved machine is loaded on the other side
-of a restart: the datum is portable, the behaviour behind the names is
-code, and the two are rejoined deliberately rather than by accident.
+again. This is the part to plan for when a saved machine is loaded on
+the other side of a restart: the datum is portable, the behaviour behind
+the names is code, and the two are rejoined deliberately rather than by
+accident.
 
-The context travels only if it is itself a datum. `state->datum` refuses
-a context containing a procedure or a cycle rather than writing
-something that cannot be read back, so the failure arrives at the write,
-naming the context, instead of at the load.
+**Guards and actions are not rejoined on the same terms, and the
+asymmetry is what makes a reloaded machine look complete.** A guard is
+CALLED — the machine has to run it to decide whether a transition may
+happen — so a spec naming a guard with no binding behind it is refused,
+both when the machine is built and when a datum is read back. An action
+is only ANSWERED. The machine performs nothing; it hands back the names
+the transition asked for and who runs them stays in the caller's code.
+So a machine whose transitions carry actions reads back with no bindings
+at all, still names them, and a step from it still answers them:
+
+```
+build with an action unbound      ok
+read back with '() bindings       ok
+step from the reloaded machine    (bell), and it moved to b
+build with a guard unbound        raises
+read a guarded machine back
+  with '() bindings               raises
+```
+
+The consequence to plan for is the first column, not the last: a
+reloaded machine missing every action binding raises nothing, runs, and
+moves through its states correctly. What is missing is whatever those
+names were supposed to make happen, and the machine is not the thing
+that would have noticed.
+
+The context travels only if it is itself a datum, and that is enforced
+where it is handed over rather than where it is written:
+`make-event-state-machine` and `state-send!` both refuse a context
+containing a procedure or a cycle. So a machine cannot come to hold
+something unwritable, and the failure names the context at the call that
+supplied it instead of surfacing a saved-game later.
+
+`state-machine` hands out the machine value itself, for the questions
+`(lng machine)` answers and this does not. It is safe to hand out
+because it is immutable: what comes back is the state as of that call
+and does not follow later steps, so it is a photograph rather than a
+second handle on the cell.
 
 Two transitions sharing a from-event key with no guards are refused by
 `make-machine`, so a spec like that never becomes a machine and no
