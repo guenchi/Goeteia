@@ -572,6 +572,10 @@ Both points are damped at one rate, and that is what holds the heading steady: t
 - `ktx-stream!` — fetch and upload in one call, handing the finished texture slot to `cb`
 - `ktx-alpha?` — whether the file carries alpha slices -- for ETC1S they are second slices whose grey carries the coverage
 
+## `(gfx lod)`
+
+- `lod-shader-functions` — `lod_interval` and `dither_threshold` as shader forms, for a caller to splice into its own shader. Together they dissolve one level of detail into the next instead of popping: `dither_threshold` gives a pixel a stable value in [0,1) from the interleaved-gradient hash, `lod_interval` gives a tier the half-open slice of that range it owns, and a fragment draws when its threshold falls inside its tier's slice. No blending state and no sorted second pass. Choosing WHICH level draws is a different question that `(gfx scene)`'s `lod` container already answers, and its switch is hard -- this is the seam. The edges handed to `lod_interval` are forced into order rather than assumed, because a fragment shader can neither raise nor test: an out-of-order near edge would give the middle tier an interval that runs backwards and draws nothing, and a `complete` above one would let the near tier and the distant stand-in both cover the whole range and draw on top of each other. Neither looks like a bug in this function. The library depends on `(rnrs)` alone, deliberately: both backends want these and neither can import the other's scene layer
+
 ## `(gfx mat)`
 
 - `flsin` — sine of a flonum, from the system's own range-reduced polynomial, so both compiler targets emit identical bits
