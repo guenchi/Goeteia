@@ -507,9 +507,12 @@
         ((quasiquote) (xpand-qq (cadr e) 0))
         ((define-record-type) (xpand-record e))
         ((import) '(begin))            ; resolved by the driver
-        ;; (%imports spec ...) is the clause the driver kept.  This
-        ;; landing only carries it; the map that reads it comes next.
-        ((%imports) '(begin))
+        ;; (%imports spec ...) is the clause the driver kept; the
+        ;; specs are collected here and read after expansion, when
+        ;; every inline library has registered its exports
+        ((%imports)
+         (set! *import-specs* (append *import-specs* (cdr e)))
+         '(begin))
         ((export) e)                   ; top-level export declaration
         ((library)
          ;; (library (name ...) (export ...) (import ...) body ...)
@@ -1858,6 +1861,83 @@
     vector-length vector-map vector-ref vector-set! vector? void
     with-input-from-file with-input-from-string with-output-to-file
     with-output-to-string write write-char zero?))
+
+;; ---- the import map ----------------------------------------------
+;;
+;; A clause is a map from LOCAL NAME to BINDING IDENTITY, not a set of
+;; names: (rename (rnrs) (car first)) forbids defining first and leaves
+;; car free, and two imports of one spelling are legal exactly when
+;; they are the same binding.  An identity is (library-string . name
+;; there), so a re-export carries the same identity through both paths
+;; and merging accepts it, while two genuinely different bindings under
+;; one local name is the error this shape exists to catch.
+(define *import-specs* '())
+(define *import-map* '())
+
+(define (import-binding-set target)
+  (let ((n (map unmark target)))
+    (cond
+     ((equal? n '(rnrs))
+      (map (lambda (x) (cons x (cons "rnrs" x))) $rnrs-exports))
+     ((and (pair? n) (eq? (car n) 'rnrs))
+      ;; the silence ends here: this used to be accepted and quietly
+      ;; mean the whole of (rnrs)
+      (errorf 'goeteia
+              "component libraries of (rnrs) are not supported; write (rnrs):"
+              target))
+     (else
+      (let ((e (assoc (lib-name-string target) *lib-exports*)))
+        (if e
+            (map (lambda (x) (cons (unmark x) (cons (car e) (unmark x))))
+                 (cdr e))
+            '()))))))
+
+(define (import-spec-bindings spec)
+  (let ((tag (and (pair? spec) (symbol? (car spec)) (unmark (car spec)))))
+    (case tag
+      ((except)
+       (let ((base (import-spec-bindings (cadr spec)))
+             (drop (map unmark (cddr spec))))
+         (filter (lambda (b) (not (memq (car b) drop))) base)))
+      ((only)
+       (let ((base (import-spec-bindings (cadr spec)))
+             (keep (map unmark (cddr spec))))
+         (filter (lambda (b) (memq (car b) keep)) base)))
+      ((rename)
+       ;; the original is freed and the alias is bound, which is why
+       ;; defining the original after a rename is legal
+       (let* ((base (import-spec-bindings (cadr spec)))
+              (pairs (map (lambda (pr) (cons (unmark (car pr)) (unmark (cadr pr))))
+                          (cddr spec)))
+              (olds (map car pairs)))
+         (fold-left (lambda (acc pr)
+                      (let ((e (assq (car pr) base)))
+                        (if e (cons (cons (cdr pr) (cdr e)) acc) acc)))
+                    (filter (lambda (b) (not (memq (car b) olds))) base)
+                    pairs)))
+      ((prefix)
+       (let ((base (import-spec-bindings (cadr spec)))
+             (p (unmark (caddr spec))))
+         (map (lambda (b) (cons (sym-cat (list p (car b))) (cdr b))) base)))
+      (else (import-binding-set spec)))))
+
+(define (merge-import-bindings specs)
+  (fold-left
+   (lambda (acc spec)
+     (fold-left
+      (lambda (a b)
+        (let ((prior (assq (car b) a)))
+          (cond
+           ((not prior) (cons b a))
+           ((equal? (cdr prior) (cdr b)) a)
+           (else
+            (errorf 'goeteia
+                    "two different bindings imported under one name:"
+                    (car b))))))
+      acc
+      (import-spec-bindings spec)))
+   '()
+   specs))
 
 (define primitives
   '(+ - * quotient remainder = < eq? cons car cdr pair? null? zero?
@@ -5000,6 +5080,8 @@
   (set! *collecting-scope* #f)
   (set! *form-locs* '())
   (set! *lib-exports* '())
+  (set! *import-specs* '())
+  (set! *import-map* '())
   ;; library privates get their namespace before anything reads the
   ;; forms -- collect-macros! descends into libraries and would
   ;; otherwise register a library's macros under their bare names
@@ -5050,6 +5132,11 @@
          ;; so the program's own definition is bypassed by its own
          ;; macro.  This is the point where the top-level name set is
          ;; first complete, which is why the entry is made here.
+         ;; the clause is read here: expansion has run, so every
+         ;; inline library has registered what it exports
+         (import-map (begin (set! *import-map*
+                                  (merge-import-bindings *import-specs*))
+                            *import-map*))
          (top-level-names (expanded-defined-names checked))
          (ignored (begin
                     (set! *scope-defines*
