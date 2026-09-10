@@ -14,7 +14,11 @@
 //
 // The second test is the twin that proves the probe can see foo at
 // all: when foo IS called it must be present, or an absence in the
-// first test would be the instrument's and not the compiler's.
+// first test would be the instrument's and not the compiler's.  Its
+// foo is self-recursive because a small function called once is
+// inlined and vanishes for a reason that has nothing to do with
+// dead-code elimination -- measured: the straight-line twin was
+// absent too, and read as the probe being blind.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
@@ -47,6 +51,6 @@ test('a lexical binder sharing a name does not keep an uncalled top-level functi
 
 test('twin: a top-level function that is called is present in the name section', () => {
     if (!chez) { console.log('NOT EXERCISED HERE (no chez on PATH; bin/goeteiac is Chez-hosted and this reading was NOT taken)'); return; }
-    const names = namesOf('(import (rnrs))\n(define (foo a b) (fl+ a b))\n(display (foo 1.0 2.0))\n');
+    const names = namesOf('(import (rnrs))\n(define (foo a b) (if (fl<? a b) (foo b a) (fl+ a b)))\n(display (foo 1.0 2.0))\n');
     assert.ok(names.includes('foo'), `foo is called and still absent, so the probe cannot see it; names: ${names.join(' ')}`);
 });
