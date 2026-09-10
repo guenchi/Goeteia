@@ -278,6 +278,24 @@
 (define *renames* '())    ; original -> fresh, per macro application
 (define *macros* '())     ; name -> transformer meta-value
 
+;; The definition scope an introduced identifier was written in.
+;;
+;; *marks* answers "what was this identifier spelled as before it was
+;; renamed"; it cannot answer "in which environment was it written",
+;; and those are different questions.  A library macro's introduced
+;; car and a caller's substituted car arrive in one form and must
+;; resolve against different environments, so the environment has to
+;; travel with the identifier rather than be recovered from its
+;; spelling.
+;;
+;; The handle is the defining library's name, or #f for a macro
+;; defined at top level.  *scope-defines* records what each library
+;; defines, so a library that binds car of its own is not treated as
+;; meaning the primitive.
+(define *intro-scope* '())   ; fresh -> defining library name, or #f
+(define *scope-defines* '()) ; library name -> names it defines
+(define *defining-scope* #f) ; the library whose macro is being applied
+
 (define (marked-origin s)
   (let ((e (assq s *marks*)))
     (and e (cdr e))))
@@ -328,7 +346,44 @@
         (let ((f (gensym (symbol->string (unmark s)))))
           (set! *marks* (cons (cons f s) *marks*))
           (set! *renames* (cons (cons s f) *renames*))
+          ;; the fresh token carries its lookup name through *marks*
+          ;; and its definition scope through this table
+          (set! *intro-scope* (cons (cons f *defining-scope*) *intro-scope*))
           f))))
+
+;; ---- the intrinsic head -------------------------------------------
+;;
+;; A head a user cannot write, cannot lexically bind, and that keeps the
+;; node a proper list with the operation held outside the operand list.
+;; Recognition is a record predicate and then a field, never a shape
+;; test: a vector head would be forgeable, because this reader accepts
+;; vector literals.
+;;
+;; One instance per operation, made once, so identity is eq? and
+;; survives the traversals that rebuild forms.
+(define-record-type (intrinsic make-intrinsic intrinsic?)
+  (fields (immutable op intrinsic-op)))
+
+(define *intrinsics* '())
+(define (intrinsic-for op)
+  (let ((e (assq op *intrinsics*)))
+    (if e
+        (cdr e)
+        (let ((i (make-intrinsic op)))
+          (set! *intrinsics* (cons (cons op i) *intrinsics*))
+          i))))
+
+;; Does this identifier's definition scope bind name itself?  A library
+;; that defines car means its own car there, not the primitive.
+(define (scope-binds? scope name)
+  (let ((e (assq scope *scope-defines*)))
+    (and e (memq name (cdr e)) #t)))
+
+;; The lookup name and defining scope of an introduced identifier, or #f
+;; when the identifier was not introduced by a macro.
+(define (intro-context s)
+  (let ((e (assq s *intro-scope*)))
+    (and e (cons (unmark s) (cdr e)))))
 
 ;;;; ------------------------------------------------------------------
 ;;;; the expander: derived forms and user macros.  Core forms after
@@ -654,9 +709,33 @@
     v))
 (define (macro-def? f)
   (and (pair? f) (symbol? (car f)) (eq? (unmark (car f)) 'define-syntax)))
+(define *collecting-scope* #f)   ; the library collect-macros! is inside
+
+;; A transformer is registered with the scope it was written in, so its
+;; introduced identifiers can be resolved there later.  Today
+;; registration builds from base-meta-env and application saves and
+;; restores only the rename table, which is why the scope had nowhere
+;; to live.
 (define (add-macro! f)
-  (set! *macros* (cons (cons (unmark (cadr f)) (make-transformer (caddr f)))
+  (set! *macros* (cons (cons (unmark (cadr f))
+                             (cons (make-transformer (caddr f))
+                                   *collecting-scope*))
                        *macros*)))
+(define (macro-transformer m) (car m))
+(define (macro-scope m) (cdr m))
+
+;; The names a library body defines, so scope-binds? can tell a library
+;; that means the primitive from one that binds the name itself.
+(define (library-defined-names body)
+  (let loop ((fs body) (acc '()))
+    (cond
+     ((not (pair? fs)) acc)
+     ((and (pair? (car fs)) (symbol? (car (car fs)))
+           (eq? (unmark (car (car fs))) 'define))
+      (let ((t (cadr (car fs))))
+        (loop (cdr fs)
+              (cons (unmark (if (pair? t) (car t) t)) acc))))
+     (else (loop (cdr fs) acc)))))
 ;; register every define-syntax reachable at the top level -- directly,
 ;; or spliced through a (begin ...) or a (library ...) body -- so a
 ;; macro is live before any sibling form (including its own library
@@ -667,16 +746,30 @@
    ((and (pair? f) (symbol? (car f)))
     (case (unmark (car f))
       ((begin) (for-each collect-macros! (cdr f)))
-      ((library) (for-each collect-macros! (cdr (cdddr f))))
+      ((library)
+       (let ((name (strip-marks (cadr f)))
+             (body (cdr (cdddr f)))
+             (saved *collecting-scope*))
+         (set! *scope-defines*
+               (cons (cons name (library-defined-names body)) *scope-defines*))
+         (set! *collecting-scope* name)
+         (for-each collect-macros! body)
+         (set! *collecting-scope* saved)))
       (else #f)))
    (else #f)))
-(define (apply-macro tf form)
+(define (apply-macro m form)
   ;; each application gets a fresh rename table; that is what keeps
-  ;; separate expansions of the same macro hygienic
-  (let ((saved *renames*))
+  ;; separate expansions of the same macro hygienic.  The defining
+  ;; scope is installed for the same extent, so identifiers the
+  ;; template introduces record where they were written while
+  ;; substituted syntax, which is not renamed here, keeps the caller's.
+  (let ((saved *renames*)
+        (saved-scope *defining-scope*))
     (set! *renames* '())
-    (let ((out (meta-apply tf (list form))))
+    (set! *defining-scope* (macro-scope m))
+    (let ((out (meta-apply (macro-transformer m) (list form))))
       (set! *renames* saved)
+      (set! *defining-scope* saved-scope)
       out)))
 
 (define (meta-eval e env)
@@ -2329,6 +2422,10 @@
          (args (cdr e))
          (rop (and (symbol? op) (unmark op))))
     (cond
+     ;; an intrinsic head names its operation directly: no table is
+     ;; consulted and no spelling can reach this arm
+     ((intrinsic? op)
+      (compile-prim (intrinsic-op op) args locals cell))
      ((and (symbol? op) (assq op locals))
       (compile-indirect (compile-ref op locals cell) args locals cell tail?))
      ;; a %loop self-call: new values on the stack, parameters set
@@ -4257,6 +4354,87 @@
                                     (map (lambda (x) (ns-walk x table #f)) body)))))))
       f))
 
+;; ---- resolving introduced call heads, once definition scope is complete
+;;
+;; Runs after check-duplicate-defines! and before inline-forms: the
+;; first point at which the top-level name set is known.  Only
+;; call-position heads are considered, and only identifiers a macro
+;; introduced -- substituted syntax carries the caller's context and is
+;; left alone, which is what keeps two differently bound car's in one
+;; form distinguishable.
+;;
+;; Resolution is lexical first.  An introduced identifier that a binder
+;; in the expanded program captures is that binder's, whatever its
+;; definition scope said; a template that introduces its own car binder
+;; must keep meaning the binder.  Only when no binder captures it does
+;; the stored name get looked up in the stored scope.
+;;
+;; This slice lowers car and nothing else.  Value position, arithmetic,
+;; predicates and the synthesis sites migrate afterwards, on the same
+;; heads.
+(define (lowerable-head? op bound)
+  (and (symbol? op)
+       (not (memq op bound))
+       (let ((ctx (intro-context op)))
+         (and ctx
+              (eq? (car ctx) 'car)
+              (not (scope-binds? (cdr ctx) 'car))))))
+
+(define (binder-names formals)
+  (let loop ((f formals) (acc '()))
+    (cond ((symbol? f) (cons f acc))
+          ((pair? f) (loop (cdr f) (cons (car f) acc)))
+          (else acc))))
+
+(define (lower-intrinsics f bound)
+  (if (not (pair? f))
+      f
+      (let ((h (car f)))
+        (cond
+         ((and (symbol? h) (eq? (unmark h) 'quote)) f)
+         ((and (symbol? h) (eq? (unmark h) 'lambda))
+          (let ((inner (append (binder-names (cadr f)) bound)))
+            (cons h (cons (cadr f)
+                          (map-tail (lambda (b) (lower-intrinsics b inner))
+                                    (cddr f))))))
+         ((and (symbol? h) (eq? (unmark h) 'let))
+          (let* ((bs (cadr f))
+                 (inner (append (map car bs) bound)))
+            (cons h
+                  (cons (map-tail (lambda (b)
+                                    (list (car b) (lower-intrinsics (cadr b) bound)))
+                                  bs)
+                        (map-tail (lambda (b) (lower-intrinsics b inner))
+                                  (cddr f))))))
+         ;; a define's target may be a dotted formals list, which is not
+         ;; a form and must not be walked as one
+         ((and (symbol? h) (eq? (unmark h) 'define))
+          (let ((target (cadr f)))
+            (cons h (cons target
+                          (map-tail (lambda (b)
+                                      (lower-intrinsics
+                                       b
+                                       (if (pair? target)
+                                           (append (binder-names (cdr target)) bound)
+                                           bound)))
+                                    (cddr f))))))
+         (else
+          (let ((head (if (lowerable-head? h bound) (intrinsic-for 'car) h)))
+            (cons (if (pair? h) (lower-intrinsics h bound) head)
+                  (map-tail (lambda (a) (lower-intrinsics a bound)) (cdr f)))))))))
+
+;; Map over a possibly improper list, keeping the tail.
+;;
+;; The shape this exists for is a dotted formals list reaching a form
+;; walker: (define (f . args) ...) puts (f . args) where a walker
+;; expects a form, and an ordinary map over it raises rather than
+;; walking. The define arm below does not walk formals at all; this
+;; keeps the generic arm safe for every other improper tail.
+(define (map-tail g l)
+  (cond ((pair? l) (cons (g (car l)) (map-tail g (cdr l))))
+        ((null? l) '())
+        (else l)))
+
 ;; the target-independent front half -- expansion, assignment
 ;; conversion, inlining, DCE -- shared by every backend; returns
 ;; (export-names forms fn-defs var-defs main-steps)
@@ -4264,6 +4442,10 @@
   (set! *marks* '())
   (set! *renames* '())
   (set! *macros* '())
+  (set! *intro-scope* '())
+  (set! *scope-defines* '())
+  (set! *defining-scope* #f)
+  (set! *collecting-scope* #f)
   (set! *form-locs* '())
   (set! *lib-exports* '())
   ;; library privates get their namespace before anything reads the
@@ -4296,13 +4478,22 @@
                               (not (and (pair? f) (symbol? (car f))
                                         (eq? (unmark (car f)) 'export))))
                             expanded))))
+         ;; introduced heads are resolved here, where the top-level
+         ;; name set is first complete and before inlining reads the
+         ;; forms
+         (resolved (map-in-order (lambda (f)
+                                   (let ((nf (lower-intrinsics f '())))
+                                     (unless (eq? nf f)
+                                       (record-loc! nf (form-loc f)))
+                                     nf))
+                                 checked))
          (forms (prune-dead
                  (map-in-order (lambda (f)
                                  (let ((nf (convert-assignments f)))
                                    (unless (eq? nf f)
                                      (record-loc! nf (form-loc f)))
                                    nf))
-                     (inline-forms checked))
+                     (inline-forms resolved))
                  export-names))
          (fn-defs (filter fn-define? forms))
          (var-defs (filter var-define? forms))

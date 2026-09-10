@@ -675,6 +675,12 @@
          (args (cdr e))
          (rop (and (symbol? op) (unmark op))))
     (cond
+     ;; an intrinsic head names its operation directly.  It reaches the
+     ;; same primitive emitter the symbol arm below uses; what it does
+     ;; not do is consult a table, so no later binding of the name can
+     ;; reach it.
+     ((intrinsic? op)
+      (jp (intrinsic-op op) args (map-in-order (lambda (a) (jx a env lctx)) args)))
      ((and (symbol? op) (assq op env))
       (jicall (list "(" (cdr (assq op env)) ")") args env lctx tail?))
      ((and rop (memq rop primitives) (not (assq-marked op *fns*)))
