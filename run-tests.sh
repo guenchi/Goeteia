@@ -412,6 +412,7 @@ for m in test/macro-toplevel-hygiene.mjs \
          test/defect-v01-shader-check-can-vanish-unnoticed.mjs \
          test/c02-product-fn-specs.mjs \
          test/c02-product-trampoline.mjs \
+         test/c02-product-float-emission.mjs \
          test/defect-b01-build-ignores-library-deps.mjs; do
     if $CAP ${NODE-node} --test "$m" >/dev/null 2>&1; then
         echo "ok   $m"
