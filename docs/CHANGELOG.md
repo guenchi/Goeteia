@@ -212,20 +212,18 @@ Five defects are known, reproduced, and NOT fixed in this release. They
 are listed here because an unfixed defect that scrolls off a list is one
 nobody re-reads at the next decision.
 
-- **A top-level definition written as `(define car <expression>)` does
-  not shadow the primitive.** `(define car (lambda (x) 99))` followed
-  by `(car (list 1))` answers 1 at every call site in the program:
-  the name is compiled as the builtin however the program bound it, and
-  there is no diagnostic. The same definition written as
-  `(define (car x) 99)` shadows correctly, so the two spellings R6RS
-  treats as one differ here. It is the program's OWN calls that are
-  affected: the prelude's, a library's and the compiler's own uses of a
-  primitive's name are no longer reachable from a program's definition
-  (see Fixed). Whether a program may redefine an imported name at all
-  is open -- R6RS says it may not without `(except (rnrs) car)` -- and
-  the decision is recorded as pending rather than made here. Present
-  in 1.7.0. Held red by `defect-c02-shadow-primitive`.
-  **Workaround**: use the `(define (name ...) ...)` spelling.
+- **A program may define a name it imports, and the two definition
+  forms then disagree.** R6RS says a program body may not define an
+  identifier it imports from `(rnrs)`; here `(define (car x) 99)` is
+  accepted and shadows the program's own calls, `(define car (lambda
+  (x) 99))` is accepted and does not, and `(import (except (rnrs)
+  car))` -- the legal way to say it -- constrains nothing. The next
+  release refuses the definition under a plain import, naming the
+  `except` spelling, and honours `except`, `only` and `rename`; a
+  definition made after excluding the name then shadows the program's
+  own calls in both forms, while the prelude's, a library's and the
+  compiler's uses stay on the primitive (see Fixed). Held red by
+  `defect-c02-shadow-primitive`, now written with `except`.
 - **A morph target's POSITION accessor can declare a `max` below a
   value the file stores.** The bounds are computed over the values as
   given, and the file holds them as `f32`, so a value that rounds
