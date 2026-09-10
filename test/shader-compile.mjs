@@ -18,6 +18,7 @@
 // in this suite, so it appears in the run's summary instead of passing
 // in silence.
 import { execFileSync } from 'node:child_process';
+import { readdirSync, readFileSync } from 'node:fs';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -86,7 +87,45 @@ if (!findChrome()) {
         return out;
     }, { timeoutMs: 120000 });
 
-    test('the shader a real compiler must refuse is refused', () => {
+    test('every library that emits shaders is named in the emitter', () => {
+    // The emitter is a list of names, and a list of names cannot shout
+    // for what is missing from it.  Two libraries landed shader
+    // functions and neither was added, so a real GLSL compiler had
+    // never read either one -- they were strings nobody had checked.
+    //
+    // What makes this mechanical is that a library announces itself:
+    // anything offering shader text exports an accessor ending in
+    // -shaders or -shader-functions, so the set that should be here is
+    // derivable rather than remembered.
+    // ⚠️ Checked against what the emitter ACTUALLY EMITTED, not against
+    // its source text.  Searching the source for the accessor's name
+    // passes a call that has been renamed or commented out, because the
+    // name survives as an argument -- measured: disabling the call left
+    // this test green.
+    const libDir = join(root, 'lib', 'gfx');
+    const emitted = new Set(emitAll().map(e => e.name.split('/')[0]));
+    const missing = [];
+    for (const f of readdirSync(libDir)) {
+        if (!f.endsWith('.ss')) continue;
+        const src = readFileSync(join(libDir, f), 'utf8');
+        const accessors = [...src.matchAll(
+            /^\s*\(define \(([a-z0-9-]*-shaders?(?:-functions)?)\)/mg)].map(m => m[1]);
+        if (accessors.length === 0) continue;
+        // At least one, not all of them: the accessors overlap.  A
+        // library that offers both halves separately and the pair
+        // together has three names for two shaders, and naming the
+        // pair covers the halves.  ⇒ This says "some of this library's
+        // shader text is compiled", which is what catches a library
+        // nobody added; it does not say every accessor is reached.
+        if (!emitted.has(f.replace(/\.ss$/, '')))
+            missing.push(`${f}: ${accessors.join(', ')}`);
+    }
+    assert.deepEqual(missing, [],
+        'these accessors emit shader text that no compiler ever reads; ' +
+        'add them to tools/shader-emit.ss:\n  ' + missing.join('\n  '));
+});
+
+test('the shader a real compiler must refuse is refused', () => {
         const [, r] = results.find(([e]) => e.name.startsWith('control/'));
         assert.ok(!(r.vertex?.ok ?? true),
             'the known-bad shader compiled: what answered is a stub, and every other result here means nothing');

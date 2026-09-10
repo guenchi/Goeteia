@@ -18,6 +18,7 @@
 ;; against a stub would look identical to a run against a compiler.
 (import (rnrs) (gfx glsl)
         (gfx fx) (gfx ibl) (gfx post) (gfx sprite) (gfx scene)
+        (gfx mat) (gfx lod)
         (gfx gltf) (gfx mesh) (gfx particles))
 
 (define (render dialect forms)
@@ -42,12 +43,38 @@
        (display (render dialect fs)) (newline)))
    rows))
 
+;; A function set is not a program, so a real compiler cannot read one
+;; on its own.  Wrapping it in the smallest program that CALLS every
+;; function is stronger than compiling the text would have been: the
+;; call sites make the compiler check the signatures, and a function
+;; nobody calls is dead code a driver is free to discard before it ever
+;; looks at the body.
+(define (emit-functions! lib fns calls)
+  (emit! lib
+         (list (list "functions" 'es100
+                     '((attribute vec2 a_pos)
+                       (define (main) void
+                         (set! gl_Position (vec4 a_pos (fl 0) (fl 1)))))
+                     (append '((precision highp float)) fns
+                             (list (list 'define '(main) 'void
+                                         (list 'set! 'gl_FragColor calls))))))))
+
 (emit! "fx" (fx-quad-shaders))
 (emit! "ibl" (ibl-shaders))
 (emit! "post" (post-shaders))
 (emit! "sprite" (sprite-shaders))
 (emit! "scene" (scene-shaders))
 (emit! "gltf" (gltf-shaders))
+(emit-functions! "mat" (mat-shader-functions)
+                 '(vec4 (safe_unit (vec3 (fl 1) (fl 2) (fl 2)))
+                        (dot (rot_axis (vec3 (fl 1) (fl 0) (fl 0))
+                                       (vec3 (fl 0) (fl 1) (fl 0)))
+                             (vec3 (fl 1) (fl 1) (fl 1)))))
+(emit-functions! "lod" (lod-shader-functions)
+                 '(vec4 (lod_interval (fl 5) (fl 1) (vec2 (fl 1) (fl 2))
+                                      (vec2 (fl 3) (fl 4)) (fl 1))
+                        (dither_threshold gl_FragCoord.xy)
+                        (fl 1)))
 (emit! "mesh" (mesh-shaders))
 (emit! "particles" (particles-shaders))
 
