@@ -922,6 +922,50 @@
                               '() #f
                               -1 0 #f 1.0))))))
 
+  ;; Whether welding translucent members is safe for this batch.
+  ;;
+  ;; The argument written beside the key below is sound but narrower
+  ;; than the use it was put to: blending a*C + (1-a)*dst with one C
+  ;; and one a gives the same pixel in either order, which proves that
+  ;; swapping two ADJACENT layers of one colour changes nothing.
+  ;; Merging them into a single draw needs the further fact that they
+  ;; ARE adjacent -- and when a differently coloured translucent
+  ;; surface is composited between them, merging moves it to one side.
+  ;; Three planes at alpha 0.5 on black, far red, middle blue, near
+  ;; red, come to (0.625, 0, 0.25); the two orders a merge can produce
+  ;; are (0.375, 0, 0.5) and (0.75, 0, 0.125).  A quarter of full scale
+  ;; in two channels is not a rounding question.
+  ;;
+  ;; Adjacency cannot be settled here.  The blended pass orders by
+  ;; depth from the camera, the camera moves, and this decision is made
+  ;; once when the scene is built -- so the only condition worth
+  ;; testing is one that holds for EVERY camera.  That condition is
+  ;; that no differently keyed translucent surface exists to come
+  ;; between them: then every order is the same order, and the original
+  ;; argument applies with nothing left over.
+  ;;
+  ;; The rule is deliberately conservative.  Two reds and two blues
+  ;; that never overlap on screen would be safe to weld and are
+  ;; refused here, because nothing available at build time can tell
+  ;; that case from the sandwich.  The cost of refusing is a draw call;
+  ;; the cost of accepting is a wrong picture with nothing to report
+  ;; it.
+  (define ($sgl-translucent-key? f) (fl<? (vector-ref f 10) 1.0))
+
+  (define ($sgl-one-translucent-key? ns)
+    (let loop ((l ns) (seen #f))
+      (cond
+       ((null? l) #t)
+       (else
+        (let ((f ($sgl-nd-f (car l))))
+          (if (not ($sgl-translucent-key? f))
+              (loop (cdr l) seen)
+              (let ((k (list (vector-ref f 7) (vector-ref f 8)
+                             (vector-ref f 9) (vector-ref f 10))))
+                (cond ((not seen) (loop (cdr l) k))
+                      ((equal? seen k) (loop (cdr l) seen))
+                      (else #f)))))))))
+
   ;; partition lit singles: same-color static groups of 2+ weld
   (define ($sgl-weld! singles)
     (let part ((ns singles) (stat '()) (dyn '()))
@@ -929,7 +973,8 @@
           (if ($sgl-static? (car ns))
               (part (cdr ns) (cons (car ns) stat) dyn)
               (part (cdr ns) stat (cons (car ns) dyn)))
-          (let group ((ns (reverse stat)) (groups '()) (out (reverse dyn)))
+          (let* ((one-translucent-key? ($sgl-one-translucent-key? stat)))
+            (let group ((ns (reverse stat)) (groups '()) (out (reverse dyn)))
             (if (null? ns)
                 (append
                  (fold-left
@@ -945,7 +990,10 @@
                       ;; part by part.  With the output width following
                       ;; the total there is nothing left for it to
                       ;; prevent, and skipping the weld was the cost.
-                      (if (pair? (cdr members))
+                      (if (and (pair? (cdr members))
+                               (or (not ($sgl-translucent-key?
+                                         ($sgl-nd-f (car members))))
+                                   one-translucent-key?))
                           (cons ($sgl-weld (reverse members)) acc)
                           (append (reverse members) acc))))
                   '() groups)
@@ -971,7 +1019,7 @@
                              (group (cdr ns) groups out))
                       (group (cdr ns)
                              (cons (cons key (list (car ns))) groups)
-                             out))))))))
+                             out)))))))))
 
   ;; lit nodes sharing a geometry, two or more, become an instanced
   ;; group -- one buffer of matrix+color per instance, one draw
