@@ -3991,25 +3991,81 @@
   (if (pair? (cadr f)) (car (cadr f)) (cadr f)))
 (define (form-refs e acc)
   ;; worklist traversal: form spines outrun the wasm stack
-  (let walk ((stack (cons e '())) (acc acc))
-    (cond
-     ((null? stack) acc)
-     ((symbol? (car stack))
-      ;; Identifiers go in AS WRITTEN, marks and all.  Unmarking here
-      ;; would answer for a macro-introduced reference the question its
-      ;; ORIGIN asks, and the table these names are looked up in is
-      ;; keyed by the mark -- so an introduced definition would never be
-      ;; found by the reference in its own expansion, and would be
-      ;; pruned out from under it.  assq-marked walks from the mark to
-      ;; the origin at the lookup instead, which reaches both.
-      (let ((u (car stack)))
-        (walk (cdr stack) (if (memq u acc) acc (cons u acc)))))
-     ((and (pair? (car stack))
-           (not (eq? (resolve-tag (car (car stack))) 'quote)))
-      (walk (cons (car (car stack))
-                  (cons (cdr (car stack)) (cdr stack)))
-            acc))
-     (else (walk (cdr stack) acc)))))
+  ;;
+  ;; Each entry is (x . expression?).  The flag is #t for something
+  ;; that is an expression and #f for a LIST TAIL produced by taking
+  ;; one apart, and the binding arms may fire only on an expression.
+  ;; The generic arm pushes car and cdr separately, so the tail of
+  ;; (vector lambda foo) is the pair (lambda foo) -- read as an
+  ;; expression that would be a lambda whose formals are foo, whose
+  ;; reference would then be skipped and whose definition would be
+  ;; pruned out from under it.  The same trap exists for let and
+  ;; %loop, reached through a variable of that name.
+  (let walk ((stack (list (cons e #t))) (acc acc))
+    (if (null? stack)
+        acc
+        (let* ((entry (car stack))
+               (x (car entry))
+               (expression? (cdr entry))
+               (rest (cdr stack)))
+          (cond
+           ((symbol? x)
+            ;; Identifiers go in AS WRITTEN, marks and all.  Unmarking
+            ;; here would answer for a macro-introduced reference the
+            ;; question its ORIGIN asks, and the table these names are
+            ;; looked up in is keyed by the mark -- so an introduced
+            ;; definition would never be found by the reference in its
+            ;; own expansion, and would be pruned out from under it.
+            ;; assq-marked walks from the mark to the origin at the
+            ;; lookup instead, which reaches both.
+            (walk rest (if (memq x acc) acc (cons x acc))))
+           ((not (pair? x)) (walk rest acc))
+           ((eq? (resolve-tag (car x)) 'quote) (walk rest acc))
+           ;; Binding forms: a binder's name is not a reference to the
+           ;; top-level definition that shares its spelling.  Inits,
+           ;; bodies and every other position are walked as before.
+           ;;
+           ;; There is deliberately NO bound set here.  A reference in
+           ;; a body to a name that is also lexically bound STILL
+           ;; counts, which over-approximates in the safe direction: a
+           ;; definition may be kept that could have been pruned, and
+           ;; none is pruned while something still needs it.
+           ((and expression? (symbol? (car x))
+                 (eq? (resolve-tag (car x)) 'let) (pair? (cdr x)))
+            (let* ((named (symbol? (cadr x)))
+                   (bs (if named (caddr x) (cadr x)))
+                   (body (if named (cdddr x) (cddr x))))
+              (walk (append (map (lambda (f) (cons f #t))
+                                 (let-binding-inits bs))
+                            (map (lambda (f) (cons f #t)) body)
+                            rest)
+                    acc)))
+           ((and expression? (symbol? (car x))
+                 (eq? (resolve-tag (car x)) '%loop)
+                 (pair? (cdr x)) (pair? (cddr x)) (pair? (cdddr x)))
+            (walk (append (map (lambda (f) (cons f #t)) (cadddr x))
+                          (map (lambda (f) (cons f #t)) (cdr (cdddr x)))
+                          rest)
+                  acc))
+           ((and expression? (symbol? (car x))
+                 (eq? (resolve-tag (car x)) 'lambda) (pair? (cdr x)))
+            (walk (append (map (lambda (f) (cons f #t)) (cddr x)) rest)
+                  acc))
+           (else
+            ;; the car of a form is an expression; its cdr is a tail
+            (walk (cons (cons (car x) #t)
+                        (cons (cons (cdr x) #f) rest))
+                  acc)))))))
+
+;; The init expression of each binding in a let's binding list.  A
+;; binder with no init contributes nothing: only its name would be
+;; there, and a name in binder position is not a reference.
+(define (let-binding-inits bs)
+  (let loop ((l bs))
+    (cond ((not (pair? l)) '())
+          ((and (pair? (car l)) (pair? (cdr (car l))))
+           (cons (cadr (car l)) (loop (cdr l))))
+          (else (loop (cdr l))))))
 ;; A top-level initializer is pure when evaluating it can neither
 ;; perform IO nor observably fail: literals, quotes, variable reads,
 ;; closure creation, and known-allocating constructors over pure
