@@ -199,6 +199,25 @@ adds up to.
 - `timeline-tick!` — advances the clock and answers the payloads now due, earliest first, as data for the caller to interpret; the queue is written back before they are answered, so scheduling from inside the handling adds to a timeline that no longer holds what is being handled
 - `timeline-clear!` — drops everything queued and leaves the timeline usable; there is no way to cancel one payload, which would need a name for it that only the caller has
 
+## `(gam window)`
+
+An action that is live for only part of its own duration, and touches each thing at most once while it is: a swung weapon, a closing door, a jet of flame. It holds no geometry and no magnitude -- the caller tests whatever it tests, and comes back to ask whether a thing has been touched already.
+
+- `make-window` — a window from a duration in seconds and the fractions of it at which the live part opens and closes. Fractions rather than seconds, so the same description keeps its shape at any duration; `from` may equal `to` for an action live at a single instant
+- `window?` — whether a value is a window
+- `window-duration` — the whole length in seconds
+- `window-time` — how far in the clock stands, which stops at the duration rather than running past it
+- `window-from` — the fraction at which the live part opens
+- `window-to` — the fraction at which it closes
+- `window-step!` — advance by an elapsed time, remembering where the clock was before; a negative time is refused
+- `window-live?` — whether the window is open at the instant the clock stands at now. A caller sampling geometry wants `window-span` instead: on a long frame an action can cross a target while being live at neither sample
+- `window-done?` — whether the clock has reached the duration
+- `window-span` — the slice of the live window the last step passed through, as a pair of fractions, or #f if the step did not touch it. This is what the remembered previous time is for: a step longer than the entire window still reports the entire window rather than skipping it, which is the failure that makes a game look like it drops inputs and which gets worse exactly as frames get longer
+- `window-mark!` — record a thing as touched, answering #t the first time and #f afterwards, so the caller writes `(when (window-mark! w target) ...)` and cannot get the test-then-mark pairing wrong. Things are compared with `equal?`, so an entity handle -- a pair of numbers -- works; `eq?` would silently fail on exactly those
+- `window-marked?` — whether a thing has been recorded already
+- `window-marks` — the things recorded so far
+- `window-reset!` — back to the start, ledger and all. The marks have to go: a second use that remembered the first one's targets would pass straight through them, which looks exactly like a missed hit
+
 # gfx
 
 Drawing, and the geometry and assets behind it.
@@ -250,6 +269,8 @@ Both points are damped at one rate, and that is what holds the heading steady: t
 - `character-grounded?` — whether the character is standing on something, which is what gates jumping
 - `character-move!` — applies gravity, moves by a horizontal velocity for dt, slides along the boxes, updates grounded and vertical speed, and answers the new position
 - `character-jump!` — gives the character an upward speed, but only while it is grounded
+- `segment-segment-closest` — the closest point on each of two segments, in that order. Every question this library answers about two segments is answered from here, `capsule-capsule?` included, so a caller that needs to know WHERE two capsules meet gets it from the same arithmetic that decided THAT they meet rather than from a second copy that can disagree at the boundary
+- `capsule-capsule-contact` — where two capsules meet, which way and by how much: a point on each surface, the unit normal from the second toward the first, and the separation, which is negative when they overlap and then its size is the penetration depth. It answers for capsules that are apart as well. When the two axes meet there is no line to take a normal from, so the normal is +x -- arbitrary but FIXED, since normalising a zero vector answers NaN and choosing by anything incidental makes a caller's result depend on something it cannot see. `capsule-capsule?` remains the authority on whether they touch: it compares squared quantities while this takes a square root, and the two could in principle differ in the last bit exactly on the boundary
 - `make-aabb-grid` — a broadphase: hashes static boxes into xz cells of a given size, so a query touches a handful instead of all of them
 - `grid-near` — every box whose cells the sphere at pos with radius r touches, each box once
 - `circle-circle?` — do two circles in a plane overlap? The arguments are a pair of numbers (x, y) per circle; this library does not say which two world axes they are, so a top-down game passes (x, z)
