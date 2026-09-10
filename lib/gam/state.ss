@@ -48,6 +48,17 @@
 ;; know asks state-transition!, which reports it as a boolean, or puts
 ;; (on-unknown error) in the spec and lets the mistake raise.
 ;;
+;; AMBIGUITY IS CAUGHT IN TWO PLACES AND ONLY THE LATER ONE REACHES
+;; HERE.  Two transitions sharing a (from event) key with NO guards are
+;; refused by make-machine, so such a spec never becomes a machine at
+;; all and no caller of this library can be holding one.  Two sharing
+;; that key WITH guards are accepted, because whether both can hold at
+;; once is a question about the guards and not about the spec; if both
+;; then do hold, the step raises.  Nothing here picks a winner in either
+;; case, and in the raising one the cell still holds what it held
+;; before -- which, with the paragraph above, is the whole of what a
+;; caller needs to know about a step that did not go through.
+;;
 ;; IT ADDS NO BEHAVIOUR.  Nothing here interprets a state, times a
 ;; state, or decides what a transition means.  It holds one and passes
 ;; the questions through.  Anything richer belongs either in the spec,
