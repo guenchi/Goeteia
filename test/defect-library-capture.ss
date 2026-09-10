@@ -34,3 +34,24 @@
 (define bag (make-inventory))
 (inventory-add! bag 'gem 3)
 (display (inventory-items bag))
+
+;; WHERE THIS EXPECTATION COMES FROM.  A cell that is red today is a
+;; cell whose expectation no run has ever produced, so nothing checks
+;; that the expectation is reachable at all.  Tonight one of these
+;; files could not have gone green even after its defect was fixed --
+;; the wanted transcript was hand-written and was missing a trailing
+;; space that the program always prints -- and its redness would have
+;; gone on reading as "the defect is still there".
+;;
+;; So each of these carries a witness: the same program with the one
+;; line that triggers the defect removed.  It is not a control in the
+;; usual sense; it is the source of the number on the expect line.
+;;
+;; Measured, with that line removed:
+;;
+;;     (import (rnrs) (gam inventory))
+;;     (define bag (make-inventory))
+;;     (inventory-add! bag 'gem 3)
+;;     (display (inventory-items bag))
+;;
+;;   ->  ((gem . 3))

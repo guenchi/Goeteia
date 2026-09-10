@@ -1,4 +1,4 @@
-;; expect: 4 ok; 20 ok; 34 ok; 35 ok;
+;; expect: 4 ok; 20 ok; 34 ok; 35 ok; end
 ;; RED ON PURPOSE: the HZB pyramid and the depth-sorting cull pipeline
 ;; live at hard-coded slots 250 and 251, and geometry groups are handed
 ;; consecutive slots from 9 upward with no ceiling.  -> Enough groups
@@ -176,7 +176,8 @@ globalThis.__gpulog = [];
   (let ((sc (scene-of n)))
     (sgpu-init! sc (js-get (js-global) "__mockcanvas"))
     (sgpu-draw! sc))
-  (display n) (display " ok; "))
+  (display n) (display " ok;")
+  (display " "))
 
 ;; n distinct geometries, so each takes a group of its own.  The
 ;; geometry spec is data rather than code, so the scene can be built
@@ -205,6 +206,7 @@ globalThis.__gpulog = [];
 (step 20)
 (step 34)
 (step 35)
+(display "end")
 
 ;; WHAT THIS CELL DOES NOT SEE, measured rather than reasoned.
 ;;
@@ -219,13 +221,23 @@ globalThis.__gpulog = [];
 ;; them.  A reservation one short of correct is still correct in
 ;; effect, and this cell would report every count passing.
 ;;
-;; The obvious repair does not work and was measured before being
-;; discarded: a group takes an extra slot when it carries a texture, so
-;; a textured mesh in the last group ought to reach further up.  Adding
-;; one moved the boundary not at all -- top-1 and top-2 still passed --
-;; which says the extra slot is not written on this path, not that the
-;; scene was built wrong.  Closing this needs something that makes the
-;; last group use its whole stride, and nothing here does.
+;; The obvious repair was tried and did not move the boundary: a group
+;; takes an extra slot when it carries a texture, so a textured mesh in
+;; the last group ought to reach further up, and with one added top-1
+;; and top-2 still passed.
+;;
+;; That reading does NOT establish that the extra slot goes unwritten,
+;; and the first draft of this comment said it did.  The texture slot a
+;; fixture names has to already hold a real texture; pointing at an
+;; empty one either fails in some other way or is never classified as
+;; textured at all, and in the second case the slot-taking code never
+;; runs.  "Ran and made no difference" and "never ran" are the same
+;; reading here, and nothing was done to tell them apart.
+;;
+;; So what is known is the boundary, three slots below the reservation.
+;; Whoever revisits this starts by putting a real texture in the slot
+;; and confirming the last group is classified as textured, BEFORE
+;; drawing any conclusion from a boundary that did not move.
 ;;
 ;; The margin is real and it comes from the reservation being derived
 ;; from the walk rather than placed near it.  That derivation is an
