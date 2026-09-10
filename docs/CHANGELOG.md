@@ -208,17 +208,22 @@ nobody re-reads at the next decision.
   defined twice. Present in 1.7.0. Held red by
   `defect-library-redefines-imported-name`, which reports once because
   it is a compile error rather than a wrong value.
-- **A function nothing calls can be published as taking floats.** The
-  specialisation pass seeds every surviving fixed-arity function with
-  "every parameter is a float" and demotes only from the calls it can
-  see; a function with no visible call is normally pruned first, but a
-  `let` binding of the same name anywhere in the program counts as a
-  reference to it and keeps it. The published entry is then a guess
-  nobody checked. No program has been found that reads the guess: the
-  one function whose only call is constructed after the pass
-  (`call/cc`'s escape) is listed out of specialisation by name. It is
-  recorded because the tree holds it red (`defect-spec-candidate-by-name`)
-  and a red cell with no entry here would look like an oversight.
+- **A `let` binding of a top-level function's name reads as a call to
+  it.** The specialisation pass walks the program as a flat list of
+  forms with no knowledge of binding forms, so `(let ((foo 5)) 1)` is
+  recorded as a call to `foo` with `5` as its argument. Two things
+  follow. The function is kept alive by dead-code elimination, which
+  counts the binder's name as a reference. And the rule that clears the
+  specialisation of a function with no visible call -- the rule that
+  protects every function whose real call is constructed after the
+  pass -- does not fire, so the optimistic all-float seed is published
+  with its first parameter decided by the initialiser's type. No
+  program has yet been found that reads the wrong entry: the one
+  function whose only call is constructed after the pass (`call/cc`'s
+  escape) is listed out of specialisation by name, which is how the
+  fault was found. Held red by `defect-spec-candidate-by-name` and
+  `defect-dce-binder-counts-as-reference`, one per half, because a fix
+  for either leaves the other.
 - **A morph target's POSITION accessor can declare a `max` below a
   value the file stores.** The bounds are computed over the values as
   given, and the file holds them as `f32`, so a value that rounds
