@@ -90,7 +90,7 @@ const rows = [
     ['a macro-introduced binder does not hide the program\'s call',
         [REC, CALL, '(define-syntax with-zq (syntax-rules () ((_ e) (let ((zq 1)) e))))', '(display (with-zq (zq 5 0.0)))'], '#f #t'],
     ['a macro-introduced binder\'s own use is not an escape',
-        [REC, CALL, '(define-syntax with-zq (syntax-rules () ((_ e) (let ((zq 1)) (+ zq e))))', '(display (with-zq (zq 5 0.0)))'], '#f #t'],
+        [REC, CALL, '(define-syntax with-zq (syntax-rules () ((_ e) (let ((zq 1)) (+ zq e)))))', '(display (with-zq (zq 5 0.0)))'], '#f #t'],
 ];
 
 for (const [title, forms, expected] of rows) {
