@@ -52,7 +52,10 @@ Sound.
 Game scaffolding: the bookkeeping a game repeats, without the numbers a
 game chooses. Most stand alone; `(gam party)` is over the handles from
 `(sim entity)`, `(gam state)` is a mutable owner for `(lng machine)`, and
-`(gam save)` writes through `(web js)`.
+`(gam save)` writes through `(web js)`. `(gam stats)`, `(gam effects)` and
+`(gam modifiers)` divide one area between them: a pool with a value and a
+maximum, a named state that is on for a while, and what a set of sources
+adds up to.
 
 ## `(gam abilities)`
 
@@ -99,6 +102,25 @@ game chooses. Most stand alone; `(gam party)` is over the handles from
 - `inventory-add!` — adds a positive exact count and answers the count afterwards; zero is refused as well as a negative, since adding nothing means the arithmetic that produced it went wrong
 - `inventory-take!` — all or nothing: enough, and it is removed with #t; not enough, and #f with not one removed
 - `inventory-items` — the rows as fresh pairs, in the order their keys were FIRST added, on both compiler targets; a key taken down to zero keeps its row and its place, so putting it back does not move it to the end and make the listing a record of what the player did
+
+## `(gam modifiers)`
+
+- `make-modifiers` — an empty set of claims, with an optional procedure mapping an attribute to the attribute that scales it; with no procedure nothing is scaled, which is a rule a reader can state, unlike the contents of a built-in list
+- `modifiers?` — whether a value is a modifier set
+- `modifier-set!` — one source's claim on one attribute: source, attribute and value, then optionally a duration in seconds (#f for forever), an exclusive group (#f for none) and whether it can be dispelled. A source holds at most one claim per attribute, so applying the same source again REPLACES its own claim and leaves every other source alone -- which is what makes "refresh this" one call that cannot double-stack or over-remove. Every position is type-checked except source against attribute, which are both plain symbols and cannot be told apart here
+- `modifier-remove-source!` — drops every claim a source holds, across all attributes
+- `modifier-ref` — what an attribute comes to right now: ungrouped claims added, plus the largest MAGNITUDE from each exclusive group, all multiplied by `1 +` the total of the scaling attribute if the mapping names one. An attribute nothing has claimed answers 0 rather than raising, since that state is reached by doing nothing. Scaling is one level deep: the scaling attribute's own total obeys the same stacking rules but is not itself scaled
+- `modifier-tick!` — counts every timed claim down by an elapsed time and drops those that reach zero; claims with no duration are untouched, and a negative time is refused
+- `modifier-dispel!` — drops the claims marked dispellable and nothing else, across every attribute
+- `modifier-clear!` — drops every claim
+- `modifier-entries` — the claims as they stand, newest first. They are opaque values: read them with the accessors below rather than by position
+- `modifier-entry?` — whether a value is a modifier entry
+- `modifier-entry-source` — which source made the claim
+- `modifier-entry-attribute` — which attribute it claims about
+- `modifier-entry-value` — the magnitude claimed
+- `modifier-entry-remaining` — seconds left, or #f for a claim that does not expire. The two are kept distinct rather than using a large number for "forever", because a caller showing the time left has to be able to tell them apart
+- `modifier-entry-group` — the exclusive group, or #f if the claim simply adds
+- `modifier-entry-dispellable?` — whether `modifier-dispel!` will take it
 
 ## `(gam party)`
 
