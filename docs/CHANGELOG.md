@@ -208,7 +208,7 @@ than re-verified item by item for this document.
 
 ### KNOWN OPEN
 
-Five defects are known, reproduced, and NOT fixed in this release. They
+Six defects are known, reproduced, and NOT fixed in this release. They
 are listed here because an unfixed defect that scrolls off a list is one
 nobody re-reads at the next decision.
 
@@ -224,6 +224,14 @@ nobody re-reads at the next decision.
   own calls in both forms, while the prelude's, a library's and the
   compiler's uses stay on the primitive (see Fixed). Held red by
   `defect-c02-shadow-primitive`, now written with `except`.
+- **Component libraries such as `(rnrs base)` are not implemented.**
+  Until now both compilers accepted `(import (rnrs base))` and quietly
+  handed back the whole of `(rnrs)`; an rnrs spec with anything after
+  the name is now refused by name. Implementing the components means
+  assigning every exported name to a component by hand, and nothing in
+  this tree imports one (zero files against 323 importing `(rnrs)`), so
+  a wrong assignment would go unnoticed. **Workaround**: import
+  `(rnrs)`.
 - **A morph target's POSITION accessor can declare a `max` below a
   value the file stores.** The bounds are computed over the values as
   given, and the file holds them as `f32`, so a value that rounds
