@@ -126,7 +126,7 @@ adds up to.
 
 - `make-party` — an empty roster with nobody selected
 - `party?` — whether a value is a party
-- `party-members` — the handles in the order they joined; the list is never altered in place, so one already handed out stays as it was
+- `party-members` — the handles in the order they joined; the list is never altered in place, so one already handed out stays as it was. A handle is a pair of numbers and every question here judges it by VALUE, so a handle rebuilt from the same slot and generation names the same member as the one the store issued -- which is what lets a caller persist the two numbers and use them again after a restart
 - `party-selected` — the selected handle, or #f for nobody
 - `party-add!` — enrols a live entity at the end of the roster; adding an existing member is quiet, and a handle whose entity is not alive is refused because no later call would report it
 - `party-remove!` — drops a handle from the roster and clears the selection if it was that one; removing a non-member is quiet
@@ -149,7 +149,7 @@ adds up to.
 - `recovery-open?` — whether a claim is outstanding. Not the same question as pending being zero: a claim for zero is open and will be consumed, while no claim cannot be
 - `recovery-pending` — what is on the table right now, and 0 when no claim is open
 - `recovery-loss!` — records what was ACTUALLY taken and opens a claim for it, answering the amount recorded. It removes nothing from anywhere: the caller subtracts from its own store and reports what came out, because a demand larger than the store leaves a claim for points that never existed. A second loss REPLACES the first, so an unclaimed amount is gone
-- `recovery-claim!` — answers that fraction of what is pending and closes the claim for good, even for a fraction of zero, since the operation settles a claim rather than collecting what is available; it gives nothing back to anything, does not round, and a fraction outside 0 to 1 is refused
+- `recovery-claim!` — answers that fraction of what is pending and closes the claim for good, even for a fraction of zero, since the operation settles a claim rather than collecting what is available; it gives nothing back to anything and does not round. A fraction outside 0 to 1 is refused, and a refused claim is not a consumed one: the claim is left open with its amount intact, so a caller that catches the error can settle again
 
 ## `(gam save)`
 

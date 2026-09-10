@@ -1,5 +1,273 @@
 # Changelog
 
+## Unreleased
+
+*159 commits.* Two new families of libraries -- `(gam …)` for the
+bookkeeping a game repeats and `(sim …)` for the machinery under it --
+and a real GLSL compiler behind page verification, which every shader
+defect this tree can produce used to pass.
+
+### Breaking
+
+- A library's `export` clause must name something the library defines.
+  A name exported but never defined used to compile, and the failure
+  arrived at whoever imported it. **Migration**: delete the name, or
+  define it.
+- An unclosed block comment is an error rather than a silent end of
+  file, and a dot in a list may be followed by exactly one datum and
+  then a close. Both were accepted before and both hid the mistake
+  that produced them.
+- `<=` and `>=` no longer answer `#t` for a NaN. They were built as the
+  negation of the opposite strict comparison, which is the same thing
+  for every pair of real numbers and not for an unordered one:
+  `(>= nan nan)` answered `#t`, so a NaN sorted, compared equal to
+  itself, and travelled through guards written to keep it out.
+  **Migration**: none, unless code depended on the old answer.
+
+### API — new libraries
+
+- `(gam …)`, thirteen libraries: `abilities`, `effects`, `fields`,
+  `inventory`, `modifiers`, `party`, `quest`, `recovery`, `save`,
+  `state`, `stats`, `timeline`, `window`. The bookkeeping a game
+  repeats, with none of the numbers a game chooses -- a cooldown that
+  does not spend the cost it carries, pools that are named rather than
+  indexed, a level curve the caller supplies. Ten import nothing but
+  `(rnrs)`. `docs/game.md` is the long form: what each one refuses to
+  decide, and the failure that refusal prevents.
+- `(sim …)`, six libraries: `entity` (a fixed-capacity store whose
+  handles carry a generation, so a recycled slot never inherits an old
+  handle's identity), `schedule` (systems by priority, never by load
+  order), `events` (a topic bus with a depth limit), `step` (a fixed
+  timestep whose count is derived from the total, so one frame's
+  rounding is never carried into the next), `grid`, `random` (a MINSTD
+  generator with a stated bias bound).
+- `(lng effect)`: what several sources do to one quantity -- effects
+  carry a kind, a source, a priority and a phase, and resolve to a
+  single answer.
+- `(gfx camera)`: an orbit camera whose eye and look point are damped
+  toward goals derived from one aim, so the heading is steady across
+  irregular frames.
+- `(gfx reflect)`: how much of a reflection target actually needs
+  drawing -- `#f` to skip the pass, `#t` for all of it, or a pixel
+  rectangle, with every uncertainty answering `#t`.
+- `(gfx particles)`, `(gfx lod)`, `(gfx surface)`: a particle system, a
+  dithered three-interval detail selector, and a tangent frame derived
+  from screen-space derivatives so a mesh need not carry a tangent
+  attribute.
+- `(aud mix)`: equal-power panning and voice eviction.
+
+### API — additions
+
+Generated from the same export index the suite checks, so these lists
+agree with the gate by construction -- which is not the same as having
+been checked against what each library actually exports.
+
+- `(gfx collide)`: `ray-heightfield` and `screen-ray` (ground given as
+  a height function, and the pick ray built from an inverse
+  view-projection rather than from a copy of the field of view),
+  `segment-segment-closest` and `capsule-capsule-contact` (the closest
+  points, so a caller that needs to know WHERE two capsules meet gets
+  it from the arithmetic that decided THAT they meet), and the 2D
+  circle half: `circle-circle?`, `segment-circle?`, `move-circle`.
+- `(gfx mat)`: `fl-clamp`, `fl-lerp`, `fl-damp`, `fl-turn`,
+  `fl-smooth`, `fl-pi`, `fl-tau`, `fl-length2`, `fl-dist2`,
+  `fl-heading`, `mat-shader-functions`.
+- `(gfx fx)`: `key-went-down?`, `key-went-up?`, `keys-consume-edges!` --
+  a key pressed and released between two reads is invisible to a level
+  surface, and the loss gets worse as frames get longer.
+- Shader accessors, so the text a library emits can be read by
+  something other than a driver: `gltf-shaders`, `ibl-shaders`,
+  `mesh-shaders`, `post-shaders`, `scene-shaders`, `sprite-shaders`,
+  `particles-shaders`, `lod-shader-functions`,
+  `surface-shader-functions`, `fx-quad-shaders`.
+- `(web dom)`: `need-element-by-id`, and an element cache the caller
+  owns -- `make-element-cache`, `cached-element`,
+  `set-text-if-changed!`.
+- `(aud sfx)`: `audio-voices!`, `audio-voice-count`, `audio-limiter!`.
+- `(gfx uastc)`: `uastc-level-bytes`.
+
+### Fixed
+
+Derived from the commits in this range and attributed to them, rather
+than re-verified item by item for this document.
+
+- Compiler: a loop parameter captured by an inner lambda no longer
+  lives in a raw slot, so closures made in a loop stop sharing the
+  loop's last value; a transformer's arithmetic stops discarding
+  arguments it has already evaluated; a record accessor checks its
+  type; the one quotient that overflows promotes; an ill-formed
+  initialiser is checked before it is eliminated; a reference resolves
+  by the identifier it carries before the one it was renamed from.
+- Prelude: `memv` and `assv` compare by `eqv?`; `floor` and `truncate`
+  return integers; infinities are neither; `inexact` accepts a complex
+  number.
+- Reader: the six partial scanners become one.
+- GLB and glTF: the reader checks the container before it believes it;
+  the meshopt decoders read inside the length they were given; a
+  deflate stream ends inside its last real byte; a zstd frame keeps the
+  promises in its header; a UASTC level is measured against its
+  dimensions before a byte is read; vertex attribute sizes come from
+  the format's structure, and every width was wrong; four ways an
+  invalid primitive or animation got written; a joint's parent is its
+  nearest joint ancestor; a primitive is written back to the node it
+  came from; the resample grid reaches the last key.
+- Rendering: a colour signal moves the generation counter, so a new
+  colour reaches the screen; a sheet tinted to zero alpha stops putting
+  its colour on the screen; generated quads are wound to agree with the
+  normals they carry; a mesh is drawn at the width it was written; the
+  bump pointer moves only under a guard; VAOs are keyed by separate
+  numeric resource slots; a translucent member is welded only when
+  nothing can come between; the reserved GPU slots are derived from the
+  group walk.
+- Input: attaching the input layer twice no longer counts one event
+  twice; a press released off the element no longer stays pressed
+  forever; a record of what was attached belongs to whoever asks.
+- Web: FFI arguments are staged only after they all convert; a keyed
+  list's item effects are released with the list; the class attribute
+  merges; an existing component registry is adopted.
+- GLSL: a negative literal under a negation printed as the decrement
+  operator.
+- Compile cache: the key now covers all of `src/`, not a list of files
+  the driver was known to read.
+
+### Tests and tooling
+
+- Page verification puts a page's shaders in front of a **real GLSL
+  compiler** rather than a recording stub whose `getShaderParameter`
+  answered `true`. Every shader defect the tree can produce passed page
+  verification before this. Where no browser is reachable the run says
+  so in its own output rather than passing quietly, and a compiler that
+  cannot be RUN is reported as unverified while a shader a compiler
+  REFUSED is a failure -- collapsing those two either restores the
+  silent pass or makes the gate flaky enough to be turned off.
+- `tools/cdp.mjs` drives a real browser: shader compilation, reading a
+  frame back, and comparing two frames inside the page.
+- The runner: a right answer from a process that died is not a pass;
+  everything is under a timeout; a callback error reported to the
+  console is a verdict; a test that ended early says so, so its
+  failures read as a lower bound.
+- The page verifier stops swallowing an async failure, keeps removed
+  nodes out of its snapshot, and agrees with itself between runs.
+- Builds: nothing is published before it is verified, no two builds
+  share a path, and a page is rebuilt when a library it imports
+  changes.
+- Comments across the tree are English prose carrying their emphasis in
+  words, checked by a gate that reads untracked files too -- so a
+  library being written right now is in scope rather than exempt.
+
+### KNOWN OPEN
+
+Four defects are known, reproduced, and NOT fixed in this release. They
+are listed here because an unfixed defect that scrolls off a list is one
+nobody re-reads at the next decision.
+
+- **A top-level definition captures a name the prelude uses
+  internally.** Defining `car`, `cdr`, `null?` or `zero?` at the top
+  level silently changes the behaviour of standard procedures and of
+  libraries the program only imported: the prelude, every imported
+  library and the compiler's own synthesised operations are spliced
+  into one flat top level and call primitives by the same bare symbols
+  a program can define. It is every surviving use in the prelude, not a
+  handful of call sites.
+
+  **The symptom appears far from the cause, and usually does not name
+  the definition that caused it.** `assq` answers `#f`; `length` loops.
+  Worst of all, `vector` is built by walking its arguments with `car`,
+  so `(vector 1 2)` comes back holding 99 in *both* slots -- and since
+  most of this tree's record types are tagged vectors, anything
+  constructed while the name is captured has every field wrong. The
+  first thing to complain is then the library that owns the type,
+  rejecting its own object with its own error and naming a value the
+  caller never passed:
+
+  ```
+  inventory-add!: not an inventory 99
+  ```
+
+  Names that collide with a user-visible top level, `filter` among
+  them, are refused at compile time; these are not.
+  **This is present in 1.7.0 and is not new, which is the reason to
+  name it rather than leave it out.** Four cells hold it red:
+  `defect-c02-shadow-primitive`, `defect-library-capture`,
+  `defect-prelude-capture-car`, `defect-prelude-capture-null`.
+  **Workaround**: do not define these names at the top level; put them
+  inside a library, where renaming applies.
+- **A morph target's POSITION accessor can declare a `max` below a
+  value the file stores.** The bounds are computed over the values as
+  given, and the file holds them as `f32`, so a value that rounds
+  upward on the way in lands outside the declared range. This is
+  invalid per the glTF specification, and a loader that culls on
+  accessor bounds will clip the target. It affects morph-target
+  positions only: a primitive's own POSITION bounds are read back out
+  of the stored `f32`. **No cell holds this red** -- it is known from
+  reading the writer, which is a weaker footing than the others, and a
+  reader deciding what to trust cannot tell the two grades of evidence
+  apart unless it is said which is which.
+  **Computing the bounds correctly is necessary and not sufficient**:
+  the declared value is written into JSON by the flonum printer, the
+  subject of its own entry here, and does not survive that round trip
+  either. The
+  two compose, and fixing this one alone would leave the accessor still
+  declaring a bound the file does not honour.
+- **`state-send!` is documented as raising for an event that cannot
+  happen, and does not.** Whether an unknown event raises is decided by
+  an `on-unknown` clause in the spec; `make-state-machine` emits no
+  such clause, and the default is to answer no actions and stay put. So
+  a caller that sends an event its own code chose gets silence and a
+  machine that did not move. The comment describes the intended
+  behaviour and the shorthand is what should change. Held red by
+  `defect-s01-send-is-quiet-about-impossible-events`.
+- **A flonum written and read back is not the number that was
+  written.** This is a property of the printer this release ships, not
+  a limit of the representation: it walks the fraction by repeated
+  multiplication by ten and stops after twelve digits, so the loss
+  begins at two significant figures and gets worse downward:
+
+  ```
+  0.12    prints as  0.119999999999   reads back as  0.119999999999, not 0.12
+  1e-11   prints as  0.000000000009   reads back as  9e-12, low by ten per cent
+  9e-12   prints as  0.000000000009   reads back as  9e-12, unchanged
+  5e-12   prints as  0.000000000004   reads back as  4e-12
+  2e-12   prints as  0.000000000001   reads back as  1e-12
+  1e-12   prints as  0.000000000000   reads back as  0
+  ```
+
+  The values in the right-hand column are exact, taken outside the
+  printer; printing them would show something else again, which is the
+  whole subject of this entry.
+
+  **There is no clean threshold, and looking for one is the mistake.**
+  Which values survive does not follow their size: 9e-12 comes back
+  unchanged while 1e-11, which is larger, comes back a tenth short; and
+  1e-12 collapses to zero while 2e-12, just above it, comes back as a
+  different non-zero number instead. Losing a value entirely and
+  shifting it to another are two views of one walk, not two ranges with
+  a line between them. The fate of any particular value belongs to the
+  cell rather than to this entry.
+
+  **Printing is not idempotent**, which is the part that spreads:
+  0.119999999999 reprints as 0.119999999998, so a golden sample
+  refreshed from an older golden sample is not the sample it replaced.
+  Not every value moves -- once one has collapsed to 9e-12 it reprints
+  unchanged -- and a rule that held for every value would be easier to
+  work around than one that holds for some. And this is the property much of the rest of the tree
+  leans on without saying so -- **any claim of byte-for-byte identity
+  across hosts in this release is a claim about twelve decimal places**,
+  since identity is checked by comparing printed output, and not even a
+  stable claim about those, since reprinting moves the value. Held red
+  on all three hosts by
+  `test/defect-n01-flonum-print-does-not-round-trip.ss`, whose
+  expectation was verified to be reachable under the host Scheme.
+  **A repaired printer that round-trips every double has been written
+  and measured, and is deliberately not in this release**, held out on
+  its cost at extreme exponents. So a reader who later finds this fixed
+  should not conclude the entry was wrong: it describes what ships
+  here.
+
+  **Workaround**: do not use printed output as the carrier for a value
+  that has to survive; compare flonums by tolerance rather than by
+  their text.
+
 ## 1.7.0 — 2026-09-08
 
 *8 commits.* Three new libraries under `(lng …)`; an effect can release what
