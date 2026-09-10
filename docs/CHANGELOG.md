@@ -219,7 +219,16 @@ nobody re-reads at the next decision.
   primitive taken as a value gets a wrapper whose argument walk is
   written with bare `null?`, so `((lambda (f) (f 1 2)) +)` under a
   top-level `null?` ends in an illegal cast
-  (`defect-prim-value-wrapper-calls-user-null`).
+  (`defect-prim-value-wrapper-calls-user-null`, and `-cdr` for the
+  same walk's `cdr`). Names the compiler writes into its own
+  expansions are captured the same way: `case` dispatches through
+  `eq?`, quasiquote builds with `cons`, internal definitions allocate
+  with `cons` and fill with `set-car!` -- so a program that defines any
+  of those at the top level changes every `case`, every quasiquote and
+  every body with internal definitions in the program
+  (`defect-c02-synth-case-eq`, `defect-c02-synth-quasiquote-cons`,
+  `defect-c02-synth-internal-define-cons`, `-set-car`). All present in
+  1.7.0; the fixed names are `car` everywhere and quasiquote's `append`.
   **Workaround**: use the `(define (name …) …)` spelling, and do not
   define `null?` at the top level.
 - **A definition inside a function body does not shadow a primitive
