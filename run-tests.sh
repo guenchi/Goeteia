@@ -417,6 +417,7 @@ for m in test/macro-toplevel-hygiene.mjs \
          test/defect-spec-candidate-by-name.mjs \
          test/defect-dce-binder-counts-as-reference.mjs \
          test/defect-spec-prelude-binder-collides-with-user-name.mjs \
+         test/spec-scan-binding-forms.mjs \
          test/defect-b01-build-ignores-library-deps.mjs; do
     if $CAP ${NODE-node} --test "$m" >/dev/null 2>&1; then
         echo "ok   $m"
