@@ -333,10 +333,52 @@
               (vector-set! nms k nm)
               (vector-set! bt k (gltf-node-translation g ni))
               (vector-set! bq k (q-normalize (gltf-node-rotation g ni)))
-              (vector-set! parents k
-                           (if (and (integer? pn) (>= pn 0))
-                               (vector-ref pos pn)
-                               -1)))
+              ;; ⚠️ The parent lookup used to map only the IMMEDIATE
+              ;; node parent through `pos`, which is -1 for anything
+              ;; that is not a joint.  A rig's alignment, twist or IK
+              ;; helper sitting between two joints therefore made the
+              ;; lower joint look like a root of its own, and the
+              ;; helper's transform never reached the world bind pose.
+              ;; Nothing was reported: the skeleton was simply smaller
+              ;; than it is, and the extent is the denominator of the
+              ;; retarget ratio.
+              ;;
+              ;; So walk up until a joint is found, and carry the
+              ;; skipped nodes' transforms into this joint's local one
+              ;; -- relinking without composing would put the joint at
+              ;; the wrong place instead of the wrong parent, which is
+              ;; the same error wearing different clothes.
+              (let up ((q pn) (skipped '()))
+                (cond
+                 ((not (and (integer? q) (>= q 0)))
+                  ;; no joint above: a root, with whatever helpers sat
+                  ;; over it folded in
+                  (vector-set! parents k -1)
+                  ($rt-fold-skipped! bt bq k skipped))
+                 ((>= (vector-ref pos q) 0)
+                  (vector-set! parents k (vector-ref pos q))
+                  ($rt-fold-skipped! bt bq k skipped))
+                 (else
+                  ;; a non-joint on the way up.  Its placement has to be
+                  ;; expressible as translation and rotation, because
+                  ;; that is all a joint's stored bind pose can carry --
+                  ;; and an unrepresentable one is refused BY NAME
+                  ;; rather than silently dropped, which is the failure
+                  ;; being fixed here.
+                  (let ((hn ($rt-node-name names q)))
+                    (when (gltf-node-matrix? g q)
+                      (error who "a node between joints is given as a matrix, not TRS" hn))
+                    (let* ((sc (gltf-node-scale g q))
+                           (sx (vector-ref sc 0)) (sy (vector-ref sc 1))
+                           (sz (vector-ref sc 2)))
+                      (when (or (fl<? $rt-scale-tol ($rt-fl-abs (fl- sx 1.0)))
+                                (fl<? $rt-scale-tol ($rt-fl-abs (fl- sy 1.0)))
+                                (fl<? $rt-scale-tol ($rt-fl-abs (fl- sz 1.0))))
+                        (error who "a node between joints carries a non-unit scale" hn))))
+                  (up (gltf-node-parent g q)
+                      (cons (cons (gltf-node-translation g q)
+                                  (q-normalize (gltf-node-rotation g q)))
+                            skipped))))))
             (loop (+ k 1))))
         ;; children, in joint order
         (let loop ((k (- nj 1)))
@@ -400,6 +442,31 @@
                                        (vector-ref g 14))))
           (loop (cdr o))))
       out))
+
+  ;; (t1,q1) then (t2,q2) as one transform: the rotations multiply, and
+  ;; the inner translation arrives rotated by the outer one.
+  (define ($rt-tq-compose t1 q1 t2 q2)
+    (cons (let ((r (m4-transform (m4-from-quat (vector-ref q1 0) (vector-ref q1 1)
+                                               (vector-ref q1 2) (vector-ref q1 3))
+                                 t2)))
+            (vector (fl+ (vector-ref t1 0) (vector-ref r 0))
+                    (fl+ (vector-ref t1 1) (vector-ref r 1))
+                    (fl+ (vector-ref t1 2) (vector-ref r 2))))
+          (q-mul q1 q2)))
+
+  ;; Fold the non-joint nodes that were walked past into joint k's own
+  ;; bind transform.  `skipped` is nearest-ancestor first, so folding
+  ;; from the far end inward composes them in the order the scene graph
+  ;; applies them.
+  (define ($rt-fold-skipped! bt bq k skipped)
+    (unless (null? skipped)
+      (let loop ((ss (reverse skipped))
+                 (t (vector-ref bt k))
+                 (q (vector-ref bq k)))
+        (if (null? ss)
+            (begin (vector-set! bt k t) (vector-set! bq k q))
+            (let ((c ($rt-tq-compose (car (car ss)) (cdr (car ss)) t q)))
+              (loop (cdr ss) (car c) (cdr c)))))))
 
   ;; The bind skeleton's size: the LARGEST of its three axis spans,
   ;; not the vertical one -- see the header.
@@ -917,10 +984,23 @@
         (error 'retarget-write-glb! "the asset has no such skin" si))
       (glb-write!
        (map (lambda (p)
+              ;; ⚠️ 'node carries each primitive back to the node it was
+              ;; actually on.  Without it every primitive was written
+              ;; under the 'mesh-node option, whose default is 0 -- so a
+              ;; mesh parented to a node with a transform came back
+              ;; parented to the root and the figure stood somewhere
+              ;; else.  Nothing was reported: the file is valid, the
+              ;; animation is right, and only the placement is wrong.
+              ;;
+              ;; The reader already answers this (gprim-node) and the
+              ;; writer already accepts it; this path simply never
+              ;; asked.  The 'mesh-node option stays as the default for
+              ;; primitives that name no node of their own.
               (list (gprim-layout p) (gprim-vbase p)
                     (quotient (gprim-vbytes p) (gprim-stride p))
                     (gprim-ibase p) (gprim-icount p)
                     'color (gprim-color p)
+                    'node (gprim-node p)
                     'index-u32? (gprim-index-u32? p)))
             (gltf-prims dst))
        'nodes (let loop ((i (- (gltf-node-count dst) 1)) (acc '()))
