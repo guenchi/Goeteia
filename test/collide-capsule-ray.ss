@@ -162,4 +162,61 @@
       (raises? (lambda () (ray-heightfield (v3 0.0 1.0 0.0) (v3 0.0 -1.0 0.0)
                                            flat 10.0 0.5 -1))) #t)
 
+;; ---- THREE BRANCHES THE PROSE PROMISES AND NO ROW ABOVE ENTERS ----
+;;
+;; These were found by a second reader running mutants against the cell
+;; rather than against the library, and all three survived it.  They
+;; are the same family as the exports that had no cell at all, one
+;; level in: not a procedure nobody calls, but a branch INSIDE one
+;; that the file's own comments describe and that no row here reaches.
+;;
+;; A branch whose behaviour is promised in prose and witnessed by no
+;; line is a promise, not a property.
+
+;; WHEN THE AXES MEET there is no direction between them, and the
+;; library picks +x -- arbitrary, but fixed, and a caller resolving a
+;; collision needs it not to flicker.  No row above puts two axes
+;; EXACTLY through each other, so the degenerate branch had never run.
+(let-values (((on1 on2 sep)
+              (capsule-capsule-contact
+               (v3 -1.0 0.0 0.0) (v3 1.0 0.0 0.0) 0.5
+               (v3 0.0 -1.0 0.0) (v3 0.0 1.0 0.0) 0.25)))
+  (want 'meeting-axes-put-the-first-surface-point-along-minus-x
+        (v-near? on1 (v3 -0.5 0.0 0.0)) #t)
+  (want 'and-the-second-along-plus-x
+        (v-near? on2 (v3 0.25 0.0 0.0)) #t)
+  (want 'and-the-separation-is-minus-the-summed-radii
+        (near? sep -0.75) #t))
+
+;; A CROSSING INSIDE THE FIRST STEP.  This row enters the branch; it
+;; does not discriminate the mutant that suggested it, and the reason
+;; is worth writing down rather than leaving as a gap.
+;;
+;; Replacing the bisection's lower bound with 0.0 instead of the
+;; previous sample survives every row here INCLUDING this one, and the
+;; two programs are the same program for every ground this file uses:
+;; `above?' is monotone in t for a flat or linear ground and a
+;; descending ray, so bisecting [0, hit] and [previous, hit] converge
+;; to the same crossing.  They differ only where the ray is above the
+;; ground, below it, and above it again -- which needs a ground with a
+;; bump and a ray at an angle, i.e. a second thing that can be wrong.
+;;
+;; So this is an equivalent mutant under this cell's inputs, argued
+;; rather than assumed.  Distinguishing it needs non-monotone ground
+;; and belongs to whoever adds that.
+(want 'a-crossing-inside-the-first-step-is-refined
+      (near? (ray-heightfield (v3 0.0 1.0 0.0) (v3 0.0 -1.0 0.0)
+                              flat 100.0 4.0 30)
+             1.0)
+      #t)
+
+;; THE RANGE IS A BUDGET, and the row above that tests it uses a ray
+;; which never meets the ground at all -- so a march that overran the
+;; range would still answer #f there, for the wrong reason.  Here the
+;; ground IS crossed, just past the range.
+(want 'a-crossing-beyond-the-range-is-not-answered
+      (ray-heightfield (v3 0.0 1.0 0.0) (v3 0.0 -1.0 0.0)
+                       flat 0.5 0.25 30)
+      #f)
+
 (display (if (null? fails) #t (reverse fails)))
