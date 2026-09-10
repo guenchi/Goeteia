@@ -575,7 +575,7 @@
                   ;; loop below), so the edge target stays r while the
                   ;; table is asked with the identifier as written
                   ((assq-marked op *fns*) (edge! f r))
-                  ((memq r primitives) #f)
+                  ((and (memq r primitives) (not (top-level-defined? op))) #f)
                   (else (hashtable-set! base f #t)))))))))))
     (define (scan-last f xs bound lnames self)
       (cond ((null? xs) #f)
@@ -687,7 +687,7 @@
       (jp (intrinsic-op op) args (map-in-order (lambda (a) (jx a env lctx)) args)))
      ((and (symbol? op) (assq op env))
       (jicall (list "(" (cdr (assq op env)) ")") args env lctx tail?))
-     ((and rop (memq rop primitives) (not (assq-marked op *fns*)))
+     ((and rop (memq rop primitives) (not (top-level-defined? op)))
       (jp rop args (map-in-order (lambda (a) (jx a env lctx)) args)))
      ((and rop (assq-marked op *fns*))
       (let* ((entry (cdr (assq-marked op *fns*)))
@@ -712,7 +712,7 @@
   (if (and (pair? e)
            (head-op (car e))
            (not (assq (car e) env))
-           (not (assq-marked (car e) *fns*))
+           (not (top-level-defined? (car e)))
            (let ((expect (assq (head-op (car e)) prim-arity)))
              (and expect (= (length (cdr e)) (cdr expect)))))
       (let ((rop (head-op (car e)))

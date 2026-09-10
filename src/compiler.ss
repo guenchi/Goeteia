@@ -928,8 +928,13 @@
 ;; Without the tag a library's definitions are recorded as the
 ;; program's own, because at splice time they look exactly like them.
 (define (close-library-scope name import-clause body)
-  (cons '%library-body
-        (close-scope name body (imported-names import-clause))))
+  (let ((out (close-scope name body (imported-names import-clause))))
+    ;; the library's own clause, its own definitions, its own forms
+    (record-judgement-unit!
+     (merge-import-bindings (if (pair? import-clause) (cdr import-clause) '()))
+     (map (lambda (n) (list n 'define name)) (expanded-defined-names out))
+     out)
+    (cons '%library-body out)))
 
 ;; The prelude is not a library: no header, no exports, no imports, and
 ;; its marker is consumed before preparation.  What it does have is a
@@ -1982,10 +1987,21 @@
 ;; message carries the provenance and the spelling that makes the
 ;; definition legal, because the author's next question is always
 ;; "then how do I define it".
-(define (refuse-imported-definitions!)
+;; Each scope is judged against ITS OWN clause: a library body answers
+;; to the library's imports, the program to the program's.  R6RS gives
+;; a library body no exemption, and treating one as exempt would leave
+;; the legal form of "a library redefines a name it excluded"
+;; unreachable.
+(define *judgement-units* '())
+
+(define (record-judgement-unit! map defines forms)
+  (set! *judgement-units*
+        (cons (list map defines forms) *judgement-units*)))
+
+(define (refuse-imported-definitions! map defines)
   (for-each
    (lambda (d)
-     (let ((b (assq (car d) *import-map*)))
+     (let ((b (assq (car d) map)))
        (when b
          (let ((lib (car (cdr b)))
                (nm (symbol->string (car d))))
@@ -1994,12 +2010,14 @@
                     nm " is imported by (" lib "); write (import (except ("
                     lib ") " nm ")) to define it:")
                    (caddr d))))))
-   (reverse *program-defines*)))
+   (reverse defines)))
 
 ;; Assigning to an imported variable is refused for the same reason
 ;; defining one is: the program does not own that binding.  A LOCAL of
 ;; the same spelling is untouched, which is why this walk carries the
 ;; bound names rather than matching on the spelling alone.
+(define *assignment-map* '())
+
 (define (refuse-imported-assignment! form bound)
   (cond
    ((not (pair? form)) #f)
@@ -2010,7 +2028,7 @@
          (pair? (cdr form)) (symbol? (cadr form)))
     (let ((n (unmark (cadr form))))
       (unless (memq (cadr form) bound)
-        (let ((b (assq n *import-map*)))
+        (let ((b (assq n *assignment-map*)))
           (when b
             (let ((lib (car (cdr b))) (nm (symbol->string n)))
               (errorf 'goeteia
@@ -2041,9 +2059,16 @@
          (walk-forms-for-set! (cdr fs) bound))
         (else #f)))
 
-(define (refuse-imported-assignments!)
+(define (refuse-imported-assignments! map forms)
+  (set! *assignment-map* map)
   (for-each (lambda (f) (refuse-imported-assignment! f '()))
-            (reverse *program-forms*)))
+            (reverse forms)))
+
+(define (judge-scopes!)
+  (for-each (lambda (u)
+              (refuse-imported-definitions! (car u) (cadr u))
+              (refuse-imported-assignments! (car u) (caddr u)))
+            (reverse *judgement-units*)))
 
 (define (merge-import-bindings specs)
   (fold-left
@@ -5249,6 +5274,7 @@
   (set! *program-form?* #f)
   (set! *program-defines* '())
   (set! *program-forms* '())
+  (set! *judgement-units* '())
   ;; library privates get their namespace before anything reads the
   ;; forms -- collect-macros! descends into libraries and would
   ;; otherwise register a library's macros under their bare names
@@ -5291,8 +5317,10 @@
          ;; import and the spelling that fixes it.
          (import-map (begin (set! *import-map*
                                   (merge-import-bindings *import-specs*))
-                            (refuse-imported-definitions!)
-                            (refuse-imported-assignments!)
+                            (record-judgement-unit! *import-map*
+                                                    *program-defines*
+                                                    *program-forms*)
+                            (judge-scopes!)
                             *import-map*))
          ;; top-level (export name ...): keep through DCE, expose as
          ;; wasm exports so the host can call them
