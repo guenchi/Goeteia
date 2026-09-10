@@ -1,18 +1,31 @@
-// compute-fn-specs! admits a top-level function as a specialisation
-// candidate on a reference to its NAME, and a lexical binder's name
-// counts.  A function nothing calls therefore gets the optimistic
-// all-f64 seed and, with no call to demote it, is published with f64
-// parameters it was never shown to take.  Measured:
+// A lexical binding of a top-level function's name does two things to
+// the specialisation pass, neither of which the binding asked for.
+// Measured on this fixture, with the --specs mode of the instrument:
 //
 //     (define (foo a b) (fl+ a b))  (display 1)                  no entry
 //     same, plus (display (let ((foo 5)) 1))                      (foo #f #t)
 //
-// Harmless while every call to such a function is visible to the pass,
-// because a visible call demotes the seed.  It is not harmless for a
-// function whose only call is constructed at emission time -- which is
-// exactly how $escape came to trap once a lexical $escape existed, and
-// why $escape is now on $spec-denylist.  This cell pins the general
-// fault; the denylist entry covers the one known victim.
+// First, dead-code elimination collects references by symbol, and the
+// binder's name counts: foo is absent from the module's name section
+// without the binder and present with it (the cell beside this one
+// pins that half).  Second, spec-scan is a flat walk over the form
+// tree with no knowledge of binding forms, so the binding pair
+// (foo 5) is recorded as a CALL to foo with 5 as its argument.  The
+// rule in compute-fn-specs! that marks a candidate with no visible
+// call as escaped -- the rule that protects every function whose real
+// call is constructed at emission -- therefore does not fire, and the
+// optimistic all-f64 seed is published with parameter 1 demoted by
+// the initialiser's type.  That last clause is the prediction that
+// separated this mechanism from two earlier stories: (foo 5.0) gives
+// (foo #t #t), and 5, 'x and (5 6) all give (foo #f #t).
+//
+// Harmless while every real call is visible, because a real call
+// demotes the seed.  Fatal for the function whose only call is
+// constructed at emission, which is how $escape came to trap once a
+// lexical $escape existed and why it is on $spec-denylist.  This cell
+// pins the general fault; the denylist entry covers the known victim.
+// A fix that teaches spec-scan the binding forms turns this green
+// while leaving the DCE half to its own cell.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
