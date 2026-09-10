@@ -31,10 +31,37 @@ const globalListeners = {};
 // the Scheme side registers key handlers on the global; intercept
 // everything that is not the worker's own message plumbing
 const realAdd = globalThis.addEventListener.bind(globalThis);
+const realRemove = globalThis.removeEventListener.bind(globalThis);
+
+// The worker's own plumbing keeps the real listeners; everything else
+// is held in a table here, because a forwarded event is a message and
+// not an event the platform will dispatch.
+function isPlumbing(k) {
+    return k === 'message' || k === 'messageerror' || k === 'error';
+}
+
+// Registration is intercepted, so removal has to be intercepted too.
+// It was not: a handler added here went into the table, and the
+// matching removeEventListener went to the platform, which has no
+// entry for it and no way to say so.  The handler stayed in the table
+// and kept being called -- a listener that cannot be taken off is a
+// leak with a behaviour, since the object it closes over stays
+// reachable and keeps answering events meant for whatever replaced it.
+function drop(table, k, f) {
+    const l = table[k];
+    if (!l) return;
+    const i = l.indexOf(f);
+    if (i >= 0) l.splice(i, 1);
+}
+
 globalThis.addEventListener = (k, f, o) => {
-    if (k === 'message' || k === 'messageerror' || k === 'error')
-        return realAdd(k, f, o);
+    if (isPlumbing(k)) return realAdd(k, f, o);
     (globalListeners[k] = globalListeners[k] || []).push(f);
+};
+
+globalThis.removeEventListener = (k, f, o) => {
+    if (isPlumbing(k)) return realRemove(k, f, o);
+    drop(globalListeners, k, f);
 };
 
 onmessage = async (e) => {
@@ -49,6 +76,7 @@ onmessage = async (e) => {
             getContext: (k, o) => off.getContext(k, o),
             addEventListener: (k, f) =>
                 (canvasListeners[k] = canvasListeners[k] || []).push(f),
+            removeEventListener: (k, f) => drop(canvasListeners, k, f),
         };
         await loadGoeteia(d.wasm);
         postMessage({ ready: true });

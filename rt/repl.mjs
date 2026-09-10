@@ -31,7 +31,7 @@ import { runModule } from './run.mjs';
 // paren balance, aware of strings, comments and char literals
 // One place that knows what is not code.
 //
-// Six hand-written walkers -- four here, two in repl.mjs -- each
+// Six hand-written walkers -- four in compile.mjs, two here -- each
 // carried the same three lines for `;`, `"` and `#\`, byte for byte,
 // and none of them knew `#|`.  So an (import ...) written inside a
 // block comment was found by libraryImports and taken for the
@@ -95,6 +95,18 @@ function balance(text) {
     return depth;
 }
 
+// Whether a stretch of text holds anything the compiler would read.
+// Comments and whitespace are characters without being code, and the
+// difference decides whether a tail is a bare atom or a leftover note.
+function hasCode(text) {
+    for (let i = 0; i < text.length; i++) {
+        const j = noiseEnd(text, i);
+        if (j >= 0) { i = j; continue; }
+        if (!/\s/.test(text[i])) return true;
+    }
+    return false;
+}
+
 // top-level form spans (same scanner shape as the balance check)
 function topSpans(text) {
     const spans = [];
@@ -141,7 +153,15 @@ export async function startRepl() {
             ` (write %repl-result) (newline)))`;
         const tailStart = spans.length ? spans[spans.length - 1][1] : 0;
         const tail = input.slice(tailStart);
-        if (tail.trim())                 // a bare atom: lst, 42, ...
+        // A bare atom: lst, 42, ...  The test is whether the tail holds
+        // CODE, not whether it holds characters: a line comment after
+        // the last form is characters and not code, and wrapping it
+        // produced `(... %repl-result ; note))`, where the comment ate
+        // the parentheses the wrapper had just added.  The reader then
+        // reported an unclosed list at a column past the end of what
+        // the user typed, which is the tell that the text it failed on
+        // was not the text they wrote.
+        if (hasCode(tail))
             return input.slice(0, tailStart) + wrap(tail.trim());
         if (spans.length) {
             const [s, e] = spans[spans.length - 1];
@@ -157,11 +177,16 @@ export async function startRepl() {
             const session = defs.concat([printLast(input)]).join('\n');
             const bytes = await compileSource(session);
             const { text } = await runModule(bytes, []);
-            // write raw bytes: the program's output is already utf-8
+            // runModule has already decoded the program's bytes as
+            // utf-8, so `text` is a string of characters and not a
+            // string of bytes.  Re-encoding it as latin1 was writing
+            // one byte per character, which is lossless only while
+            // every character is below U+0100; anything else -- an
+            // accent, a CJK character, an arrow the program printed --
+            // arrived at the terminal as something other than what was
+            // written.
             if (text)
-                process.stdout.write(
-                    Buffer.from(text.endsWith('\n') ? text : text + '\n',
-                                'latin1'));
+                process.stdout.write(text.endsWith('\n') ? text : text + '\n');
             // successful evaluations contribute their definitions
             for (const [s, e] of topSpans(input)) {
                 const form = input.slice(s, e);

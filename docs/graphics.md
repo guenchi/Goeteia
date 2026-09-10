@@ -1480,7 +1480,7 @@ colour out.
 (define atlas (make-rimg tw th (fx-alloc! (rimg-bytes tw th))))
 (png-decode! src slen (rimg-base atlas))          ; (gfx image) fills it
 (define shot  (make-rimg 256 256 (fx-alloc! (rimg-bytes 256 256))))
-(define uv    (rattr-f32 (gprim-vbase p) (gprim-stride p) 12 n 2))
+(define uv    (rattr-f32 (gprim-vbase p) (gprim-stride p) 24 n 2))  ; position 12 + normal 12
 
 (render-textured! fr mesh cam uv atlas 'bilinear shot scratch)
 (frame-texel fr mesh uv atlas 130 84)             ; -> #(tx ty), or #f

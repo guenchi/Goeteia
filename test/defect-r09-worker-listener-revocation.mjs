@@ -69,15 +69,24 @@ test('a removed handler stops being called', () => {
                  'about the shim\'s table');
 });
 
-test('the canvas shim offers a way to remove a listener at all', () => {
+test('the canvas shim offers a way to remove a listener at all', async () => {
     // The canvas is built when the worker is handed one; ask the shim
     // for the API rather than for a behaviour, because there is no
     // method to call.
-    globalThis.onmessage({ data: { canvas: {
+    //
+    // The handler is async and goes on to load a module from the URL
+    // in the message, which is null here because this test has no
+    // module and does not need one -- the shim is in place before that
+    // line is reached.  So the promise is awaited and its rejection
+    // swallowed HERE.  Left alone it rejects after the test has ended,
+    // and node reports the file as failed with every assertion in it
+    // passing: four green ticks and a red file, which reads as a
+    // defect in the worker and is a defect in this fixture.
+    await globalThis.onmessage({ data: { canvas: {
         get width() { return 1; }, set width(v) {},
         get height() { return 1; }, set height(v) {},
         getContext: () => ({}),
-    }, wasm: null } });
+    }, wasm: null } }).catch(() => {});
     const c = globalThis.__goeteia_canvas;
     assert.equal(typeof c.addEventListener, 'function');
     assert.equal(typeof c.removeEventListener, 'function',
