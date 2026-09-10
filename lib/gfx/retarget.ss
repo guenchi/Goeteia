@@ -711,16 +711,32 @@
              ;; a decimated grid can land on the same key twice, and
              ;; a sampler with a repeated input is not a legal glTF
              ;; animation
+             ;; The grid spans the keys INCLUSIVELY: i runs over
+             ;; [0, limit) and k over [0, n-1], so the first and last
+             ;; keys are both picked.
+             ;;
+             ;; It used to be (i * n) / limit, and that was wrong: its
+             ;; largest value at i = limit-1 is n - ceiling(n/limit),
+             ;; which is never n-1 for any n past the limit.  The final key was unreachable, and
+             ;; the loss did not stop there: the clip's duration is
+             ;; taken as the largest surviving time, so it became the
+             ;; second-to-last key's, and an explicit 'samples grid is
+             ;; laid out over that duration and inherited the same short
+             ;; clip.  One unreachable index, and the clip ends early
+             ;; wherever it is asked for.
+             ;;
+             ;; With (i * (n-1)) / (limit-1) the maximum is exactly n-1,
+             ;; so no clamp is needed to keep the index in range.
              (let* ((v (list->vector sorted))
                     (n (vector-length v)))
                ($rt-dedup
                 (let pick ((i 0) (acc '()))
                   (if (= i $rt-time-limit)
                       (reverse acc)
-                      (let ((k (quotient (* i n) $rt-time-limit)))
+                      (let ((k (quotient (* i (- n 1))
+                                         (- $rt-time-limit 1))))
                         (pick (+ i 1)
-                              (cons (vector-ref v (if (< k n) k (- n 1)))
-                                    acc)))))))))))
+                              (cons (vector-ref v k) acc)))))))))))
 
   ;; ---- the core ---------------------------------------------------
   ;; The only place the semantics live.  Everything a target joint
