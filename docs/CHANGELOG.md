@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-*159 commits.* Two new families of libraries -- `(gam …)` for the
+*185 commits.* Two new families of libraries -- `(gam …)` for the
 bookkeeping a game repeats and `(sim …)` for the machinery under it --
 and a real GLSL compiler behind page verification, which every shader
 defect this tree can produce used to pass.
@@ -91,6 +91,17 @@ been checked against what each library actually exports.
 Derived from the commits in this range and attributed to them, rather
 than re-verified item by item for this document.
 
+- Compiler, where a name resolves: an identifier a macro expansion
+  introduces, an identifier written inside a library body or inside the
+  prelude, and a reference the compiler synthesises itself (the
+  `append` behind quasiquote, the escape behind `call/cc`) now resolve
+  where they were written, not at the program's top level. Before
+  this, a program that defined `car` changed what `assq` answered, what
+  an imported library did six lines inside a procedure the program
+  never read, and what `(vector 1 2)` held; each of those is now the
+  R6RS answer. Three commits, each with its own red cell first and a
+  mutation run after; the part of this that is NOT fixed is under
+  KNOWN OPEN.
 - Compiler: a loop parameter captured by an inner lambda no longer
   lives in a raw slot, so closures made in a loop stop sharing the
   loop's last value; a transformer's arithmetic stops discarding
@@ -157,41 +168,57 @@ than re-verified item by item for this document.
 
 ### KNOWN OPEN
 
-Four defects are known, reproduced, and NOT fixed in this release. They
+Seven defects are known, reproduced, and NOT fixed in this release. They
 are listed here because an unfixed defect that scrolls off a list is one
 nobody re-reads at the next decision.
 
-- **A top-level definition captures a name the prelude uses
-  internally.** Defining `car`, `cdr`, `null?` or `zero?` at the top
-  level silently changes the behaviour of standard procedures and of
-  libraries the program only imported: the prelude, every imported
-  library and the compiler's own synthesised operations are spliced
-  into one flat top level and call primitives by the same bare symbols
-  a program can define. It is every surviving use in the prelude, not a
-  handful of call sites.
-
-  **The symptom appears far from the cause, and usually does not name
-  the definition that caused it.** `assq` answers `#f`; `length` loops.
-  Worst of all, `vector` is built by walking its arguments with `car`,
-  so `(vector 1 2)` comes back holding 99 in *both* slots -- and since
-  most of this tree's record types are tagged vectors, anything
-  constructed while the name is captured has every field wrong. The
-  first thing to complain is then the library that owns the type,
-  rejecting its own object with its own error and naming a value the
-  caller never passed:
-
-  ```
-  inventory-add!: not an inventory 99
-  ```
-
-  Names that collide with a user-visible top level, `filter` among
-  them, are refused at compile time; these are not.
-  **This is present in 1.7.0 and is not new, which is the reason to
-  name it rather than leave it out.** Four cells hold it red:
-  `defect-c02-shadow-primitive`, `defect-library-capture`,
-  `defect-prelude-capture-car`, `defect-prelude-capture-null`.
-  **Workaround**: do not define these names at the top level; put them
-  inside a library, where renaming applies.
+- **A top-level definition written as `(define car <expression>)` does
+  not shadow the primitive.** `(define car (lambda (x) 99))` followed
+  by `(car (list 1))` answers 1 at every call site in the program:
+  the name is compiled as the builtin however the program bound it, and
+  there is no diagnostic. The same definition written as
+  `(define (car x) 99)` shadows correctly, so the two spellings R6RS
+  treats as one differ here. This is what remains of the capture
+  defect fixed above; it is the program's OWN calls that are affected
+  now, not the prelude's or an imported library's. Present in 1.7.0.
+  Held red on all three hosts by `defect-c02-shadow-primitive`.
+  Alongside it, and from the same flat top level: the prelude still
+  calls `null?` by a bare symbol, so a program that defines `null?`
+  at the top level changes what `length` answers -- `0` for a
+  three-element list, or a trap, depending on what the definition
+  returns (`defect-prelude-capture-null-observable`,
+  `defect-prelude-capture-null`). The fix above covers `car` and the
+  names the compiler synthesises; `null?` is not in that set yet.
+  **Workaround**: use the `(define (name …) …)` spelling, and do not
+  define `null?` at the top level.
+- **A definition inside a function body does not shadow a primitive
+  either, and it ends in a trap.** `(define (go p) (define (car x)
+  'inner) (car p))` compiles the inner call as the builtin `car`, and
+  since the builtin's argument arrives with the wrong representation
+  the run ends in an illegal cast rather than a wrong value. The same
+  shadow through `let` works. Present in 1.7.0. Held red by
+  `defect-internal-define-shadows-primitive`, with a green `let` twin
+  beside it so the two spellings are checked against each other.
+- **A library that excludes a name from its `(rnrs)` import and
+  defines its own is refused as a duplicate top-level definition.**
+  `(import (except (rnrs) append))` followed by `(define (append a b)
+  …)` inside the library is a legal R6RS program; here the library's
+  definitions are spliced to the top level beside the prelude's, and an
+  import list constrains nothing, so the compiler reports the name
+  defined twice. Present in 1.7.0. Held red by
+  `defect-library-redefines-imported-name`, which reports once because
+  it is a compile error rather than a wrong value.
+- **A function nothing calls can be published as taking floats.** The
+  specialisation pass seeds every surviving fixed-arity function with
+  "every parameter is a float" and demotes only from the calls it can
+  see; a function with no visible call is normally pruned first, but a
+  `let` binding of the same name anywhere in the program counts as a
+  reference to it and keeps it. The published entry is then a guess
+  nobody checked. No program has been found that reads the guess: the
+  one function whose only call is constructed after the pass
+  (`call/cc`'s escape) is listed out of specialisation by name. It is
+  recorded because the tree holds it red (`defect-spec-candidate-by-name`)
+  and a red cell with no entry here would look like an oversight.
 - **A morph target's POSITION accessor can declare a `max` below a
   value the file stores.** The bounds are computed over the values as
   given, and the file holds them as `f32`, so a value that rounds
