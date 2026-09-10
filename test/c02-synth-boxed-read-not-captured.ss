@@ -5,7 +5,7 @@
 ;; redefine cons or set-car!, so none of them reached this site: it is
 ;; the boxed READ, and only a program that defines car can see it.
 ;; Chez answers 7; before the fix this printed mine.
-(import (rnrs))
+(import (except (rnrs) car))
 (define (car x) (quote mine))
 (define (go) (define n 5) (set! n 7) n)
 (display (go))

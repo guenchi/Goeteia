@@ -3,6 +3,6 @@
 ;; around the append slice 3 protected; see
 ;; defect-c02-synth-quasiquote-cons.  Chez answers (1 2 3 4); here an
 ;; illegal cast.
-(import (rnrs))
+(import (except (rnrs) cons))
 (define (cons a b) (quote mine))
 (display `(1 ,@(list 2 3) 4))

@@ -39,6 +39,6 @@
 ;; end of the list and the run dies with `illegal cast`.  A trap,
 ;; not a wrong answer, so it is in a file of its own: it would take
 ;; any cell after it with it.
-(import (rnrs))
+(import (except (rnrs) null?))
 (define (null? x) #f)
 (display (length (list 1 2 3)))

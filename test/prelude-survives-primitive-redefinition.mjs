@@ -45,7 +45,7 @@ function answerAfterRedefining(name) {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'goeteia-prim-'));
     const ss = path.join(dir, 'p.ss');
     const wasm = path.join(dir, 'p.wasm');
-    fs.writeFileSync(ss, `(import (rnrs))\n(define (${name} . args) ${body})\n(display 1)\n`);
+    fs.writeFileSync(ss, `(import (except (rnrs) ${name}))\n(define (${name} . args) ${body})\n(display 1)\n`);
     const c = spawnSync(path.join(root, 'bin/goeteiac'), [ss, wasm], { encoding: 'utf8', timeout: 120000 });
     if (!fs.existsSync(wasm)) { fs.rmSync(dir, { recursive: true, force: true }); return `COMPILE-ERR: ${(c.stderr || '').trim().split('\n').pop()}`; }
     const r = spawnSync('node', [path.join(root, 'rt/run.mjs'), wasm], { encoding: 'utf8', timeout: 20000 });

@@ -12,7 +12,7 @@
 ;;
 ;; Variant c: a library definition that is itself produced by a macro
 ;; calls car; the user shadows car afterwards.
-(import (rnrs))
+(import (except (rnrs) car))
 (begin
   (library (orc lib3)
     (export head)

@@ -7,6 +7,6 @@
 ;; -- (1 (quasiquote (2 (unquote (3 4))))) where Chez prints
 ;; (1 `(2 ,(3 4))) -- and that abbreviation is a printer's choice, not
 ;; a value.  Chez answers #t.
-(import (rnrs))
+(import (except (rnrs) cons))
 (define (cons a b) (quote mine))
 (display (equal? `(1 `(2 ,(3 ,(+ 1 3)))) (quote (1 (quasiquote (2 (unquote (3 4))))))))

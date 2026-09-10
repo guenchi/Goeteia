@@ -6,6 +6,6 @@
 ;; program's -- so those cells could not see this site; it needs the
 ;; zero-argument call.  (+) is 0 in Chez; before the fix this ended in
 ;; an illegal cast.
-(import (rnrs))
+(import (except (rnrs) null?))
 (define (null? x) #f)
 (display ((lambda (f) (f)) +))

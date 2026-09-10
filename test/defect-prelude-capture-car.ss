@@ -37,6 +37,6 @@
 ;;
 ;; Today this prints #f: assq walked the list with the user's car,
 ;; which answers 99 for everything, so nothing matched.
-(import (rnrs))
+(import (except (rnrs) car))
 (define (car x) 99)
 (display (assq 'a (list (cons 'a 1))))

@@ -6,6 +6,6 @@
 ;; the wrong sum is observable: 1 where Chez answers 6.  (A cdr that
 ;; answered a symbol made the walk loop forever, and a cell that hangs
 ;; costs every gate 180 seconds per host for the same reading.)
-(import (rnrs))
+(import (except (rnrs) cdr))
 (define (cdr x) (quote ()))
 (display ((lambda (f) (f 1 2 3)) +))

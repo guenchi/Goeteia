@@ -12,6 +12,6 @@
 ;; fourth spelling of the open null? entry: the prelude's own calls,
 ;; the compiler's synthesized calls, and now a wrapper built at
 ;; emission all reach the program's definition by the same bare name.
-(import (rnrs))
+(import (except (rnrs) null?))
 (define (null? x) #f)
 (display ((lambda (f) (f 1 2)) +))

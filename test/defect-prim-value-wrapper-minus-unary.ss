@@ -5,6 +5,6 @@
 ;; the fold's first car is taken from an empty list: illegal cast where
 ;; Chez answers -5.  (Redefining cdr made this walk loop forever; the
 ;; hang is the same defect and a worse cell.)
-(import (rnrs))
+(import (except (rnrs) null?))
 (define (null? x) #f)
 (display ((lambda (f) (f 5)) -))

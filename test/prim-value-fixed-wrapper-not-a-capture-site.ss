@@ -4,6 +4,6 @@
 ;; at the meta level, not as a written call, so a program's cons does
 ;; not reach it.  Chez and every host answer 7.  If this goes red the
 ;; fixed-arity wrapper acquired a written head.
-(import (rnrs))
+(import (except (rnrs) cons))
 (define (cons a b) (quote mine))
 (display ((lambda (f) (f (quote (7)))) car))

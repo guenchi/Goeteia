@@ -13,7 +13,7 @@
 ;; template's car in the library's scope gives the same; today's gives
 ;; `shadow'.  This is the row that says whether the representation
 ;; works, independently of whether the prelude is protected yet.
-(import (rnrs))
+(import (except (rnrs) car))
 (begin
   (library (orc lib)
     (export head-tag)

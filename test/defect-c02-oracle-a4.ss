@@ -10,6 +10,6 @@
 ;; the binding-identity slice: not the representation, the printer.  It
 ;; goes green when the prelude's own references are protected, and not
 ;; before.
-(import (rnrs))
+(import (except (rnrs) car))
 (define (car x) 'shadow)
 (display (list 'a))

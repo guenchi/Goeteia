@@ -11,6 +11,6 @@
 ;; back 0.  Chez says 3.  This is the row to cite as evidence for the
 ;; null? capture; the trapping one is kept because a trap is a real
 ;; consequence a user will meet.
-(import (rnrs))
+(import (except (rnrs) null?))
 (define (null? x) #t)
 (display (length '(1 2 3)))

@@ -13,7 +13,7 @@
 ;; Variant a2 -- THE ONE THE REPRESENTATION IS JUDGED ON: the caller's
 ;; own (car ...) is substituted beside the template's introduced car,
 ;; in one form, and the two must resolve differently.
-(import (rnrs))
+(import (except (rnrs) car))
 (begin
   (library (orc lib)
     (export pair-of)

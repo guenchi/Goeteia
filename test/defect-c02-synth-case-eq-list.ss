@@ -3,6 +3,6 @@
 ;; the same bare eq? as the single-datum form; see
 ;; defect-c02-synth-case-eq.  Chez answers hit; here the stack is
 ;; exhausted.
-(import (rnrs))
+(import (except (rnrs) eq?))
 (define (eq? a b) #f)
 (display (case 2 ((1 2 3) (quote hit)) (else (quote miss))))

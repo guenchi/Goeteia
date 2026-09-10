@@ -31,7 +31,7 @@
 ;; the pair that says a repair went too far, and it is worth more
 ;; than the two red files: they say the defect exists, and this says
 ;; what a fix is not allowed to cost.
-(import (rnrs))
+(import (except (rnrs) car null?))
 
 (define failed 0)
 (define (check name ok)

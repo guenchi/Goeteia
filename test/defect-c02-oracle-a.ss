@@ -12,7 +12,7 @@
 ;;
 ;; Variant a: the template introduces car twice; the user shadows car
 ;; after the import.  Both must be the library's car.
-(import (rnrs))
+(import (except (rnrs) car))
 (begin
   (library (orc lib)
     (export first-of)

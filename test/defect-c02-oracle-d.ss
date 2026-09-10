@@ -10,7 +10,7 @@
 ;; in lib/ and the whole of the prelude are this shape.  a3 going green
 ;; while d stays red is the measurement that the slice protects
 ;; templates and not scopes.
-(import (rnrs))
+(import (except (rnrs) car))
 (begin
   (library (orc lib4)
     (export head)
