@@ -505,7 +505,19 @@
 
   ;; fixed slots: 0 env, 1 cull pipeline, 2 lit pipeline, 3 env bind
   ;; group, 4 textured pipeline, 5 shared sampler, 6/7 the blended
-  ;; (lit/tex) pipelines; groups take 8 slots each from 8 up
+  ;; (lit/tex) pipelines, 8 the blend-lit env group.
+  ;;
+  ;; Groups take $sgpu-group-stride slots each from $sgpu-group-base
+  ;; up. The two numbers are named because a second allocator has to
+  ;; agree with them: the reserved slots below are placed past the end
+  ;; of the group walk, and were previously two constants chosen to be
+  ;; far away from it. Far away is a distance, not an invariant -- with
+  ;; enough groups the walk reached them, overwrote them, and the next
+  ;; use of the pyramid slot found a group's buffer there and asked it
+  ;; for a texture view. That surfaces in the render loop as a missing
+  ;; method on a host object, with nothing naming the allocator.
+  (define $sgpu-group-base 9)
+  (define $sgpu-group-stride 7)
   (define $inst-fmt
     "float32x4,float32x4,float32x4,float32x4,float32x4")
 
@@ -514,8 +526,16 @@
   ;; pyramid -- mode stays 0 until the first gpu-hzb!, and while a
   ;; camera/scene is static last frame's pyramid is exact, so the
   ;; occluded set matches (occlusion that changes the picture is a bug).
-  (define $sgpu-hzb-slot 250)           ; the pyramid resource slot
-  (define $sgpu-sortcull-slot 251)      ; the depth-sorting cull pipeline
+  ;; Set by $sgpu-reserve! from the group count before anything uses
+  ;; them, so the number is derived from the same two constants the
+  ;; group walk uses rather than guessed against them. The initial
+  ;; values are never read: sgpu-init! reserves before it allocates.
+  (define $sgpu-hzb-slot 0)
+  (define $sgpu-sortcull-slot 0)
+  (define ($sgpu-reserve! ngroups)
+    (let ((top (+ $sgpu-group-base (* $sgpu-group-stride ngroups))))
+      (set! $sgpu-hzb-slot top)
+      (set! $sgpu-sortcull-slot (+ top 1))))
   (define $sgpu-hzb-w 0.0)
   (define $sgpu-hzb-h 0.0)
   (define $sgpu-hzb-built #f)
@@ -527,6 +547,7 @@
     (set! $sgpu-hzb-h ($sgpu-fl (js->number (js-get canvas "height"))))
     (set! $sgpu-hzb-built #f)
     ($sg-aspect! sc (fl/ $sgpu-hzb-w $sgpu-hzb-h))
+    ($sgpu-reserve! (length ($sg-groups sc)))
     (gpu-uniforms! 0 224)
     (gpu-compute! 1 $sgpu-cull)
     (gpu-compute! $sgpu-sortcull-slot $sgpu-cull-sort)
@@ -546,7 +567,7 @@
                           32 "float32x3,float32x3,float32x2" 80 $inst-fmt)
     (gpu-bindgroup! 8 6 0)
     ($sg-envat! sc (fx-alloc! 224))
-    (let init ((gs ($sg-groups sc)) (slot 9))
+    (let init ((gs ($sg-groups sc)) (slot $sgpu-group-base))
       (when (pair? gs)
         (let* ((g (car gs))
                (m (vector-ref g 0))
@@ -602,7 +623,7 @@
           (gpu-buffer-data! slot vbase vbytes)
           (gpu-buffer-data! (+ slot 1) ibase ibytes)
           (gpu-flush!))
-        (init (cdr gs) (+ slot 7))))
+        (init (cdr gs) (+ slot $sgpu-group-stride))))
     ($sg-ready! sc #t))
 
   (define ($sgpu-gen nodes)
