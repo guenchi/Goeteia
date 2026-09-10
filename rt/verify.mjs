@@ -266,6 +266,8 @@ function tagsIn(html) {
 export function makeWorld({ width = 800, height = 600 } = {}) {
     const gl = [];                 // every recorded GL call, in order
     const c2d = [];                // every recorded 2d-context call
+    // every linked (vertex, fragment) pair
+    const programs = [];
     const nodes = [];              // every element ever created
     const listeners = [];          // {el, type, fn}
     const byId = new Map();
@@ -309,13 +311,50 @@ export function makeWorld({ width = 800, height = 600 } = {}) {
         const base = {
             getExtension: () => null,
             getParameter: () => 0,
-            createShader: () => ({ kind: 'shader', id: ++seq }),
-            shaderSource(s, src) { rec('shaderSource', { len: String(src).length }); },
+            // The type comes through as its own name, because the
+            // Proxy below answers an unknown ALL-CAPS member with the
+            // string of that member.  It is kept because a pair of
+            // sources is only checkable if which half is which is
+            // known.
+            createShader: (type) => ({ kind: 'shader', id: ++seq,
+                                       shaderType: String(type), src: null }),
+            shaderSource(s, src) {
+                if (s) s.src = String(src);
+                rec('shaderSource', { len: String(src).length });
+            },
             compileShader() {},
+            // THIS ANSWER IS NOT A VERDICT, and nothing downstream may
+            // read it as one.  Replay is synchronous and a real GLSL
+            // compiler is not reachable from inside it, so this can
+            // only be the answer that lets the page get as far as
+            // drawing -- a `false` here stops every page at its first
+            // shader and produces no trace at all.
+            //
+            // What changed is where the claim lives.  The sources are
+            // now kept, paired at link time, and put in front of a real
+            // compiler AFTER the replay, and the verdict this run
+            // reports comes from that and from nothing else.  When no
+            // compiler can be reached the run says so in as many words
+            // rather than inheriting the `true` below.
             getShaderParameter: () => true,
             getShaderInfoLog: () => '',
-            createProgram: () => ({ kind: 'program', id: ++seq }),
-            attachShader() {}, linkProgram() {},
+            createProgram: () => ({ kind: 'program', id: ++seq, attached: [] }),
+            attachShader(p, sh) { if (p && p.attached && sh) p.attached.push(sh); },
+            // A pair is recorded at link time rather than at attach:
+            // linking is the point at which the page has said which
+            // two halves belong together.
+            linkProgram(p) {
+                if (!p || !p.attached) return;
+                const half = (want) => {
+                    const sh = p.attached.find(x => x && x.shaderType === want);
+                    return sh && typeof sh.src === 'string' ? sh.src : null;
+                };
+                const vertex = half('VERTEX_SHADER');
+                const fragment = half('FRAGMENT_SHADER');
+                if (vertex !== null || fragment !== null) {
+                    programs.push({ id: p.id, vertex, fragment });
+                }
+            },
             getProgramParameter: () => true,
             getProgramInfoLog: () => '',
             bindAttribLocation(p, i, n) { rec('attribLoc', { i, n }); },
@@ -566,7 +605,7 @@ export function makeWorld({ width = 800, height = 600 } = {}) {
     const driven = new Set();
 
     const world = {
-        gl, c2d, nodes, listeners, byId, console: console_, root, driven,
+        gl, c2d, programs, nodes, listeners, byId, console: console_, root, driven,
         get now() { return now; },
         // Which controls the harness is ABLE to drive.  Frozen before
         // the act and used by every snapshot, so the set is identical
@@ -792,6 +831,7 @@ export async function scenario(bytes, {
         trace.tags = w.tagCounts();
         trace.console = w.console.slice();
         trace.gl = w.gl;
+        trace.programs = w.programs;
         trace.world = w;
         trace.stdout = Buffer.from(stdout).toString('utf8');
         // An error inside a callback the page scheduled is the
@@ -1281,6 +1321,98 @@ export function trapHint(msg) {
     return row ? row[1] : null;
 }
 
+// ---------------------------------------------------------------- //
+// Shaders: the one thing replay cannot judge for itself
+// ---------------------------------------------------------------- //
+//
+// A recording context can say what a page asked for.  It cannot say
+// whether a shader compiles, because deciding that is a compiler's job
+// and the only compiler within reach is a real driver inside a browser.
+// For as long as this file has existed the recorder answered
+// COMPILE_STATUS with `true`, which meant every shader defect the tree
+// can produce passed page verification, and looked like a check while
+// doing it.
+//
+// The compiler lives in tools/cdp.mjs, which drives a browser over the
+// devtools protocol.  Two things make that a soft dependency rather
+// than an import:
+//
+//   * tools/ is not among the published `files`, and rt/ is, so a
+//     static import would break the package for everyone installing it;
+//   * a browser is not always present, and must not have to be.
+//
+// So it is loaded dynamically and every way of not getting there ends
+// in a NAMED reason rather than in a pass.  A reason is not a failure:
+// a machine with no browser cannot verify shaders and saying so is the
+// honest report.  What is a failure is a shader a compiler refused.
+//
+// THE DIFFERENCE BETWEEN THOSE TWO IS LOAD-BEARING.  A browser that
+// will not start is `unverified`, so a gate does not go red because a
+// download failed; a shader that will not compile is `failed`, so a
+// gate does go red for the thing this exists to catch.  Collapsing
+// them either way undoes the point -- one direction restores the silent
+// pass, the other makes the check flaky enough that someone turns it
+// off.
+export async function defaultShaderChecker() {
+    let cdp;
+    try {
+        cdp = await import('../tools/cdp.mjs');
+    } catch (e) {
+        return { reason: 'the shader compiler harness (tools/cdp.mjs) is not '
+                 + 'beside this copy of the runtime, as it is not part of the '
+                 + 'published package' };
+    }
+    if (!cdp.findChrome || !cdp.findChrome()) {
+        return { reason: 'no Chrome beside this tree, so no real GLSL compiler '
+                 + 'could be reached' };
+    }
+    return {
+        async check(pairs) {
+            return cdp.withBrowser(async page => {
+                const out = [];
+                for (const p of pairs) {
+                    out.push({ pair: p, result: await cdp.checkShader(page, p.vertex, p.fragment) });
+                }
+                return out;
+            }, { timeoutMs: 120000 });
+        },
+    };
+}
+
+// Identical pairs are compiled once.  A page that builds the same
+// program on several frames, or two programs from one shared vertex
+// half, would otherwise pay a browser round trip per repeat, and the
+// answer cannot differ between two identical strings.
+function distinctPairs(programs) {
+    const seen = new Map();
+    for (const p of programs || []) {
+        if (typeof p.vertex !== 'string' || typeof p.fragment !== 'string') continue;
+        const key = `${p.vertex}\u0000${p.fragment}`;
+        if (!seen.has(key)) seen.set(key, { vertex: p.vertex, fragment: p.fragment, ids: [] });
+        seen.get(key).ids.push(p.id);
+    }
+    return [...seen.values()];
+}
+
+// One line per rejected half, naming the half and quoting the driver's
+// own first line: a compiler's message carries a line number into the
+// shader, and paraphrasing it would throw away the only part that says
+// where to look.
+function shaderFailureDetail(entry) {
+    const { result } = entry;
+    const parts = [];
+    for (const half of ['vertex', 'fragment']) {
+        const r = result && result[half];
+        if (r && !r.ok) {
+            parts.push(`${half}: ${String(r.log || '(no log)').split('\n')[0]}`);
+        }
+    }
+    if (!parts.length && result && result.linked === false) {
+        parts.push(`link: ${String(result.linkLog || '(no log)').split('\n')[0]}`);
+    }
+    return parts.join('; ') || 'refused, with no message';
+}
+
 export async function verifyBytes(bytes, checks = DEFAULT_CHECKS, opts = {}) {
     assertCheckKeys(checks);
     const spec = { ...DEFAULT_CHECKS, ...checks };
@@ -1331,6 +1463,88 @@ export async function verifyBytes(bytes, checks = DEFAULT_CHECKS, opts = {}) {
     };
 
     let stage = 'done';
+
+    // Shaders, before the stage checks, because a page whose shaders a
+    // compiler refuses is broken in a way that outranks whether it drew
+    // or reacted -- and because the answer is about the page rather
+    // than about anything the caller asked for.
+    // A page that links no shader program gets no row at all.  "Not
+    // exercised" has to mean "there was something to check and it was
+    // not checked", or every static page carries a line about a thing
+    // it does not have and the line stops being read.
+    const shaderPairs = distinctPairs(base.programs);
+    if (shaderPairs.length) {
+        if (opts.shaders === false) {
+            // Even a deliberate skip is announced.  A run that quietly
+            // omits the one check standing between a shader defect and
+            // a pass is indistinguishable, in its output, from a run
+            // where the shaders were fine -- which is the shape of the
+            // hole this whole section exists to close, in miniature.
+            results.push({ kind: 'shaders', manual: true,
+                           detail: `NOT EXERCISED HERE (shader compilation was turned `
+                                   + `off; the ${shaderPairs.length} shader program(s) `
+                                   + `this page links were NOT compiled)` });
+        } else {
+            const checker = opts.shaderCheck !== undefined
+                ? opts.shaderCheck : await defaultShaderChecker();
+            if (!checker || !checker.check) {
+                const why = (checker && checker.reason) || 'no shader compiler was supplied';
+                results.push({ kind: 'shaders', manual: true,
+                               detail: `NOT EXERCISED HERE (${why}; the ${shaderPairs.length} `
+                                       + `shader program(s) this page links were NOT compiled, `
+                                       + `and the recording context accepts every one of them)` });
+            } else {
+                let checked = null;
+                let broke = null;
+                try { checked = await checker.check(shaderPairs); }
+                catch (e) { broke = e; }
+                if (broke) {
+                    // The compiler could not be RUN.  That is not the
+                    // page's fault and must not be reported as if it
+                    // were, or a gate goes red for a failed download.
+                    results.push({ kind: 'shaders', manual: true,
+                                   detail: 'NOT EXERCISED HERE (the shader compiler could '
+                                           + `not be run: ${broke.message}; the `
+                                           + `${shaderPairs.length} shader program(s) this `
+                                           + 'page links were NOT compiled)' });
+                } else if (checked.every(e => !e.result || !e.result.context)) {
+                    results.push({ kind: 'shaders', manual: true,
+                                   detail: 'NOT EXERCISED HERE (the browser gave no WebGL '
+                                           + 'context, so nothing was compiled)' });
+                } else {
+                    const bad = checked.filter(e => {
+                        const r = e.result;
+                        if (!r || !r.context) return false;
+                        return !(r.vertex && r.vertex.ok) || !(r.fragment && r.fragment.ok)
+                               || r.linked === false;
+                    });
+                    const ok = bad.length === 0;
+                    results.push({
+                        kind: 'shaders', ok,
+                        detail: ok
+                            ? `${checked.length} shader program(s) compiled by a real GLSL compiler`
+                            : `${bad.length} of ${checked.length} shader program(s) refused by a real GLSL compiler`,
+                    });
+                    if (!ok) {
+                        if (stage === 'done') stage = 'shaders';
+                        for (const e of bad) {
+                            errors.push({
+                                stage: 'shaders',
+                                message: `a shader this page links does not compile -- ${shaderFailureDetail(e)}`,
+                                file: null, line: null, col: null,
+                                hint: 'the recording context used for page replay accepts '
+                                      + 'any shader text, so this defect is invisible to '
+                                      + 'every check except this one; the line number in '
+                                      + "the message is the compiler's, into the shader "
+                                      + 'source as emitted',
+                                excerpt: null,
+                            });
+                        }
+                    }
+                }
+            }
+        }
+    }
 
     if (spec.needs_draw) {
         const d = stats.draws;
@@ -1442,6 +1656,9 @@ export const VERIFY_USAGE = `Usage: goeteia verify <file.ss> [options]
   --out <report.json>    also write the JSON verdict to a file
   --wasm <out.wasm>      keep the compiled module (default: discarded)
   --script               compile with -O0 (faster, for quick feedback)
+  --no-shaders           skip putting the page's shaders through a real
+                         GLSL compiler (they are checked by default when
+                         a browser is present; the report says which)
 Exit status: 0 passed, 1 failed, 2 bad usage.  See docs/verify.md.`;
 
 // The spec may be given as a path or written out on the command line.
@@ -1502,7 +1719,7 @@ function report(r, source) {
 // that take a value.  A misspelt option name has to be refused for
 // the same reason a misspelt spec key is -- `--neds draw` would
 // otherwise run with nothing required and report a pass.
-export const VERIFY_BOOL_FLAGS = ['json', 'script'];
+export const VERIFY_BOOL_FLAGS = ['json', 'script', 'no-shaders'];
 export const VERIFY_VALUE_FLAGS = ['needs', 'checks', 'out', 'wasm'];
 
 export async function runVerify(argv) {
@@ -1517,7 +1734,8 @@ export async function runVerify(argv) {
     };
     for (let i = 0; i < argv.length; i++) {
         const a = argv[i];
-        if (a === '--json' || a === '--script') args[a.slice(2)] = true;
+        if (a === '--json' || a === '--script' || a === '--no-shaders')
+            args[a.slice(2)] = true;
         else if (a === '--help' || a === '-h') { console.log(VERIFY_USAGE); return 0; }
         else if (a.startsWith('--')) {
             const name = a.slice(2);
@@ -1543,6 +1761,7 @@ export async function runVerify(argv) {
 
     const r = await verifyFile(pos[0], checks,
         { script: !!args.script,
+          ...(args['no-shaders'] ? { shaders: false } : {}),
           ...(args.wasm ? { outFile: path.resolve(args.wasm) } : {}) });
     r.source = path.resolve(pos[0]);
     const json = JSON.stringify(r, (k, v) =>
