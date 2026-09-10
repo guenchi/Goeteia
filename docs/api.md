@@ -537,7 +537,7 @@ Both points are damped at one rate, and that is what holds the heading steady: t
 
 - `ibl-brdf-lut!` — bake the split-sum BRDF lookup table once; answers the texture slot to sample with (NdotV, roughness)
 - `ibl-prefilter!` — GGX-convolve the cube map in `src-slot` into a fresh cube map with `levels` mips; answers its slot
-- `ibl-shaders` — the prefilter and BRDF-lookup passes as `(name dialect vertex-forms fragment-forms)`, dialect second because it decides which renderer the forms want. Both are `es100` and both have `#f` for their vertex half: they run through `fx-fullscreen!`, which supplies the quad. `$ggx-sample` is deliberately not in this table -- it is a set of helper functions spliced into the prefilter shader, it has no `main`, and compiling it alone would fail forever; a permanently red row teaches people to ignore the whole table, so the omission is recorded rather than left to be rediscovered
+- `ibl-shaders` — the prefilter and BRDF-lookup passes as `(name dialect vertex-forms fragment-forms)`, dialect second because it decides which renderer the forms want. Both are `es100` and both have `#f` for their vertex half: they run through `fx-fullscreen!`, which supplies the quad. GLSL `normalize` inside these shaders has the zero-length behaviour the language gives it -- infinities or a NaN, untestable on the device -- so a caller adapting them for vectors that can vanish wants `safe_unit` from `mat-shader-functions`. `$ggx-sample` is deliberately not in this table -- it is a set of helper functions spliced into the prefilter shader, it has no `main`, and compiling it alone would fail forever; a permanently red row teaches people to ignore the whole table, so the omission is recorded rather than left to be rediscovered
 
 ## `(gfx image)`
 
@@ -596,14 +596,14 @@ Both points are damped at one rate, and that is what holds the heading steady: t
 - `v3-scale` — a vector times a scalar, as a new vector
 - `v3-dot` — the dot product; for unit vectors, the cosine of the angle between them
 - `v3-cross` — the cross product, right-handed, as a new vector
-- `v3-normalize` — a unit vector in the same direction, as a new vector
+- `v3-normalize` — a unit vector in the same direction, as a new vector. A zero vector divides by zero: the answer holds infinities or NaNs rather than a direction, and no error is raised. That is deliberate -- the several reasonable answers (a zero direction, a previous heading, a refusal) belong to the caller, who can test for the result this gives. On the GPU, where nothing can be tested, `mat-shader-functions` carries `safe_unit` instead
 - `v3-set!` — writes three flonums into a caller-owned vector and answers it; the destructive spellings exist so a per-frame loop allocates once, and they assume their arguments are already flonums
 - `v3-copy!` — copies one vector into a caller-owned destination and answers it
 - `v3-add!` — adds two vectors into a caller-owned destination and answers it
 - `v3-sub!` — subtracts two vectors into a caller-owned destination and answers it
 - `v3-scale!` — scales a vector into a caller-owned destination and answers it
 - `v3-cross!` — crosses two vectors into a caller-owned destination, which must not be either operand -- the components land as they are computed
-- `v3-normalize!` — normalizes a vector into a caller-owned destination and answers it
+- `v3-normalize!` — normalizes a vector into a caller-owned destination and answers it; the zero-length case is `v3-normalize`'s
 - `m4-identity` — a fresh identity matrix, 16 elements, column-major as m[col*4 + row] -- the order uniformMatrix4fv expects
 - `m4-mul` — the product of two matrices: (m4-mul a b) transforms as a after b
 - `m4-scratch!` — sets the staging base the m4s- spellings write into and read from
@@ -637,6 +637,7 @@ Both points are damped at one rate, and that is what holds the heading steady: t
 - `fl-tau` — two pi, for the same reason; the seam a heading crosses is at tau, not at 360
 - `fl-length2` — the length of a two-component vector given as loose scalars, so a caller holding x and z in two locals asks without allocating a vector; squaring first, so the usable range ends near 1.3e154 rather than wherever a general-purpose hypot would take it
 - `fl-dist2` — the distance between two points on a plane, same shape and same range
+- `mat-shader-functions` — `safe_unit` and `rot_axis` as shader forms, for a caller to splice into its own shader. `safe_unit` is `normalize` with the zero case removed: it divides by `max(length, 1e-5)`, because GLSL `normalize` yields infinities or a NaN there and a fragment shader can neither test for one nor raise, so the NaN travels through the rest of the frame. `rot_axis` is Rodrigues' rotation, turning a point about the axis a vector gives by that vector's length, and answering the point untouched below a 1e-6 angle, where there is no length to normalize the axis by
 - `fl-heading` — the heading of a direction on the ground plane: zero toward -Z, positive turning toward +X, which is the convention the view and rotation matrices here already use; the origin answers zero. Offered instead of a two-component normalize, because normalizing needs a policy for the zero vector and none of them is right for every caller -- a caller who needs unit components has the length from fl-length2 and can divide, having decided what a zero length means for itself
 
 ## `(gfx mesh)`
