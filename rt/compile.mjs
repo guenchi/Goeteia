@@ -304,6 +304,12 @@ function resolveEmbedImports(text, dirs, file) {
     return result + text.slice(at);
 }
 
+// a parsed spec back to source text, so the marker carries exactly
+// what was written
+function writeSpec(spec) {
+    return Array.isArray(spec) ? '(' + spec.map(writeSpec).join(' ') + ')' : String(spec);
+}
+
 function resolveImports(text, dirs, visited = new Set(), file = 'input') {
     // replace top-level (import ...) spans with the inlined
     // libraries; every other byte passes through untouched
@@ -313,10 +319,15 @@ function resolveImports(text, dirs, visited = new Set(), file = 'input') {
         const form = text.slice(start, end);
         if (/^\(\s*import[\s)]/.test(form)) {
             result += text.slice(at, start);
-            result += parseSpecs(form)
+            const specs = parseSpecs(form);
+            result += specs
                 .map(spec => loadLibrary(specTarget(spec), dirs, visited)
                              + '\n' + specAliases(spec))
                 .join('\n');
+            // the clause itself, after the libraries it pulled in: the
+            // spliced result cannot say which names the program asked
+            // for, and that is what the import rule reads
+            result += '\n(%imports ' + specs.map(writeSpec).join(' ') + ')\n';
             result += locMark(file, lineAt(text, end));
             at = end;
         }

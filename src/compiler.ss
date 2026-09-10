@@ -507,6 +507,9 @@
         ((quasiquote) (xpand-qq (cadr e) 0))
         ((define-record-type) (xpand-record e))
         ((import) '(begin))            ; resolved by the driver
+        ;; (%imports spec ...) is the clause the driver kept.  This
+        ;; landing only carries it; the map that reads it comes next.
+        ((%imports) '(begin))
         ((export) e)                   ; top-level export declaration
         ((library)
          ;; (library (name ...) (export ...) (import ...) body ...)

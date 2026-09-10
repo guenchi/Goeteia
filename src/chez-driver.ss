@@ -309,8 +309,18 @@
       (set! *opt-level* (cadr (cdar fs)))
       (loop (cdr fs) acc))
      ((and (pair? (cdar fs)) (eq? (car (cdar fs)) 'import))
+      ;; The clause itself survives as (%imports spec ...), placed
+      ;; after the libraries it pulled in.  Inlining the libraries is
+      ;; what the flat-splice model needs; knowing WHICH NAMES the
+      ;; program asked for is what the import rule needs, and that
+      ;; question cannot be answered from the spliced result -- a
+      ;; library's definitions look the same however they got there.
       (loop (cdr fs)
-            (append (reverse (load-specs (cdr (cdar fs)) dirs)) acc)))
+            (cons (cons (string-append file ":"
+                                       (number->string (caar fs)))
+                        (cons '%imports (cdr (cdar fs))))
+                  (append (reverse (load-specs (cdr (cdar fs)) dirs))
+                          acc))))
      (else
       (loop (cdr fs)
             (cons (cons (string-append file ":"
