@@ -3494,18 +3494,24 @@
 ;;
 ;; $escape is here for the same reason and not a different one:
 ;; compile-callcc builds its call at EMISSION, after this pass has
-;; run, so no call to $escape is ever visible to the demotion.  What
-;; kept that safe was incidental: call/cc's expansion uses $escape in
-;; value position, that use marks it escaped, the pass clears its
-;; vector, and with no entry compile-direct emits eqref operands.  A
-;; lexical binding of the name suppresses that marking (measured; the
-;; step from the binder to the missing mark is not), and the optimistic
-;; seed is published instead.  Listing $escape here makes the emitted
-;; operands independent of whether an entry happens to exist, which is
-;; the rule stated above.  The seed being published for a function
-;; with no visible call is a fault of its own, pinned by
-;; test/defect-spec-candidate-by-name.mjs on a function that reaches
-;; the pass by a different route (kept alive, not kept unmarked).
+;; run, so no call to $escape is ever visible here.  What kept that
+;; safe was the rule below for candidates nothing calls -- with no
+;; visible call $escape was marked escaped, its vector cleared, and
+;; with no entry compile-direct emitted eqref operands.
+;;
+;; A lexical binding of the name defeats that rule.  The walk feeding
+;; this pass carries no bound set and cannot tell a binding form from
+;; an application, so the pair in (let (($escape 5)) ...) is recorded
+;; as a call to $escape.  The name then counts as called, the rule
+;; does not fire, and the optimistic seed is published -- parameter 1
+;; demoted by the type of the binder's initialiser, which is the fake
+;; call's only argument, and the rest left optimistic because no call
+;; ever supplies them.
+;;
+;; Listing $escape here makes the emitted operands independent of all
+;; of that.  The general fault -- a binding pair read as a call, and a
+;; seed published for a function nothing calls -- is pinned by
+;; test/defect-spec-candidate-by-name.mjs.
 (define $spec-denylist
   '($add2 $sub2 $mul2 $quot2 $rem2 $eq2 $lt2 $escape))
 
