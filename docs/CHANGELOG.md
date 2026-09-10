@@ -114,6 +114,20 @@ than re-verified item by item for this document.
   escape helper) stays listed out of specialisation by name, and dead
   code elimination still keeps such a function alive, which is its own
   open entry below.
+- Compiler, every primitive: the prelude, an imported library and the
+  compiler's own expansions call primitives by their bare names, and a
+  program's top-level definition of `null?`, `cdr`, `eq?`, `+` or `<`
+  used to change what they did -- three of those broke the prelude by
+  themselves. Every name in the primitive list now resolves to the
+  primitive where the prelude, a library or the compiler wrote it,
+  including the heads the compiler writes into `case` (which now
+  compares with `eqv?`, so a flonum or bignum datum matches),
+  quasiquote, internal definitions, boxed variables and the wrapper
+  built when a primitive is taken as a value. One row per primitive
+  redefines it and checks the prelude did not notice. A definition
+  inside a function body shadowing a primitive, which used to end in
+  a trap, is fixed by the same change. What remains is the value-form
+  top-level definition, under KNOWN OPEN.
 - Compiler, dead-code elimination: a `let` binding, a loop parameter
   or a `lambda` formal spelled like a top-level function no longer
   keeps that function in the module when nothing calls it. Binder
@@ -194,7 +208,7 @@ than re-verified item by item for this document.
 
 ### KNOWN OPEN
 
-Eight defects are known, reproduced, and NOT fixed in this release. They
+Five defects are known, reproduced, and NOT fixed in this release. They
 are listed here because an unfixed defect that scrolls off a list is one
 nobody re-reads at the next decision.
 
@@ -204,71 +218,14 @@ nobody re-reads at the next decision.
   the name is compiled as the builtin however the program bound it, and
   there is no diagnostic. The same definition written as
   `(define (car x) 99)` shadows correctly, so the two spellings R6RS
-  treats as one differ here. This is what remains of the capture
-  defect fixed above; it is the program's OWN calls that are affected
-  now, not the prelude's or an imported library's. Present in 1.7.0.
-  Held red on all three hosts by `defect-c02-shadow-primitive`.
-  Alongside it, and from the same flat top level: the prelude still
-  calls `null?` by a bare symbol, so a program that defines `null?`
-  at the top level changes what `length` answers -- `0` for a
-  three-element list, or a trap, depending on what the definition
-  returns (`defect-prelude-capture-null-observable`,
-  `defect-prelude-capture-null`). The fix above covers `car` and the
-  names the compiler synthesises; `null?` is not in that set yet, and
-  it reaches the program's definition by a third road as well: a
-  primitive taken as a value gets a wrapper whose argument walk is
-  written with bare `null?`, so `((lambda (f) (f 1 2)) +)` under a
-  top-level `null?` ends in an illegal cast
-  (`defect-prim-value-wrapper-calls-user-null`, and `-cdr` for the
-  same walk's `cdr`). Names the compiler writes into its own
-  expansions are captured the same way: `case` dispatches through
-  `eq?`, quasiquote builds with `cons`, internal definitions allocate
-  with `cons` and fill with `set-car!` -- so a program that defines any
-  of those at the top level changes every `case`, every quasiquote and
-  every body with internal definitions in the program
-  (`defect-c02-synth-case-eq`, `defect-c02-synth-quasiquote-cons`,
-  `defect-c02-synth-internal-define-cons`, `-set-car`). All present in
-  1.7.0; the fixed names are `car` everywhere and quasiquote's `append`.
-  **Workaround**: use the `(define (name …) …)` spelling, and do not
-  define `null?` at the top level.
-- **A definition inside a function body does not shadow a primitive
-  either, and it ends in a trap.** `(define (go p) (define (car x)
-  'inner) (car p))` compiles the inner call as the builtin `car`, and
-  since the builtin's argument arrives with the wrong representation
-  the run ends in an illegal cast rather than a wrong value. The same
-  shadow through `let` works. Present in 1.7.0. Held red by
-  `defect-internal-define-shadows-primitive`, with a green `let` twin
-  beside it so the two spellings are checked against each other.
-- **A library that excludes a name from its `(rnrs)` import and
-  defines its own is refused as a duplicate top-level definition.**
-  `(import (except (rnrs) append))` followed by `(define (append a b)
-  …)` inside the library is a legal R6RS program; here the library's
-  definitions are spliced to the top level beside the prelude's, and an
-  import list constrains nothing, so the compiler reports the name
-  defined twice. Present in 1.7.0. Held red by
-  `defect-library-redefines-imported-name`, which reports once because
-  it is a compile error rather than a wrong value.
-- **`case` compares with `eq?`, so a flonum or bignum datum never
-  matches.** R6RS specifies `eqv?`: `(case 1.5 ((1.5) 'a) (else 'b))`
-  answers `b` here and `a` on the host, and a datum outside the fixnum
-  range behaves the same way. Symbols, characters and fixnums match.
-  Present in 1.7.0. Held red by `defect-case-uses-eq-not-eqv` and
-  `-bignum`. **Workaround**: `cond` with `eqv?` for such data.
-- **A vector quasiquote template is not processed.** `` `#(1 ,x) ``
-  comes out holding the literal `(unquote x)` where R6RS says it is a
-  vector whose second element is the value of `x`. Present in 1.7.0.
-  Held red by `defect-quasiquote-vector-template`. **Workaround**:
-  `(list->vector `(1 ,x))`.
-- **A local that shadows a float parameter is taken for the parameter,
-  and its value lands in the float slot.** In `(define (zq a b) (let
-  ((a 5)) (if (fl<? b 0.0) (zq a (fl+ b 1.0)) a)))` the recursive call
-  passes the `let`'s exact 5, but the specialiser reads that `a` as the
-  parameter it shadows, keeps the parameter as a float, and the call
-  traps with an illegal cast where the same program answers 5 on the
-  host. Passing the value through a local of any other name is fine.
-  Present in 1.7.0. Held red by
-  `defect-spec-shadowed-parameter-demotes-nothing`, with the renamed
-  twin green beside it.
+  treats as one differ here. It is the program's OWN calls that are
+  affected: the prelude's, a library's and the compiler's own uses of a
+  primitive's name are no longer reachable from a program's definition
+  (see Fixed). Whether a program may redefine an imported name at all
+  is open -- R6RS says it may not without `(except (rnrs) car)` -- and
+  the decision is recorded as pending rather than made here. Present
+  in 1.7.0. Held red by `defect-c02-shadow-primitive`.
+  **Workaround**: use the `(define (name ...) ...)` spelling.
 - **A morph target's POSITION accessor can declare a `max` below a
   value the file stores.** The bounds are computed over the values as
   given, and the file holds them as `f32`, so a value that rounds
