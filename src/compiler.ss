@@ -1924,6 +1924,7 @@
 ;; same moment because the map is not built until expansion is done.
 (define *program-form?* #f)
 (define *program-defines* '())
+(define *program-forms* '())
 
 (define (record-program-define! name kind loc)
   (when *program-form?*
@@ -1994,6 +1995,55 @@
                     lib ") " nm ")) to define it:")
                    (caddr d))))))
    (reverse *program-defines*)))
+
+;; Assigning to an imported variable is refused for the same reason
+;; defining one is: the program does not own that binding.  A LOCAL of
+;; the same spelling is untouched, which is why this walk carries the
+;; bound names rather than matching on the spelling alone.
+(define (refuse-imported-assignment! form bound)
+  (cond
+   ((not (pair? form)) #f)
+   ((not (symbol? (car form)))
+    (walk-forms-for-set! form bound))
+   ((eq? (resolve-tag (car form)) 'quote) #f)
+   ((and (eq? (resolve-tag (car form)) 'set!)
+         (pair? (cdr form)) (symbol? (cadr form)))
+    (let ((n (unmark (cadr form))))
+      (unless (memq (cadr form) bound)
+        (let ((b (assq n *import-map*)))
+          (when b
+            (let ((lib (car (cdr b))) (nm (symbol->string n)))
+              (errorf 'goeteia
+                      (string-append
+                       nm " is imported by (" lib "); write (import (except ("
+                       lib ") " nm ")) to assign it:")
+                      n)))))
+      (when (pair? (cddr form))
+        (refuse-imported-assignment! (caddr form) bound))))
+   ((and (eq? (resolve-tag (car form)) 'lambda) (pair? (cdr form)))
+    (let ((inner (append (binder-names (cadr form)) bound)))
+      (walk-forms-for-set! (cddr form) inner)))
+   ((and (eq? (resolve-tag (car form)) 'let) (pair? (cdr form)))
+    (let* ((named (symbol? (cadr form)))
+           (bs (if named (caddr form) (cadr form)))
+           (body (if named (cdddr form) (cddr form)))
+           (names (let f ((l bs))
+                    (if (pair? l)
+                        (if (pair? (car l)) (cons (car (car l)) (f (cdr l))) (f (cdr l)))
+                        '()))))
+      (walk-forms-for-set! (let-binding-inits bs) bound)
+      (walk-forms-for-set! body (append names bound))))
+   (else (walk-forms-for-set! (cdr form) bound))))
+
+(define (walk-forms-for-set! fs bound)
+  (cond ((pair? fs)
+         (refuse-imported-assignment! (car fs) bound)
+         (walk-forms-for-set! (cdr fs) bound))
+        (else #f)))
+
+(define (refuse-imported-assignments!)
+  (for-each (lambda (f) (refuse-imported-assignment! f '()))
+            (reverse *program-forms*)))
 
 (define (merge-import-bindings specs)
   (fold-left
@@ -2555,6 +2605,11 @@
            (rop (head-op h)))
       (or (and rop (memq rop fl-direct-ops)
                (not (assq h locals))
+               ;; changed for consistency with the other six guards.
+               ;; HYPOTHESIS, not a reading: no cell can observe this one,
+               ;; because a wrong "yes" here costs an f64 slot rather than a
+               ;; value -- compile-f64 still declines to emit the unboxing.
+               ;; Eight fixtures failed to witness it.
                (not (top-level-defined? h))
                (let ((a (assq rop prim-arity)))
                  (and a (= (length (cdr e)) (cdr a)))))
@@ -3761,6 +3816,11 @@
     (let* ((h (car e))
            (rop (head-op h)))
       (or (and rop (memq rop fl-direct-ops)
+               ;; changed for consistency with the other six guards.
+               ;; HYPOTHESIS, not a reading: no cell can observe this one,
+               ;; because a wrong "yes" here costs an f64 slot rather than a
+               ;; value -- compile-f64 still declines to emit the unboxing.
+               ;; Eight fixtures failed to witness it.
                (not (top-level-defined? h))
                (let ((a (assq rop prim-arity)))
                  (and a (= (length (cdr e)) (cdr a)))))
@@ -4251,6 +4311,10 @@
                  (eq? (unmark (car nf)) 'define))
         (record-program-define! (if (pair? (cadr nf)) (car (cadr nf)) (cadr nf))
                                 'define loc))
+      ;; the whole form, not just its name: an assignment to an
+      ;; imported variable can sit anywhere inside it
+      (when *program-form?*
+        (set! *program-forms* (cons nf *program-forms*)))
       (cons nf acc)))))
 (define (normalize-define f)
   ;; top-level forms built by macros have marked heads
@@ -5184,6 +5248,7 @@
   (set! *import-map* '())
   (set! *program-form?* #f)
   (set! *program-defines* '())
+  (set! *program-forms* '())
   ;; library privates get their namespace before anything reads the
   ;; forms -- collect-macros! descends into libraries and would
   ;; otherwise register a library's macros under their bare names
@@ -5227,6 +5292,7 @@
          (import-map (begin (set! *import-map*
                                   (merge-import-bindings *import-specs*))
                             (refuse-imported-definitions!)
+                            (refuse-imported-assignments!)
                             *import-map*))
          ;; top-level (export name ...): keep through DCE, expose as
          ;; wasm exports so the host can call them
