@@ -214,7 +214,12 @@ nobody re-reads at the next decision.
   three-element list, or a trap, depending on what the definition
   returns (`defect-prelude-capture-null-observable`,
   `defect-prelude-capture-null`). The fix above covers `car` and the
-  names the compiler synthesises; `null?` is not in that set yet.
+  names the compiler synthesises; `null?` is not in that set yet, and
+  it reaches the program's definition by a third road as well: a
+  primitive taken as a value gets a wrapper whose argument walk is
+  written with bare `null?`, so `((lambda (f) (f 1 2)) +)` under a
+  top-level `null?` ends in an illegal cast
+  (`defect-prim-value-wrapper-calls-user-null`).
   **Workaround**: use the `(define (name …) …)` spelling, and do not
   define `null?` at the top level.
 - **A definition inside a function body does not shadow a primitive
