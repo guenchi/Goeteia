@@ -69,7 +69,7 @@
 ;; same marks and must meet.  A top-level definition the USER wrote
 ;; shadowing a primitive is a separate, still-open finding with its own
 ;; red cell, and neither result implies the other.
-(import (rnrs))
+(import (except (rnrs) ))
 (define-syntax m
   (syntax-rules ()
     ((_)

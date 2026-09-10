@@ -29,7 +29,7 @@
 ;; The other two spellings are test/defect-prelude-capture-car.ss and
 ;; test/defect-prelude-capture-null.ss.  The pair that a fix must NOT
 ;; break is test/prelude-capture-value-form.ss.
-(import (rnrs) (gam inventory))
+(import (except (rnrs) car) (gam inventory))
 (define (car x) 99)
 (define bag (make-inventory))
 (inventory-add! bag 'gem 3)
