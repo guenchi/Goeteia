@@ -219,4 +219,35 @@
                        flat 0.5 0.25 30)
       #f)
 
+;; THE STEP IS THE DANGEROUS NUMBER, and it is the one thing here that
+;; the library's own prose names as unobservable:
+;;
+;;     a feature THINNER THAN THE STEP can sit entirely between two
+;;     samples ... nothing here can notice it
+;;
+;; That is true of the library and false of a cell, because a cell
+;; knows where the ridge is.  Doubling the march step survives every
+;; row above -- on flat or linear ground a coarser march still brackets
+;; the crossing and the bisection converges to the same place, so a
+;; wrong step is invisible in the crossings that ARE found and shows
+;; only in the features that are stepped over.
+;;
+;; The ridge below sits under the second sample and not under its
+;; neighbours: a march of one step lands on it, a march of two strides
+;; past, runs out the range, and answers #f with confidence.
+(define (ridge x z)
+  (if (and (fl<? 0.18 x) (fl<? x 0.22)) 2.0 0.0))
+
+(let ((hit (ray-heightfield (v3 0.0 1.0 0.0) (v3 1.0 -0.01 0.0)
+                            ridge 5.0 0.1 20)))
+  (want 'the-ridge-under-the-second-sample-is-found
+        (if (and hit (fl<? 0.1 hit) (fl<? hit 0.25)) #t #f) #t))
+
+;; Its control: the same ray over ground with no ridge must find
+;; nothing within the range.  Without it, a row that says "an answer
+;; came back" passes for a march that answers everywhere.
+(want 'CONTROL-the-same-ray-over-flat-ground-finds-nothing
+      (ray-heightfield (v3 0.0 1.0 0.0) (v3 1.0 -0.01 0.0) flat 5.0 0.1 20)
+      #f)
+
 (display (if (null? fails) #t (reverse fails)))
