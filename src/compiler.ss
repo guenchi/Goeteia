@@ -3494,10 +3494,16 @@
 ;;
 ;; $escape is here for the same reason and not a different one:
 ;; compile-callcc builds its call at EMISSION, after this pass has
-;; run, so the demotion never sees it and the optimistic all-f64 seed
-;; survives into a call whose operands are eqref.  It belonged on this
-;; list before anything in C02 -- a lexical binding of the name merely
-;; made the path reachable, which is how the omission surfaced.
+;; run, so no call to $escape is ever visible to the demotion.  What
+;; kept that safe was incidental: a function nothing visibly calls is
+;; normally pruned before this pass runs, so it had no entry at all and
+;; compile-direct emitted eqref operands.  A lexical binding of the
+;; name is enough to change that -- dead-code elimination counts the
+;; binder's name as a reference and keeps the definition, and this
+;; pass then publishes the optimistic seed with nothing to demote it.
+;; Listing $escape here makes the emitted operands independent of
+;; whether an entry happens to exist, which is the rule stated above.
+;; The general fault is pinned by test/defect-spec-candidate-by-name.mjs.
 (define $spec-denylist
   '($add2 $sub2 $mul2 $quot2 $rem2 $eq2 $lt2 $escape))
 
