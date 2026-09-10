@@ -16,10 +16,32 @@
 ;; watches from, and an eye that follows rather than snaps.
 ;;
 ;;   (define c (make-orbit-camera))
-;;   (camera-target! c (v3 0.0 1.55 0.0))     ; the eye height is the
-;;   (camera-orbit! c dyaw dpitch 0.0)        ;   CALLER's, not ours
+;;   ;; the eye height in the anchor is the CALLER's, not ours
+;;   (camera-target! c (v3 0.0 1.55 0.0))
+;;   (camera-orbit! c dyaw dpitch 0.0)
 ;;   (camera-follow! c dt)
 ;;   (fx-uniform! prog 'u_view (camera-view c))
+;;
+;; THERE ARE TWO LOOK POINTS AND THEY ARE NOT INTERCHANGEABLE.
+;; camera-target! sets the GOAL -- where the camera should be looking.
+;; camera-aim reads it back unchanged.  camera-target answers the
+;; SMOOTHED point, which follows the goal at the same rate the eye
+;; follows its own, and which is what camera-view looks at.
+;;
+;; The smoothed one is for what is SEEN: the view matrix, and anything
+;; composed around the gaze.  The raw one is for what is COMPUTED:
+;; which detail level to load something at, what to stream in, where a
+;; thing is for the purpose of reacting to it.  The smoothed point sits
+;; behind the anchor by a distance that grows with speed, so a world
+;; keyed to it loads late exactly when the anchor is moving fast -- the
+;; moment it needed to be early -- and anything that moves aside for
+;; the camera moves aside in the wrong place.  Neither mistake raises.
+;;
+;; Both being damped at one rate is what keeps the heading steady.  The
+;; two goals differ by the orbit offset, damping is affine, so the pair
+;; stays exactly that offset apart once it is -- whatever the frame
+;; times are.  camera-place! exists to establish that at a cut, and
+;; camera-follow! does it on the first step.
 ;;
 ;; What this library does NOT decide, on purpose:
 ;;
@@ -39,8 +61,8 @@
   (export make-orbit-camera orbit-camera?
           camera-yaw camera-pitch camera-distance
           camera-limits! camera-orbit! camera-target! camera-follow!
-          camera-floor! camera-shake!
-          camera-eye camera-target camera-view)
+          camera-floor! camera-shake! camera-place!
+          camera-eye camera-target camera-aim camera-view)
   (import (rnrs) (gfx mat))
 
   (define ($cam-fl v) (if (flonum? v) v (exact->inexact v)))
@@ -53,6 +75,7 @@
             (mutable pitch-hi $cam-phi $cam-phi!)
             (mutable dist-lo $cam-dlo $cam-dlo!)
             (mutable dist-hi $cam-dhi $cam-dhi!)
+            (mutable aim $cam-aim $cam-aim!)
             (mutable target $cam-target $cam-target!)
             (mutable eye $cam-eye $cam-eye!)
             (mutable placed $cam-placed $cam-placed!)  ; has the eye ever been put?
@@ -67,7 +90,7 @@
     ($make-camera 0.0 0.35 6.0
                   0.08 1.12          ; pitch, radians: never underneath,
                   1.0 30.0           ; never straight down
-                  (v3 0.0 0.0 0.0) (v3 0.0 0.0 0.0) #f
+                  (v3 0.0 0.0 0.0) (v3 0.0 0.0 0.0) (v3 0.0 0.0 0.0) #f
                   #f 0.0
                   (v3 0.0 0.0 0.0)
                   12.0 8.0 1.0))
@@ -75,7 +98,11 @@
   (define (camera-yaw c) ($cam-yaw c))
   (define (camera-pitch c) ($cam-pitch c))
   (define (camera-distance c) ($cam-dist c))
+  ;; Two look points, and which one a caller wants depends on what it
+  ;; is for.  See the note above camera-target! -- the distinction is
+  ;; the point of this pair and getting it wrong is silent.
   (define (camera-target c) ($cam-target c))
+  (define (camera-aim c) ($cam-aim c))
 
   ;; A reversed pair is refused by name rather than quietly swapped: a
   ;; caller that passed them the wrong way round has a bug in the code
@@ -111,7 +138,30 @@
     ($cam-dist! c (fl-clamp (fl+ ($cam-dist c) ($cam-fl ddist))
                             ($cam-dlo c) ($cam-dhi c))))
 
-  (define (camera-target! c v) ($cam-target! c v))
+  ;; WHAT THIS SETS IS THE GOAL, NOT THE CURRENT LOOK POINT.  The look
+  ;; point follows it the way the eye follows: a caller writing this
+  ;; every simulation step gets a look point that moves smoothly between
+  ;; those steps instead of stepping with them.
+  ;;
+  ;; That is the whole reason the two are separate.  A simulation writes
+  ;; a new anchor at its own fixed rate while the display draws faster;
+  ;; if the look point were this value outright, the heading -- the
+  ;; difference between the eye, which IS smoothed, and the look point,
+  ;; which would not be -- would jump on the frames carrying a
+  ;; simulation step and sit still on the others.  Nothing about that
+  ;; reads as a bug at the call site: every value written is correct,
+  ;; and the picture still wobbles.
+  ;;
+  ;; ANYTHING THAT COMPUTES RATHER THAN LOOKS WANTS camera-aim.  The
+  ;; smoothed point is behind the thing it is following, by design and
+  ;; by a distance that grows with speed.  Use it for what the viewer
+  ;; sees -- the view matrix, a sky or reflection composed around the
+  ;; gaze.  Do not use it to decide what to load, what detail to load it
+  ;; at, or where something is for the purpose of interacting with it:
+  ;; streaming keyed to a point that lags arrives late exactly when the
+  ;; anchor is moving fast, which is when it had to be early, and a
+  ;; world that reacts to the lagged point reacts in the wrong place.
+  (define (camera-target! c v) ($cam-aim! c v))
 
   (define (camera-floor! c floor-fn clearance)
     ($cam-floor! c floor-fn)
@@ -130,10 +180,24 @@
            (nz (fl-clamp (fl+ (v3-z s) (fl* ($cam-fl dz) k)) (fl- 0.0 m) m)))
       ($cam-shake! c (v3 nx ny nz))))
 
-  ;; where the eye WOULD sit, ignoring the follow: on a sphere of the
-  ;; current radius around the target, at the current yaw and pitch
+  ;; Where the eye WOULD sit, ignoring the follow: on a sphere of the
+  ;; current radius around the AIM -- not around the smoothed look
+  ;; point -- at the current yaw and pitch.
+  ;;
+  ;; Which of the two it orbits is not a detail.  Both the eye and the
+  ;; look point are damped, at one rate, and damping is affine: if two
+  ;; quantities start a fixed distance apart and are damped toward goals
+  ;; that same distance apart, they stay exactly that distance apart,
+  ;; whatever the step lengths are and however the goal moves.  Orbiting
+  ;; the aim is what makes the eye's goal and the look point's goal
+  ;; differ by exactly the orbit offset, so the rig stays rigid and the
+  ;; heading is constant.  Orbiting the smoothed point instead feeds the
+  ;; look point's own lag back into the eye's goal, and then the
+  ;; separation depends on how long each step was -- which is to say the
+  ;; heading wobbles with the frame times, which is the defect this
+  ;; whole arrangement exists to remove.
   (define ($cam-desired c)
-    (let* ((t ($cam-target c))
+    (let* ((t ($cam-aim c))
            (d ($cam-dist c))
            (cp (flcos ($cam-pitch c)))
            (sp (flsin ($cam-pitch c)))
@@ -155,13 +219,23 @@
   (define (camera-follow! c dt)
     (let ((dt ($cam-fl dt))
           (want ($cam-desired c)))
-      ;; the first step places the eye outright: damping from an
-      ;; arbitrary origin would fly the camera in from wherever the
-      ;; record happened to be initialised
+      ;; The first step places both outright: damping from an arbitrary
+      ;; origin would fly the camera in from wherever the record
+      ;; happened to be initialised.  It is the same act as
+      ;; camera-place!, which is why that one is written in terms of
+      ;; this flag rather than repeating the two assignments.
       (if (not ($cam-placed c))
-          (begin ($cam-eye! c want) ($cam-placed! c #t))
+          (camera-place! c)
           (let ((e ($cam-eye c))
+                (t ($cam-target c))
+                (a ($cam-aim c))
                 (rate ($cam-follow-rate c)))
+            ;; One rate for both, and the look point is moved first so
+            ;; that a caller reading camera-target after this call sees
+            ;; the point this frame was drawn with.
+            ($cam-target! c (v3 (fl-damp (v3-x t) (v3-x a) rate dt)
+                                (fl-damp (v3-y t) (v3-y a) rate dt)
+                                (fl-damp (v3-z t) (v3-z a) rate dt)))
             ($cam-eye! c (v3 (fl-damp (v3-x e) (v3-x want) rate dt)
                              (fl-damp (v3-y e) (v3-y want) rate dt)
                              (fl-damp (v3-z e) (v3-z want) rate dt)))))
@@ -176,6 +250,27 @@
         ($cam-shake! c (v3 (fl-damp (v3-x s) 0.0 rate dt)
                            (fl-damp (v3-y s) 0.0 rate dt)
                            (fl-damp (v3-z s) 0.0 rate dt))))))
+
+  ;; A cut: put the eye and the look point where they belong for the
+  ;; aim as it stands, with no travel in between.  This is what the
+  ;; first camera-follow! does, and it is exported because the same
+  ;; thing has to be available afterwards -- a teleport, a change of
+  ;; scene, a jump between fixed viewpoints.  Without it the only way
+  ;; to move a camera a long way is to let it fly there, across
+  ;; whatever lies between.
+  ;;
+  ;; It places BOTH.  Placing the eye alone would leave the look point
+  ;; travelling to the new anchor from the old one, which is the same
+  ;; wrong picture as before with the two halves swapped.
+  ;;
+  ;; It does NOT clear the shake.  A cut does not un-hit the camera, and
+  ;; the shake is a displacement with its own decay that the caller
+  ;; asked for; silently dropping it here would make one of the two
+  ;; ways of placing a camera quietly different from the other.
+  (define (camera-place! c)
+    ($cam-target! c ($cam-aim c))
+    ($cam-eye! c ($cam-desired c))
+    ($cam-placed! c #t))
 
   ;; the eye a renderer should use: where the follow put it, displaced
   ;; by whatever shake is still ringing

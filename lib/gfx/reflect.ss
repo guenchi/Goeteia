@@ -37,6 +37,30 @@
 ;;     still fetches the edge texel, so a footprint that lands off the
 ;;     target gets the edge strip it will actually read.
 ;;
+;; WHERE reflect-vp COMES FROM, since this file asks for one and never
+;; says how to get it: it is the ordinary view-projection with the
+;; mirror composed into it,
+;;
+;;   (m4-mul proj (m4-mul view (reflect-plane-matrix plane-y)))
+;;
+;; and reflect-plane-matrix, just above, is that mirror.  Two things
+;; come with it and neither of them raises.
+;;
+;; The reflection has determinant -1, so it REVERSES TRIANGLE WINDING.
+;; The reflection pass has to flip which face it culls, or every model
+;; in the reflection is inside out -- and inside out, on water, reads
+;; as an odd highlight rather than as a fault.
+;;
+;; And do not rebuild the mirrored view out of m4-look-at at a mirrored
+;; eye instead.  m4-look-at builds its basis with cross products, a
+;; cross product is not equivariant under a transform of determinant
+;; -1, and the matrix that comes out differs from the composition above
+;; by exactly a negated camera x axis: measured, the two agree to zero
+;; once that one axis is flipped back.  A negated x axis is a
+;; left-right mirrored reflection.  It is self-consistent, it is
+;; plausible on moving water, and it is wrong -- which is the failure
+;; this file opened by saying it exists to avoid.
+;;
 ;; What this library does NOT cover, and the caller must: the polygons
 ;; passed in have to enclose the maximum displacement the caller's
 ;; shader applies.  A pixel pad cannot recover geometry a wave pushes

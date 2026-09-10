@@ -185,6 +185,10 @@ Drawing, and the geometry and assets behind it.
 
 An orbit camera: a point it looks at, an angle and distance it watches from, and an eye that follows rather than snaps. It decides none of the things that belong to the caller -- mouse sensitivity (pass changes already in radians and world units), how high above a character the target sits (pass a target that includes it), or whether the world has ground at all.
 
+**There are two look points and they are not interchangeable.** `camera-target!` sets the GOAL; `camera-aim` reads that back unchanged; `camera-target` answers the SMOOTHED point that follows it, and that is what `camera-view` looks at. The smoothed point is for what is **seen** -- the view matrix, and anything composed around the gaze. The raw one is for what is **computed**: what to stream in, what detail level to load it at, and where a thing is for the purpose of reacting to it. The smoothed point sits behind the anchor by a distance that grows with speed, so a world keyed to it loads late exactly when the anchor is moving fast -- the moment it needed to be early -- and anything that moves aside for the camera moves aside in the wrong place. Neither mistake raises, and neither looks like a bug at the call site.
+
+Both points are damped at one rate, and that is what holds the heading steady: their two goals differ by the orbit offset, damping is affine, so once the pair is that offset apart it stays exactly that far apart whatever the frame times are. `camera-follow!` establishes it on the first step and `camera-place!` re-establishes it at a cut.
+
 - `make-orbit-camera` — a camera with gentle defaults: pitch limited to 0.08..1.12 radians so it never goes under the floor or straight down, distance 1..30, and the eye placed outright on the first `camera-follow!` rather than flown in from the origin
 - `orbit-camera?` — whether a value is an orbit camera
 - `camera-yaw` — the accumulated heading in radians. NOT folded into one turn: folding would erase the fact that the player spun three times, and there is no seam to fold for, because the following happens in position space rather than angle space
@@ -192,12 +196,14 @@ An orbit camera: a point it looks at, an angle and distance it watches from, and
 - `camera-distance` — how far the eye sits from the target, always within the limits
 - `camera-limits!` — set the pitch and distance bounds, and bring the current values inside them at once. A reversed pair is refused by name rather than silently swapped, because a caller that passed them the wrong way round has a bug in whatever computed them
 - `camera-orbit!` — add to yaw, pitch and distance. The changes are ALREADY in radians and world units: a pixels-per-radian factor belongs to the input layer, and burning one in here would make every caller with a different device divide it back out. Pitch and distance clamp; yaw does not
-- `camera-target!` — the point the camera looks at, as a v3. It is the caller's job to include a character's eye height in it
+- `camera-target!` — the GOAL the camera should be looking at, as a v3; the look point follows it rather than becoming it. It is the caller's job to include a character's eye height in it. A caller writing this once per simulation step gets a look point that moves smoothly between those steps instead of stepping with them -- which is the whole reason the goal and the look point are separate values
 - `camera-follow!` — advance the follow by `dt` seconds. The damping is per unit time, so sixty steps of 1/60 land where six steps of 1/6 land -- a property a test can check, unlike "looks smooth". The ground lift happens AFTER the damping: lifting the damping's target instead would let the eye dip into a hillside at a terrain edge and climb back out every time
 - `camera-floor!` — give a `(x z) -> y` ground function and a clearance to stay above it, or `#f` for a world with no ground
 - `camera-shake!` — add an impulse, scaled by `power`, that decays back to zero. The clamp is on the accumulated result rather than on each addend, so a stack of hits in one frame cannot throw the eye across the level
 - `camera-eye` — where a renderer should put the eye: the followed position displaced by whatever shake is still ringing
-- `camera-target` — the point being looked at, as last set
+- `camera-target` — the SMOOTHED point being looked at, which is what `camera-view` uses. It lags the goal by a distance that grows with speed, so it answers "where is the camera looking" and never "where is the thing it is following"
+- `camera-aim` — the goal exactly as `camera-target!` last set it, with no smoothing. This is the one for anything that computes rather than looks
+- `camera-place!` — a cut: put the look point on the goal and the eye at its orbit position around it, with no travel in between. This is what the first `camera-follow!` does, exported because a teleport, a change of scene or a jump between fixed viewpoints needs the same thing afterwards. It places BOTH, since placing the eye alone would leave the look point flying in from the old anchor. It does NOT clear the shake: a cut does not un-hit the camera
 - `camera-view` — the view matrix, built from `camera-eye` and `camera-target` through `m4-look-at`, so there is one definition of what this camera sees rather than two that can drift
 
 ## `(gfx collide)`
@@ -838,7 +844,9 @@ the far plane never does.
 
 ## `(gfx reflect)`
 
-- `reflect-plane-matrix` — a mirror matrix about the horizontal plane `y = plane-y`, for building the mirrored camera
+This library answers how much of the target to draw; it does not build the mirrored view, because two of its existing exports already do. The `reflect-vp` that `reflect-range` takes is `(m4-mul proj (m4-mul view (reflect-plane-matrix plane-y)))` -- the ordinary view-projection with the mirror composed into it. Two things come with it, and neither raises if you miss them. The reflection matrix has determinant -1, so it **reverses triangle winding**: the reflection pass has to flip which face is culled, or models turn inside out. And do not rebuild the mirrored view from `m4-look-at` at a mirrored eye instead -- `m4-look-at` builds its basis with cross products, cross products are not equivariant under a reflection, and the result differs from the matrix route by exactly a negated camera x axis. That is a left-right mirrored reflection: self-consistent, plausible on moving water, and wrong.
+
+- `reflect-plane-matrix` — a mirror matrix about the horizontal plane `y = plane-y`; composed into a view-projection as above, this IS the mirrored camera
 - `reflect-range` — how much of a reflection target needs drawing: `#f` to skip the pass, `#t` for all of it, or `#(x y w h)` in pixels from the LOWER LEFT; anything it cannot bound conservatively answers `#t`
 - `m4-crop-rect` — the projection restricted to a pixel rectangle, so that rectangle becomes the whole of clip space -- a culling frustum for the reflection pass
 
