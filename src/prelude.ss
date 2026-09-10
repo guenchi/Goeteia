@@ -1491,8 +1491,21 @@
 (define (void) (begin))
 
 (define (> a b) (< b a))
-(define (<= a b) (if (< b a) #f #t))
-(define (>= a b) (if (< a b) #f #t))
+;; <= and >= are built from < and =, NOT as the negation of the
+;; opposite strict comparison.  (not (> a b)) equals (<= a b) for every
+;; pair of real numbers and differs on exactly one input: a NaN, which
+;; IEEE 754 says is unordered with respect to every value including
+;; itself, so all four comparisons are false.  Written as negations,
+;; (<= nan 0) and (>= nan nan) answered #t -- the second of those is
+;; the claim that a NaN is ordered with respect to itself, which is
+;; enough to let an ordered insert give it a position and make every
+;; later comparison against it a lie, quietly and permanently.
+;;
+;; It also decides whether the guards spelled (and (real? x) (not (< x 0)))
+;; keep NaN out: they do, and they do it through <, so they were never
+;; the thing to fix.
+(define (<= a b) (if (< a b) #t (= a b)))
+(define (>= a b) (if (< b a) #t (= a b)))
 ;; R6RS max and min take one argument or more, not exactly two.  They
 ;; were binary, so `(max 1 5 2)' was a compile error and `(apply max
 ;; (list 3 9 4 100))' answered 9 -- the extra arguments went by without
