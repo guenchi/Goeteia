@@ -419,6 +419,7 @@ for m in test/macro-toplevel-hygiene.mjs \
          test/defect-spec-prelude-binder-collides-with-user-name.mjs \
          test/spec-scan-binding-forms.mjs \
          test/dce-binding-forms.mjs \
+         test/prelude-survives-primitive-redefinition.mjs \
          test/defect-b01-build-ignores-library-deps.mjs; do
     if $CAP ${NODE-node} --test "$m" >/dev/null 2>&1; then
         echo "ok   $m"
