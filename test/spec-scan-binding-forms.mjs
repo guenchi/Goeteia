@@ -23,6 +23,13 @@
 // bound rows are red before the fix; the traversal and escape rows are
 // the green twins that a fix which skips inits, bodies or clauses, or
 // loses the escape marking, would turn red.
+//
+// Two macro rows were added against the first fix (compiler.ss
+// 60ccdeaf), which compared bound names unmarked: on bff01a3 the hole
+// row reads (#f #t) and the own-use row reads no entry (the template's
+// use escaped the program's function -- a by-symbol confusion older
+// than the fix); on 60ccdeaf both read (#t #t), the hole's call having
+// been taken for a call to the local.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
@@ -74,6 +81,16 @@ const rows = [
     // inside the binder's scope the name is the local, not the candidate
     ['value use of the bound name is not an escape', [REC, CALL, '(display (let ((zq 1)) zq))'],                      '#t #t'],
     ['call of the bound name is not a call',         [REC, CALL, '(display (let ((zq (lambda (x y) x))) (zq 1 2)))'], '#t #t'],
+    // a binder a macro introduces is a different binding from the one
+    // the program wrote, so the program's call in the template's hole
+    // is still a call to the top-level function (it must demote), and
+    // the template's own use of its binder is not an escape of it.
+    // Bound names must be compared as written, marks and all -- an
+    // unmarked comparison reads the hole's call as local and drops it.
+    ['a macro-introduced binder does not hide the program\'s call',
+        [REC, CALL, '(define-syntax with-zq (syntax-rules () ((_ e) (let ((zq 1)) e))))', '(display (with-zq (zq 5 0.0)))'], '#f #t'],
+    ['a macro-introduced binder\'s own use is not an escape',
+        [REC, CALL, '(define-syntax with-zq (syntax-rules () ((_ e) (let ((zq 1)) (+ zq e))))', '(display (with-zq (zq 5 0.0)))'], '#f #t'],
 ];
 
 for (const [title, forms, expected] of rows) {
