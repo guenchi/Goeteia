@@ -90,4 +90,20 @@
 ;; So the four controls and the six defect rows are all satisfiable by
 ;; a correct printer, and a repair here has a colour to aim at.
 
+;; A CORRECTION TO THIS FILE'S OWN COMMIT MESSAGE.  It says 0.12 comes
+;; back as 0.119999999998.  It does not: it comes back as the double
+;; 0.119999999999, and ...998 is what the broken printer SHOWS when
+;; asked to render that value.  The number was read off a rendering
+;; produced by the thing being described.
+;;
+;; That is the same mistake this file's boolean rows exist to avoid,
+;; made one level out -- not in a row, but in the prose reporting it --
+;; and it survived because prose has no assertion to fail.  The right
+;; column of any table about a printer has to be taken outside the
+;; printer: an exact rational, a predicate, or the string quoted rather
+;; than rendered.
+;;
+;; The history is not rewritten, so the wrong number stands in the log
+;; with this note beside the file it describes.
+
 (display (if (null? fails) #t (reverse fails)))
