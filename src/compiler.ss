@@ -3446,44 +3446,134 @@
 
 ;; collect operator-position calls (name . arglist) in e; a name that
 ;; appears anywhere else (a value use) is added to escaped
-(define (spec-scan e cand escaped calls)
+(define (spec-scan e cand escaped calls bound0)
   ;; cand: names that are specialization candidates; mutating the
   ;; escaped hashtable and returning the call list
-  (let walk ((stack (list e)) (calls calls))
+  ;;
+  ;; Each stack entry is (form . bound): the form to walk, and the
+  ;; names lexically bound around it.  A name in that set is a local,
+  ;; so an occurrence of it is neither a call to nor an escape of the
+  ;; top-level candidate that happens to share its spelling -- without
+  ;; it, (let ((g ...)) (quotient n g)) inside the prelude reads as a
+  ;; call to a user function named g and then escapes it.
+  ;;
+  ;; Three binding forms reach this pass: let, %loop and lambda.
+  ;; let*, letrec, do, internal define, case-lambda, let-values and
+  ;; guard are all written in the prelude but are lowered to these
+  ;; before the pass runs.  A named let arrives as %loop when
+  ;; loop-ok? accepts it and as a letrec spelling when it does not,
+  ;; and only the second reads as `let` -- which is why a census whose
+  ;; fixture held no qualifying named let reported no %loop at all.
+  ;;
+  ;; The set holds binder symbols AS WRITTEN, and membership is tested
+  ;; on the raw symbol: a binder a macro introduces and a program's own
+  ;; name of the same spelling are different bindings, and unmarking on
+  ;; the way in would let a template's binder hide the program's call.
+  ;; Only cand and the recorded call name are compared unmarked.
+  (let walk ((stack (list (cons e bound0))) (calls calls))
     (if (null? stack)
         calls
-        (let ((x (car stack)) (rest (cdr stack)))
+        (let* ((entry (car stack))
+               (x (car entry))
+               (bound (cdr entry))
+               (rest (cdr stack)))
           (cond
-           ((not (pair? x)) (walk rest calls))
+           ;; A bare symbol reaches here as a form in its own right --
+           ;; a let init, a body expression, a dotted tail.  The
+           ;; binding branches enqueue those individually, and nothing
+           ;; else looks at them, so the escape one may represent has
+           ;; to be recorded here: a candidate's name in a value
+           ;; position is an escape unless it is bound.  Before the
+           ;; binding branches existed, the enclosing list's own mark
+           ;; walk caught these, which is why this arm could discard
+           ;; them.
+           ((not (pair? x))
+            (when (and (symbol? x)
+                       (not (memq x bound))
+                       (memq (unmark x) cand))
+              (hashtable-set! escaped (unmark x) #t))
+            (walk rest calls))
            ((and (symbol? (car x)) (eq? (resolve-tag (car x)) 'quote))
             (walk rest calls))
+           ;; (let ((v init) ...) body ...) and (let name ((v init) ...)
+           ;; body ...): the inits are outside the bindings' scope, and
+           ;; a named let's own name is in scope only in its body
+           ((and (symbol? (car x)) (eq? (resolve-tag (car x)) 'let)
+                 (pair? (cdr x)))
+            (let* ((named (symbol? (cadr x)))
+                   (bs (if named (caddr x) (cadr x)))
+                   (body (if named (cdddr x) (cddr x)))
+                   (names (let f ((l bs))
+                            (if (pair? l)
+                                (if (pair? (car l))
+                                    (cons (car (car l)) (f (cdr l)))
+                                    (f (cdr l)))
+                                '())))
+                   (inner (append names
+                                  (if named (list (cadr x)) '())
+                                  bound)))
+              (walk (append (map (lambda (b)
+                                   (cons (if (pair? b) (cadr b) b) bound))
+                                 bs)
+                            (append (map (lambda (f) (cons f inner)) body)
+                                    rest))
+                    calls)))
+           ;; (%loop name (param ...) (init ...) body ...): what a
+           ;; named let becomes when loop-ok? accepts it, so it is a
+           ;; binding form too.  The name and the parameters bind in
+           ;; the body; the inits are evaluated outside.
+           ((and (symbol? (car x)) (eq? (resolve-tag (car x)) '%loop)
+                 (pair? (cdr x)) (pair? (cddr x)) (pair? (cdddr x)))
+            (let* ((body (cdr (cdddr x)))
+                   (inner (cons (cadr x) (append (caddr x) bound))))
+              (walk (append (map (lambda (i) (cons i bound)) (cadddr x))
+                            (append (map (lambda (f) (cons f inner)) body)
+                                    rest))
+                    calls)))
+           ;; (lambda formals body ...): formals bind, proper or dotted
+           ((and (symbol? (car x)) (eq? (resolve-tag (car x)) 'lambda)
+                 (pair? (cdr x)))
+            (let ((inner (append (binder-names (cadr x)) bound)))
+              (walk (append (map (lambda (f) (cons f inner)) (cddr x)) rest)
+                    calls)))
+           ;; There is deliberately no guard branch.  guard is a
+           ;; prelude macro, lowered to let/lambda/cond before this
+           ;; pass, so it never reaches this walk; the `guard' tag a
+           ;; census of the incoming forms reports comes from an
+           ;; ordinary prelude local of that name.  A branch for it
+           ;; would also have been wrong: a clause's test position
+           ;; reads as an operator, so (guard (e (zq 1)) 0) would have
+           ;; recorded a call to zq where the clause only evaluates it.
            (else
             (let* ((h (car x))
                    (rop (and (symbol? h) (unmark h)))
-                   (called (and rop (memq rop cand) rop)))
+                   (local? (and (symbol? h) (memq h bound) #t))
+                   (called (and rop (not local?) (memq rop cand) rop)))
               ;; the operator, when a call to a candidate, is not a
               ;; value use; a candidate name in any other position is
-              ;; an escape.  Push car and cdr separately so dotted
-              ;; formal lists ((x . more)) don't reach append
+              ;; an escape.  A locally bound name is neither.  Push car
+              ;; and cdr separately so dotted formal lists ((x . more))
+              ;; don't reach append
               (let mark ((es (if called (cdr x) x)))
                 (when (pair? es)
                   (when (and (symbol? (car es))
+                             (not (memq (car es) bound))
                              (memq (unmark (car es)) cand))
                     (hashtable-set! escaped (unmark (car es)) #t))
                   (mark (cdr es))))
               ;; flatten x's elements onto the stack as individual
-              ;; forms (the operator skipped when it's a candidate
-              ;; call); a dotted tail (a lambda's rest formal) rides
-              ;; on too but is a bare symbol, harmless to revisit
+              ;; forms, each carrying this form's bound set (the
+              ;; operator skipped when it's a candidate call); a dotted
+              ;; tail rides on too but is a bare symbol, harmless
               (let push ((es (if called (cdr x) x)) (st rest))
                 (cond
-                 ((pair? es) (push (cdr es) (cons (car es) st)))
+                 ((pair? es) (push (cdr es) (cons (cons (car es) bound) st)))
                  ((null? es)
                   (walk st (if called
                                (cons (cons rop (cdr x)) calls)
                                calls)))
-                 (else                            ; dotted tail
-                  (walk (cons es st)
+                 (else
+                  (walk (cons (cons es bound) st)
                         (if called
                             (cons (cons rop (cdr x)) calls)
                             calls))))))))))))
@@ -3555,11 +3645,15 @@
             (lambda (acc d)
               (let* ((name (unmark (def-name d)))
                      (params (formals-names (cdadr d)))
+                     ;; a function's own parameters bind in its body,
+                     ;; as written: a parameter spelled like a
+                     ;; candidate is that parameter, not a call to the
+                     ;; top-level function of the same name
                      (calls (spec-scan (cons 'begin (cddr d))
-                                       cand escaped '())))
+                                       cand escaped '() params)))
                 (cons (cons (and (memq name cand) name) calls) acc)))
             (list (cons #f (spec-scan (cons 'begin main-steps)
-                                      cand escaped '())))
+                                      cand escaped '() '())))
             fn-defs)))
       ;; a function with NO source-level call site proves nothing --
       ;; the arithmetic helpers and the call/cc internals are reached
