@@ -97,7 +97,7 @@ if (!findChrome()) {
     // anything offering shader text exports an accessor ending in
     // -shaders or -shader-functions, so the set that should be here is
     // derivable rather than remembered.
-    // ⚠️ Checked against what the emitter ACTUALLY EMITTED, not against
+    // Checked against what the emitter ACTUALLY EMITTED, not against
     // its source text.  Searching the source for the accessor's name
     // passes a call that has been renamed or commented out, because the
     // name survives as an argument -- measured: disabling the call left
@@ -114,7 +114,7 @@ if (!findChrome()) {
         // At least one, not all of them: the accessors overlap.  A
         // library that offers both halves separately and the pair
         // together has three names for two shaders, and naming the
-        // pair covers the halves.  ⇒ This says "some of this library's
+        // pair covers the halves.  It says "some of this library's
         // shader text is compiled", which is what catches a library
         // nobody added; it does not say every accessor is reached.
         if (!emitted.has(f.replace(/\.ss$/, '')))
