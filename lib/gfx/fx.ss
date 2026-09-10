@@ -113,7 +113,25 @@
     (unless $fx-canvas (error 'fx-slot! "call fx-init! first"))
     (let ((s $fx-slot)) (set! $fx-slot (+ s 1)) s))
 
+  ;; ⚠️ The size is checked here for the same reason fx-release! checks
+  ;; its mark, and against the same hazard: both move $fx-heap, and the
+  ;; guards below fx-release! were written because moving it wrongly
+  ;; hands out memory that is already in use.  fx-alloc! moved the very
+  ;; same pointer with nothing asked, so a negative size walked the
+  ;; level backwards and the next allocation was handed bytes a live
+  ;; object was still using -- the hazard fx-release! is guarded
+  ;; against, reached through the entrance that was not.
+  ;;
+  ;; ⭐ And a level dragged down this way could not be recovered: every
+  ;; mark taken earlier is now ABOVE the water level, which is exactly
+  ;; what fx-release!'s second guard refuses.  The guard protecting the
+  ;; good path also sealed the way back from the bad one.
+  ;;
+  ;; Zero is allowed: it is a real request with a real answer, and
+  ;; callers pass it for empty geometry.
   (define (fx-alloc! bytes)             ; 8-aligned bump; grows memory
+    (when (< bytes 0)
+      (error 'fx-alloc! "negative size" bytes))
     (let* ((r (remainder $fx-heap 8))
            (base (if (= r 0) $fx-heap (+ $fx-heap (- 8 r))))
            (end (+ base bytes))
@@ -177,6 +195,18 @@
             (immutable vbase $fx-mesh-vbase) (immutable ibase $fx-mesh-ibase)
             (immutable vbytes $fx-mesh-vbytes) (immutable ibytes $fx-mesh-ibytes)
             (immutable count fx-mesh-count)
+            ;; ⚠️ Which index width this mesh was WRITTEN with.  mesh.ss
+            ;; already answers the question -- mesh-index-u32? -- and
+            ;; mesh-write! already lays the indices out accordingly; it
+            ;; was only the upload and the draw that never asked, so a
+            ;; mesh past 65536 vertices had 32-bit indices in memory and
+            ;; was handed to the host as 16-bit ones.
+            ;;
+            ;; It is recorded here rather than re-derived at draw time
+            ;; because the handle outlives the mesh: the bytes were laid
+            ;; out once, and the width that laid them out is the one the
+            ;; draw has to name.
+            (immutable u32 $fx-mesh-u32?)
             (mutable up $fx-mesh-up $fx-mesh-up!)))
 
   (define (fx-mesh! m)
@@ -185,16 +215,21 @@
            (ibase (fx-alloc! (mesh-index-bytes m))))
       (mesh-write! m vbase ibase)
       ($make-fx-mesh vbuf ibuf vbase ibase (mesh-vertex-bytes m)
-                     (mesh-index-bytes m) (mesh-index-count m) #f)))
+                     (mesh-index-bytes m) (mesh-index-count m)
+                     (mesh-index-u32? m) #f)))
   (define (fx-mesh-use! prog h)
     (fx-use! prog ($fx-mesh-vbuf h))
     (cmd-bind-index! ($fx-mesh-ibuf h))
     (unless ($fx-mesh-up h)
       (cmd-buffer-data! ($fx-mesh-vbase h) ($fx-mesh-vbytes h))
-      (cmd-index-data! ($fx-mesh-ibase h) ($fx-mesh-ibytes h))
+      (if ($fx-mesh-u32? h)
+          (cmd-index-data32! ($fx-mesh-ibase h) ($fx-mesh-ibytes h))
+          (cmd-index-data! ($fx-mesh-ibase h) ($fx-mesh-ibytes h)))
       ($fx-mesh-up! h #t)))
   (define (fx-mesh-draw! h)
-    (cmd-draw-elements! GL-TRIANGLES (fx-mesh-count h)))
+    (if ($fx-mesh-u32? h)
+        (cmd-draw-elements32! GL-TRIANGLES (fx-mesh-count h))
+        (cmd-draw-elements! GL-TRIANGLES (fx-mesh-count h))))
 
   ;; ---- offscreen render targets (webgl2) ----
   (define-record-type (fx-target $make-fx-target fx-target?)
