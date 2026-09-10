@@ -2,8 +2,17 @@
 ;; RED ON PURPOSE: a user's `car` is called by the prelude's `assq`.
 ;; The prelude and the user's program are spliced into one flat top
 ;; level, and the prelude calls primitives by the same bare symbols the
-;; user can define.  src/prelude.ss contains 101 uses of `(car ` and 65
-;; of `(null? `.  -> Defining one of those names at top level does not
+;; user can define.  How many places that is, as a command rather than
+;; a number, because a count written into a comment has no author and
+;; goes quietly wrong -- two readers measured this file today and got
+;; three different answers, all of them honest:
+;;
+;;     grep -c '(car ' src/prelude.ss      lines, not occurrences
+;;     grep -o '(car ' src/prelude.ss | wc -l    occurrences
+;;
+;; On 2026-09-10 the first answers 103 for `(car ' and 67 for
+;; `(null? '.  The point is not the number: it is that every one of
+;; them stops meaning what the caller wrote.
 ;; capture five synthesised calls -- it captures that name everywhere in
 ;; the prelude that survives dead-code elimination.
 ;;
