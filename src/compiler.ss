@@ -4000,7 +4000,12 @@
   ;; expression that would be a lambda whose formals are foo, whose
   ;; reference would then be skipped and whose definition would be
   ;; pruned out from under it.  The same trap exists for let and
-  ;; %loop, reached through a variable of that name.
+  ;; %loop, reached through a variable of that name.  The quote arm
+  ;; was the fourth to need the flag, and it had been losing a live
+  ;; reference since before any of the binding-form work: the tail
+  ;; of (vector quote foo) is (quote foo), which that arm skipped
+  ;; whole, so foo's definition was pruned while foo still referred
+  ;; to it.
   (let walk ((stack (list (cons e #t))) (acc acc))
     (if (null? stack)
         acc
@@ -4020,7 +4025,8 @@
             ;; lookup instead, which reaches both.
             (walk rest (if (memq x acc) acc (cons x acc))))
            ((not (pair? x)) (walk rest acc))
-           ((eq? (resolve-tag (car x)) 'quote) (walk rest acc))
+           ((and expression? (eq? (resolve-tag (car x)) 'quote))
+            (walk rest acc))
            ;; Binding forms: a binder's name is not a reference to the
            ;; top-level definition that shares its spelling.  Inits,
            ;; bodies and every other position are walked as before.
