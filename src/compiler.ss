@@ -381,6 +381,16 @@
 ;; symbol and fall through to the generic "evaluate, then test
 ;; truthiness" -- eight instructions per predicate test, and eleven
 ;; kilobytes of snapshot, for heads that name the same primitive.
+;; Does the program define this name at top level, in EITHER spelling?
+;; A function definition lands in *fns* and a value definition in
+;; *vars*, and a guard that consults only the first answers "this is
+;; the primitive" for a name the dispatcher has a definition for.  That
+;; is how (define car (lambda (x) 99)) went on compiling as the
+;; primitive while (define (car x) 99) shadowed: not two rules, one
+;; rule asking half the question.
+(define (top-level-defined? h)
+  (or (assq-marked h *fns*) (assq-marked h *vars*)))
+
 (define (head-op h)
   (cond ((symbol? h) (unmark h))
         ((intrinsic? h) (intrinsic-op h))
@@ -512,6 +522,9 @@
         ;; every inline library has registered its exports
         ((%imports)
          (set! *import-specs* (append *import-specs* (cdr e)))
+         ;; everything expanded from here on is the program's own,
+         ;; until a library arm says otherwise
+         (set! *program-form?* #t)
          '(begin))
         ((export) e)                   ; top-level export declaration
         ((library)
@@ -525,9 +538,15 @@
          ;; The scope closes here, on the expanded body, because this
          ;; is the last point at which the library's own names are
          ;; separable from the top level it splices into
-         (close-library-scope (strip-marks (cadr e))
-                              (cadddr e)
-                              (xpand* (cdr (cdddr e)))))
+         (let ((saved *program-form?*))
+           ;; a library's definitions answer to the library's own
+           ;; clause, not to the program's
+           (set! *program-form?* #f)
+           (let ((out (close-library-scope (strip-marks (cadr e))
+                                           (cadddr e)
+                                           (xpand* (cdr (cdddr e))))))
+             (set! *program-form?* saved)
+             out)))
         ((case)
          ;; (case E ((d ...) body ...) ... (else body ...))
          (let ((t (gensym "t")))
@@ -902,8 +921,14 @@
                             *lib-exports*)))
               (loop (cdr specs) (if e (append (cdr e) acc) acc)))))))
 
+;; The body is returned under %library-body rather than begin.  Both
+;; splice the same way, but the tag survives to expand-spliced, which
+;; is where top-level forms are recorded -- and by then the library
+;; arm has long since restored the flag that said "not the program's".
+;; Without the tag a library's definitions are recorded as the
+;; program's own, because at splice time they look exactly like them.
 (define (close-library-scope name import-clause body)
-  (cons 'begin
+  (cons '%library-body
         (close-scope name body (imported-names import-clause))))
 
 ;; The prelude is not a library: no header, no exports, no imports, and
@@ -1826,6 +1851,16 @@
 ;; decides which names an import clause governs, never the spelling.
 (define $rnrs-exports
   '(
+    ;; R6RS exports its syntax as well as its procedures.  The
+    ;; derivation could not see these: they are neither prelude
+    ;; definitions nor primitives, but arms of the expander, and a
+    ;; manifest built from definitions alone silently omits every one
+    ;; of them -- which would let a program define `case' or `lambda'
+    ;; and be told nothing.
+    and begin case cond define define-record-type define-syntax do
+    else if lambda let let* letrec letrec* or parameterize
+    quasiquote quote set! syntax-rules unless unquote
+    unquote-splicing when =>
     * + - / < <= = > >= abs append assert assoc assq assv bitwise-and
     bitwise-arithmetic-shift-left bitwise-arithmetic-shift-right
     bitwise-ior bitwise-xor boolean? bytevector bytevector-length
@@ -1874,6 +1909,27 @@
 (define *import-specs* '())
 (define *import-map* '())
 
+;; Which definitions are the PROGRAM's own.
+;;
+;; After the flat splice a definition is a definition: the prelude's
+;; display, a library's, and the program's all arrive as top-level
+;; forms and nothing in the result says which is which.  The import
+;; rule governs only what the program wrote, so the answer has to be
+;; recorded while it is still knowable -- during expansion, where the
+;; clause marker says "the program's own forms start here" and the
+;; library arm says "these are not".
+;;
+;; The names are collected now and judged after the map exists, which
+;; is a landing later: collecting and checking cannot happen at the
+;; same moment because the map is not built until expansion is done.
+(define *program-form?* #f)
+(define *program-defines* '())
+
+(define (record-program-define! name kind loc)
+  (when *program-form?*
+    (set! *program-defines*
+          (cons (list (unmark name) kind loc) *program-defines*))))
+
 (define (import-binding-set target)
   (let ((n (map unmark target)))
     (cond
@@ -1920,6 +1976,24 @@
              (p (unmark (caddr spec))))
          (map (lambda (b) (cons (sym-cat (list p (car b))) (cdr b))) base)))
       (else (import-binding-set spec)))))
+
+;; A program may not define a name its own clause brings in.  The
+;; message carries the provenance and the spelling that makes the
+;; definition legal, because the author's next question is always
+;; "then how do I define it".
+(define (refuse-imported-definitions!)
+  (for-each
+   (lambda (d)
+     (let ((b (assq (car d) *import-map*)))
+       (when b
+         (let ((lib (car (cdr b)))
+               (nm (symbol->string (car d))))
+           (errorf 'goeteia
+                   (string-append
+                    nm " is imported by (" lib "); write (import (except ("
+                    lib ") " nm ")) to define it:")
+                   (caddr d))))))
+   (reverse *program-defines*)))
 
 (define (merge-import-bindings specs)
   (fold-left
@@ -2394,7 +2468,7 @@
    ((and (pair? e)
          (memq (head-op (car e)) '(= <))
          (not (assq (car e) locals))
-         (not (assq-marked (car e) *fns*))
+         (not (top-level-defined? (car e)))
          (= (length (cdr e)) 2)
          (i32-expr? (cadr e) locals)
          (i32-expr? (caddr e) locals))
@@ -2406,7 +2480,7 @@
    ((and (pair? e)
          (memq (head-op (car e)) '(fl<? fl=?))
          (not (assq (car e) locals))
-         (not (assq-marked (car e) *fns*))
+         (not (top-level-defined? (car e)))
          (= (length (cdr e)) 2))
     (let* ((a (compile-f64 (cadr e) locals cell))
            (b (compile-f64 (caddr e) locals cell)))
@@ -2416,7 +2490,7 @@
          (let ((expect (assq (head-op (car e)) prim-arity)))
            (and expect (= (length (cdr e)) (cdr expect))))
          (not (assq (car e) locals))
-         (not (assq-marked (car e) *fns*)))
+         (not (top-level-defined? (car e))))
     (pred-i32 (head-op (car e))
               (map-in-order (lambda (a) (compile-exp a locals cell #f))
                             (cdr e))
@@ -2481,7 +2555,7 @@
            (rop (head-op h)))
       (or (and rop (memq rop fl-direct-ops)
                (not (assq h locals))
-               (not (assq-marked h *fns*))
+               (not (top-level-defined? h))
                (let ((a (assq rop prim-arity)))
                  (and a (= (length (cdr e)) (cdr a)))))
           (fl-if? e locals))))
@@ -2827,7 +2901,7 @@
         (list acode
               (map (lambda (slot) (local-set slot)) (reverse slots))
               #x0C (uleb (- *blocks* base)))))
-     ((and rop (memq rop primitives) (not (assq-marked op *fns*)))
+     ((and rop (memq rop primitives) (not (top-level-defined? op)))
       (compile-prim rop args locals cell))
      ((and rop (assq-marked op *fns*))
       (compile-direct (cdr (assq-marked op *fns*)) e args locals cell tail?
@@ -3151,7 +3225,7 @@
          (rop (head-op h)))
     (and rop
          (not (assq h locals))
-         (not (assq-marked h *fns*))
+         (not (top-level-defined? h))
          (let ((a (assq rop prim-arity)))
            (and a (= (length (cdr e)) (cdr a))))
          rop)))
@@ -3267,7 +3341,7 @@
       (cond
        ((and rop (memq rop fl-direct-ops)
              (not (assq h locals))
-             (not (assq-marked h *fns*))
+             (not (top-level-defined? h))
              (let ((a (assq rop prim-arity)))
                (and a (= (length (cdr e)) (cdr a)))))
         (direct rop))
@@ -3687,7 +3761,7 @@
     (let* ((h (car e))
            (rop (head-op h)))
       (or (and rop (memq rop fl-direct-ops)
-               (not (assq-marked h *fns*))
+               (not (top-level-defined? h))
                (let ((a (assq rop prim-arity)))
                  (and a (= (length (cdr e)) (cdr a)))))
           (and (eq? (resolve-tag h) 'if) (= (length e) 4)
@@ -4132,13 +4206,31 @@
         (let ((loc (and (pair? ls) (car ls)))
               (rest (if (pair? ls) (cdr ls) '())))
           (if (macro-def? (car fs))     ; collected before this pass
-              (loop (cdr fs) rest acc)
+              ;; recorded here and not at the splice: a macro
+              ;; definition never reaches expand-spliced, because this
+              ;; pass drops it
+              (begin
+                (record-program-define! (cadr (car fs)) 'define-syntax loc)
+                (loop (cdr fs) rest acc))
               (loop (cdr fs) rest
                     (expand-spliced
                      ($with-loc loc (lambda () (xpand (car fs))))
                      loc acc)))))))
 (define (expand-spliced x loc acc)
   (cond
+   ((and (pair? x) (symbol? (car x))
+         (eq? (unmark (car x)) '%library-body))
+    ;; splices exactly like a begin, but nothing inside is the
+    ;; program's own definition
+    (let ((saved *program-form?*))
+      (set! *program-form?* #f)
+      (let ((out (let splice ((subs (cdr x)) (acc acc))
+                   (if (null? subs)
+                       acc
+                       (splice (cdr subs)
+                               (expand-spliced (car subs) loc acc))))))
+        (set! *program-form?* saved)
+        out)))
    ((and (pair? x) (symbol? (car x)) (eq? (unmark (car x)) 'begin))
     ;; top-level begin splices recursively (its subforms are already
     ;; expanded), so macros, define-record-type and libraries can nest
@@ -4147,10 +4239,18 @@
       (if (null? subs)
           acc
           (splice (cdr subs) (expand-spliced (car subs) loc acc)))))
-   ((macro-def? x) (add-macro! x) acc)
+   ((macro-def? x)
+    ;; a macro definition produced by expansion (inside a begin, or by
+    ;; another macro) does reach here
+    (record-program-define! (cadr x) 'define-syntax loc)
+    (add-macro! x) acc)
    (else
     (let ((nf (normalize-define x)))
       (record-loc! nf loc)
+      (when (and (pair? nf) (symbol? (car nf))
+                 (eq? (unmark (car nf)) 'define))
+        (record-program-define! (if (pair? (cadr nf)) (car (cadr nf)) (cadr nf))
+                                'define loc))
       (cons nf acc)))))
 (define (normalize-define f)
   ;; top-level forms built by macros have marked heads
@@ -5082,6 +5182,8 @@
   (set! *lib-exports* '())
   (set! *import-specs* '())
   (set! *import-map* '())
+  (set! *program-form?* #f)
+  (set! *program-defines* '())
   ;; library privates get their namespace before anything reads the
   ;; forms -- collect-macros! descends into libraries and would
   ;; otherwise register a library's macros under their bare names
@@ -5093,18 +5195,39 @@
   ;; live before its own body is expanded (382's eager xpand*)
   (for-each collect-macros! forms)
   (let* ((pre-n *prelude-prefix-n*)
-         ;; the prefix is expanded and closed on its own, so that a
+         ;; The prefix is expanded and closed on its own, so that a
          ;; written head in it resolves while the user's top-level
-         ;; names do not yet exist
+         ;; names do not yet exist.
+         ;;
+         ;; The two halves are sequenced BY LET*, not by argument
+         ;; order.  They were arguments to one append, and Chez
+         ;; evaluates arguments in whatever order it likes -- measured,
+         ;; it took the user's half first, so "the prefix is expanded
+         ;; on its own" was a sentence the code did not implement.  A
+         ;; pass whose correctness is an ordering must say the ordering
+         ;; where the reader can see it.
+         (expanded-prefix (if (> pre-n 0)
+                              (close-scope *prelude-scope*
+                                           (expand-forms (first-n forms pre-n)
+                                                         (first-n locs pre-n))
+                                           '())
+                              '()))
          (expanded (if (> pre-n 0)
-                       (append (close-scope
-                                *prelude-scope*
-                                (expand-forms (first-n forms pre-n)
-                                              (first-n locs pre-n))
-                                '())
+                       (append expanded-prefix
                                (expand-forms (list-tail forms pre-n)
                                              (list-tail locs pre-n)))
                        (expand-forms forms locs)))
+         ;; The clause is read here: expansion has run, so every inline
+         ;; library has registered what it exports.  Refusal runs
+         ;; before check-duplicate-defines! below, because a program
+         ;; that defines an imported name trips BOTH -- and "defined
+         ;; twice" names the prelude's definition, which the author did
+         ;; not write and cannot act on, while this one names the
+         ;; import and the spelling that fixes it.
+         (import-map (begin (set! *import-map*
+                                  (merge-import-bindings *import-specs*))
+                            (refuse-imported-definitions!)
+                            *import-map*))
          ;; top-level (export name ...): keep through DCE, expose as
          ;; wasm exports so the host can call them
          (export-names
@@ -5132,11 +5255,7 @@
          ;; so the program's own definition is bypassed by its own
          ;; macro.  This is the point where the top-level name set is
          ;; first complete, which is why the entry is made here.
-         ;; the clause is read here: expansion has run, so every
-         ;; inline library has registered what it exports
-         (import-map (begin (set! *import-map*
-                                  (merge-import-bindings *import-specs*))
-                            *import-map*))
+
          (top-level-names (expanded-defined-names checked))
          (ignored (begin
                     (set! *scope-defines*
