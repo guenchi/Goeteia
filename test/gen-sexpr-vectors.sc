@@ -16,8 +16,8 @@
 ;;; at ../../01-igropyr relative to this file) and Chez Scheme:
 ;;;
 ;;;   cd ../01-igropyr && scheme -q --libdirs . \
-;;;       --script ../03-goeteia/test/gen-sexpr-vectors.sc \
-;;;       ../03-goeteia/test/sexpr-vectors.json
+;;;       --script ../goeteia/test/gen-sexpr-vectors.sc \
+;;;       ../goeteia/test/sexpr-vectors.json
 ;;;
 ;;; It refuses to run if it cannot see the source, if sexpr.sc is dirty,
 ;;; or if the sentinel below says the thing answering is older than the

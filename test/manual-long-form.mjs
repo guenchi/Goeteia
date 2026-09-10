@@ -50,10 +50,10 @@ import { test } from 'node:test';
 import assert from 'node:assert';
 
 const root = new URL('..', import.meta.url).pathname;
-const manualPath = join(root, '..', '04-goeteia-website', 'docs', 'manual.md');
+const manualPath = join(root, '..', 'goeteia-ws', 'docs', 'manual.md');
 
 if (!existsSync(manualPath)) {
-    console.log('NOT EXERCISED HERE (the website checkout ../04-goeteia-website/docs/manual.md is not beside this tree; clone the website branch there to check the manual against the long forms)');
+    console.log('NOT EXERCISED HERE (the website checkout ../goeteia-ws/docs/manual.md is not beside this tree; clone the website branch there to check the manual against the long forms)');
 } else {
     console.log('EXERCISED HERE: the manual is beside this tree and its long-form pointers are followed');
     const lines = readFileSync(manualPath, 'utf8').split('\n');

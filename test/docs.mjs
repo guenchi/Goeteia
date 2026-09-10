@@ -141,7 +141,7 @@ test('verify.md documents the spec-key whitelist and the 2d context', () => {
 
 // ---- the manual on the website names libraries and procedures that exist ----
 //
-// docs/manual.md lives in the website branch (../04-goeteia-website),
+// docs/manual.md lives in the website branch (../goeteia-ws),
 // so nothing in this tree used to open it: it named `(web gl)` for a
 // library that exists only as `(gfx gl)`, thirty-five times, and a
 // `(web audio)` that exists as `(aud sfx)`, and no cell ever red.  Two
@@ -152,7 +152,7 @@ test('verify.md documents the spec-key whitelist and the 2d context', () => {
 // website checkout is absent the check announces itself and stands
 // down, so a missing sibling reads as "not run", never as "passed".
 const here = path.dirname(fileURLToPath(import.meta.url));
-const manualPath = path.join(here, '..', '..', '04-goeteia-website', 'docs', 'manual.md');
+const manualPath = path.join(here, '..', '..', 'goeteia-ws', 'docs', 'manual.md');
 // The website serves its own copy of the API index -- api.js fetches
 // docs/api.md from the website root at run time -- so the copy is what
 // readers actually get, and nothing tied the two files together.  It
@@ -162,9 +162,9 @@ const manualPath = path.join(here, '..', '..', '04-goeteia-website', 'docs', 'ma
 // A generated file with a second home needs a check that they are the
 // same file, or the second home is a fork nobody declared.
 const apiHere = path.join(here, '..', 'docs', 'api.md');
-const apiThere = path.join(here, '..', '..', '04-goeteia-website', 'docs', 'api.md');
+const apiThere = path.join(here, '..', '..', 'goeteia-ws', 'docs', 'api.md');
 if (!fs.existsSync(apiThere)) {
-    console.log('NOT EXERCISED HERE (the website checkout ../04-goeteia-website/docs/api.md is not beside this tree; clone the website branch there to check that the served copy of the API index matches this one)');
+    console.log('NOT EXERCISED HERE (the website checkout ../goeteia-ws/docs/api.md is not beside this tree; clone the website branch there to check that the served copy of the API index matches this one)');
 } else {
     // A stand-down prints a line; running prints nothing, so a log with
     // neither says "the check ran" only by absence -- and absence is what
@@ -186,7 +186,7 @@ if (!fs.existsSync(apiThere)) {
 }
 
 if (!fs.existsSync(manualPath)) {
-    console.log('NOT EXERCISED HERE (the website checkout ../04-goeteia-website/docs/manual.md is not beside this tree; clone the website branch there to run the manual checks)');
+    console.log('NOT EXERCISED HERE (the website checkout ../goeteia-ws/docs/manual.md is not beside this tree; clone the website branch there to run the manual checks)');
 } else {
     const manual = fs.readFileSync(manualPath, 'utf8');
     const libRoot = path.join(here, '..', 'lib');
