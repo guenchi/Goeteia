@@ -39,6 +39,7 @@ Usage:
   goeteia <input.ss> [input-file]             compile and run in one step
   goeteia repl                                interactive session
   goeteia dev [port]                          live-reload dev server (cwd)
+  goeteia deps <input.ss>                     list the sources it is built from
   goeteia verify <page.ss> [options]          compile, run and judge a page
   goeteia pack <page.ss> <out.html> [options] one self-contained .html
   goeteia --version                           print the version
@@ -76,6 +77,19 @@ async function main() {
             const out = argv[2] || src.replace(/\.\w+$/, '') + '.wasm';
             await compileFile(src, out);
             console.error(`wrote ${out}`);
+            return;
+        }
+
+        // The source files an artifact is derived from, one per line,
+        // for a build script deciding whether it is stale. The walk
+        // lives in rt/compile.mjs, beside the one that inlines those
+        // same files, so the build and the compiler cannot disagree
+        // about what a page depends on.
+        if (cmd === 'deps') {
+            const src = argv[1];
+            if (!src) usage(1);
+            const { sourceFilesFor } = await import('../rt/compile.mjs');
+            for (const f of sourceFilesFor(src)) console.log(f);
             return;
         }
 

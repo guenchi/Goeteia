@@ -463,6 +463,67 @@ export async function compileSource(text,
     return runCompiler(input, compilerWasm);
 }
 
+// Every source file a compiled artifact is derived from, page first,
+// each once, in the order the compiler would read them.
+//
+// build.sh decides whether a page needs recompiling by comparing the
+// artifact against its inputs, and it used to compare against ONE of
+// them -- the page's own source -- so an edit to a library the page
+// imports left the artifact in place and the dev server went on
+// serving the previous picture. The freshness question is about the
+// dependency closure, and the closure is known here, by the same walk
+// that inlines the sources. A second implementation of it in the shell
+// would be a second answer to one question, and the scanner is already
+// subtle enough that one of its cases has a red cell of its own.
+//
+// KNOWN GAP, and it is the same defect: src/prelude.ss and the
+// compiler snapshot are inputs to every artifact and are not listed.
+// Including them would make every page stale whenever either moved,
+// which is correct and is also a different decision about how much a
+// dev-server save should rebuild. It is written down rather than left
+// to be rediscovered.
+export function sourceFilesFor(sourceFile) {
+    const inDir = path.dirname(path.resolve(sourceFile));
+    const dirs = [inDir, path.join(inDir, 'lib'), path.join(here, '../lib')];
+    const out = [path.resolve(sourceFile)];
+    const seen = new Set();
+    // A program and a library declare their imports differently: the
+    // program's are top-level forms, the library's is one clause inside
+    // its (library ...) form. Reading the entry file with the library
+    // scanner finds nothing at all and answers "no dependencies", which
+    // is the same wrong answer this function exists to stop giving.
+    const importsOf = (text, file, isProgram) => {
+        const resolved = resolveEmbedImports(text, dirs, file);
+        if (!isProgram) return libraryImports(resolved);
+        const specs = [];
+        for (const [start, end] of topLevelSpans(resolved)) {
+            const form = resolved.slice(start, end);
+            if (/^\(\s*import[\s)]/.test(form))
+                for (const spec of parseSpecs(form)) specs.push(spec);
+        }
+        return specs;
+    };
+    const walk = (text, file, isProgram) => {
+        for (const spec of importsOf(text, file, isProgram)) {
+            const target = specTarget(spec);
+            if (target[0] === 'rnrs' || target[0] === 'goeteia') continue;
+            const key = target.join('/');
+            if (seen.has(key)) continue;
+            seen.add(key);
+            for (const d of dirs) {
+                const p = path.join(d, ...target) + '.ss';
+                if (fs.existsSync(p)) {
+                    out.push(p);
+                    walk(readSource(p), p, false);
+                    break;
+                }
+            }
+        }
+    };
+    walk(readSource(sourceFile), path.resolve(sourceFile), true);
+    return out;
+}
+
 // Compile a source file straight to an output file.
 export async function compileFile(sourceFile, outFile, opts = {}) {
     fs.writeFileSync(outFile, await compileToBytes(sourceFile, opts));
