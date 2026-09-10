@@ -14,7 +14,7 @@
 //
 // Readings on 35ea5da, before the fix, taken in a detached worktree
 // of that commit: every "absent" row present (9 red), every
-// "present" row present (12 green).  The first reading of this file
+// "present" row present (15 green).  The first reading of this file
 // was taken on the shared tree while the fix was already in progress
 // there, and read 8 of the 10 as absent -- the fix working, not the
 // baseline -- which is why the baseline is stated with its commit.
@@ -75,6 +75,16 @@ const rows = [
     ['reference under a lambda formal of the same name', [`(display ((lambda (foo) ${R}) 5))`],                      'present'],
     ['loop name is referenced by its own tail call',     ['(display (let foo ((x 5)) (if (< x 1) 1 (foo (- x 1)))))'],   'present'],
     ['loop binder referenced in the body',               ['(display (let again ((foo 5)) (if (< foo 1) 1 (again (- foo 1)))))'], 'present'],
+    // a list TAIL that happens to start with a binding form's name is
+    // not that binding form.  form-refs takes lists apart car and cdr,
+    // so the worklist holds tails as well as expressions; the tail of
+    // (vector lambda foo) is (lambda foo), and a binding arm that fires
+    // on the shape alone reads foo as a formal and prunes a definition
+    // that is still referenced.  Reachable through any variable named
+    // like a binding form.
+    ['a variable named lambda before a reference in a call',  ['(define bar 42)', '(let ((lambda 0)) (display (vector-ref (vector lambda foo) 1)))'],  'present'],
+    ['a variable named let before a reference in a call',     ['(define bar 42)', '(let ((let 0)) (display (vector-ref (vector let foo) 1)))'],        'present'],
+    ['a variable named %loop before a reference in a call',   ['(define bar 42)', '(let ((%loop 0)) (display (vector-ref (vector %loop foo) 1)))'],    'present'],
     // hygiene: a macro's binder is not the program's reference, and vice versa
     ['macro binder with the reference in the hole',  ['(define-syntax with-foo (syntax-rules () ((_ e) (let ((foo 5)) e))))', `(display (with-foo ${R}))`], 'present'],
     ['macro binder with nothing in the hole',        ['(define-syntax with-foo (syntax-rules () ((_ e) (let ((foo 5)) e))))', '(display (with-foo 1))'],     'absent'],
