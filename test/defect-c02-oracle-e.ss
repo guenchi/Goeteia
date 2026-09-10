@@ -3,11 +3,17 @@
 ;; DEFINES its own car must mean its own, not the primitive.  This is
 ;; what stands between "protect the import" and "steal the library's
 ;; own name", and it is green today and must stay green.
+;;
+;; The import excludes car on purpose.  A first version imported (rnrs)
+;; whole and defined car anyway; goeteia accepts that and answers
+;; `mine', but Chez rejects it -- a library may not redefine a name it
+;; imports -- so the expectation had no source outside the thing being
+;; tested.  With the exclusion both hosts answer `mine'.
 (import (rnrs))
 (begin
   (library (orc lib5)
     (export mine)
-    (import (rnrs))
+    (import (except (rnrs) car))
     (define (car x) 'mine)
     (define (mine p) (car p)))
   (import (orc lib5)))
