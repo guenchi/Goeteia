@@ -6,4 +6,20 @@
 ;; oracle for the expect line; the design that has to make this green is
 ;; archive/goeteia-c02-binding-identity-design.md (see its section 0h).
 ;;
-;; Variant b, the GREEN TWIN: the template introduces a lexical car binder around the substituted expression.  This is right today and a repair must not disturb it.
+;; A first version of this file was committed with no program in it: a
+;; shell edit failed silently, the cell read as red, and the red was
+;; taken for the defect.  An empty cell is red for every reason at once.
+;;
+;; Variant b, the GREEN TWIN: the template introduces a lexical car
+;; binder around the substituted expression.  Right today; a repair
+;; must not disturb it.
+(import (rnrs))
+(begin
+  (library (orc lib2)
+    (export with-my-car)
+    (import (rnrs))
+    (define-syntax with-my-car
+      (syntax-rules ()
+        ((_ e) (let ((car (lambda (p) 'lexical))) (list (car '(introduced)) e))))))
+  (import (orc lib2)))
+(display (with-my-car (car '(substituted))))
