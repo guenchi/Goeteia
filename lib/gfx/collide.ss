@@ -56,6 +56,7 @@
   (export sphere-sphere? aabb-aabb? sphere-aabb?
           capsule-sphere? capsule-capsule? capsule-aabb?
           ray-sphere ray-aabb ray-plane ray-triangle ray-mesh
+          ray-heightfield screen-ray
           sphere-aabb-push sweep-sphere-aabb move-and-slide
           make-character character? character-pos character-grounded?
           character-move! character-jump!
@@ -208,6 +209,100 @@
           (v3 (fl* bx (fl+ best-d r))
               (fl* by (fl+ best-d r))
               (fl* bz (fl+ best-d r))))))))
+
+  ;; ---- ground described by a function, not by geometry ----
+  ;;
+  ;; A world whose ground is a height function has no triangles to test,
+  ;; so ray-mesh has nothing to work on and ray-plane is only right if
+  ;; the ground is flat.  This walks the ray forward until it is under
+  ;; the ground, then bisects the interval it crossed.
+  ;;
+  ;; BOTH NUMBERS ARE THE CALLER'S, and the step is the dangerous one.
+  ;; The march only ever knows whether it is above the ground at the
+  ;; points it samples, so a feature THINNER THAN THE STEP can sit
+  ;; entirely between two samples: the ray passes over a wall, a fence
+  ;; post, the edge of a mesa, and both neighbouring samples are above
+  ;; the ground, so nothing is detected and the march continues to
+  ;; whatever lies beyond, and the caller gets a confident answer at the
+  ;; wrong place.  It is not a failure, it is a WRONG ANSWER, and
+  ;; nothing here can notice it: from inside, a crossing that was
+  ;; stepped over is indistinguishable from one that was never there.
+  ;; A caller picks the step against the narrowest feature its ground
+  ;; has, and pays for it in samples.
+  ;;
+  ;; The refinement count is the other one, and it is the safe one: too
+  ;; few and the answer is imprecise by a knowable amount -- the step
+  ;; halved that many times -- rather than wrong somewhere else.
+  ;;
+  ;; ANSWERS A DISTANCE, like every other ray- here, so the value can be
+  ;; compared with what the other shapes answer without remembering
+  ;; which of them is special.  The point is `o + d*t`, and its height
+  ;; is on the surface only to within the refinement; a caller that
+  ;; needs it exactly on the ground substitutes the height function's
+  ;; own answer at that x and z, which costs one more call.
+  (define (ray-heightfield o d height range step refine)
+    (unless (procedure? height)
+      (error 'ray-heightfield "the ground is a procedure of x and z" height))
+    (let ((range ($col-fl range))
+          (step ($col-fl step)))
+      (unless (fl<? 0.0 step)
+        (error 'ray-heightfield "the march step is a positive distance" step))
+      (unless (fl<? 0.0 range)
+        (error 'ray-heightfield "the range is a positive distance" range))
+      (unless (and (integer? refine) (not (< refine 0)))
+        (error 'ray-heightfield "the refinement count is a non-negative integer" refine))
+      (let ()
+        (define (above? t)
+          (let ((x (fl+ (v3-x o) (fl* t (v3-x d))))
+                (y (fl+ (v3-y o) (fl* t (v3-y d))))
+                (z (fl+ (v3-z o) (fl* t (v3-z d)))))
+            (fl<? ($col-fl (height x z)) y)))
+        (if (not (above? 0.0))
+            0.0
+            (let march ((t step) (previous 0.0))
+              (cond
+               ((fl<? range t) #f)
+               ((above? t) (march (fl+ t step) t))
+               (else
+                (let bisect ((lo previous) (hi t) (k refine))
+                  (if (= k 0)
+                      hi
+                      (let ((mid (fl* 0.5 (fl+ lo hi))))
+                        (if (above? mid)
+                            (bisect mid hi (- k 1))
+                            (bisect lo mid (- k 1))))))))))))) 
+
+  ;; The ray under a point on the screen, as an origin on the near plane
+  ;; and a unit direction.
+  ;;
+  ;; This exists so that nobody rebuilds it from a field of view.  The
+  ;; obvious hand-written version takes the half-angle the projection
+  ;; was built with, reconstructs the frustum from it, and aims a ray
+  ;; through the pixel -- and the moment the projection changes, that
+  ;; copy of the angle is stale and picking is quietly aimed somewhere
+  ;; else.  The inverse view-projection cannot go stale that way: it IS
+  ;; the projection, so a ray built from it is aimed wherever the
+  ;; picture is actually looking.
+  ;;
+  ;; x and y are in normalised device coordinates, -1 to 1, with y UP --
+  ;; a pointer position in pixels becomes that with
+  ;; `(- (* 2 (/ px w)) 1)` and `(- 1 (* 2 (/ py h)))`, the second
+  ;; flipped because pointer events count down from the top.
+  (define (screen-ray inv-vp x y)
+    (let* ((fx ($col-fl x))
+           (fy ($col-fl y))
+           (near (m4-unproject inv-vp fx fy -1.0))
+           (far (m4-unproject inv-vp fx fy 1.0))
+           (dir (v3-sub far near))
+           (len (flsqrt (v3-dot dir dir))))
+      (unless (and (fl=? len len) (fl<? len 1e30) (fl<? $col-eps len))
+        (error 'screen-ray
+               "the near and far points do not give a direction: the matrix is not an invertible view-projection"
+               x y))
+      (values near
+              (v3 (fl/ (v3-x dir) len)
+                  (fl/ (v3-y dir) len)
+                  (fl/ (v3-z dir) len)))))
 
   ;; ---- capsules: a segment p..q wearing a radius ----
   (define ($col-on-seg p q x)           ; closest point of p..q to x
