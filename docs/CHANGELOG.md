@@ -194,7 +194,7 @@ than re-verified item by item for this document.
 
 ### KNOWN OPEN
 
-Six defects are known, reproduced, and NOT fixed in this release. They
+Eight defects are known, reproduced, and NOT fixed in this release. They
 are listed here because an unfixed defect that scrolls off a list is one
 nobody re-reads at the next decision.
 
@@ -248,6 +248,17 @@ nobody re-reads at the next decision.
   defined twice. Present in 1.7.0. Held red by
   `defect-library-redefines-imported-name`, which reports once because
   it is a compile error rather than a wrong value.
+- **`case` compares with `eq?`, so a flonum or bignum datum never
+  matches.** R6RS specifies `eqv?`: `(case 1.5 ((1.5) 'a) (else 'b))`
+  answers `b` here and `a` on the host, and a datum outside the fixnum
+  range behaves the same way. Symbols, characters and fixnums match.
+  Present in 1.7.0. Held red by `defect-case-uses-eq-not-eqv` and
+  `-bignum`. **Workaround**: `cond` with `eqv?` for such data.
+- **A vector quasiquote template is not processed.** `` `#(1 ,x) ``
+  comes out holding the literal `(unquote x)` where R6RS says it is a
+  vector whose second element is the value of `x`. Present in 1.7.0.
+  Held red by `defect-quasiquote-vector-template`. **Workaround**:
+  `(list->vector `(1 ,x))`.
 - **A local that shadows a float parameter is taken for the parameter,
   and its value lands in the float slot.** In `(define (zq a b) (let
   ((a 5)) (if (fl<? b 0.0) (zq a (fl+ b 1.0)) a)))` the recursive call
