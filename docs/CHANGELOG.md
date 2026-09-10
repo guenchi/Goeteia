@@ -221,9 +221,15 @@ nobody re-reads at the next decision.
   program has yet been found that reads the wrong entry: the one
   function whose only call is constructed after the pass (`call/cc`'s
   escape) is listed out of specialisation by name, which is how the
-  fault was found. Held red by `defect-spec-candidate-by-name` and
-  `defect-dce-binder-counts-as-reference`, one per half, because a fix
-  for either leaves the other.
+  fault was found. It reaches ordinary code without any binder of the
+  program's own: the prelude binds `(g (gcd n d))` inside a `let`, so a
+  program whose function is named `g` collects a fake one-argument
+  call from inside the prelude and loses its specialisation outright
+  -- the same function named anything else keeps it. Same answers,
+  slower code, decided by a name the program cannot see. Held red by
+  `defect-spec-candidate-by-name`, `defect-dce-binder-counts-as-reference`
+  (one per half, because a fix for either leaves the other) and
+  `defect-spec-prelude-binder-collides-with-user-name`.
 - **A morph target's POSITION accessor can declare a `max` below a
   value the file stores.** The bounds are computed over the values as
   given, and the file holds them as `f32`, so a value that rounds
