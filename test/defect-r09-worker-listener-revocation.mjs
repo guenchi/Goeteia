@@ -5,7 +5,7 @@
 // rt/worker.mjs replaces globalThis.addEventListener with one that
 // pushes the handler into its own table, because forwarded events are
 // re-dispatched from that table rather than by the platform.  The word
-// removeEventListener does not appear in the file.  A caller that
+// removeEventListener does not appear in the file.  -> A caller that
 // removes a listener reaches the native function, which knows nothing
 // about the table, and the handler keeps being called.
 //

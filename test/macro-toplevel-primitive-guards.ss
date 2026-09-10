@@ -29,7 +29,7 @@
 ;; LOOKUPS.  That was not visible from the cell: it was red before the
 ;; fix and green after, which is what a working cell looks like.  It
 ;; took reverting each lookup one at a time and asking whether anything
-;; shouted -- eight of them did not.  "This cell goes red when the
+;; shouted -- eight of them did not.  -> "This cell goes red when the
 ;; code is wrong" is a claim about the ways it was tried, and the four
 ;; positions above were added because a mutation matrix named them.
 ;;
@@ -52,7 +52,7 @@
 ;; are named rather than left as "covered": fl-expr?, $i32-prim-of,
 ;; fl-expr-in?, and the JS trampoline's tail scan.  Reverting any of
 ;; them changes which optimisation fires, not what is computed -- the
-;; module comes out a different size with byte-identical output.  
+;; module comes out a different size with byte-identical output.  ->
 ;; Only an assertion about the BUILD PRODUCT can see them (slot types,
 ;; the function-spec table, the bouncy-frame flag), and there is no
 ;; such assertion in this tree.  A cell cannot be written for them

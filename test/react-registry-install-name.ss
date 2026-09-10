@@ -9,7 +9,7 @@
 ;; survive.  That means the adopt branch runs there and the install
 ;; branch never does -- and its "the registry is at globalThis.__goeteia"
 ;; cell is then asking about the object the SETUP left, not about
-;; anything this library did.  A fix that installed under a different
+;; anything this library did.  -> A fix that installed under a different
 ;; name would keep every cell in that file green while the React side,
 ;; which looks the registry up by that name, found nothing.
 ;;
@@ -21,7 +21,7 @@
 ;;
 ;;     Cannot read properties of undefined (reading 'Solo')
 ;;
-;; The install branch is reachable only from a module that has not
+;; -> The install branch is reachable only from a module that has not
 ;; registered anything yet, which is a fresh process.
 ;;
 ;; That caching is itself worth knowing and is asserted below: a

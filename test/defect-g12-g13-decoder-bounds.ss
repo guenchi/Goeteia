@@ -17,7 +17,7 @@
 ;; already written differ by format: UASTC's requirement is a function
 ;; of the dimensions, so one up-front check settles it; meshopt's stream
 ;; is variable-length and self-describing, so it needs a per-byte
-;; window.  deflate and zstd are variable-length too, so they are
+;; window.  -> deflate and zstd are variable-length too, so they are
 ;; predicted to want meshopt's shape rather than UASTC's.  If the fix
 ;; turns out to be a single up-front check, that prediction is wrong and
 ;; the family does not split the way it was said to.

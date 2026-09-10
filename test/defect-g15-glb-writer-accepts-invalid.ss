@@ -10,7 +10,7 @@
 ;; The output is a file, and a file outlives the process that wrote
 ;; it.  Every one of these is caught somewhere downstream -- a viewer,
 ;; an importer, a validator, someone else's pipeline -- at a point
-;; where the information about what produced it is gone.  A writer
+;; where the information about what produced it is gone.  -> A writer
 ;; that accepts what it cannot represent moves the diagnosis to whoever
 ;; is least able to make it.
 ;;

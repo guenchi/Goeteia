@@ -4,7 +4,7 @@
 ;; (inexact z) on a complex number is an `illegal cast` -- a wasm trap.
 ;; A trap is not a Scheme condition: `guard` does not catch it, the
 ;; process stops, and every verdict the file had not yet printed is
-;; lost.  This cell cannot share a file with anything, and the two
+;; lost.  -> This cell cannot share a file with anything, and the two
 ;; controls below run BEFORE it for the same reason.
 ;;
 ;; Chez answers 1.0+2.0i.  The review filed this as "inexact takes the
@@ -25,7 +25,7 @@
 ;; from broken to fixed, and a reader watching only the runner's colour
 ;; would have concluded the fix had not taken.
 ;;
-;; Passing cells are silent, exactly like every other cell in this
+;; -> Passing cells are silent, exactly like every other cell in this
 ;; directory, so this file can be read the same way as the rest.  A
 ;; trap still ends the file, and that is still a failure: the runner
 ;; sees empty output where it wanted #t.

@@ -4,7 +4,7 @@
 ;; everything not in that handful is gone from the file.
 ;;
 ;; The write path takes 'mesh-node from its options and defaults it to
-;; 0 -- not to where the primitive actually was.  A mesh parented to
+;; 0 -- not to where the primitive actually was.  -> A mesh parented to
 ;; a node with a transform comes back parented to the root, and the
 ;; model is somewhere else.  Nothing is reported: the file is valid,
 ;; the animation is correct, and the figure stands in the wrong place.

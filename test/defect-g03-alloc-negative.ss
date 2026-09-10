@@ -10,7 +10,7 @@
 ;; command region hands out the encoder's own bytes, one above the
 ;; water level hands out memory that was never allocated.  fx-alloc!
 ;; moves the same pointer, can move it down by any amount, and asks
-;; nothing.  One hazard, two entrances, a guard on one of them.
+;; nothing.  -> One hazard, two entrances, a guard on one of them.
 ;;
 ;; In linear memory the ordinary case does not crash.  Nothing traps
 ;; and nothing is logged; two live objects become one, and the symptom
@@ -20,7 +20,7 @@
 ;; The allocator is one global water level, so a cell that damages it
 ;; damages every cell after it: an early probe walked the level below
 ;; zero, and everything downstream trapped on `memory access out of
-;; bounds`, taking the file's whole verdict with it.  Controls run
+;; bounds`, taking the file's whole verdict with it.  -> Controls run
 ;; first while the heap is sane, the overlap probe uses a small
 ;; negative that stays in range, and the probes that wreck the level
 ;; run last and never dereference what they get.

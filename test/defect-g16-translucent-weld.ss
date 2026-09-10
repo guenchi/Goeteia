@@ -11,7 +11,7 @@
 ;;
 ;; That proves swapping two ADJACENT layers of one colour and one alpha
 ;; is a no-op.  It is used to justify merging them into a single draw,
-;; which additionally requires them to BE adjacent.  When something
+;; which additionally requires them to BE adjacent.  -> When something
 ;; else is composited between them, merging moves it to one side.
 ;;
 ;; The arithmetic, checked rather than asserted.  Three planes, each
@@ -21,7 +21,7 @@
 ;;     the two reds together   (0.375, 0, 0.5)  or  (0.75, 0, 0.125)
 ;;
 ;; Neither merged order is the right colour, and the error is a quarter
-;; of full scale in two channels.  This is not a rounding question.
+;; of full scale in two channels.  -> This is not a rounding question.
 ;;
 ;; The cell counts DRAWS rather than pixels, on purpose: the mock GL
 ;; records calls, and what is wrong is the decision to merge, which is

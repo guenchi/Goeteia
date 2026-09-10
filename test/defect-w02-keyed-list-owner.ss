@@ -10,7 +10,7 @@
 ;; the only call to an item's disposer is in the branch that runs when
 ;; a key disappears from the data.
 ;;
-;; Dispose the owner of the whole list and every item's effects stay
+;; -> Dispose the owner of the whole list and every item's effects stay
 ;; subscribed.  They keep running on every later signal write, holding
 ;; their closures, their nodes and whatever those reference, for as
 ;; long as the signal lives.

@@ -24,7 +24,7 @@
 ;; -- twenty-two of those across (gam) and (web css) -- which a NaN
 ;; passes because (< nan 0) is false.  The obvious repair is to write
 ;; the positive form (>= x 0) instead, and that does not work either,
-;; because >= is the broken one.  Fixing the guards without fixing
+;; because >= is the broken one.  -> Fixing the guards without fixing
 ;; the predicate would look like a fix and change nothing.
 ;;
 ;; The controls are the ordinary orderings, because a repair that made

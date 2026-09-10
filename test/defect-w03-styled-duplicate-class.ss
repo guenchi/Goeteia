@@ -13,7 +13,7 @@
 ;; a particular spelling of it.  Attribute-internal order does not
 ;; affect CSS, so pinning "card-0 mine" rather than "mine card-0" would
 ;; promote an irrelevant detail into a contract and refuse a correct
-;; fix that happened to order them the other way.  The cells below
+;; fix that happened to order them the other way.  -> The cells below
 ;; count the attribute and look for both tokens.
 ;;
 ;; The controls are the two shapes that already work and a fix could

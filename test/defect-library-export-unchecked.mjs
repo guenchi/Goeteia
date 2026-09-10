@@ -29,7 +29,7 @@
 // Its fixture passed the name in as a macro argument, which is never
 // renamed -- a fact written down in macro-toplevel-hygiene.ss, two
 // files away.  The shape was measured in one form and then written in
-// another because the second read better.  Measure the shape you are
+// another because the second read better.  -> Measure the shape you are
 // going to commit, not the one that led you to it.
 import test from 'node:test';
 import assert from 'node:assert/strict';

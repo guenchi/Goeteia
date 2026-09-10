@@ -20,7 +20,7 @@
 ;; this one never did, and a comment stating a mechanism was written on
 ;; the strength of it.
 ;;
-;; The procedure cases below are chosen so the call survives to the
+;; -> The procedure cases below are chosen so the call survives to the
 ;; lookup, and each says why:
 ;;
 ;;   rec   self-recursive.  The durable one: no inliner fully

@@ -14,7 +14,7 @@
 ;; This is the prelude's `read`, the one a compiled program calls.  The
 ;; host-side driver's reader refuses these correctly, and the driver
 ;; has the opposite defect on block comments -- see
-;; test/defect-r02-driver-block-comment.mjs.  Neither file's result
+;; test/defect-r02-driver-block-comment.mjs.  -> Neither file's result
 ;; can be assumed from the other; the two were measured separately, and
 ;; the earlier attempt to measure this one through `(quote ...)` in a
 ;; source file was reading the HOST's reader and learned nothing about

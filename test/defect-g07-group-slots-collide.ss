@@ -1,7 +1,7 @@
 ;; expect: 4 ok; 20 ok; 34 ok; 35 ok;
 ;; RED ON PURPOSE: the HZB pyramid and the depth-sorting cull pipeline
 ;; live at hard-coded slots 250 and 251, and geometry groups are handed
-;; consecutive slots from 9 upward with no ceiling.  Enough groups
+;; consecutive slots from 9 upward with no ceiling.  -> Enough groups
 ;; and the group allocator walks over both.
 ;;
 ;; MEASURED BOUNDARY: 34 groups work, 35 does not.  It is not
@@ -29,7 +29,7 @@
 ;; THE FAILURE CANNOT BE CAUGHT.  It surfaces as a host JS error
 ;; ("slots[...].createView is not a function"), not a Scheme condition,
 ;; so `guard` goes straight past it exactly as it goes past a wasm
-;; trap.  This file cannot collect verdicts and print them at the
+;; trap.  -> This file cannot collect verdicts and print them at the
 ;; end; it prints each count as that count survives, and the run simply
 ;; stops where it breaks.  The expected line is the whole sequence, so
 ;; a short answer names the count that failed.

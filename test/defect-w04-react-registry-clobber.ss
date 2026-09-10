@@ -8,7 +8,7 @@
 ;; module-local, so each independently loaded module starts at #f and
 ;; each one clobbers the global on its first registration.
 ;;
-;; Load a module registering ReviewOne and then one registering
+;; -> Load a module registering ReviewOne and then one registering
 ;; ReviewTwo, and only ReviewTwo exists.
 ;;
 ;; Nothing fails at load time.  The host asks for a component that
@@ -20,7 +20,7 @@
 ;; convenient: this module's only knowledge of an earlier one is
 ;; whatever it left on globalThis, and a JS-installed object is
 ;; indistinguishable from a Scheme-installed one at that boundary.
-;; The cell cannot tell the difference, and neither can the code
+;; -> The cell cannot tell the difference, and neither can the code
 ;; under test, which is the whole reason the defect exists.
 ;;
 ;; The controls are what a fix must not spend: two components

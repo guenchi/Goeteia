@@ -198,7 +198,7 @@ globalThis.__audio = { log: [], now: 0, ids: 0, nodes: {}, edges: {} };
   ;; the graph -- audio-target-of reads edges out of it -- so an edge
   ;; made before a reset is not merely unlisted, it is gone, and a path
   ;; that crosses it stops early with no sign that anything was lost.
-  ;; A section that wants a fresh count and a whole graph must take a
+  ;; -> A section that wants a fresh count and a whole graph must take a
   ;; mark (audio-log-length) and count from it, not reset.
   (define (audio-mock-reset!)
     (js-eval "globalThis.__audio.log.length = 0; globalThis.__audio.now = 0;"))

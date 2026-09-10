@@ -14,7 +14,7 @@
 ;; THE SHAPE: the hazard is understood elsewhere in this same file.
 ;; js-set! converts before staging the property name, and its comment
 ;; says why -- "a string value passes through the same name buffer and
-;; would swallow a name already staged".  Somebody worked this out
+;; would swallow a name already staged".  -> Somebody worked this out
 ;; and fixed one path.  js-call, js-method and js-new push as they go.
 ;; One hazard, four entrances, a guard on one.
 ;;

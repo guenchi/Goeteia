@@ -23,7 +23,7 @@
 ;; The hook is installed here rather than letting the report reach the
 ;; console, for a reason worth stating: the runner now FAILS any test
 ;; that reports a callback error, so a cell that must provoke one cannot
-;; let it out.  It is captured and asserted on instead.
+;; let it out.  -> It is captured and asserted on instead.
 (import (rnrs) (web js))
 
 (define failed 0)

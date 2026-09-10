@@ -32,7 +32,7 @@
 ;;            precision about 1.2e-7.  An error smaller than that is
 ;;            erased by the platform before it reaches a sample.
 ;;
-;; 1e-9 sits between the arithmetic noise floor and the smallest
+;; -> 1e-9 sits between the arithmetic noise floor and the smallest
 ;; difference the platform can represent.  It cannot be loosened -- past
 ;; 1.2e-7 the error is one the hardware would keep -- and it cannot be
 ;; tightened without failing on this tree's own trigonometry.  Both

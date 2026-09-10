@@ -4,7 +4,7 @@
 ;; The prelude and the user's program are spliced into one flat top
 ;; level, and the prelude calls primitives by the same bare symbols the
 ;; user can define.  src/prelude.ss contains 101 uses of `(car ` and 65
-;; of `(null? `.  Defining one of those names at top level does not
+;; of `(null? `.  -> Defining one of those names at top level does not
 ;; capture five synthesised calls -- it captures that name everywhere in
 ;; the prelude that survives dead-code elimination.
 ;;
@@ -16,7 +16,7 @@
 ;;
 ;; And the two spellings do not agree.  `(define (f …) …)` is broken
 ;; today; `(define f (lambda …))` works -- and works ONLY because C02 is
-;; unfixed, since it is the spelling that already dispatches.  Fixing
+;; unfixed, since it is the spelling that already dispatches.  -> Fixing
 ;; C02's eleven guards without this would turn two working programs into
 ;; broken ones.  See test/prelude-capture-value-form.ss, which pins
 ;; those two and must stay green.

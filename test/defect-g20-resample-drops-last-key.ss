@@ -13,7 +13,7 @@
 ;; taken as the maximum of the sampled times, so it becomes the
 ;; second-to-last key's time.  Ask for `samples 2` -- two keys spanning
 ;; the clip, as explicit as a caller can be -- and the last one still
-;; lands at 4095 instead of 4096.  A caller who never wanted
+;; lands at 4095 instead of 4096.  -> A caller who never wanted
 ;; decimation, and said so, inherits its error.
 ;;
 ;; The cells report the time they read, not whether it was right.

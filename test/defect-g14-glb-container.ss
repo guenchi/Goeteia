@@ -110,7 +110,7 @@
 ;; nothing at all.  A trap is still coverage -- something noticed -- but
 ;; it is coverage that takes the rest of the file's verdicts with it,
 ;; because a wasm trap is not a condition and the run simply stops.
-;; A cell that traps under mutation belongs in this group even when it
+;; -> A cell that traps under mutation belongs in this group even when it
 ;; is a clean named refusal today.
 ;;
 ;; G14-SHORT is here for exactly that reason.  Today it is a named

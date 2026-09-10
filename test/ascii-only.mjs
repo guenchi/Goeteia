@@ -5,7 +5,7 @@
 // test/sexpr-mjs.mjs round-trips unicode, test/args.mjs passes
 // non-ASCII argv, and the REPL cell displays a CJK string because that
 // is the defect it measures.  A blanket ban on the characters would
-// forbid testing the thing the library is supposed to do.  The rule
+// forbid testing the thing the library is supposed to do.  -> The rule
 // is about the language a comment is WRITTEN IN, so the check reads
 // comments and leaves data alone.
 //
@@ -14,13 +14,13 @@
 // a comment.  A trailing comment after code needs a scanner that knows
 // where a string ends, and this tree already has six hand-written
 // partial ones that all get that wrong; adding a seventh to police a
-// style rule is a bad trade.  Chinese in a trailing comment passes
+// style rule is a bad trade.  -> Chinese in a trailing comment passes
 // here.  That is a known hole with a stated reason, not an oversight.
 //
 // ONE EXEMPTION, and it is a real one rather than a convenience.
 // A .ss test's first line reads `;; expect: <output>` -- it opens with
 // a comment marker and run-tests.sh parses it as the expected stdout.
-// It is data wearing a comment's clothes, and test/utf8-display.ss
+// -> It is data wearing a comment's clothes, and test/utf8-display.ss
 // necessarily expects CJK output.  The exemption is by SHAPE (the
 // expect line) rather than by filename, so a new UTF-8 test needs no
 // edit here and an ordinary comment in that same file is still caught.
@@ -35,7 +35,7 @@
 // committed, and was invisible.  Measured: a new library with a Chinese
 // comment passed all three cells.
 //
-// Untracked files are read when their extension is one this rule
+// -> Untracked files are read when their extension is one this rule
 // covers.  That is what keeps review/ out: it carries .md and .json,
 // which are not in the map, so the exclusion follows from the rule
 // rather than from a list of directories nobody will maintain.

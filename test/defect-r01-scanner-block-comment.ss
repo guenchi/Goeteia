@@ -28,12 +28,12 @@
 ;;
 ;;     #| a ( in prose |#            compiles
 ;;     #| a ) in prose |#            compiles
-;;     #| (import (nope lib)) |#     REFUSED   the only one
+;;     #| (import (nope lib)) |#     REFUSED   <- the only one
 ;;     #;(import (nope lib))         compiles
 ;;     #| out #| in |# out |#        compiles
 ;;     ; (import (nope lib))         compiles  (control)
 ;;
-;; The reachable failure is a block comment containing a literal
+;; -> The reachable failure is a block comment containing a literal
 ;; import CLAUSE, because that is what libraryImports pattern-matches
 ;; for.  Stray parens shift the depth without changing which clause
 ;; matches.  A nine-cell file asserting the other forms was written
@@ -48,7 +48,7 @@
 ;; This is a degeneracy failure, not a parsing bug: there are two
 ;; readers of this source and they disagree.  The tree HAS a correct
 ;; reader; the scanner is a second, smaller one written to answer a
-;; narrower question, and it drifted.  The fix is not "add #| to the
+;; narrower question, and it drifted.  -> The fix is not "add #| to the
 ;; scanner" -- that leaves #;, |symbols| and nesting for next time.
 ;;
 ;; The control is a library with an ordinary line comment mentioning an

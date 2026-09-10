@@ -430,7 +430,7 @@ done
 # This checks that each file is MENTIONED, not that it ran.  That is
 # weaker than it sounds only in a way nobody does by accident: naming a
 # file here without running it takes deliberate effort, while adding a
-# file to test/ and forgetting this list is one keystroke.  It covers
+# file to test/ and forgetting this list is one keystroke.  -> It covers
 # the failure that happened, and it says which one it covers.
 for m in test/*.mjs; do
     grep -q "$m" "$0" || {

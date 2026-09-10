@@ -81,7 +81,7 @@
 ;; middle are spare, and the canonical stream in test/meshopt.ss has
 ;; twenty-four spare the same way.  A length one byte short therefore
 ;; still contains every byte the decoder reads; what shrank was the
-;; slack.  It is not a truncated stream, it is a length reported one
+;; slack.  -> It is not a truncated stream, it is a length reported one
 ;; too large -- and this format carries nothing that could tell the
 ;; difference.  A rule that demanded the data reach the tail exactly
 ;; would refuse the suite's own known-good stream, which was measured

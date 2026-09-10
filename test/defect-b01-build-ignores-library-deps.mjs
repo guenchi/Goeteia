@@ -3,7 +3,7 @@
 //
 //     [ "$src" -nt "$wasm" ] || continue
 //
-// A library the page imports can be newer than the artifact and the
+// -> A library the page imports can be newer than the artifact and the
 // page is skipped.  The dev server runs this on every save, so editing
 // a shared library and reloading serves the old picture -- and reloads
 // keep serving it, because the timestamp that decides never moves.

@@ -7,7 +7,7 @@
 ;; documented.  (gfx mesh) exports mesh-index-u32?, and the comment
 ;; over it says what a caller is supposed to do with it: "callers ask
 ;; mesh-index-u32? to pick cmd-index-data32!/cmd-draw-elements32! over
-;; the u16 pair".  (gfx gl) provides that pair.  Both halves exist,
+;; the u16 pair".  (gfx gl) provides that pair.  -> Both halves exist,
 ;; the instruction is written down, and fx-mesh! does not ask.
 ;;
 ;; The failure is not a crash.  The GPU reads a u32 index buffer as
@@ -16,7 +16,7 @@
 ;; made of triangles nobody authored.
 ;;
 ;; The cells read the encoded command stream rather than a picture:
-;; 17/18 are the u16 upload and draw, 36/37 the u32 pair.  No GPU is
+;; 17/18 are the u16 upload and draw, 36/37 the u32 pair.  -> No GPU is
 ;; involved and the reading is the opcode itself, not something
 ;; downstream of it.
 ;;
@@ -30,7 +30,7 @@
 ;; The GL stub test/fx-vao-cache.ss uses, so fx-init! and fx-buffer!
 ;; can hand out slots.  It cannot fake this file's reading: the
 ;; opcodes below are words the encoder writes into linear memory, and
-;; the stub sits downstream of the command stream, not inside it.  
+;; the stub sits downstream of the command stream, not inside it.  ->
 ;; Whatever the stub answers, it never touches what is measured here.
 (js-eval "globalThis.__vaoCount = 0; globalThis.__boundVao = null;
 globalThis.__canvas = { width:64, height:64, getContext() { return {

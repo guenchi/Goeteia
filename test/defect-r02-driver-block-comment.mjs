@@ -52,7 +52,7 @@ test('a block comment left open inside a list is refused', () => {
     // Already green, and it localises the defect: this one is
     // refused because the LIST is unterminated, not because the
     // comment is.  Something else was still pending, so the reader had
-    // a reason to complain.  The hole is exactly the case where
+    // a reason to complain.  -> The hole is exactly the case where
     // nothing else is open, which is also the common one -- a comment
     // at the end of a file.
     assert.equal(compiles('(import (rnrs))\n(display (list 1 #| never closed\n'), false);
