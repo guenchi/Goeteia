@@ -188,7 +188,7 @@ than re-verified item by item for this document.
 
 ### KNOWN OPEN
 
-Six defects are known, reproduced, and NOT fixed in this release. They
+Seven defects are known, reproduced, and NOT fixed in this release. They
 are listed here because an unfixed defect that scrolls off a list is one
 nobody re-reads at the next decision.
 
@@ -228,6 +228,14 @@ nobody re-reads at the next decision.
   defined twice. Present in 1.7.0. Held red by
   `defect-library-redefines-imported-name`, which reports once because
   it is a compile error rather than a wrong value.
+- **A variable named `quote` in front of a reference inside a call
+  makes the reference disappear.** Dead-code elimination takes lists
+  apart car and cdr and skips any pair whose head resolves to `quote`,
+  tail or not; the tail of `(vector quote foo)` is `(quote foo)`, so
+  `foo` is never seen and its definition is pruned while the program
+  still needs it. The compile stops with `foo` unbound where the host
+  answers 42. Present in 1.7.0; found by a reviewer's fixture. Held
+  red by `defect-dce-quote-tail-loses-reference`.
 - **A local that shadows a float parameter is taken for the parameter,
   and its value lands in the float slot.** In `(define (zq a b) (let
   ((a 5)) (if (fl<? b 0.0) (zq a (fl+ b 1.0)) a)))` the recursive call
