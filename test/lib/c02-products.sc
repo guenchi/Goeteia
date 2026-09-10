@@ -28,6 +28,14 @@
 (define forms (append prelude (list '(%prelude-end)) user))
 (define locs (map (lambda (f) "?:0") forms))
 (define args (cddr (command-line-arguments)))
+(if (and (pair? args) (string=? (car args) "--specs"))
+    ;; --specs name...: the fn-specs entries for exactly the names given
+    (begin
+      (compile-program forms locs)
+      (prepare-program forms locs)
+      (display (list 'fn-specs
+                     (filter (lambda (e) (memq (car e) (map string->symbol (cdr args)))) *fn-specs*)))
+      (newline))
 (if (and (pair? args) (string=? (car args) "--js"))
     (begin
       (set! *target* 'js)
@@ -45,4 +53,4 @@
       (prepare-program forms locs)
       (display (list 'fn-specs-after-prepare
                      (filter (lambda (e) (memq (car e) '(norm twice run))) *fn-specs*)))
-      (newline)))
+      (newline))))
