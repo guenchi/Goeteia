@@ -73,6 +73,7 @@ const leb = () => { let r = 0, s = 0, x; do { x = u8[p++]; r |= (x & 127) << s; 
         for (const o of r.ops) hist[o] = (hist[o] || 0) + 1;
         return { clean: r.clean, ops: r.ops.length,
                  f64Locals: r.locals.filter(([, t]) => t === 0x7c).reduce((a, [n]) => a + n, 0),
+                 i32Locals: r.locals.filter(([, t]) => t === 0x7f).reduce((a, [n]) => a + n, 0),
                  count: (op) => hist[op] || 0 };
     };
     const walkClean = () => { let c = 0; for (const [s, e] of bodies) if (walk(s, e).clean) c++; return [c, bodies.length]; };
