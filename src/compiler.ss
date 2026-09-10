@@ -375,8 +375,12 @@
 
 ;; Does this identifier's definition scope bind name itself?  A library
 ;; that defines car means its own car there, not the primitive.
+;; Keyed by equal?, not eq?: collect-macros! stores the name object it
+;; stripped, and the library arm strips its own.  Two spellings of one
+;; library name are one scope, and an eq? lookup would miss the entry
+;; the arm just wrote.
 (define (scope-binds? scope name)
-  (let ((e (assq scope *scope-defines*)))
+  (let ((e (assoc scope *scope-defines*)))
     (and e (memq name (cdr e)) #t)))
 
 ;; The lookup name and defining scope of an introduced identifier, or #f
@@ -488,8 +492,13 @@
          ;; header export list is advisory (dead code elimination
          ;; prunes what goes unused), the driver has already inlined
          ;; the imports, and a mid-body (export ...) survives as a
-         ;; top-level export declaration
-         (cons 'begin (xpand* (cdr (cdddr e)))))
+         ;; top-level export declaration.
+         ;;
+         ;; The scope closes here, on the expanded body, because this
+         ;; is the last point at which the library's own names are
+         ;; separable from the top level it splices into
+         (close-library-scope (strip-marks (cadr e))
+                              (xpand* (cdr (cdddr e)))))
         ((case)
          ;; (case E ((d ...) body ...) ... (else body ...))
          (let ((t (gensym "t")))
@@ -736,6 +745,95 @@
         (loop (cdr fs)
               (cons (unmark (if (pair? t) (car t) t)) acc))))
      (else (loop (cdr fs) acc)))))
+
+;; The names a library's EXPANDED body defines.  library-defined-names
+;; reads the body before expansion, so it cannot see a definition a
+;; macro produced or a group a begin spliced; closing the scope needs
+;; the identities that actually exist at the library's close.
+(define (expanded-defined-names body)
+  (let loop ((fs body) (acc '()))
+    (cond
+     ((not (pair? fs)) acc)
+     ((and (pair? (car fs)) (symbol? (car (car fs)))
+           (eq? (unmark (car (car fs))) 'begin))
+      (loop (cdr fs) (loop (cdr (car fs)) acc)))
+     ((and (pair? (car fs)) (symbol? (car (car fs)))
+           (eq? (unmark (car (car fs))) 'define))
+      (let ((t (cadr (car fs))))
+        (loop (cdr fs)
+              (cons (unmark (if (pair? t) (car t) t)) acc))))
+     (else (loop (cdr fs) acc)))))
+
+;; A written call-position identifier the library neither binds
+;; lexically nor defines belongs to the library's imports, not to
+;; whatever the user defines later at top level.  This slice protects
+;; written car and nothing else, matching the resolver's reach.
+(define (written-head-visit op bound scope)
+  (and (symbol? op)
+       (not (memq op bound))
+       (not (intro-context op))
+       (eq? (unmark op) 'car)
+       (not (scope-binds? scope 'car))
+       (rename-introduced op)))
+
+;; Close a library's scope over its expanded body.
+;;
+;; Recording each such identifier with rename-introduced gives it the
+;; shape an introduced identifier already has -- a fresh token whose
+;; lookup name and defining scope are both known -- so the single
+;; resolver at lower-intrinsics decides written and introduced heads
+;; alike, and one rule lives in one place.
+;;
+;; Renaming rather than resolving here is deliberate.  An intrinsic
+;; record placed during expansion would have to survive every pass
+;; between here and the resolver, and a wrong decision made this early
+;; could not be taken back; a token the resolver declines still reads
+;; as car, because assq-marked walks its origin.
+(define (close-scope scope body)
+  (set! *scope-defines*
+        (cons (cons scope (expanded-defined-names body))
+              (filter (lambda (e) (not (equal? (car e) scope)))
+                      *scope-defines*)))
+  (let ((saved-renames *renames*)
+        (saved-scope *defining-scope*))
+    ;; a fresh rename table, for the same reason apply-macro takes one:
+    ;; this walk must not share renames with an expansion in progress
+    (set! *renames* '())
+    (set! *defining-scope* scope)
+    (let ((out (map-in-order
+                (lambda (f)
+                  (walk-heads f '()
+                              (lambda (op bnd)
+                                (written-head-visit op bnd scope))))
+                body)))
+      (set! *renames* saved-renames)
+      (set! *defining-scope* saved-scope)
+      out)))
+
+(define (close-library-scope name body)
+  (cons 'begin (close-scope name body)))
+
+;; The prelude is not a library: no header, no exports, no imports, and
+;; its marker is consumed before preparation.  What it does have is a
+;; scope -- the definitions in the prefix, plus the primitives it does
+;; not define -- and closing that scope before the user's forms are
+;; expanded is what keeps a car written in the prelude out of reach of
+;; a user definition of the same name.
+;;
+;; This protects references to primitives.  References to the prelude's
+;; own procedures need exact definition identities and are not in this
+;; slice.
+(define *prelude-scope* '%prelude)
+
+;; How many of prepare-program's input forms are the prelude prefix.
+;;
+;; A count is exact HERE and only here: it indexes the input, before
+;; expansion, and the marker split produced it from that same list.
+;; After expansion no count could stand -- expand-forms drops macro
+;; definitions and expand-spliced turns one begin into many -- which is
+;; why the prefix is separated before a form is expanded, not recovered
+;; afterwards.
+(define *prelude-prefix-n* 0)
 ;; register every define-syntax reachable at the top level -- directly,
 ;; or spliced through a (begin ...) or a (library ...) body -- so a
 ;; macro is live before any sibling form (including its own library
@@ -4386,42 +4484,82 @@
           ((pair? f) (loop (cdr f) (cons (car f) acc)))
           (else acc))))
 
-(define (lower-intrinsics f bound)
+;; Names a body's leading internal definitions bind.  They are
+;; letrec*-like: live for every form in the body, including the
+;; definitions' own right-hand sides.
+(define (body-bound body bound)
+  (let loop ((b body) (acc bound))
+    (if (and (pair? b) (internal-def? (car b)))
+        (loop (cdr b) (cons (internal-def-name (car b)) acc))
+        acc)))
+
+;; One walker, two visitors.  Lexical accounting -- formals, let
+;; bindings, define targets, internal definition groups and %loop
+;; labels -- lives here and nowhere else, so the scope-close renamer
+;; and the top-level resolver cannot disagree about what is bound.
+;;
+;; visit receives a call-position symbol head and the names in scope,
+;; and returns a replacement head or #f to leave it alone.
+(define (walk-heads f bound visit)
   (if (not (pair? f))
       f
       (let ((h (car f)))
         (cond
          ((and (symbol? h) (eq? (unmark h) 'quote)) f)
          ((and (symbol? h) (eq? (unmark h) 'lambda))
-          (let ((inner (append (binder-names (cadr f)) bound)))
+          (let ((inner (body-bound (cddr f)
+                                   (append (binder-names (cadr f)) bound))))
             (cons h (cons (cadr f)
-                          (map-tail (lambda (b) (lower-intrinsics b inner))
+                          (map-tail (lambda (b) (walk-heads b inner visit))
                                     (cddr f))))))
          ((and (symbol? h) (eq? (unmark h) 'let))
           (let* ((bs (cadr f))
-                 (inner (append (map car bs) bound)))
+                 (inner (body-bound (cddr f) (append (map car bs) bound))))
             (cons h
                   (cons (map-tail (lambda (b)
-                                    (list (car b) (lower-intrinsics (cadr b) bound)))
+                                    (list (car b) (walk-heads (cadr b) bound visit)))
                                   bs)
-                        (map-tail (lambda (b) (lower-intrinsics b inner))
+                        (map-tail (lambda (b) (walk-heads b inner visit))
                                   (cddr f))))))
+         ;; (%loop name (param ...) (init ...) body ...): the label and
+         ;; the parameters are bound in the body; the inits are not,
+         ;; they are evaluated in the enclosing scope
+         ((and (symbol? h) (eq? (unmark h) '%loop))
+          (let* ((body (cdr (cdddr f)))
+                 (inner (body-bound body
+                                    (cons (cadr f) (append (caddr f) bound)))))
+            (cons h
+                  (cons (cadr f)
+                        (cons (caddr f)
+                              (cons (map-tail (lambda (i) (walk-heads i bound visit))
+                                              (cadddr f))
+                                    (map-tail (lambda (b) (walk-heads b inner visit))
+                                              body)))))))
          ;; a define's target may be a dotted formals list, which is not
          ;; a form and must not be walked as one
          ((and (symbol? h) (eq? (unmark h) 'define))
           (let ((target (cadr f)))
             (cons h (cons target
                           (map-tail (lambda (b)
-                                      (lower-intrinsics
+                                      (walk-heads
                                        b
                                        (if (pair? target)
-                                           (append (binder-names (cdr target)) bound)
-                                           bound)))
+                                           (body-bound
+                                            (cddr f)
+                                            (append (binder-names (cdr target))
+                                                    bound))
+                                           bound)
+                                       visit))
                                     (cddr f))))))
          (else
-          (let ((head (if (lowerable-head? h bound) (intrinsic-for 'car) h)))
-            (cons (if (pair? h) (lower-intrinsics h bound) head)
-                  (map-tail (lambda (a) (lower-intrinsics a bound)) (cdr f)))))))))
+          (let ((head (if (symbol? h) (or (visit h bound) h) h)))
+            (cons (if (pair? h) (walk-heads h bound visit) head)
+                  (map-tail (lambda (a) (walk-heads a bound visit)) (cdr f)))))))))
+
+(define (lower-intrinsics f bound)
+  (walk-heads f bound
+              (lambda (op bnd)
+                (and (lowerable-head? op bnd) (intrinsic-for 'car)))))
 
 ;; Map over a possibly improper list, keeping the tail.
 ;;
@@ -4458,7 +4596,18 @@
   ;; since a library splices globally and a macro it defines must be
   ;; live before its own body is expanded (382's eager xpand*)
   (for-each collect-macros! forms)
-  (let* ((expanded (expand-forms forms locs))
+  (let* ((pre-n *prelude-prefix-n*)
+         ;; the prefix is expanded and closed on its own, so that a
+         ;; written head in it resolves while the user's top-level
+         ;; names do not yet exist
+         (expanded (if (> pre-n 0)
+                       (append (close-scope
+                                *prelude-scope*
+                                (expand-forms (first-n forms pre-n)
+                                              (first-n locs pre-n)))
+                               (expand-forms (list-tail forms pre-n)
+                                             (list-tail locs pre-n)))
+                       (expand-forms forms locs)))
          ;; top-level (export name ...): keep through DCE, expose as
          ;; wasm exports so the host can call them
          (export-names
@@ -4778,6 +4927,9 @@
          ;; independent of what the host program compiles to
          (saved *target*))
     (set! *target* (if (eq? which 'js) 'js 'wasm))
+    ;; the sub-program is prefixed with the same prelude, so it carries
+    ;; the same boundary
+    (set! *prelude-prefix-n* (length *embed-prelude*))
     (let ((r (if (eq? which 'js)
                  (embed-bytes->string (compile-program-js sub-forms sub-locs))
                  (compile-program-wasm sub-forms sub-locs))))
@@ -4901,12 +5053,16 @@
       ;; no marker (an old stream): no embed support, compile as-is
       (set! *embed-prelude* '())
       (set! *embed-prelude-locs* '())
+      (set! *prelude-prefix-n* 0)
       (if (eq? *target* 'js)
           (compile-program-js forms locs)
           (compile-program-wasm forms locs)))
      ((and (pair? (car fs)) (eq? (car (car fs)) '%prelude-end))
       (set! *embed-prelude* (reverse pf))
       (set! *embed-prelude-locs* (reverse pl))
+      ;; where the prefix ends in the list the backends are about to
+      ;; receive -- the only point at which that is known exactly
+      (set! *prelude-prefix-n* (length pf))
       (let* ((user (map-in-order embed-expand (cdr fs)))
              (all-forms (append (reverse pf) user))
              (all-locs (append (reverse pl) (cdr ls))))
