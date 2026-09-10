@@ -142,9 +142,34 @@
      ;; own value.  1.7e12 IS an exact integer as a double, so it prints
      ;; as 1700000000000.0 and reads back as itself.
      ;;
-     ;; This is not a shortest-representation printer.  0.1 still prints
-     ;; its true expansion, and making it print "0.1" is a separate
-     ;; piece of work (dtoa) that this deliberately does not start.
+     ;; What the fraction printer below actually does: twelve places
+     ;; after the point, truncated rather than rounded, with no
+     ;; exponent form, and a lookahead that stops as soon as the rest
+     ;; is zero.  The lookahead is why 0.1 prints as "0.1" -- an
+     ;; earlier note here said it printed its true expansion, which it
+     ;; does not, and that sentence was the reason to believe the
+     ;; printer was at least faithful.
+     ;;
+     ;; It is not faithful, and not only imprecise.  Measured: 0.12
+     ;; prints 0.119999999999 and does not read back; 450 of the 999
+     ;; values n/100 do not read back; and printing is not idempotent --
+     ;; pi loses a place on each print-and-read and keeps losing.
+     ;;
+     ;; Near the twelfth place there is no clean threshold, which is
+     ;; worth writing out because a reader will otherwise assume one:
+     ;;
+     ;;     1e-11  ->  0.000000000009   wrong digit, not a short one
+     ;;     1e-12  ->  0.000000000000   a non-zero value reads as zero
+     ;;     2e-12  ->  0.000000000001   wrong digit again
+     ;;     9e-12  ->  0.000000000009   happens to read back
+     ;;     1e-13  ->  0.000000000000   zero
+     ;;
+     ;; The wrong digits are the repeated multiply accumulating error
+     ;; past the last place printed; the zeros are truncation with no
+     ;; exponent form to fall back on.  They are two symptoms of the
+     ;; same walk, and neither is a bound the other respects.
+     ;;
+     ;; The integer part is exact and none of this touches it.
      ((fl<? (fixnum->flonum 536870911) mag)
       (let* ((ipf (flfloor mag))
              (frac (fl- mag ipf)))
