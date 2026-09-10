@@ -13,6 +13,10 @@
 ;; HEAD before any of the binding-form work, so this is not a
 ;; regression of it; found by a reviewer's fixture during that review.
 ;;
+;; The js target answers 5: f64 specialisation is a wasm matter, and
+;; this file is red on stage0 and stage1 only, so its two lines in a
+;; gate are the expected count, not a third host that happened to pass.
+;;
 ;; The recursive path has to be taken for the wrong operand to reach
 ;; the slot, which is what the -1.0 is for: with b = 0.0 the function
 ;; returns the local without recursing and every host prints 5.
