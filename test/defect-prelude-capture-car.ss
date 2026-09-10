@@ -7,12 +7,18 @@
 ;; goes quietly wrong -- two readers measured this file today and got
 ;; three different answers, all of them honest:
 ;;
-;;     grep -c '(car ' src/prelude.ss      lines, not occurrences
-;;     grep -o '(car ' src/prelude.ss | wc -l    occurrences
+;;     grep -c  '(car ' src/prelude.ss           LINES containing one
+;;     grep -o  '(car ' src/prelude.ss | wc -l    OCCURRENCES
 ;;
-;; On 2026-09-10 the first answers 103 for `(car ' and 67 for
-;; `(null? '.  The point is not the number: it is that every one of
-;; them stops meaning what the caller wrote.
+;; On 2026-09-10 those answer 103 and 115 for `(car ', and 67 and 67
+;; for `(null? '.  Both numbers are quoted because the pair is the
+;; point: `(null? ' agrees with itself only because it happens to
+;; occur at most once per line, so a line count that HAPPENS to be
+;; right teaches nothing about the one that does not.
+;;
+;; And the quantity a reader wants is occurrences, not lines.  The
+;; point is not the number either way: it is that every one of them
+;; stops meaning what the caller wrote.
 ;; capture five synthesised calls -- it captures that name everywhere in
 ;; the prelude that survives dead-code elimination.
 ;;
