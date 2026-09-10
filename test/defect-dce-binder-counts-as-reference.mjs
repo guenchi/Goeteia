@@ -12,9 +12,11 @@
 // the same binding pair is then read as a call.  The two halves are
 // held in two cells because a fix for either leaves the other in place.
 //
-// The second test is the twin that proves the probe can see foo at
-// all: when foo IS called it must be present, or an absence in the
-// first test would be the instrument's and not the compiler's.  Its
+// The twins prove the probe can see foo at all and pin what a fix
+// must keep: when foo IS called, or is taken as a value, it must be
+// present, or an absence in the first test would be the instrument's
+// and not the compiler's -- and a fix that stops counting binders
+// must not stop counting value uses.  Its
 // foo is self-recursive because a small function called once is
 // inlined and vanishes for a reason that has nothing to do with
 // dead-code elimination -- measured: the straight-line twin was
@@ -47,6 +49,12 @@ test('a lexical binder sharing a name does not keep an uncalled top-level functi
     const names = namesOf(fs.readFileSync(path.join(root, 'test/defect-spec-candidate-by-name-fixture.ss'), 'utf8'));
     assert.ok(names.length > 0, 'the module has no name section; the probe read nothing');
     assert.ok(!names.includes('foo'), `foo survived dead-code elimination with no call to it; names: ${names.join(' ')}`);
+});
+
+test('twin: a top-level function used only as a value is present in the name section', () => {
+    if (!chez) { console.log('NOT EXERCISED HERE (no chez on PATH; bin/goeteiac is Chez-hosted and this reading was NOT taken)'); return; }
+    const names = namesOf('(import (rnrs))\n(define (foo a b) (if (fl<? a b) (foo b a) (fl+ a b)))\n(display (vector-length (vector foo)))\n');
+    assert.ok(names.includes('foo'), `foo is taken as a value and still absent: a fix that stops counting binders must not stop counting value uses; names: ${names.join(' ')}`);
 });
 
 test('twin: a top-level function that is called is present in the name section', () => {
