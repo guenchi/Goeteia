@@ -654,7 +654,8 @@
              (pair? (car t))
              (eq? (resolve-tag (caar t)) 'unquote-splicing)
              (pair? (cdar t)))
-        (list 'append (xpand (cadr (car t)))
+        (list (compiler-introduced 'append)
+              (xpand (cadr (car t)))
               (xpand-qq (cdr t) level)))
        (else
         (list 'cons (xpand-qq (car t) level)
@@ -834,6 +835,38 @@
 ;; why the prefix is separated before a form is expanded, not recovered
 ;; afterwards.
 (define *prelude-prefix-n* 0)
+
+;; A token the COMPILER introduces, under the prelude's defining scope.
+;;
+;; Two sites synthesize a call to a prelude procedure by writing its
+;; bare name -- quasiquote's append and call/cc's $escape.  A bare name
+;; is an ordinary reference, so a lexical binding of that name at the
+;; use site captures it and the splice calls the user's append.
+;;
+;; rename-introduced memoizes against *renames*, so setting
+;; *defining-scope* alone would hand back whatever token the enclosing
+;; expansion had already minted for this symbol, carrying that
+;; expansion's scope.  The isolation below is the one apply-macro and
+;; close-scope take, for the same reason.
+;;
+;; What makes this enough for these two heads: emission matches a
+;; lexical binding by exact token before it walks marks, so a fresh
+;; token is not captured; and assq-marked's origin walk then reaches
+;; the prelude's definition, which is the only one a program can have,
+;; because a top-level redefinition is refused as a duplicate.
+;;
+;; It is NOT a general implementation of contextual procedure
+;; resolution.  It rests on those two properties, and a head lacking
+;; either is not covered by it.
+(define (compiler-introduced sym)
+  (let ((saved-renames *renames*)
+        (saved-scope *defining-scope*))
+    (set! *renames* '())
+    (set! *defining-scope* *prelude-scope*)
+    (let ((tok (rename-introduced sym)))
+      (set! *renames* saved-renames)
+      (set! *defining-scope* saved-scope)
+      tok)))
 ;; register every define-syntax reachable at the top level -- directly,
 ;; or spliced through a (begin ...) or a (library ...) body -- so a
 ;; macro is live before any sibling form (including its own library
@@ -2667,7 +2700,8 @@
          (vname (gensym "v"))
          (fcode (compile-exp (cadr e) locals cell #f))
          (kcode (compile-lambda (list vname)
-                                (list (list '$escape tokname wname vname))
+                                (list (list (compiler-introduced '$escape)
+                                            tokname wname vname))
                                 (cons (cons tokname tok)
                                       (cons (cons wname wind) locals))
                                 cell))
@@ -3457,8 +3491,15 @@
 ;; the arithmetic helpers codegen calls by index (arith2's slow
 ;; path, compile-test) with eqref operands -- these hidden call
 ;; sites bypass the spec, so the helpers must never specialize
+;;
+;; $escape is here for the same reason and not a different one:
+;; compile-callcc builds its call at EMISSION, after this pass has
+;; run, so the demotion never sees it and the optimistic all-f64 seed
+;; survives into a call whose operands are eqref.  It belonged on this
+;; list before anything in C02 -- a lexical binding of the name merely
+;; made the path reachable, which is how the omission surfaced.
 (define $spec-denylist
-  '($add2 $sub2 $mul2 $quot2 $rem2 $eq2 $lt2))
+  '($add2 $sub2 $mul2 $quot2 $rem2 $eq2 $lt2 $escape))
 
 (define (compute-fn-specs! fn-defs main-steps)
   (set! *fn-specs* '())
