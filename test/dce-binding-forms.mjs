@@ -13,8 +13,8 @@
 // about it.  "absent" rows mention foo only as a binder.
 //
 // Readings on 35ea5da, before the fix, taken in a detached worktree
-// of that commit: every "absent" row present (10 red), every
-// "present" row present (10 green).  The first reading of this file
+// of that commit: every "absent" row present (9 red), every
+// "present" row present (12 green).  The first reading of this file
 // was taken on the shared tree while the fix was already in progress
 // there, and read 8 of the 10 as absent -- the fix working, not the
 // baseline -- which is why the baseline is stated with its commit.
@@ -50,8 +50,14 @@ const rows = [
     ['plain let binder',                    ['(display (let ((foo 5)) 1))'],                                        'absent'],
     ['named let name',                      ['(display (let foo ((x 5)) 1))'],                                      'absent'],
     ['named let binder',                    ['(display (let again ((foo 5)) 1))'],                                  'absent'],
-    ['loop name (a named let loop-ok? takes)',   ['(display (let foo ((x 5)) (if (< x 1) 1 (foo (- x 1)))))'],      'absent'],
-    ['loop binder (a named let loop-ok? takes)', ['(display (let again ((foo 5)) (if (< foo 1) 1 (again (- foo 1)))))'], 'absent'],
+    // a named let that loop-ok? takes lowers to %loop; its parameters
+    // are binders.  The binder must be UNREFERENCED in the body for the
+    // row to discriminate: with no scope tracking a body reference to
+    // foo keeps the top-level foo alive, by design (see below).  The
+    // loop's own name cannot be an "absent" row at all: a named let is
+    // a loop only when its body calls the name, and that call is a
+    // reference spelled foo.
+    ['loop binder, unreferenced (a named let loop-ok? takes)', ['(display (let again ((foo 0) (i 0)) (if (< i 3) (again 9 (+ i 1)) i)))'], 'absent'],
     ['lambda formal',                       ['(display ((lambda (foo) 1) 5))'],                                     'absent'],
     ['lambda first of dotted formals',      ['(display ((lambda (foo . rest) 1) 5))'],                              'absent'],
     ['lambda dotted rest formal',           ['(display ((lambda (x . foo) 1) 5))'],                                 'absent'],
@@ -67,6 +73,8 @@ const rows = [
     // no scope tracking: a reference under a same-named binder still counts
     ['reference under a let binder of the same name',    [`(display (let ((foo 5)) ${R}))`],                         'present'],
     ['reference under a lambda formal of the same name', [`(display ((lambda (foo) ${R}) 5))`],                      'present'],
+    ['loop name is referenced by its own tail call',     ['(display (let foo ((x 5)) (if (< x 1) 1 (foo (- x 1)))))'],   'present'],
+    ['loop binder referenced in the body',               ['(display (let again ((foo 5)) (if (< foo 1) 1 (again (- foo 1)))))'], 'present'],
     // hygiene: a macro's binder is not the program's reference, and vice versa
     ['macro binder with the reference in the hole',  ['(define-syntax with-foo (syntax-rules () ((_ e) (let ((foo 5)) e))))', `(display (with-foo ${R}))`], 'present'],
     ['macro binder with nothing in the hole',        ['(define-syntax with-foo (syntax-rules () ((_ e) (let ((foo 5)) e))))', '(display (with-foo 1))'],     'absent'],
