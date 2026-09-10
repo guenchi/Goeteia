@@ -523,6 +523,14 @@
       ($check-options 'glb-write! $option-keys opts)
       (unless (and (integer? vcount) (> vcount 0))
         (error 'glb-write! "a primitive needs at least one vertex" vcount))
+      ;; An index count with no index array to count describes indices
+      ;; that are not there.  The pair travels together, so it is
+      ;; checked together: either both say there are indices, or
+      ;; neither does.
+      (when (and (not ibase0) (integer? icount0) (> icount0 0))
+        (error 'glb-write!
+               "a primitive gives an index count with no index array"
+               icount0))
       (let* ((tight (glb-stride layout))
              (stride ($option opts 'stride tight))
              (u32? (and ($option opts 'index-u32? (> vcount 65536)) #t))
@@ -895,17 +903,39 @@
                                 "'anims takes a list of clips" as)))))
       (map (lambda (c) ($clip-plan c nnodes)) l)))
 
-  ;; an animation input accessor must carry min and max, and a
-  ;; sampler whose times go backwards has no reading at all -- both
-  ;; answered by one scan of the times themselves
+  ;; A time as the FILE will carry it.  An animation input is written
+  ;; as f32, so two times that differ in f64 can arrive identical in
+  ;; the file; a check made before the conversion would pass input that
+  ;; the file then carries as a duplicate.  The scratch word is taken
+  ;; on first use rather than at load time, because the heap is not
+  ;; ours to claim from before a caller has asked for anything.
+  (define $f32-cell #f)
+  (define ($as-f32 v)
+    (unless $f32-cell (set! $f32-cell (fx-alloc! 4)))
+    (%mem-f32-set! $f32-cell v)
+    (%mem-f32-ref $f32-cell))
+
+  ;; an animation input accessor must carry min and max, and the times
+  ;; must be non-negative and strictly increasing -- glTF requires
+  ;; both, and all of it is answered by one scan of the times
+  ;; themselves.
+  ;;
+  ;; The ordering is compared on the f32 values because that is what
+  ;; the file will hold; the bounds stay as they were read, since they
+  ;; describe the same numbers the accessor describes.
   (define ($times-bounds src count)
     (let ((t0 ($src-ref 'glb-write! src 0 0 1)))
+      (when (fl<? t0 0.0)
+        (error 'glb-write! "a keyframe time is negative" t0))
       (let loop ((i 1) (mn t0) (mx t0) (prev t0))
         (if (= i count)
             (cons (vector mn) (vector mx))
             (let ((t ($src-ref 'glb-write! src i 0 1)))
-              (when (fl<? t prev)
-                (error 'glb-write! "keyframe times go backwards" prev t))
+              (when (fl<? t 0.0)
+                (error 'glb-write! "a keyframe time is negative" t))
+              (unless (fl<? ($as-f32 prev) ($as-f32 t))
+                (error 'glb-write!
+                       "keyframe times must strictly increase" prev t))
               (loop (+ i 1)
                     (if (fl<? t mn) t mn)
                     (if (fl<? mx t) t mx)
@@ -1736,6 +1766,21 @@
                     (let ((r ($plan (car ds) at skins mesh-node nnodes)))
                       (loop (cdr ds) (cdr r) (cons (car r) acc))))))
              (plans (car planned))
+             ;; A material index names a slot in the file's own
+             ;; materials array, so it can only be checked once that
+             ;; array is known -- $plan sees the descriptor, not the
+             ;; file.  An index past the end would be written out and
+             ;; refused by whoever opened the file.
+             (checked-materials
+              (let ((nmat (length ($option opts 'materials '()))))
+                (for-each
+                 (lambda (p)
+                   (let ((m ($plan-material p)))
+                     (when (and m (>= m nmat))
+                       (error 'glb-write!
+                              "'material names a material the file lacks"
+                              m nmat))))
+                 plans)))
              (slots ($morph-slots plans))
              (placed ($place ($extra-specs skins anims slots plans)
                              (cdr planned)))

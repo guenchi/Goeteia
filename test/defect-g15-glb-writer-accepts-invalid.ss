@@ -92,4 +92,24 @@
                       (list (list #f (cons 1.0 1.0) (vector 0.0 0.0 0.0)
                                   #f #f #f #f #f))))) #f)
 
+;; TWO TIMES THAT ARE DISTINCT IN F64 AND THE SAME IN F32.
+;; 1.0 and 1.0 + 2^-30 differ as doubles and collide once rounded to
+;; the four bytes an animation input is stored in, so the file would
+;; carry two keys at the same instant while the descriptor that
+;; produced them looks strictly increasing.
+;;
+;; This is the row that says WHERE the comparison happens.  A check
+;; written on the values as given accepts this pair; the file is what
+;; has to be valid, so the check belongs on the side the file sees.
+;; Nothing else in this cell can tell the two implementations apart --
+;; every other pair here is wrong in f64 as well.
+(want 'g15-times-colliding-only-after-quantisation
+      (refuses? (lambda () (write-with (vector 1.0 1.0000000009313226) 0))) #t)
+
+;; And its control, which is the same shape one ulp of f32 further out:
+;; a pair that survives the rounding must still go through, or the row
+;; above is satisfied by a check that refuses everything close.
+(want 'g15-CONTROL-times-that-survive-quantisation
+      (refuses? (lambda () (write-with (vector 1.0 1.0001) 0))) #f)
+
 (if (null? fails) (display #t) (begin (display fails) (newline)))
