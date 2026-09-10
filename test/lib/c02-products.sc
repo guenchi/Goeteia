@@ -28,6 +28,27 @@
 (define forms (append prelude (list '(%prelude-end)) user))
 (define locs (map (lambda (f) "?:0") forms))
 (define args (cddr (command-line-arguments)))
+(if (and (pair? args) (string=? (car args) "--heads"))
+    ;; --heads: the set of resolved operator tags that reach
+    ;; compute-fn-specs!, taken from the exact forms it is handed.  The
+    ;; census says which binding forms survive to the pass, which is
+    ;; what a walk that must recognise them has to be taught.
+    (let ((orig compute-fn-specs!) (seen '()))
+      (set! compute-fn-specs!
+            (lambda (fn-defs main-steps)
+              (let walk ((x (cons (map (lambda (d) (cons 'begin (cddr d))) fn-defs) main-steps)))
+                (when (pair? x)
+                  (when (symbol? (car x))
+                    (let ((t (resolve-tag (car x))))
+                      (unless (memq t seen) (set! seen (cons t seen)))))
+                  (walk (car x))
+                  (walk (cdr x))))
+              (orig fn-defs main-steps)))
+      (compile-program forms locs)
+      (prepare-program forms locs)
+      (display (list 'heads (list-sort (lambda (a b) (string<? (symbol->string a) (symbol->string b)))
+                                       (filter symbol? seen))))
+      (newline))
 (if (and (pair? args) (string=? (car args) "--specs"))
     ;; --specs name...: the fn-specs entries for exactly the names given
     (begin
@@ -53,4 +74,4 @@
       (prepare-program forms locs)
       (display (list 'fn-specs-after-prepare
                      (filter (lambda (e) (memq (car e) '(norm twice run))) *fn-specs*)))
-      (newline))))
+      (newline)))))
