@@ -3495,15 +3495,17 @@
 ;; $escape is here for the same reason and not a different one:
 ;; compile-callcc builds its call at EMISSION, after this pass has
 ;; run, so no call to $escape is ever visible to the demotion.  What
-;; kept that safe was incidental: a function nothing visibly calls is
-;; normally pruned before this pass runs, so it had no entry at all and
-;; compile-direct emitted eqref operands.  A lexical binding of the
-;; name is enough to change that -- dead-code elimination counts the
-;; binder's name as a reference and keeps the definition, and this
-;; pass then publishes the optimistic seed with nothing to demote it.
-;; Listing $escape here makes the emitted operands independent of
-;; whether an entry happens to exist, which is the rule stated above.
-;; The general fault is pinned by test/defect-spec-candidate-by-name.mjs.
+;; kept that safe was incidental: call/cc's expansion uses $escape in
+;; value position, that use marks it escaped, the pass clears its
+;; vector, and with no entry compile-direct emits eqref operands.  A
+;; lexical binding of the name suppresses that marking (measured; the
+;; step from the binder to the missing mark is not), and the optimistic
+;; seed is published instead.  Listing $escape here makes the emitted
+;; operands independent of whether an entry happens to exist, which is
+;; the rule stated above.  The seed being published for a function
+;; with no visible call is a fault of its own, pinned by
+;; test/defect-spec-candidate-by-name.mjs on a function that reaches
+;; the pass by a different route (kept alive, not kept unmarked).
 (define $spec-denylist
   '($add2 $sub2 $mul2 $quot2 $rem2 $eq2 $lt2 $escape))
 
