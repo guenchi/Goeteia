@@ -6,25 +6,25 @@
 ;;   here       #f    #f     #t     #t    #f    #f    #f     #t
 ;;   Chez       #f    #f     #f     #f    #f    #f    #f     #f
 ;;
-;; ⭐ The shape of the error says where it came from: < and > are right
+;; The shape of the error says where it came from: < and > are right
 ;; and <= and >= are wrong, which is what writing them as the negation
 ;; of the opposite strict comparison produces.  (not (> a b)) equals
 ;; (<= a b) for every pair of reals and differs on exactly one input --
 ;; a NaN, where IEEE 754 says all four comparisons are false because
 ;; the values are unordered rather than equal.
 ;;
-;; ⚠️ (>= n n) answering #t is the one that does damage: it says a NaN
+;; (>= n n) answering #t is the one that does damage: it says a NaN
 ;; is ordered with respect to itself, so a sort or an ordered insert
 ;; will place it, and every later comparison against it lies too.  A
 ;; single NaN deadline in a priority queue permanently corrupts the
 ;; ordering invariant, and nothing raises.
 ;;
-;; ⭐ AND IT DEFEATS THE GUARD EVERY LIBRARY IN THIS TREE USES.  The
+;; AND IT DEFEATS THE GUARD EVERY LIBRARY IN THIS TREE USES.  The
 ;; house form for "a non-negative real" is (and (real? x) (not (< x 0)))
 ;; -- twenty-two of those across (gam) and (web css) -- which a NaN
 ;; passes because (< nan 0) is false.  The obvious repair is to write
 ;; the positive form (>= x 0) instead, and that does not work either,
-;; because >= is the broken one.  ⇒ Fixing the guards without fixing
+;; because >= is the broken one.  Fixing the guards without fixing
 ;; the predicate would look like a fix and change nothing.
 ;;
 ;; The controls are the ordinary orderings, because a repair that made

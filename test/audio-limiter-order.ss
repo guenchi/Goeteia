@@ -1,19 +1,19 @@
 ;; expect: #t
 ;; The other order: play FIRST, configure the limiter after.
 ;;
-;; ⭐ This is the file the design change exists for.  The bus used to be
+;; This is the file the design change exists for.  The bus used to be
 ;; born at the first limiter configuration, which left every sound
 ;; started before it permanently unlimited -- and for loop-sound!, which
 ;; has no natural end, "permanently" meant exactly that.  Moving the
 ;; bus's birth to whichever comes first, the first play or the first
-;; configuration, is what fixed it.  ⚠️ A fix with no cell has no
+;; configuration, is what fixed it.  A fix with no cell has no
 ;; evidence, and the cell has to be in this order: the configure-first
 ;; order (test/audio-limiter.ss) was green before the change too.
 ;;
 ;; It is a separate FILE rather than a separate section because
 ;; (aud sfx) keeps its context in module state that audio-init! sets
 ;; once and never clears.  One process is one context is one bus
-;; lifetime.  ⛔ Reinstalling the mock does not undo it: the library
+;; lifetime.  Reinstalling the mock does not undo it: the library
 ;; still holds the old context object, and cells written that way pass
 ;; or fail for reasons that have nothing to do with the library -- which
 ;; is how the first draft of this file behaved.
@@ -41,7 +41,7 @@
 (audio-limiter!)
 (check "LIM-INSERTED-AFTER: the sound already playing now runs through the limiter"
        (equal? (audio-path-kinds early) '("SRC" "GAIN" "GAIN" "COMP" "DEST")))
-;; ⭐ and it happened without touching the voice: the source's edge and
+;; and it happened without touching the voice: the source's edge and
 ;; its volume gain's edge are the ones they were.  This is the half that
 ;; distinguishes "the bus moved" from "every voice was rewired" -- both
 ;; produce the path above, and only one of them is the design.

@@ -5,12 +5,12 @@
 ;; buffer playback sets volume, rate and looping -- and the default
 ;; graph is exactly the nodes it is allowed to have.
 ;;
-;; ⚠️ This file used to carry its own inline mock, in which every gain
+;; This file used to carry its own inline mock, in which every gain
 ;; came back with the id "GAIN".  That mock could say a gain connected
 ;; to a gain; it could not say WHICH, and a voice now passes through
 ;; three of them (volume, bus, and with panning two more plus a
 ;; merger).  The whitelist below is unwritable in a log like that: it
-;; cannot even answer how many distinct gains exist.  ⭐ The mock was
+;; cannot even answer how many distinct gains exist.  The mock was
 ;; not broken -- it was built for a smaller question, and we started
 ;; asking one it had no words for.  It now shares test/lib/audmock.ss
 ;; with the other audio files, which is also one instrument instead of
@@ -20,7 +20,7 @@
 (define failed 0)
 (define (check name ok)
   (unless ok (set! failed (+ failed 1)) (display "  FAIL ") (display name) (newline)))
-;; ⚠️ Counting is done FROM a mark rather than after a reset wherever
+;; Counting is done FROM a mark rather than after a reset wherever
 ;; the graph is also being read.  audio-mock-reset! empties the log, and
 ;; in this instrument the log IS the graph -- an edge made before the
 ;; reset is not merely unlisted, it is gone, so a path that crosses it
@@ -42,18 +42,18 @@
 
 
 (audio-mock-install!)
-;; ⭐ The mark is taken BEFORE audio-init!, and that position is the
+;; The mark is taken BEFORE audio-init!, and that position is the
 ;; whole cell.  Creating the context is one of the things under
 ;; suspicion here -- the rule is that the bus is made by the first play
 ;; or the first limiter configuration and NOT by the context coming into
 ;; being -- so init has to fall inside the window being observed.  A
 ;; mark taken after it puts the accused outside the evidence.
 ;;
-;; ⚠️ Measured twice, wrongly twice, before this line was right.  The
+;; Measured twice, wrongly twice, before this line was right.  The
 ;; first version counted connect entries in the log, and the reset below
 ;; erased the edge that would have shown the extra node.  The second
 ;; counted creations but marked after init, so the subtraction removed
-;; the same node again.  ⭐ Both times the evidence happened before it
+;; the same node again.  Both times the evidence happened before it
 ;; was observed -- once erased by a reset, once cancelled by a minus --
 ;; and both times the repair swapped the mechanism that had just been
 ;; named while leaving the moment wrong.  The reading that settles it is
@@ -87,22 +87,22 @@
             (= 0.2 (audio-arg-num (audio-find-from "param.setValueAtTime"
                                                    (+ 1 (audio-find "param.setValueAtTime")))
                                   2))))
-;; ⭐ Two beeps and nothing else: four nodes, no bus.  The bus is made
+;; Two beeps and nothing else: four nodes, no bus.  The bus is made
 ;; by the first play or the first limiter configuration -- NOT by the
 ;; context coming into being.  Hanging its creation on the context
 ;; would put an extra node in the graph of a program that only ever
 ;; beeps, and this is the cell that says so.
 ;;
-;; ⚠️ It counts CREATIONS, taken from a mark, and not connect entries in
+;; It counts CREATIONS, taken from a mark, and not connect entries in
 ;; the log.  The first version counted the log and could not see the
 ;; mutant it was written for: the bus built during audio-init! had its
 ;; connect cleared by the reset above, so the count came out at exactly
-;; the expected four.  ⛔ The comment then claiming "this is the cell
+;; the expected four.  The comment then claiming "this is the cell
 ;; that would say so" was false, and it was the only thing telling
 ;; anyone the constraint was watched.
 ;;
-;; ⚠️ The numbers this cell actually reads, on the mutant that builds
-;; the bus during audio-init!: delta 5 against the 4 asserted.  ⛔ Not
+;; The numbers this cell actually reads, on the mutant that builds
+;; the bus during audio-init!: delta 5 against the 4 asserted.  Not
 ;; "creations answer 5, log entries answer 4" -- that was true of the
 ;; absolute count and this cell uses a difference, so every number in it
 ;; was right and none of them was about this cell.  A reading that is
@@ -123,7 +123,7 @@
             (equal? "hit.ogg" (audio-arg (audio-find "fetch") 0))))
 
 ;; ---- playback, and the whitelist ----
-;; ⚠️ COMPAT-NODES, narrowed.  It used to say only "no extra nodes",
+;; COMPAT-NODES, narrowed.  It used to say only "no extra nodes",
 ;; which a bus at unity would fail while a bus quietly doubling as a
 ;; master volume would pass just as well.  Naming the nodes AND pinning
 ;; the bus at 1.0 is the stronger statement, and it is the one that

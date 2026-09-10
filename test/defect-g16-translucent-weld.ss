@@ -3,7 +3,7 @@
 ;; welded into one draw even when a differently coloured translucent
 ;; surface lies between them in depth.
 ;;
-;; ⭐ The premise is written down beside the weld, and it is a correct
+;; The premise is written down beside the weld, and it is a correct
 ;; argument with a missing quantifier:
 ;;
 ;;     "blending a*C + (1-a)*dst with one C and one a gives the same
@@ -11,19 +11,19 @@
 ;;
 ;; That proves swapping two ADJACENT layers of one colour and one alpha
 ;; is a no-op.  It is used to justify merging them into a single draw,
-;; which additionally requires them to BE adjacent.  ⇒ When something
+;; which additionally requires them to BE adjacent.  When something
 ;; else is composited between them, merging moves it to one side.
 ;;
-;; ⚠️ The arithmetic, checked rather than asserted.  Three planes, each
+;; The arithmetic, checked rather than asserted.  Three planes, each
 ;; alpha 0.5, on black: far red, middle blue, near red.
 ;;
 ;;     far R, mid B, near R    (0.625, 0, 0.25)   <- correct
 ;;     the two reds together   (0.375, 0, 0.5)  or  (0.75, 0, 0.125)
 ;;
 ;; Neither merged order is the right colour, and the error is a quarter
-;; of full scale in two channels.  ⇒ This is not a rounding question.
+;; of full scale in two channels.  This is not a rounding question.
 ;;
-;; ⭐ The cell counts DRAWS rather than pixels, on purpose: the mock GL
+;; The cell counts DRAWS rather than pixels, on purpose: the mock GL
 ;; records calls, and what is wrong is the decision to merge, which is
 ;; visible one step before any pixel exists.  A pixel test would need a
 ;; real GL and would then be measuring the blender as well.
@@ -67,10 +67,10 @@
 (define (want name got expect)
   (unless (equal? got expect) (set! fails (cons (list name 'got got 'want expect) fails))))
 
-;; ⚠️ Count BOTH draw kinds.  Identical geometry of one colour becomes
+;; Count BOTH draw kinds.  Identical geometry of one colour becomes
 ;; an instance group, which the mock logs as drawInst, so a counter
 ;; that only knew drawElements read zero for the opaque control and
-;; would have been reported as "the control does not draw".  ⭐ The
+;; would have been reported as "the control does not draw".  The
 ;; first version did exactly that, and the zero looked like a broken
 ;; scene rather than a blind instrument.
 (define (draws-of sc)

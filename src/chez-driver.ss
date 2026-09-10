@@ -163,7 +163,7 @@
 
 (define (skip-block src i n depth)       ; past the opening #|
   (cond
-   ;; ⚠️ This used to answer `n` with the note that `read` would say
+   ;; This used to answer `n` with the note that `read` would say
    ;; so.  It does not: skipping to end-of-input looks exactly like
    ;; reaching the end of the file, so the driver stops reading forms
    ;; and compiles what it had.  What is lost is not the comment -- it

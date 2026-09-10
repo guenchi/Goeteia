@@ -227,27 +227,27 @@ globalThis.__gpulog = [];
 ;; vector and pass #f where the transform attributes pass the
 ;; generation slot, so the counter never moves, the group's generation
 ;; sum is unchanged, and the whole group is skipped: no rebuild, no
-;; upload.  ⚠️ The data structure holds the new colour and the screen
+;; upload.  The data structure holds the new colour and the screen
 ;; holds the old one, which is why nothing anywhere reports it.
 ;;
-;; ⚠️ OPEN, and much older than this section.  A round prints
+;; OPEN, and much older than this section.  A round prints
 ;; `callback error: ->js: cannot convert to a JS value` on stderr FIFTY
 ;; ONE times, across todomvc, xr, react, sx, tail, ws-sse and others --
-;; every one of which passes.  ⛔ It is invisible to the verdict because
+;; every one of which passes.  It is invisible to the verdict because
 ;; run-tests.sh compares stdout and this goes to stderr; a callback that
 ;; cannot convert its result answers undefined and the host carries on.
 ;;
-;; ⛔ An earlier version of this comment said the section introduced it,
+;; An earlier version of this comment said the section introduced it,
 ;; on the evidence that the gate's log did not contain it.  That was a
 ;; reading of the wrong file: the gate writes an AUDIT of seventy-five
 ;; lines and the round's real log elsewhere, and the audit does not
 ;; carry stderr.  The real logs have fifty-one, in every round stored.
-;; ⚠️ A minimal sgpu scene with no signal at all produces one, so it is
+;; A minimal sgpu scene with no signal at all produces one, so it is
 ;; not about signals and not about colour.
 ;;
 ;; It is recorded as its own finding rather than guessed at here.
 ;;
-;; ⭐ The pair is the point.  A cell that only watched the colour would
+;; The pair is the point.  A cell that only watched the colour would
 ;; not distinguish "colour signals are broken" from "signals are broken"
 ;; or "this scene never uploads anything"; the rotation case, in the
 ;; same scene and the same frame shape, is what makes the colour case

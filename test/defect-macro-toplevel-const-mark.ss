@@ -14,7 +14,7 @@
 ;;
 ;;   unbound variable: #{mc <mark>}
 ;;
-;; ⚠️ See the other file for the shape this cell must NOT return to.
+;; See the other file for the shape this cell must NOT return to.
 ;; Demanding that a user-written `mc` see this definition is demanding
 ;; that hygiene be broken.
 (import (rnrs))

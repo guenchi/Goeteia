@@ -60,7 +60,8 @@
           fx-program-istride fx-program-blocks
           fx-use! fx-use-instanced! fx-uniform! fx-uniform?
           fx-ticks! fx-loop! fx-loop-fixed!
-          fx-init-input! key-down? pointer-x pointer-y pointer-down?
+          fx-init-input! key-down? key-went-down? key-went-up?
+          keys-consume-edges! pointer-x pointer-y pointer-down?
           pointer-lock! pointer-locked? pointer-motion!
           fx-fullscreen! fx-quad-program
           fx-fullscreen-use! fx-fullscreen-draw!
@@ -113,7 +114,7 @@
     (unless $fx-canvas (error 'fx-slot! "call fx-init! first"))
     (let ((s $fx-slot)) (set! $fx-slot (+ s 1)) s))
 
-  ;; ⚠️ The size is checked here for the same reason fx-release! checks
+  ;; The size is checked here for the same reason fx-release! checks
   ;; its mark, and against the same hazard: both move $fx-heap, and the
   ;; guards below fx-release! were written because moving it wrongly
   ;; hands out memory that is already in use.  fx-alloc! moved the very
@@ -122,7 +123,7 @@
   ;; object was still using -- the hazard fx-release! is guarded
   ;; against, reached through the entrance that was not.
   ;;
-  ;; ⭐ And a level dragged down this way could not be recovered: every
+  ;; And a level dragged down this way could not be recovered: every
   ;; mark taken earlier is now ABOVE the water level, which is exactly
   ;; what fx-release!'s second guard refuses.  The guard protecting the
   ;; good path also sealed the way back from the bad one.
@@ -195,7 +196,7 @@
             (immutable vbase $fx-mesh-vbase) (immutable ibase $fx-mesh-ibase)
             (immutable vbytes $fx-mesh-vbytes) (immutable ibytes $fx-mesh-ibytes)
             (immutable count fx-mesh-count)
-            ;; ⚠️ Which index width this mesh was WRITTEN with.  mesh.ss
+            ;; Which index width this mesh was WRITTEN with.  mesh.ss
             ;; already answers the question -- mesh-index-u32? -- and
             ;; mesh-write! already lays the indices out accordingly; it
             ;; was only the upload and the draw that never asked, so a
@@ -654,6 +655,23 @@
   ;; therefore survives on an element the caller has moved away from,
   ;; and does nothing there.
   (define $fx-keys (make-hashtable string-hash string=?))
+  ;; A key that goes down and up again between two reads is invisible to
+  ;; $fx-keys, which only ever holds the level: both edges have been
+  ;; written by the time anyone looks, and the second one erased the
+  ;; first.  That is not a rare case -- a key tapped inside one frame is
+  ;; a deliberate act by the player, and it is the frames that run long
+  ;; (a hitch, a loaded level, a simulation stepping at a lower rate
+  ;; than the display) that swallow the most of them.  The failure is
+  ;; silent and reads as an input the game "missed".
+  ;;
+  ;; So the edges are latched here as they arrive, and stay latched
+  ;; until the caller says it has seen them.  Both directions are kept:
+  ;; a release between reads is lost exactly as a press is, and a caller
+  ;; that needed only one of the two would otherwise have to install a
+  ;; second keyup listener to get the other -- which puts two owners on
+  ;; the same event, the thing this layer exists to prevent.
+  (define $fx-key-down-edges (make-hashtable string-hash string=?))
+  (define $fx-key-up-edges (make-hashtable string-hash string=?))
   (define $fx-px 0.0)
   (define $fx-py 0.0)
   ;; Which pointers are down, by pointerId.  A single boolean could
@@ -737,11 +755,19 @@
         (set! $fx-input-window? #t)
         (js-method (js-global) "addEventListener" "keydown"
                    (lambda (e)
-                     (hashtable-set! $fx-keys (js->string (js-get e "key")) #t)
+                     (let ((k (js->string (js-get e "key"))))
+                       (hashtable-set! $fx-keys k #t)
+                       ;; Auto-repeat delivers keydown over and over
+                       ;; while the key is held; setting a flag that is
+                       ;; already set is why repeats need no special
+                       ;; case here.
+                       (hashtable-set! $fx-key-down-edges k #t))
                      (js-undefined)))
         (js-method (js-global) "addEventListener" "keyup"
                    (lambda (e)
-                     (hashtable-set! $fx-keys (js->string (js-get e "key")) #f)
+                     (let ((k (js->string (js-get e "key"))))
+                       (hashtable-set! $fx-keys k #f)
+                       (hashtable-set! $fx-key-up-edges k #t))
                      (js-undefined)))
         ;; Releases are watched on the window as well as on the
         ;; element, because pointerup fires on whatever lies under the
@@ -784,6 +810,28 @@
                    (lambda (e) ($fx-unpress! e) (js-undefined))))))
 
   (define (key-down? k) (hashtable-ref $fx-keys k #f))
+
+  ;; These two ask a different question from key-down?, and the names
+  ;; are meant to keep them apart at the call site: key-down? is about
+  ;; NOW, and these are about WHAT HAPPENED since the last
+  ;; keys-consume-edges!.  A key tapped and released inside one frame
+  ;; answers #f to key-down? and #t to both of these.
+  (define (key-went-down? k) (hashtable-ref $fx-key-down-edges k #f))
+  (define (key-went-up? k) (hashtable-ref $fx-key-up-edges k #f))
+
+  ;; Called once per simulation step, after the step has read whatever
+  ;; edges it cares about.  Clearing is the caller's to do rather than
+  ;; happening inside the read, because a step normally asks about
+  ;; several keys and a read that consumed would let the first question
+  ;; hide the answer to the second -- and it would make the order of
+  ;; the questions matter, which nothing at the call site would show.
+  ;; Fresh tables rather than a walk that deletes each key: the handlers
+  ;; read the variable when an event arrives, so replacing what it holds
+  ;; is complete at once and costs the same whether one key was latched
+  ;; or forty.
+  (define (keys-consume-edges!)
+    (set! $fx-key-down-edges (make-hashtable string-hash string=?))
+    (set! $fx-key-up-edges (make-hashtable string-hash string=?)))
   (define (pointer-x) $fx-px)
   (define (pointer-y) $fx-py)
   (define (pointer-down?) (> (hashtable-size $fx-pointers) 0))

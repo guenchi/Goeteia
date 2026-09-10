@@ -81,6 +81,18 @@
   ;; ordinary elapsed times, not a proportion of the deadline.  It is
   ;; therefore meaningful at the scale seconds are counted in, and a
   ;; caller running a clock in nanoseconds-as-units wants its own.
+  ;;
+  ;; (sim step) asks a question that looks like this one and answers it
+  ;; with NO tolerance at all.  Both are right, and the reason is the
+  ;; difference between a deadline and a cadence.  A fixed step that
+  ;; rounded a step into existence would simulate more time than has
+  ;; passed, and a step it holds back is due again on the very next
+  ;; advance -- the error corrects itself and nothing is lost.  A
+  ;; deadline here fires once: a payload held back by a last-bit
+  ;; shortfall is late for good, and there is no later tick at which it
+  ;; becomes on time.  So neither file should be changed to match the
+  ;; other, and a reader who knows one of them should not assume the
+  ;; other behaves the same way.
   (define $due-slack 1e-8)
 
   (define (timeline? t) ($t? t))

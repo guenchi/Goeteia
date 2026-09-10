@@ -7,7 +7,7 @@
 ;; fixnum range, and the fast path wraps it back around instead of
 ;; promoting.
 ;;
-;; ⚠️ Written as an equality rather than by printing the value: a
+;; Written as an equality rather than by printing the value: a
 ;; bignum's printed form is a second thing that could be wrong, and a
 ;; cell that compared text would fail for two possible reasons at once.
 ;;

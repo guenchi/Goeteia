@@ -116,7 +116,7 @@ trap 'rm -rf "$W"; git -C "$REPO" worktree prune >/dev/null 2>&1 || true' EXIT I
 git -C "$REPO" worktree add --detach "$W/t" HEAD >/dev/null 2>&1
 # the live tree's UNCOMMITTED state too: a mutation judged against HEAD
 # while the work sits uncommitted is judging a tree nobody has.
-# ⚠️ Read with -z and take the path from the RECORD, not the last
+# Read with -z and take the path from the RECORD, not the last
 # whitespace-separated field.  `awk '{print $NF}'` loses a path with a
 # space in it (it copies the tail), takes the wrong half of a rename
 # (`R  old -> new`), and cannot say anything at all about a DELETION --
@@ -220,13 +220,13 @@ verdict() {  # RED|GREEN|BLOCKED  scope  kind  detail
 run_probe() { # dir -> stdout of the probe, or the word FAILED
     [ -n "$PROBE" ] || return 0
     cp "$REPO/$PROBE" "$1/__probe.ss" 2>/dev/null || cp "$PROBE" "$1/__probe.ss"
-    # ⚠️ The status comes from the RUN, never from the pipeline.  Piping
+    # The status comes from the RUN, never from the pipeline.  Piping
     # into `head` hands the subshell head's status, which is 0 whatever
     # the runner did: a probe that printed `audit-crash` and exited 7
     # came back as the reading "audit-crash" instead of FAILED, and that
     # string was then compared against the post-mutation reading as if
-    # both were measurements.  ⛔ A crash is not a value.
-    # ⚠️ `x=$(cmd); ec=$?` does not survive `set -e`: the assignment
+    # both were measurements.  A crash is not a value.
+    # `x=$(cmd); ec=$?` does not survive `set -e`: the assignment
     # takes the substitution's status, so a failing command kills the
     # script before the next line can read $?.  The `if` form is what
     # makes the status readable at all -- and losing that is how the
@@ -284,12 +284,12 @@ if [ "$TARGET" = gate ]; then
     cp "$W/pre.keep" "$W/t/$FILE"
     if ( cd "$W/t" && ./run-tests.sh > "$W/clean.log" 2>&1 ); then clean_ec=0; else clean_ec=$?; fi
     M=$(grep -cE '^ok ' "$W/clean.log" || true)
-    # ⚠️ The clean run's status used to be thrown away with `|| true`,
+    # The clean run's status used to be thrown away with `|| true`,
     # and RED was decided by the mutated run alone.  On a tree that was
     # ALREADY failing -- a half-finished batch, an unrebuilt bootstrap
     # snapshot, someone else's work in flight -- every mutation then
     # came back RED, and each of those reds was an existing failure
-    # wearing the mutation's name.  ⭐ Without a green baseline there is
+    # wearing the mutation's name.  Without a green baseline there is
     # no denominator and no attribution, so there is no reading.
     if [ "$clean_ec" -ne 0 ]; then
         cleanfail=$(grep -E '^FAIL|^TIMEOUT' "$W/clean.log" | grep -v nodraw \
@@ -345,12 +345,12 @@ else
                 exit 0
             fi ;;
         esac
-        # ⚠️ The clean run first, in this worktree, under the same
+        # The clean run first, in this worktree, under the same
         # conditions -- including the same rebuild.  This branch used to
         # go straight to the mutated run and call a non-zero exit RED,
         # so a suite that was already failing before the mutation
         # produced a confident RED for every mutation aimed anywhere
-        # near it.  ⭐ The gate branch was given a baseline and this one
+        # near it.  The gate branch was given a baseline and this one
         # was not, for two rounds, which is the same asymmetry the
         # comment above describes: an improvement lands on the path
         # somebody happened to be looking at.
@@ -412,7 +412,7 @@ else
         cp "$W/pre.keep" "$W/t/$FILE"
         ( cd "$W/t" && rm -f __b.wasm && ./bin/goeteiac "test/$s.ss" __b.wasm >/dev/null 2>&1 ) || true
         base=""
-        # ⚠️ `|| base=""` is load-bearing, not defensive.  Under
+        # `|| base=""` is load-bearing, not defensive.  Under
         # `set -e` an assignment takes its substitution's status, so a
         # baseline that CRASHES -- exactly the case this check exists to
         # catch -- killed the script before it could say BLOCKED, and
@@ -432,7 +432,7 @@ else
     if [ "$n" -gt 0 ]; then
         # Anchored, and NOT case-insensitive: `grep -iE FAIL` also
         # matches "failing" and "failure", and it picked a PASSING
-        # line ("✔ the transport failing is a rejection") as the
+        # line ("the transport failing is a rejection") as the
         # explanation of a red.  A pattern loose enough to match prose
         # will eventually match the wrong prose.
         # ALL of them, not the first.  Criterion (1) is "it reddened

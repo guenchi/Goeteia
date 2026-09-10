@@ -9,7 +9,7 @@
 ;;
 ;;     sounding(t)  <=  cap + (evictions in (t-F, t])
 ;;
-;; and the cells below are the first reading of it.  ⚠️ Two quantities,
+;; and the cells below are the first reading of it.  Two quantities,
 ;; and they are not the same one:
 ;;
 ;;   ALLOCATED   what (audio-voice-count) reports.  It counts a voice
@@ -22,7 +22,7 @@
 ;;               and a number it hands us would be its own answer to its
 ;;               own question.
 ;;
-;; ⭐ The third cell is the one that discriminates.  An implementation
+;; The third cell is the one that discriminates.  An implementation
 ;; that released the voice inside stop() rather than on `ended` passes
 ;; "count is 3 after the eviction" and "count is 2 after ended" -- and
 ;; it tears the nodes down before the ramp has run, which is the defect
@@ -70,7 +70,7 @@
 (check "POOL-OVERSHOOT: so all three are still sounding, and the bound allows it (3 <= cap+1)"
        (= 3 (sounding)))
 
-;; ---- ⭐ time alone releases nothing ----
+;; ---- time alone releases nothing ----
 (audio-advance! (* 2.0 FADE))
 (check "POOL-ENDED: past the end of the ramp the allocation is STILL held"
        (= 3 (audio-voice-count)))

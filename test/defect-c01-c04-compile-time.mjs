@@ -10,7 +10,7 @@
 //        i)))` at the DEFAULT optimisation level emits a struct.new that
 //        stores an i32 where an eqref is declared, and
 //        WebAssembly.instantiate refuses it.  The same shape with 1.0
-//        fails as f64 against eqref.  ⚠️ Unoptimised wasm and both JS
+//        fails as f64 against eqref.  Unoptimised wasm and both JS
 //        modes answer 1, which is why nothing in the suite has ever
 //        mentioned it: every test runs somewhere the defect is absent.
 //        Reported location: src/compiler.ss:1855 (compile-%loop's local
@@ -19,13 +19,13 @@
 //   C04  dead-code elimination removes an ill-formed initialiser before
 //        anything checks its arity.  `(define unused (cons 1)) 42`
 //        compiles and answers 42 on all four combinations; `cons` with
-//        one argument is never reported.  ⭐ "It writes no side effect"
+//        one argument is never reported.  "It writes no side effect"
 //        does not imply "it cannot fail", and the elimination is
 //        applied at -O0 as well, so there is no setting in which the
 //        program is checked.  Reported location: src/compiler.ss:3311
 //        (pure-init? treats every cons as removable).
 //
-// ⚠️ Both cells run all four combinations on purpose, and the readings
+// Both cells run all four combinations on purpose, and the readings
 // are narrower than the review's summary in two ways worth recording:
 //
 //   C01 fails at wasm -O2 ONLY.  wasm -O0 and both JS modes compile and
@@ -34,7 +34,7 @@
 //
 //   C04 escapes at TOP LEVEL only.  `(let ((u (cons 1))) 42)` and a
 //       `(cons 1)` whose value is actually read are both refused today,
-//       on all four.  ⭐ So the elimination is not the whole story: the
+//       on all four.  So the elimination is not the whole story: the
 //       hole is specifically an unused TOP-LEVEL initialiser, and a
 //       repair aimed at "check arity before eliminating" should be told
 //       that two of the three placements already do.
@@ -58,10 +58,10 @@ const write = (name, src) => {
     return f;
 };
 // every combination the compiler offers, named, so a failure says which
-// ⚠️ TWO compilers, and the difference is the point.  compileToBytes
+// TWO compilers, and the difference is the point.  compileToBytes
 // with no compilerWasm uses goeteia.wasm -- the SNAPSHOT -- so a change
 // to src/ cannot move a single line of this file until the snapshot is
-// rebuilt.  ⛔ That cuts both ways: a fix does not show, and neither
+// rebuilt.  That cuts both ways: a fix does not show, and neither
 // does a BREAKAGE, so this harness on its own would report the same
 // thing about a repaired compiler and a wrecked one.
 //
@@ -162,7 +162,7 @@ for (const [name, src] of illFormed) {
     if (!compileFromSource(f, path.join(dir, 'twin-src.wasm'))) {
         note('C04 twin (from source): a WELL-formed unused initialiser was refused');
     }
-    // ⭐ And the elimination must still HAPPEN.  A repair that stopped
+    // And the elimination must still HAPPEN.  A repair that stopped
     // removing anything satisfies every refusal above while costing the
     // tree its dead-code elimination, and nothing else here would say
     // so.  Measured by bytes: the unused binding must leave no trace.

@@ -2801,7 +2801,7 @@
     ;; proved were there: the header fields are only safe to read once
     ;; the file is known to be long enough to hold them.
     ;;
-    ;; ⚠️ What these prevent is not a crash.  A chunk whose declared
+    ;; What these prevent is not a crash.  A chunk whose declared
     ;; length runs past the end reads whatever is after the buffer, so
     ;; the JSON handed to the parser is part file, part neighbour, and
     ;; what comes out is a scene -- a plausible one.  The input is a

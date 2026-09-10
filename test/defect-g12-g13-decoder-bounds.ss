@@ -4,21 +4,21 @@
 ;; frame header it never checks.
 ;;
 ;; RED ON PURPOSE.  Same family as G11 (meshopt, fixed) and G10 (UASTC,
-;; fixed): a length is carried and not enforced.  ⚠️ In linear memory
+;; fixed): a length is carried and not enforced.  In linear memory
 ;; that is not a crash -- the bytes past the end are the next buffer's,
 ;; so what comes out is real data mixed with somebody else's, from a
 ;; file off the network.
 ;;
-;; ⭐ Each red has its control beside it, because a decoder that refused
+;; Each red has its control beside it, because a decoder that refused
 ;; everything would satisfy every refusal here.  The controls are the
 ;; smallest inputs each decoder is supposed to accept.
 ;;
-;; ⭐ This pair is also where a prediction gets tested.  The two bounds
+;; This pair is also where a prediction gets tested.  The two bounds
 ;; already written differ by format: UASTC's requirement is a function
 ;; of the dimensions, so one up-front check settles it; meshopt's stream
 ;; is variable-length and self-describing, so it needs a per-byte
-;; window.  ⇒ deflate and zstd are variable-length too, so they are
-;; predicted to want meshopt's shape rather than UASTC's.  ⚠️ If the fix
+;; window.  deflate and zstd are variable-length too, so they are
+;; predicted to want meshopt's shape rather than UASTC's.  If the fix
 ;; turns out to be a single up-front check, that prediction is wrong and
 ;; the family does not split the way it was said to.
 (import (rnrs) (gfx image) (gfx zstd))

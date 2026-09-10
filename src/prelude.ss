@@ -1010,7 +1010,7 @@
                                      (%at-line $reader-line $reader-column))))
             (let ((d ($read)))
               (%skip-blanks)
-              ;; ⚠️ This used to consume whatever byte was here without
+              ;; This used to consume whatever byte was here without
               ;; looking, so "(1 . 2 3)" read as (1 . 2) and the 3 was
               ;; gone -- a shorter answer than the text, and nothing
               ;; said.  Only ")" may follow the tail datum.
@@ -1544,7 +1544,7 @@
           (else (let ((fast (cdr (cdr fast))) (slow (cdr slow)))
                   (and (not (eq? fast slow)) (loop slow fast)))))))
 
-;; ⚠️ NOT memq/assq.  eq? on a flonum, a bignum or a ratio compares
+;; NOT memq/assq.  eq? on a flonum, a bignum or a ratio compares
 ;; identity, so (memv 2.0 '(1.0 2.0)) answered #f -- the number was in
 ;; the list and the search said it was not.  eqv? is the comparison
 ;; these two are defined by.
@@ -2364,7 +2364,7 @@
    (else
     ($make-rat ($mul2 (numerator a) (denominator b))
                ($mul2 (denominator a) (numerator b))))))
-;; ⚠️ $->fl has no complex case: it falls through to the bignum path
+;; $->fl has no complex case: it falls through to the bignum path
 ;; and the cast traps -- and a wasm trap is not a condition, so a
 ;; caller cannot even catch it.  A complex converts component-wise.
 (define ($->inexact x)
@@ -2394,12 +2394,12 @@
               (loop (fl* m (fixnum->flonum 2)) (* k 2)))))
       x))
 (define (exact x) (inexact->exact x))
-;; ⚠️ A ratio used to be returned unchanged, so (floor 7/2) was 7/2.
+;; A ratio used to be returned unchanged, so (floor 7/2) was 7/2.
 ;; $make-rat keeps the denominator positive and collapses d = 1 to an
 ;; integer, so a live ratio is never integral -- which is why the
 ;; negative case always steps down by one rather than testing for it.
 ;;
-;; ⭐ floor and truncate differ ONLY on negatives: (floor -7/2) is -4
+;; floor and truncate differ ONLY on negatives: (floor -7/2) is -4
 ;; and (truncate -7/2) is -3.  A version that rounded both toward zero
 ;; would agree with this one on every positive input.
 (define (floor x)
@@ -2702,7 +2702,7 @@
     (if ($eq2 d 1) n (%make-ratio n d))))
 (define (numerator x) (if (%ratio? x) (%ratio-num x) x))
 (define (denominator x) (if (%ratio? x) (%ratio-den x) 1))
-;; ⚠️ Fixing integer? does not fix this one: the flonum? arm answered
+;; Fixing integer? does not fix this one: the flonum? arm answered
 ;; #t for an infinity on its own.  A rational is a ratio of integers,
 ;; and an infinity is not one.
 (define (rational? x)

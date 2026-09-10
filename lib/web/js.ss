@@ -91,7 +91,7 @@
      ;; the ordinary shape for an event handler -- and the host is
      ;; given `undefined` in that case anyway, so refusing it reported
      ;; a failure on every call while nothing was actually wrong.
-     ;; ⚠️ It is mapped, not accepted-in-general: a value of a type
+     ;; It is mapped, not accepted-in-general: a value of a type
      ;; that genuinely cannot cross still raises below, which is what
      ;; keeps this a conversion and not a silence.
      ((eq? v $unspecified) (js-undefined))

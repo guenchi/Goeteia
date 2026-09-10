@@ -2,7 +2,7 @@
 //
 // test/defect-macro-toplevel-{var,const}-mark.ss ask for a macro's own
 // expansion to be able to read a top-level value definition it made.
-// ⭐ The obvious way to make them green is to stop marking those names
+// The obvious way to make them green is to stop marking those names
 // -- key *vars* by the stripped symbol.  That also makes a name a
 // macro introduces visible to code the user wrote, which is precisely
 // what hygiene forbids, and no cell over there would notice.
@@ -16,7 +16,7 @@
 // run time, which for a whole-program compiler is the earlier and
 // better of the two places, and either way the program does not run.
 //
-// ⚠️ The control below is the half that keeps this from being
+// The control below is the half that keeps this from being
 // satisfied by a compiler that refuses everything.
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -56,7 +56,7 @@ test('a user-written reference does not see a name a macro introduced', () => {
 });
 
 test('the same program with the name passed in as an argument compiles', () => {
-    // ⭐ The control.  Without it, a compiler that refused every
+    // The control.  Without it, a compiler that refused every
     // program would pass the cell above.  The only difference here is
     // that the name came from the call site, so it was never marked.
     const why = refusal(`(import (rnrs))

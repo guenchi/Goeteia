@@ -3,22 +3,22 @@
 //
 //     [ "$src" -nt "$wasm" ] || continue
 //
-// ⇒ A library the page imports can be newer than the artifact and the
+// A library the page imports can be newer than the artifact and the
 // page is skipped.  The dev server runs this on every save, so editing
 // a shared library and reloading serves the old picture -- and reloads
 // keep serving it, because the timestamp that decides never moves.
 //
-// ⭐ The freshness of a derived artifact is checked against ONE of its
+// The freshness of a derived artifact is checked against ONE of its
 // inputs rather than against its dependency closure.  The compiler
 // snapshot and the prelude are inputs too, and are not compared
 // either; this cell tests the library case because it is the one a
 // person hits while working.
 //
-// ⚠️ The failure is a stale picture, not an error.  Nothing in the
+// The failure is a stale picture, not an error.  Nothing in the
 // output says "this is the previous build", so the natural reading is
 // that the edit did not do what the author thought.
 //
-// ⭐ The real build.sh is copied into a sandbox and run there, rather
+// The real build.sh is copied into a sandbox and run there, rather
 // than reimplemented here.  Its DIR comes from its own path, so a copy
 // walks the sandbox -- which means the cell exercises the script as
 // shipped, and a change to that one line moves this cell.  A
@@ -37,11 +37,11 @@ import { fileURLToPath } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
-// ⚠️ lib/ is a REAL directory here, holding one symlink per library.
+// lib/ is a REAL directory here, holding one symlink per library.
 // A first version symlinked lib/ itself and then created the fixture
 // library inside it -- which is a hole straight into the repository,
 // and it created lib/sandbox/ in the working tree before anyone
-// noticed.  ⭐ A symlinked directory in a fixture is not a copy of the
+// noticed.  A symlinked directory in a fixture is not a copy of the
 // tree; it IS the tree, and everything the test writes lands there.
 function sandbox() {
     const d = fs.mkdtempSync(path.join(os.tmpdir(), 'goeteia-b01-'));
@@ -66,7 +66,7 @@ function makePage(d) {
 }
 
 function build(d) {
-    // build.sh runs under `set -e`, so a failed compile aborts it.  ⭐
+    // build.sh runs under `set -e`, so a failed compile aborts it.  
     // Return stdout AND stderr: a cell that only read stdout would see
     // "no compile line" and report the defect under test when what
     // actually happened is that the fixture did not compile.

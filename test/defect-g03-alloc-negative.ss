@@ -3,29 +3,29 @@
 ;; moves the bump pointer BACKWARDS and the next allocation hands out
 ;; bytes that are still in use.
 ;;
-;; ⭐ THE SHAPE, and it is what makes this more than a missing check:
+;; THE SHAPE, and it is what makes this more than a missing check:
 ;; the hazard is already understood on the OTHER path.  fx-release! --
 ;; the documented way to move the water level down -- is guarded on
 ;; both sides, and its comment says exactly why: a mark below the
 ;; command region hands out the encoder's own bytes, one above the
 ;; water level hands out memory that was never allocated.  fx-alloc!
 ;; moves the same pointer, can move it down by any amount, and asks
-;; nothing.  ⇒ One hazard, two entrances, a guard on one of them.
+;; nothing.  One hazard, two entrances, a guard on one of them.
 ;;
-;; ⚠️ In linear memory the ordinary case does not crash.  Nothing traps
+;; In linear memory the ordinary case does not crash.  Nothing traps
 ;; and nothing is logged; two live objects become one, and the symptom
 ;; turns up wherever the older is next read.
 ;;
-;; ⚠️ CELL ORDER IS LOAD-BEARING and the file learned it the hard way.
+;; CELL ORDER IS LOAD-BEARING and the file learned it the hard way.
 ;; The allocator is one global water level, so a cell that damages it
 ;; damages every cell after it: an early probe walked the level below
 ;; zero, and everything downstream trapped on `memory access out of
-;; bounds`, taking the file's whole verdict with it.  ⇒ Controls run
+;; bounds`, taking the file's whole verdict with it.  Controls run
 ;; first while the heap is sane, the overlap probe uses a small
 ;; negative that stays in range, and the probes that wreck the level
 ;; run last and never dereference what they get.
 ;;
-;; ⭐ A THIRD THING, found while ordering them: once fx-alloc! has
+;; A THIRD THING, found while ordering them: once fx-alloc! has
 ;; pulled the level down, fx-release! CANNOT put it back -- the old
 ;; mark is now above the water level, which is the very thing its
 ;; second guard refuses.  The guard that protects the good path also
@@ -44,7 +44,7 @@
 (want 'g03-CONTROL-zero (integer? (fx-alloc! 0)) #t)
 (let* ((m (fx-mark)) (e1 (fx-alloc! 32)))
   (fx-release! m)
-  ;; ⭐ release! is MEANT to hand the same bytes back.  A fix that made
+  ;; release! is MEANT to hand the same bytes back.  A fix that made
   ;; the water level monotonic would take out the only form of freeing
   ;; this allocator has, and this cell is what would say so.
   (want 'g03-CONTROL-release-reuses (fx-alloc! 32) e1))

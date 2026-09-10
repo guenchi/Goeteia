@@ -4,7 +4,7 @@
 ;; This library shipped, was written up in docs/api.md, and until now no
 ;; test imported it -- the api-index check was green throughout, because
 ;; it asks whether an exported name has an entry, not whether the name
-;; does the right thing.  ⚠️ A complete index reads like coverage and is
+;; does the right thing.  A complete index reads like coverage and is
 ;; not coverage.
 ;;
 ;; Every cell names the plausible-but-wrong implementation it excludes.
@@ -30,13 +30,13 @@
 ;; The predicate has to look at BOTH the tag and the length: with only
 ;; the tag, any vector beginning with that symbol passes and the
 ;; accessors read past the end; with only the length, every six-element
-;; vector in the program is an ability.  ⭐ Each half is checked by the
+;; vector in the program is an ability.  Each half is checked by the
 ;; case the other half would let through.
 ;;
-;; ⓘ And the honest third line: a vector with the right tag AND the
+;; And the honest third line: a vector with the right tag AND the
 ;; right length IS an ability.  The representation is a plain vector and
 ;; the library says so; forging one is the caller's business, not a hole
-;; to be plugged.  ⚠️ This cell was first written claiming otherwise and
+;; to be plugged.  This cell was first written claiming otherwise and
 ;; went red -- the claim was mine, not the library's.
 (check "MAKE: the predicate checks the tag"
        (not (ability? (vector 'not-an-ability 'x 1 2 0 0))))
@@ -47,11 +47,11 @@
        (ability? (vector 'gam-ability 'x 1 2 0 0)))
 
 ;; ---- USE-REFUSED ----
-;; ⭐ The cell this file exists for.  A use that is refused must leave
+;; The cell this file exists for.  A use that is refused must leave
 ;; the cooldown counting down from where it was.  An implementation that
 ;; sets the cooldown whether or not the use succeeded passes every cell
 ;; about readiness -- the ability is not ready either way -- and turns a
-;; player mashing a key into an ability that never comes back.  ⛔ It is
+;; player mashing a key into an ability that never comes back.  It is
 ;; invisible to anyone who only tests the successful path.
 (check "USE-REFUSED: a refused use does not restart the cooldown"
        (let ((a (make-ability 'blink 0 10.0)))
@@ -95,12 +95,12 @@
          (not (ability-ready? a))))
 
 ;; ---- EXACTNESS ----
-;; ⭐ The zero an ability reports is its cooldown's own zero.  An
+;; The zero an ability reports is its cooldown's own zero.  An
 ;; implementation with a literal 0 in it is right about readiness and
 ;; wrong about the value: a game keeping its clock in flonums gets an
 ;; exact 0 back from one accessor and flonums from every other, and the
 ;; mixed arithmetic that follows is a bug nobody looks for at the place
-;; it is caused.  ⛔ `=` cannot see this; `exact?` can.
+;; it is caused.  `=` cannot see this; `exact?` can.
 (check "EXACTNESS: a flonum cooldown reports a flonum remaining, at zero too"
        (let ((a (make-ability 'blink 0 2.0)))
          (ability-use! a)
@@ -119,7 +119,7 @@
             (exact? (ability-remaining (make-ability 'b 0 2)))))
 
 ;; ---- what it refuses, and what it must NOT refuse ----
-;; A cooldown of zero is refused; a cost of zero is not.  ⭐ The
+;; A cooldown of zero is refused; a cost of zero is not.  The
 ;; asymmetry is the decision, so both halves need a cell: with only the
 ;; refusal, an edit that tightened cost the same way would pass.
 (check "REFUSE: a cooldown of zero or less is refused"
@@ -147,7 +147,7 @@
             (refuses? (lambda () (ability-use! 7)))))
 
 ;; ---- the boundary the library's comment claims ----
-;; It carries the cost and does not spend it.  ⭐ Pinning this is what
+;; It carries the cost and does not spend it.  Pinning this is what
 ;; keeps the next person from "helpfully" making use! subtract from
 ;; something: the moment it does, an ability can only ever be paid for
 ;; out of one kind of thing, and two-resource or free abilities stop

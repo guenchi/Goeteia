@@ -4,16 +4,16 @@
 ;;
 ;;   <div class="card-0" class="mine" id="x">hi</div>
 ;;
-;; ⚠️ The consequence is not "invalid markup".  A duplicate attribute
+;; The consequence is not "invalid markup".  A duplicate attribute
 ;; is a parse error and every browser keeps the FIRST, so the class the
 ;; author wrote is silently discarded -- their own styling does
 ;; nothing, on an element that looks correct in the source.
 ;;
-;; ⭐ The expectation is "one class attribute carrying both names", not
+;; The expectation is "one class attribute carrying both names", not
 ;; a particular spelling of it.  Attribute-internal order does not
 ;; affect CSS, so pinning "card-0 mine" rather than "mine card-0" would
 ;; promote an irrelevant detail into a contract and refuse a correct
-;; fix that happened to order them the other way.  ⇒ The cells below
+;; fix that happened to order them the other way.  The cells below
 ;; count the attribute and look for both tokens.
 ;;
 ;; The controls are the two shapes that already work and a fix could

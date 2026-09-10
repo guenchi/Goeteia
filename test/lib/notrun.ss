@@ -14,7 +14,7 @@
 
 ;; The one announcer for "this check did not run here".
 ;;
-;; ⚠ ANY new "not exercised in this file" MUST go through here.  The
+;; ANY new "not exercised in this file" MUST go through here.  The
 ;; gate's skip audit knows exactly one prefix, and it knows it because
 ;; there is exactly one place that writes it.  Add a sixth wording of
 ;; your own and the audit will not see it -- which is not hypothetical:

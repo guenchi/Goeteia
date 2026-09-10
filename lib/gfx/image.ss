@@ -217,7 +217,7 @@
   ;; Past the last segment there is nothing to read, and asking is an
   ;; error.
   ;;
-  ;; ⚠️ This used to hand back up to four zero bytes first, on the
+  ;; This used to hand back up to four zero bytes first, on the
   ;; grounds that a decoder holds a little lookahead at the end of the
   ;; final block.  It does not: $bit refills only when the bit buffer
   ;; is empty, so every byte fetched has at least one bit consumed

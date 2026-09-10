@@ -4,13 +4,13 @@
 //   (display 1) #| never closed
 //
 // compiles, runs, and prints 1.  Chez refuses the same file
-// ("unexpected end-of-file reading block comment").  ⚠️ What is lost
+// ("unexpected end-of-file reading block comment").  What is lost
 // is not the comment -- it is everything after the `#|`, which the
 // author believed was code.  A file truncated mid-edit, or one whose
 // closing `|#` was deleted, becomes a shorter program that still
 // builds.
 //
-// ⭐ TWO readers, wrong in opposite directions.  The prelude's `read`
+// TWO readers, wrong in opposite directions.  The prelude's `read`
 // -- the one a compiled program calls -- refuses this correctly, and
 // has the opposite defect on dotted tails, which it accepts and
 // silently truncates.  See test/defect-p04-reader-dotted.ss.  Neither
@@ -49,17 +49,17 @@ test('a block comment that is never closed is refused', () => {
 });
 
 test('a block comment left open inside a list is refused', () => {
-    // ⭐ Already green, and it localises the defect: this one is
+    // Already green, and it localises the defect: this one is
     // refused because the LIST is unterminated, not because the
     // comment is.  Something else was still pending, so the reader had
-    // a reason to complain.  ⇒ The hole is exactly the case where
+    // a reason to complain.  The hole is exactly the case where
     // nothing else is open, which is also the common one -- a comment
     // at the end of a file.
     assert.equal(compiles('(import (rnrs))\n(display (list 1 #| never closed\n'), false);
 });
 
 test('a closed block comment still compiles', () => {
-    // ⭐ The control, and it has to be here: "refuse the file" is
+    // The control, and it has to be here: "refuse the file" is
     // satisfied by refusing every file, and the reds above cannot tell
     // the difference.
     assert.equal(compiles('(import (rnrs))\n#| fine |#\n(display 1)\n'), true);

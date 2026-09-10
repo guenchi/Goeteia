@@ -2,13 +2,13 @@
 ;; no definition provides.  See
 ;; test/defect-library-export-unchecked.mjs.
 ;;
-;; ⭐ The name comes from the macro's TEMPLATE, so it is fresh and is
+;; The name comes from the macro's TEMPLATE, so it is fresh and is
 ;; not the `made-in-template` written in the export list above -- that
 ;; is hygiene working, and Chez refuses this library for the same
-;; reason.  ⛔ The defect is not that the name is unreachable; it is
+;; reason.  The defect is not that the name is unreachable; it is
 ;; that nothing says so.
 ;;
-;; ⚠️ Writing the name as a macro ARGUMENT instead would make this
+;; Writing the name as a macro ARGUMENT instead would make this
 ;; library correct and the cell green, because an argument is never
 ;; renamed.  That is stated two files away in
 ;; macro-toplevel-hygiene.ss, and a first draft of this fixture used

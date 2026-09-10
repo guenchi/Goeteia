@@ -4,32 +4,32 @@
 // test/lib/probe/exported-macro.ss lists `made-in-template` in its
 // export clause, and the only definition of that name comes out of a
 // macro template, so it is a fresh identifier and not the one exported.
-// ⭐ Refusing that library is CORRECT -- Chez refuses it too, with
+// Refusing that library is CORRECT -- Chez refuses it too, with
 // "missing definition for export made-in-template" -- and the defect
 // is not that the name is unreachable.  The defect is what happens
 // next:
 //
-//   the name is never called   the build succeeds and prints 4.  ⛔ A
+//   the name is never called   the build succeeds and prints 4.  A
 //                              library with a broken export ships, and
 //                              nobody is told.
 //   the name is called         refused, with "cannot call: ..." naming
 //                              the IMPORTER's file, while the mistake
 //                              is in the library's export list.
 //
-// ⚠️ The second is the loud half and it still points somewhere else.
+// The second is the loud half and it still points somewhere else.
 // The first is silent.
 //
-// ⭐ The same check EXISTS on the other export path: a top-level
+// The same check EXISTS on the other export path: a top-level
 // (export ...) of an undefined name answers "exported name is not a
 // function".  One family, two paths, a check on one of them -- the
 // third time that shape turned up in this tree tonight, after
 // fx-release!/fx-alloc! and compile-let/compile-%loop.
 //
-// ⚠️ A FIRST VERSION OF THIS CELL WAS GREEN AND WAS COMMITTED AS RED.
+// A FIRST VERSION OF THIS CELL WAS GREEN AND WAS COMMITTED AS RED.
 // Its fixture passed the name in as a macro argument, which is never
 // renamed -- a fact written down in macro-toplevel-hygiene.ss, two
 // files away.  The shape was measured in one form and then written in
-// another because the second read better.  ⇒ Measure the shape you are
+// another because the second read better.  Measure the shape you are
 // going to commit, not the one that led you to it.
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -74,7 +74,7 @@ test('and the refusal names the library, not the importer', () => {
 });
 
 test('CONTROL a library whose exports are all defined still builds', () => {
-    // ⭐ Without this, refusing every library would satisfy both reds.
+    // Without this, refusing every library would satisfy both reds.
     const why = compile('control',
         '(import (rnrs) (math base))\n(display 1)\n');
     assert.equal(why, null, `a well-formed library must still load:\n${why}`);

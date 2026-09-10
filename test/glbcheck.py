@@ -4,9 +4,9 @@ accessor bounds/alignment, every index reference in range, embedded image magic,
 Usage: glbcheck.py file.glb  -> prints a JSON summary; exit 1 on any violation."""
 import struct, json, sys
 def check(path):
-    # ⚠️ Two lists, not one.  A thing that could not be checked is not
+    # Two lists, not one.  A thing that could not be checked is not
     # an error -- reporting it as one fails a legal file, and a checker
-    # that cries wolf is one people stop reading.  ⛔ But it is not
+    # that cries wolf is one people stop reading.  But it is not
     # silence either: it is named, in its own field, so that a caller
     # can refuse a file whose interesting parts all went unchecked.
     # Everything reported as an error below is something actually wrong.
@@ -46,7 +46,7 @@ def check(path):
         # loader that does not implement the extension is meant to use
         # it as an all-zero placeholder.  Comparing it against the BIN
         # length reported a length mismatch on a perfectly good file --
-        # ⚠️ a checker that cries wolf on a legal input is one people
+        # a checker that cries wolf on a legal input is one people
         # stop reading, which costs more than the check was worth.
         if b.get('extensions',{}).get('EXT_meshopt_compression',{}).get('fallback'):
             continue
@@ -58,7 +58,7 @@ def check(path):
     # Box-mq.glb -- a file that has been in the tree throughout, so the
     # checker has been dying rather than checking on it, and a
     # traceback in a log is indistinguishable from not having run.
-    # ⛔ They are declined by name rather than skipped silently: an
+    # They are declined by name rather than skipped silently: an
     # unchecked thing that says nothing is an unchecked thing everyone
     # believes was checked.
     compressed=set()
@@ -132,7 +132,7 @@ def check(path):
     CT2={5120:'b',5121:'B',5122:'h',5123:'H',5125:'I',5126:'f'}
     def values(ai):
         # None for an accessor whose bytes are compressed, or that has
-        # no bufferView at all.  ⚠️ Every caller must check -- reading
+        # no bufferView at all.  Every caller must check -- reading
         # through one of these is what crashed the checker, and the
         # crash was silent for as long as nobody read the log.
         a=accs[ai]
@@ -153,7 +153,7 @@ def check(path):
                     if accs[v]['count']!=vcount: errs.append(f'mesh{mi}.prim{pi}.{k} count != POSITION count')
                 if 'indices' in p:
                     idx=values(p['indices'])
-                    # ⛔ Declined out loud.  `if idx` alone would also
+                    # Declined out loud.  `if idx` alone would also
                     # swallow an empty index list, so the three cases --
                     # checked, empty, not readable -- would have looked
                     # the same from outside.

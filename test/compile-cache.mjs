@@ -272,7 +272,7 @@ const KEYS = () => ({
 // there now RAISES, which is the intended behaviour of the read-error
 // change and would be a crash in this file rather than a verdict.
 //
-// ⭐ So the missing case is an assertion of its own rather than a skip.
+// So the missing case is an assertion of its own rather than a skip.
 // A skip here would be invisible: run-tests.sh sends this file's output
 // to /dev/null, so a printed "not measured" note would reach nobody,
 // and the row would silently stop being checked on exactly the trees

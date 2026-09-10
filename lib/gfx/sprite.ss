@@ -255,7 +255,7 @@
   ;;   src.rgb = texel.rgb * tint.rgb * tint.a
   ;;   src.a   = texel.a   * tint.a
   ;;
-  ;; ⚠️ A plain component-wise (* texel v_tint) gets the alpha channel
+  ;; A plain component-wise (* texel v_tint) gets the alpha channel
   ;; right and the colour channels wrong, and the error is invisible
   ;; until the tint alpha is low: at tint.a = 0 the ONE factor still
   ;; contributes full colour, so a sprite faded out to nothing paints

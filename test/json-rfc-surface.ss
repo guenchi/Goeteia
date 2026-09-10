@@ -116,7 +116,7 @@
                                               ; of deviation C: we must not
                                               ; be refusing DEL along with
                                               ; the real control characters
-;; ⚠ FROM HERE ON THE INPUT IS BUILT BYTE BY BYTE, and the four rows
+;; FROM HERE ON THE INPUT IS BUILT BYTE BY BYTE, and the four rows
 ;; below used to be built with `(qc code-point)` like the ones above.
 ;; That works up to 127 and is a LIE past it: a Goeteia string is a
 ;; UTF-8 BYTE string, so `(integer->char 55295)` in one is the single

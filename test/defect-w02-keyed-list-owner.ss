@@ -10,16 +10,16 @@
 ;; the only call to an item's disposer is in the branch that runs when
 ;; a key disappears from the data.
 ;;
-;; ⇒ Dispose the owner of the whole list and every item's effects stay
+;; Dispose the owner of the whole list and every item's effects stay
 ;; subscribed.  They keep running on every later signal write, holding
 ;; their closures, their nodes and whatever those reference, for as
 ;; long as the signal lives.
 ;;
-;; ⚠️ Nothing goes wrong at the moment of the leak.  The symptom is
+;; Nothing goes wrong at the moment of the leak.  The symptom is
 ;; work being done on behalf of a screen nobody is looking at, and it
 ;; grows once per mount.
 ;;
-;; ⭐ The controls are the two cases the comment DOES describe, because
+;; The controls are the two cases the comment DOES describe, because
 ;; they are what a fix must not spend: an item whose key survives a
 ;; rerun must keep its effect, and an item whose key vanishes must lose
 ;; it.  A fix that disposed item roots on every rerun would satisfy the

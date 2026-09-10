@@ -8,7 +8,7 @@
 ;; rtd it belongs to.  The predicate does check identity; the accessor
 ;; does not, so the two disagree about what a record of type `a` is.
 ;;
-;; ⚠️ Two records with the same shape are exactly the case where a
+;; Two records with the same shape are exactly the case where a
 ;; caller most needs the check -- a position and a velocity, a health
 ;; and a mana -- and it is also the case where the wrong answer is a
 ;; plausible number rather than a crash.

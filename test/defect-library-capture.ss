@@ -14,14 +14,14 @@
 ;;
 ;;     unhandled exception: inventory-add!: not an inventory 99
 ;;
-;; ⭐ The library's own contract catches it, which is the only reason
+;; The library's own contract catches it, which is the only reason
 ;; there is a message at all -- the 99 walked in far enough to fail a
 ;; check the library wrote for a different purpose.  Without that check
-;; it would have been a wrong answer.  ⚠️ Every library under lib/ has
+;; it would have been a wrong answer.  Every library under lib/ has
 ;; the same shape in the same place, and most of them have no such
 ;; contract on the path.
 ;;
-;; ⛔ This is the case that says how big the defect is.  A user may
+;; This is the case that says how big the defect is.  A user may
 ;; reasonably believe their own top level is theirs; that it reaches
 ;; into a library they merely imported is not a shadowing rule anyone
 ;; would expect to be told about.

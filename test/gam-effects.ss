@@ -3,7 +3,7 @@
 ;;
 ;; Shipped, documented, and until now imported by no test -- the same
 ;; hole as (gam abilities), found the same way, and worth saying twice:
-;; ⚠️ an API index that lists every export is a complete index and not
+;; an API index that lists every export is a complete index and not
 ;; a line of coverage.
 ;;
 ;; Three decisions in this library are decisions rather than
@@ -36,7 +36,7 @@
               (not (effect-active? f 'slow))
               (not (effect-ref f 'slow)))))
 
-;; ⭐ #f rather than 0 for a name that is not running.  Zero is a
+;; #f rather than 0 for a name that is not running.  Zero is a
 ;; duration this library never stores, so answering it would put a real
 ;; value and an absence into one answer -- and a caller writing
 ;; (if (> (effect-ref f 'slow) 0) ...) would then be right by accident
@@ -68,7 +68,7 @@
          (equal? '(slow) (effects-names f))))
 
 ;; ---- TICK-ORDER ----
-;; ⭐ Exactly-dt-left is the discriminating case.  Dropping first and
+;; Exactly-dt-left is the discriminating case.  Dropping first and
 ;; subtracting after, or treating zero as still running, both leave an
 ;; effect alive for one extra tick -- a difference no cell with a
 ;; comfortable margin can see, and one a player feels as a state that
@@ -107,7 +107,7 @@
 ;; The rule has two halves and they differ: a name refreshed while it is
 ;; still running keeps its place, because it is the same effect; a name
 ;; that ran out and was set again is a new one and goes at the end.
-;; ⚠️ With only the first half, "always keep the first position ever
+;; With only the first half, "always keep the first position ever
 ;; seen" passes; with only the second, "always append" passes.
 (check "ORDER-STABLE: names come back in the order they were first set"
        (let ((f (make-effects)))
@@ -137,7 +137,7 @@
               (begin (effect-set! f 'b 5.0) (equal? '(b) (effects-names f))))))
 
 ;; ---- what it refuses ----
-;; ⭐ A name has to be something eq? is dependable on across BOTH
+;; A name has to be something eq? is dependable on across BOTH
 ;; compiler targets.  A string would be accepted by a looser check and
 ;; then never match itself on lookup -- an effect that is set, reported
 ;; as not running, and never expires.  The refusal is what turns that
@@ -159,10 +159,10 @@
               (= 1.0 (effect-ref f #\c))
               (= 1.0 (effect-ref f #t))
               (= 1.0 (effect-ref f 42)))))
-;; ⭐ A duration of zero is refused rather than treated as already over:
+;; A duration of zero is refused rather than treated as already over:
 ;; an effect set and instantly gone is never observable between two
 ;; ticks, so a caller asking for one has computed it wrongly and would
-;; never see why.  ⚠️ The green twin is the smallest positive duration a
+;; never see why.  The green twin is the smallest positive duration a
 ;; caller would really write -- a tightening that demanded "at least one
 ;; frame" would take it away.
 (check "REFUSE: a duration of zero or less is refused"

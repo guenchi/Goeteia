@@ -3598,7 +3598,7 @@
 ;;
 ;; A library may also export a MACRO, and expansion consumes those --
 ;; (web sx), (web component), (gfx scene) and (gfx sgpu) all do -- so
-;; the macro table answers for them.  ⚠️ That arm is looser than the
+;; the macro table answers for them.  That arm is looser than the
 ;; other one: *macros* is keyed by the UNMARKED name, so a macro a
 ;; template introduced would satisfy an export clause naming its
 ;; origin.  Nobody in this tree writes that, and tightening the macro

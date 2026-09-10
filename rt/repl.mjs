@@ -31,7 +31,7 @@ import { runModule } from './run.mjs';
 // paren balance, aware of strings, comments and char literals
 // One place that knows what is not code.
 //
-// ⚠️ Six hand-written walkers -- four here, two in repl.mjs -- each
+// Six hand-written walkers -- four here, two in repl.mjs -- each
 // carried the same three lines for `;`, `"` and `#\`, byte for byte,
 // and none of them knew `#|`.  So an (import ...) written inside a
 // block comment was found by libraryImports and taken for the
@@ -45,7 +45,7 @@ import { runModule } from './run.mjs';
 // `i = noiseEnd(...); continue;` and let its own i++ step past.
 // Answers -1 when code begins at i.
 //
-// ⛔ `#;` is deliberately not here.  Skipping a datum comment means
+// `#;` is deliberately not here.  Skipping a datum comment means
 // finding where a datum ends, which is a reader's job and not a
 // scanner's -- and measured, it is not reachable: `#;(import (x))`
 // compiles today.  Adding datum-skipping would be a new mechanism

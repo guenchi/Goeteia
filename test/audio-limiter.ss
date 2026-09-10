@@ -1,12 +1,12 @@
 ;; expect: #t
 ;; The bus limiter: wiring and configuration, and nothing else.
 ;;
-;; ⛔ These cells say nothing about how the limiter SOUNDS.  All green
+;; These cells say nothing about how the limiter SOUNDS.  All green
 ;; means "the wiring and the configuration are right", not "the limiter
 ;; works".  Whether it is actually compressing is a question about
 ;; samples at two different drives, which an offline render can answer
 ;; -- a one-off reading of exactly that is in the design -- and which no
-;; standing cell here does.  ⚠️ That is "not automated", not "not
+;; standing cell here does.  That is "not automated", not "not
 ;; possible": writing the second sentence where the first is true turns
 ;; a to-do into an impossibility, and nobody tries again.
 ;;
@@ -18,11 +18,11 @@
 ;;   configuration -- and the switch changes what the BUS feeds.  One
 ;;   rewire, not one per voice.
 ;;
-;; ⚠️ This file is the CONFIGURE-then-PLAY order only.  The other order
+;; This file is the CONFIGURE-then-PLAY order only.  The other order
 ;; is test/audio-limiter-order.ss, and it is a separate file because
 ;; (aud sfx) keeps its context in module state that audio-init! sets
 ;; once and never clears: one process is one context is one bus
-;; lifetime.  Two orders, two processes.  ⛔ Reinstalling the mock does
+;; lifetime.  Two orders, two processes.  Reinstalling the mock does
 ;; not undo it -- the library still holds the old context object, and a
 ;; cell written that way passes or fails for reasons that have nothing
 ;; to do with the library.
@@ -56,7 +56,7 @@
 ;; A diagnostic tone must not be ducked by the gameplay limiter.  That
 ;; is true today because beep! builds its own graph straight to the
 ;; destination -- and nothing has ever pinned it, so it is true by
-;; accident.  ⚠️ An accident and an unwritten decision look identical to
+;; accident.  An accident and an unwritten decision look identical to
 ;; the next person who refactors; this is what makes it a decision.
 (beep! 440.0 0.1)
 (check "LIM-BEEP-BYPASS: a beep goes straight to the destination"
@@ -71,7 +71,7 @@
 ;; default: with two equal, a swap between them reads as a pass, and
 ;; with one at its default an omission reads as a pass.  (Defaults are
 ;; -6, 0, 20, 0.003, 0.25.)
-;; ⛔ No log reset here.  Resetting would drop the connect that names
+;; No log reset here.  Resetting would drop the connect that names
 ;; the compressor, and audio-newest-of-kind would answer "no-such-node"
 ;; -- a cell that then compares 'unset against every expected value and
 ;; reds for a reason that has nothing to do with the library.  The
@@ -95,7 +95,7 @@
             (equal? 0.625 (param-written comp "release"))))
 
 ;; ---- LIM-REFUSE, with its green twin ----
-;; ⭐ A rejection rule needs a passing twin, and the twin has to look
+;; A rejection rule needs a passing twin, and the twin has to look
 ;; like something that ought to be rejected -- otherwise the pair says
 ;; nothing that the rejection alone did not.  Both ends below are legal
 ;; and both are what a "tighten this up" edit would take away: ratio 1.0
@@ -117,7 +117,7 @@
             (refuses? (lambda () (audio-limiter! -6.0 0.0 20.0 -0.5 0.25)))
             (refuses? (lambda () (audio-limiter! -6.0 0.0 20.0 1.5 0.25)))
             (refuses? (lambda () (audio-limiter! -6.0 0.0 20.0 0.003 1.5)))))
-;; ⚠️ A NaN passes a range check written with fl<?, because every
+;; A NaN passes a range check written with fl<?, because every
 ;; comparison with it is false.  It has to be excluded by name, and a
 ;; cell that only tried out-of-range values would never say so.
 (check "LIM-REFUSE: a NaN is refused, in every position"
@@ -127,7 +127,7 @@
               (refuses? (lambda () (audio-limiter! -6.0 0.0 nan 0.003 0.25)))
               (refuses? (lambda () (audio-limiter! -6.0 0.0 20.0 nan 0.25)))
               (refuses? (lambda () (audio-limiter! -6.0 0.0 20.0 0.003 nan))))))
-;; ⭐ A partial argument list must be refused rather than read as a
+;; A partial argument list must be refused rather than read as a
 ;; prefix.  Accepting a short call turns "one argument missing" into
 ;; every later argument silently shifted by one -- which is the exact
 ;; mistake LIM-PARAMS exists to catch, so tolerating it here opens a

@@ -12,22 +12,22 @@
 ;; itself a joint, so Tip is treated as a root of its own and Helper's
 ;; ten units never enter the world position.
 ;;
-;; ⚠️ The extent is the denominator of the retarget ratio.  Reading it
+;; The extent is the denominator of the retarget ratio.  Reading it
 ;; as 1 instead of 11 scales every root displacement by eleven times
 ;; what it should be, and nothing anywhere reports a problem -- the
 ;; output is a valid animation of a figure moving wrongly.
 ;;
-;; ⭐ Helper nodes between joints are not exotic.  They are how rigs
+;; Helper nodes between joints are not exotic.  They are how rigs
 ;; carry alignment, twist and IK targets, and a joint list that skips
 ;; them is the normal shape of an exported skin rather than a
 ;; malformed one.
 ;;
-;; ⭐ The control is the same skeleton with the helper made a joint:
+;; The control is the same skeleton with the helper made a joint:
 ;; the extent must read 11 there, which is what says the difference is
 ;; the helper's jointness and not the geometry.  Without it, "11 is
 ;; wrong" and "this skeleton is unusual" cannot be told apart.
 ;;
-;; ⚠️ If the fix is to REFUSE this skeleton rather than to walk through
+;; If the fix is to REFUSE this skeleton rather than to walk through
 ;; the helper, this cell has to change shape rather than be deleted --
 ;; but a refusal must then be explicit, because the failure mode being
 ;; fixed is precisely that nothing was said.
@@ -65,7 +65,7 @@
          (names (retarget-glb-node-names loc)))
     (rep 'extent-src (retarget-report g 0 g 'src-names names 'dst-names names))))
 
-;; ⚠️ These report the extent they read, not whether it was right.  A
+;; These report the extent they read, not whether it was right.  A
 ;; boolean is silent about WHAT it saw, and the number is the whole
 ;; diagnosis here: 1.0 says the helper's translation was skipped, and
 ;; some third value would say something else is wrong and this cell had

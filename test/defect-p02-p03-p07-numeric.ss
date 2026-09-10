@@ -2,7 +2,7 @@
 ;; RED ON PURPOSE: three numeric predicates and procedures that answer
 ;; differently from the language they implement.  Each expectation was
 ;; taken from Chez on this machine, not from the review's wording --
-;; ⚠️ a report describes the broken half; the correct half has to come
+;; a report describes the broken half; the correct half has to come
 ;; from somewhere outside this tree.
 ;;
 ;;   P02  memv / assv compare with eq?, so equal numbers that are not
@@ -13,13 +13,13 @@
 ;;   P07  integer? and rational? answer #t for infinities.  An infinity
 ;;        is not a rational number and is not an integer.
 ;;
-;; ⭐ Every red has a green control beside it that a lazy fix would
+;; Every red has a green control beside it that a lazy fix would
 ;; break, and the controls are chosen to be the ones that CAN break:
 ;;
 ;;   P02  a symbol and a char must still be found -- a "fix" that
 ;;        replaced eq? with = would stop finding anything that is not a
 ;;        number, and = would also raise on them rather than answer #f.
-;;   P03  ⭐ the NEGATIVE cases, where floor and truncate disagree:
+;;   P03  the NEGATIVE cases, where floor and truncate disagree:
 ;;        (floor -7/2) is -4 and (truncate -7/2) is -3.  A fix that
 ;;        rounds toward zero for both passes every positive case and
 ;;        fails here, which is why the positive cases alone would not
@@ -35,10 +35,10 @@
 ;; ---- P02 ----
 (want 'p02-memv-flonum   (if (memv 2.0 (list 1.0 2.0 3.0)) #t #f) #t)
 (want 'p02-memv-ratnum   (if (memv 1/3 (list 1/2 1/3)) #t #f) #t)
-;; ⚠️ Compared whole, NOT (cdr (assv ...)).  assv answers #f when the
+;; Compared whole, NOT (cdr (assv ...)).  assv answers #f when the
 ;; defect is present, and (cdr #f) is an illegal cast -- a wasm trap,
 ;; which `guard` cannot catch and which takes the whole file's stdout
-;; with it.  ⭐ A cell that dereferences its result crashes exactly when
+;; with it.  A cell that dereferences its result crashes exactly when
 ;; the thing it tests is broken, and then reports nothing at all: the
 ;; first draft of this file printed "illegal cast" and no verdicts,
 ;; from a defect none of these cells actually trips on its own.

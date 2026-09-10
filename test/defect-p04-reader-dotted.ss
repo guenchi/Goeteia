@@ -6,15 +6,15 @@
 ;;   (1 . 2 . 3)  reads as (1 . 2)   -- ". 3" is gone
 ;;   (. 2)        reads as 2         -- the dot is swallowed
 ;;
-;; ⚠️ Not an error: a program that reads data this way gets a shorter
+;; Not an error: a program that reads data this way gets a shorter
 ;; answer than the text it was given, with nothing said.  Chez refuses
 ;; all three ("more than one item found after dot", "unexpected dot").
 ;;
-;; ⭐ There are TWO readers in this tree and only one of them is wrong.
+;; There are TWO readers in this tree and only one of them is wrong.
 ;; This is the prelude's `read`, the one a compiled program calls.  The
 ;; host-side driver's reader refuses these correctly, and the driver
 ;; has the opposite defect on block comments -- see
-;; test/defect-r02-driver-block-comment.mjs.  ⇒ Neither file's result
+;; test/defect-r02-driver-block-comment.mjs.  Neither file's result
 ;; can be assumed from the other; the two were measured separately, and
 ;; the earlier attempt to measure this one through `(quote ...)` in a
 ;; source file was reading the HOST's reader and learned nothing about
@@ -39,7 +39,7 @@
 ;; already-correct refusals, kept so a fix does not lose them
 (want "(1 . )"      'REFUSED)
 (want "(1 .)"       'REFUSED)
-;; ⭐ controls: the shapes that must keep working
+;; controls: the shapes that must keep working
 (want "(1 . 2)"     '(READ (1 . 2)))
 (want "(1 2 . 3)"   '(READ (1 2 . 3)))
 (want "(a . b)"     '(READ (a . b)))

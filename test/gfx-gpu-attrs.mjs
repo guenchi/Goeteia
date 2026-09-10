@@ -9,7 +9,7 @@
 // vertex buffer layout is not a diagnostic anywhere: the pipeline is
 // built, the draw is issued, and the attributes read from nowhere.
 //
-// ⚠️ The parser is JavaScript embedded in lib/gfx/gpu.ss as a list of
+// The parser is JavaScript embedded in lib/gfx/gpu.ss as a list of
 // string literals, and there is no WebGPU in this process to run it
 // through.  So the method's own text is lifted out and called
 // directly.  That is brittle on purpose: if the method is renamed or
@@ -60,7 +60,7 @@ assert.deepEqual(parseAttrs('float32,float32x2', 0).map(a => a.shaderLocation), 
                  'locations are consecutive from the base');
 assert.deepEqual(parseAttrs('float32x2', 3).map(a => a.shaderLocation), [3],
                  'and start at the base they were given');
-// ⛔ An offset that is not a number must never be produced.  Written
+// An offset that is not a number must never be produced.  Written
 // separately from the equality checks above because NaN !== NaN makes
 // deepEqual on an array of numbers awkward to reason about, and this is
 // the property the defect actually violates.
@@ -71,14 +71,14 @@ for (const f of ['float32', 'float32x2,float32,float32x2', 'uint32,sint32']) {
 
 // ---- every width, not just the 32-bit ones ----
 //
-// ⭐ The original `* 4` assumed four bytes per component, so it was
+// The original `* 4` assumed four bytes per component, so it was
 // wrong for EVERY format that is not 32-bit -- `float16x2` came out 8
 // bytes instead of 4, `uint8x4` came out 16 instead of 4.  That half
 // was invisible because everything in this tree today uses float32*,
 // and the cells above are all float32 too: they would have passed a
 // repair that fixed the scalar case and kept the four.
 //
-// ⚠️ These are here rather than left in the repair's own probe on
+// These are here rather than left in the repair's own probe on
 // purpose.  A fix verified only by the assertions its author wrote is
 // verified by someone who already knows what they built; the suite has
 // to carry the dimension independently, or the coverage disappears when
@@ -101,13 +101,13 @@ for (const [fmts, want] of [
 
 // ---- the whole legal set, enumerated ----
 //
-// ⭐ The implementation DERIVES sizes from the format's structure; this
+// The implementation DERIVES sizes from the format's structure; this
 // list is copied from the specification.  Two different routes to the
 // same thirty answers, which is the point: a rule with a mistake in it
 // and a table with a mistake in it are unlikely to have the same
 // mistake, and neither is checking itself.
 //
-// ⛔ The list must not be generated from the same rule the code uses.
+// The list must not be generated from the same rule the code uses.
 // It would then agree by construction and say nothing.
 const LEGAL = {
     'uint8x2': 2, 'uint8x4': 4, 'uint16x2': 4, 'uint16x4': 8,
@@ -127,7 +127,7 @@ for (const [fmt, size] of Object.entries(LEGAL)) {
 
 // ---- what must be refused, by name ----
 //
-// ⛔ Not silently treated as zero.  A layout whose offsets are all zero
+// Not silently treated as zero.  A layout whose offsets are all zero
 // and one whose offsets are NaN both put nothing recognisable on the
 // screen, and the first is harder to find, because zero looks like a
 // number somebody meant.

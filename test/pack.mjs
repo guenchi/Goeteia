@@ -577,7 +577,7 @@ test('an external reference is found however the attribute is spelled', () => {
 });
 
 test('KNOWN DISAGREEMENTS: what this scanner gets wrong, on purpose', () => {
-    // ⚠ EVERY ROW BELOW IS WRONG. They are pinned so the record of how
+    // EVERY ROW BELOW IS WRONG. They are pinned so the record of how
     // HTML actually parses stays complete, and so that a future reader
     // who finds one of them does not think it is new. Nothing here is
     // approved behaviour -- read this section as "known bugs, with the

@@ -7,17 +7,17 @@
 ;;   equal adjacent times       -- the spec requires strictly increasing
 ;;   a material index of 99     -- with no materials in the file
 ;;
-;; ⚠️ The output is a file, and a file outlives the process that wrote
+;; The output is a file, and a file outlives the process that wrote
 ;; it.  Every one of these is caught somewhere downstream -- a viewer,
 ;; an importer, a validator, someone else's pipeline -- at a point
-;; where the information about what produced it is gone.  ⇒ A writer
+;; where the information about what produced it is gone.  A writer
 ;; that accepts what it cannot represent moves the diagnosis to whoever
 ;; is least able to make it.
 ;;
-;; ⭐ The equal-times case is the one worth writing carefully, and this
+;; The equal-times case is the one worth writing carefully, and this
 ;; cell does not test it: times that are DISTINCT in f64 can coincide
 ;; once quantised to f32, so a check written before the conversion
-;; passes input that the file then carries as a duplicate.  ⛔ Reaching
+;; passes input that the file then carries as a duplicate.  Reaching
 ;; that needs two doubles a float cannot separate, and the cell for it
 ;; belongs with whoever writes the check -- placed here it would only
 ;; assert the check exists, which is not the same question.

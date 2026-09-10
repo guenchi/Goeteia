@@ -333,7 +333,7 @@
               (vector-set! nms k nm)
               (vector-set! bt k (gltf-node-translation g ni))
               (vector-set! bq k (q-normalize (gltf-node-rotation g ni)))
-              ;; ⚠️ The parent lookup used to map only the IMMEDIATE
+              ;; The parent lookup used to map only the IMMEDIATE
               ;; node parent through `pos`, which is -1 for anything
               ;; that is not a joint.  A rig's alignment, twist or IK
               ;; helper sitting between two joints therefore made the
@@ -984,7 +984,7 @@
         (error 'retarget-write-glb! "the asset has no such skin" si))
       (glb-write!
        (map (lambda (p)
-              ;; ⚠️ 'node carries each primitive back to the node it was
+              ;; 'node carries each primitive back to the node it was
               ;; actually on.  Without it every primitive was written
               ;; under the 'mesh-node option, whose default is 0 -- so a
               ;; mesh parented to a node with a transform came back

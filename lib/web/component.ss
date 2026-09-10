@@ -79,7 +79,7 @@
       (if (and (pair? kids) (pair? (car kids)) (eq? (car (car kids)) '@))
           (let ((attrs (cdr (car kids))))
             ;; every class the caller wrote folds in, in the order they
-            ;; wrote them, after styled's own.  ⛔ That order is not a
+            ;; wrote them, after styled's own.  That order is not a
             ;; contract: attribute-internal order does not affect CSS,
             ;; and pinning it would refuse a correct fix that ordered
             ;; them the other way.  What IS a contract is that there is

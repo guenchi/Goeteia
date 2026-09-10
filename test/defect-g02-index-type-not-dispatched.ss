@@ -3,20 +3,20 @@
 ;; or 32-bit, so a mesh past 65536 vertices is uploaded and drawn as if
 ;; its indices were u16.
 ;;
-;; ⭐ The mechanism to do this right is already here and already
+;; The mechanism to do this right is already here and already
 ;; documented.  (gfx mesh) exports mesh-index-u32?, and the comment
 ;; over it says what a caller is supposed to do with it: "callers ask
 ;; mesh-index-u32? to pick cmd-index-data32!/cmd-draw-elements32! over
-;; the u16 pair".  (gfx gl) provides that pair.  ⇒ Both halves exist,
+;; the u16 pair".  (gfx gl) provides that pair.  Both halves exist,
 ;; the instruction is written down, and fx-mesh! does not ask.
 ;;
-;; ⚠️ The failure is not a crash.  The GPU reads a u32 index buffer as
+;; The failure is not a crash.  The GPU reads a u32 index buffer as
 ;; pairs of u16s: every index becomes two wrong ones, half of them the
 ;; high half-words of neighbours.  What comes out is a mesh, drawn,
 ;; made of triangles nobody authored.
 ;;
 ;; The cells read the encoded command stream rather than a picture:
-;; 17/18 are the u16 upload and draw, 36/37 the u32 pair.  ⇒ No GPU is
+;; 17/18 are the u16 upload and draw, 36/37 the u32 pair.  No GPU is
 ;; involved and the reading is the opcode itself, not something
 ;; downstream of it.
 ;;
@@ -28,9 +28,9 @@
 (import (rnrs) (web js) (gfx fx) (gfx gl) (gfx mesh))
 
 ;; The GL stub test/fx-vao-cache.ss uses, so fx-init! and fx-buffer!
-;; can hand out slots.  ⭐ It cannot fake this file's reading: the
+;; can hand out slots.  It cannot fake this file's reading: the
 ;; opcodes below are words the encoder writes into linear memory, and
-;; the stub sits downstream of the command stream, not inside it.  ⇒
+;; the stub sits downstream of the command stream, not inside it.  
 ;; Whatever the stub answers, it never touches what is measured here.
 (js-eval "globalThis.__vaoCount = 0; globalThis.__boundVao = null;
 globalThis.__canvas = { width:64, height:64, getContext() { return {
@@ -58,11 +58,11 @@ globalThis.__canvas = { width:64, height:64, getContext() { return {
 (define (want name got expect)
   (unless (equal? got expect) (set! fails (cons (list name 'got got 'want expect) fails))))
 
-;; ⚠️ READING THE COMMAND STREAM MEANS DECODING IT, NOT SEARCHING IT.
+;; READING THE COMMAND STREAM MEANS DECODING IT, NOT SEARCHING IT.
 ;; The first draft scanned for the words 17/18/36/37 and stopped at the
 ;; first zero -- which is the operand of the very first command, so it
 ;; read nothing at all and reported the same empty answer for both
-;; meshes.  ⭐ A column of identical readings is the instrument talking
+;; meshes.  A column of identical readings is the instrument talking
 ;; about itself.  And searching would have been wrong even had it not
 ;; stopped: an operand may equal an opcode (this stream carries a byte
 ;; count of 4 and a slot of 5), so only a sequential walk with each

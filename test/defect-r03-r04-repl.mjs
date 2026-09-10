@@ -3,7 +3,7 @@
 //
 //   R04  `(+ 1 2) ; note` does not print 3.  It answers
 //        "read: list opened at repl line 1 column 14 never closed" --
-//        ⭐ and column 14 is past the end of what was typed.  The REPL
+//        and column 14 is past the end of what was typed.  The REPL
 //        wraps the input, the trailing comment runs to end of line, and
 //        the closing paren it added is inside the comment.
 //
@@ -13,12 +13,12 @@
 //        itself is below, in the test -- it is data, and it has to be
 //        those bytes.)
 //
-// ⚠️ R04 is the one that costs trust rather than characters.  A REPL
+// R04 is the one that costs trust rather than characters.  A REPL
 // that mishandles a comment tells the user their expression is
 // unbalanced, so the natural response is to look for the missing paren
 // in something that has none.
 //
-// ⭐ R04 is the same family as the dependency scanner (see
+// R04 is the same family as the dependency scanner (see
 // defect-r01-scanner-block-comment.ss): rt/repl.mjs holds two of the
 // six hand-written partial lexers, `balance` and `topSpans`, whose
 // comment handling is byte-identical to the four in rt/compile.mjs.
@@ -31,7 +31,7 @@
 // rather than "the REPL is broken".
 //
 // Each case starts a REPL as a subprocess.  Measured, all four
-// together: 0.49s with GOETEIA_NO_CACHE=1 and 0.52s warm.  ⚠️ An
+// together: 0.49s with GOETEIA_NO_CACHE=1 and 0.52s warm.  An
 // earlier version of this comment said "seconds rather than
 // milliseconds" and budgeted the cell around that -- written from
 // what starting a REPL sounds like, not from a reading, and wrong by

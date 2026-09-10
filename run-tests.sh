@@ -58,7 +58,7 @@ timed_out() { [ -n "$CAP" ] && [ "$1" -eq 124 ]; }
 crashed() { [ "$1" -ne 0 ] && ! timed_out "$1"; }
 
 # The verdict for one run of one test, from BOTH of the things a run
-# produces.  ⚠️ Matching stdout used to be the whole test: a program
+# produces.  Matching stdout used to be the whole test: a program
 # that printed the expected answer and then exited 7 was reported ok,
 # and the round exited 0.  A process that answers correctly and dies is
 # not a process that passed -- it is one whose answer arrived before
@@ -68,7 +68,7 @@ crashed() { [ "$1" -ne 0 ] && ! timed_out "$1"; }
 verdict() { # stage want got exitcode -> prints, sets fail
     _stage=$1; _want=$2; _got=$3; _ec=$4
     if [ "$_got" = "$_want" ] && [ "$_ec" -eq 0 ]; then
-        # stage0's ok line carries no suffix, as it always has.  ⛔ Not
+        # stage0's ok line carries no suffix, as it always has.  Not
         # cosmetic: the gate's reader and three months of logs are
         # written against these exact lines, and a refactor that made
         # every passing line different would be a change to the output
@@ -89,7 +89,7 @@ verdict() { # stage want got exitcode -> prints, sets fail
 # the same four lines is how two thirds of this script's surface came to
 # have no timeout on it at all: the bound was added to the .ss runs, and
 # each new .mjs check was written by copying the block above it, which
-# did not have one.  ⚠️ A hanging .mjs test STALLED the whole round
+# did not have one.  A hanging .mjs test STALLED the whole round
 # rather than failing it -- the exact failure the cap exists for.
 #
 # Some of these print a transcript worth seeing when they fail and
@@ -130,13 +130,13 @@ lift_notes() { # raw-output -> prints notes, sets $got to the rest
     got=$(printf '%s\n' "$1" | grep -vE "$NOTE_RE" || true)
 }
 
-# stderr is kept, not thrown away.  ⚠️ A callback that raises cannot
+# stderr is kept, not thrown away.  A callback that raises cannot
 # carry the error back into the host, so lib/web/js.ss answers undefined
 # and REPORTS to the console -- deliberately, because an error on every
 # animation frame is otherwise invisible.  That report went to stderr,
 # and this script compares stdout, so the report nobody reads was being
 # printed fifty-one times a round while every test involved passed.
-# ⛔ A diagnostic that is written and never read is worse than none: it
+# A diagnostic that is written and never read is worse than none: it
 # costs the run its cycles and buys a belief that someone is watching.
 run_one() { # wasmfile testfile   -- stdout to the caller, stderr to $ERRF
     input="${2%.ss}.input"
@@ -152,14 +152,14 @@ run_one() { # wasmfile testfile   -- stdout to the caller, stderr to $ERRF
 # so a residual one is attributable to the test that produced it.
 check_stderr() { # stage
     [ -s "$ERRF" ] || return 0
-    # ⚠️ `grep -c` prints 0 AND exits non-zero when nothing matches, so
+    # `grep -c` prints 0 AND exits non-zero when nothing matches, so
     # `|| echo 0` fired as well and n became two lines -- "0\n0" -- which
     # is not an integer, so the test below errored, did not return, and
-    # fell through to print a failure.  ⛔ The fallback triggered
+    # fell through to print a failure.  The fallback triggered
     # precisely when it was not needed, and twelve passing tests were
     # reported as failing with `0\n0 callback error(s)`.
     #
-    # ⭐ It survived because this path had only ever been exercised WITH
+    # It survived because this path had only ever been exercised WITH
     # a report present.  A check needs a case where it must stay silent
     # as much as one where it must speak, and the silent case is the one
     # nobody thinks to write.
@@ -181,7 +181,7 @@ run_js() { # jsfile testfile
 # GOETEIA_TESTS narrows the loop to named files, so a change to the
 # verdict machinery can be exercised on one test instead of all of
 # them.  Unset -- which is how the gate runs it -- it is every test.
-# ⚠️ A name in GOETEIA_TESTS that is not a file used to reach the
+# A name in GOETEIA_TESTS that is not a file used to reach the
 # compiler, which failed to open it, and the round printed
 # `(stage0 compile error)` -- so a test that DOES NOT EXIST read exactly
 # like a test that failed.  Measured: a session put an invented filename
@@ -399,7 +399,7 @@ else
     echo "FAIL test/trig-single-supply.mjs"; fail=1
 fi
 
-# Three cells added on 2026-09-09.  ⚠️ They sat in test/ for hours
+# Three cells added on 2026-09-09.  They sat in test/ for hours
 # without running, which is what the check below is for.
 for m in test/macro-toplevel-hygiene.mjs \
          test/defect-r02-driver-block-comment.mjs \
@@ -417,7 +417,7 @@ for m in test/macro-toplevel-hygiene.mjs \
     fi
 done
 
-# ⭐ EVERY test/*.mjs MUST BE NAMED IN THIS FILE.
+# EVERY test/*.mjs MUST BE NAMED IN THIS FILE.
 #
 # The .ss cells are a glob and a new one runs the moment it lands.  The
 # .mjs cells are named one at a time, and a list by name cannot shout
@@ -427,10 +427,10 @@ done
 # a fix reaches too far -- so for several hours a fix could have broken
 # hygiene and nothing in the gate would have said a word.
 #
-# ⚠️ This checks that each file is MENTIONED, not that it ran.  That is
+# This checks that each file is MENTIONED, not that it ran.  That is
 # weaker than it sounds only in a way nobody does by accident: naming a
 # file here without running it takes deliberate effort, while adding a
-# file to test/ and forgetting this list is one keystroke.  ⇒ It covers
+# file to test/ and forgetting this list is one keystroke.  It covers
 # the failure that happened, and it says which one it covers.
 for m in test/*.mjs; do
     grep -q "$m" "$0" || {

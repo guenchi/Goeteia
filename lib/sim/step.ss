@@ -100,6 +100,21 @@
            ;; how many steps are due IN TOTAL by now, minus the ones
            ;; already run.  Derived from the total every time, so the
            ;; error of one frame is never carried into the next.
+           ;;
+           ;; NO TOLERANCE IS ADDED HERE, and (gam timeline) adds one to
+           ;; the same-looking question -- deliberately, both of them.
+           ;; Ten advances of 0.1 sum to a shade under 1.0 in binary
+           ;; floating point, so the tenth step is not due yet and runs
+           ;; on the next advance instead; the step after that is due on
+           ;; time again, because the count comes from the total rather
+           ;; than from a remainder.  Rounding a step INTO existence
+           ;; here would simulate more time than has passed, and it
+           ;; would do it once per second forever.  A timeline is the
+           ;; other case: its deadlines are one-shot, so a payload held
+           ;; back by a last-bit shortfall is late permanently and never
+           ;; gets a next tick to be on time for.  Same arithmetic,
+           ;; opposite right answer -- which is why neither file should
+           ;; be made to match the other.
            (due (exact (floor (fl/ total step))))
            (n (- due taken)))
       ($step-total! c total)

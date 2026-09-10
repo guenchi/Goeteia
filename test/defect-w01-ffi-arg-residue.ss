@@ -6,19 +6,19 @@
 ;;   (js-call f this 11 <unconvertible>)  raises, 11 stays pushed
 ;;   (js-call f this 22)                  the callee sees TWO arguments
 ;;
-;; ⚠️ The damage lands on a call that did nothing wrong, in a caller
+;; The damage lands on a call that did nothing wrong, in a caller
 ;; that may have handled the first failure correctly.  A JS function
 ;; reading arguments.length, or one with optional parameters, silently
 ;; takes a different branch.
 ;;
-;; ⭐ THE SHAPE: the hazard is understood elsewhere in this same file.
+;; THE SHAPE: the hazard is understood elsewhere in this same file.
 ;; js-set! converts before staging the property name, and its comment
 ;; says why -- "a string value passes through the same name buffer and
-;; would swallow a name already staged".  ⇒ Somebody worked this out
+;; would swallow a name already staged".  Somebody worked this out
 ;; and fixed one path.  js-call, js-method and js-new push as they go.
 ;; One hazard, four entrances, a guard on one.
 ;;
-;; ⭐ Failure on the FIRST argument leaves nothing behind, and that
+;; Failure on the FIRST argument leaves nothing behind, and that
 ;; cell is green on purpose: it says the residue is the arguments
 ;; ALREADY pushed, not the failure itself, which is what tells a
 ;; reader where to look.

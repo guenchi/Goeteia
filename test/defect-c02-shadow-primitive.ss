@@ -8,7 +8,7 @@
 ;; specialisation but not known VARIABLES, so a name the program
 ;; defines at top level is still treated as the builtin.
 ;;
-;; ⚠️ Why it is worth a cell of its own rather than a line in a bigger
+;; Why it is worth a cell of its own rather than a line in a bigger
 ;; file: the failure is silent and the program is plausible.  A game
 ;; that defines its own `min`, `length` or `map` gets the builtin's
 ;; behaviour at every call and no diagnostic anywhere -- and the shape

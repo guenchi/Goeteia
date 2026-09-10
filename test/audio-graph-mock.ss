@@ -1,7 +1,7 @@
 ;; expect: #t
 ;; The recording audio mock, judged as an instrument.
 ;;
-;; ⭐ This file tests test/lib/audmock.ss, not (aud sfx).  It drives the
+;; This file tests test/lib/audmock.ss, not (aud sfx).  It drives the
 ;; mock by hand, through (web js), so that what it asserts is what the
 ;; INSTRUMENT records and not what any library happens to do.  A mock
 ;; checked only through its subject is checked by the thing it is meant
@@ -126,7 +126,7 @@
 (js-call (js-get r1 "connect") r1 r3)
 (check "MOCK-GRAPH: after a rewire the target is the NEW one, not the first"
        (equal? (audio-target-of (id r1)) (id r3)))
-;; ⚠️ The cell above does NOT catch a reader that keeps the first
+;; The cell above does NOT catch a reader that keeps the first
 ;; connect -- the disconnect before it clears the answer either way, so
 ;; "first after the disconnect" and "last" agree.  Measured: with the
 ;; reader mutated to keep the first, that cell stays green and the one
@@ -147,12 +147,12 @@
               (string=? "runaway" (list-ref p (- (length p) 1))))))
 
 ;; ---- the graph outlives the log ----
-;; ⭐ The reader used to scan the log for edges, which made every path
+;; The reader used to scan the log for edges, which made every path
 ;; assertion depend on where the section breaks fell: an edge recorded
 ;; once, when a node was born, vanished from the graph the moment a
 ;; later section called audio-mock-reset!.  Measured before the change:
 ;; inserting one harmless reset between two sections of test/audio.ss
-;; turned "music takes the same path as an effect" red -- ⚠️ a red
+;; turned "music takes the same path as an effect" red -- a red
 ;; pointing at the library while the instrument was what broke.
 ;;
 ;; So the edges live outside the log now.  This cell is the acceptance

@@ -212,7 +212,7 @@
                        ((rotation-y) ($sgpu-set1! f 4 (cadr a) ds 13))
                        ((rotation-z) ($sgpu-set1! f 5 (cadr a) ds 13))
                        ((scale) ($sgpu-set1! f 6 (cadr a) ds 13))
-                       ;; ⚠️ Colour needs the generation slot exactly as
+                       ;; Colour needs the generation slot exactly as
                        ;; the transform fields do.  The instance buffer
                        ;; is only rebuilt when $sgpu-gen changes, so a
                        ;; setter that writes the value without bumping

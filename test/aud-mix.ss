@@ -32,7 +32,7 @@
 ;;            precision about 1.2e-7.  An error smaller than that is
 ;;            erased by the platform before it reaches a sample.
 ;;
-;; ⇒ 1e-9 sits between the arithmetic noise floor and the smallest
+;; 1e-9 sits between the arithmetic noise floor and the smallest
 ;; difference the platform can represent.  It cannot be loosened -- past
 ;; 1.2e-7 the error is one the hardware would keep -- and it cannot be
 ;; tightened without failing on this tree's own trigonometry.  Both
@@ -42,7 +42,7 @@
 ;; in archive/goeteia-audio-design.md; the value is not, because two
 ;; files holding the same constant is two suppliers of one fact.
 ;;
-;; ⛔ And the fix this rules out: pan = ±1 must NOT be special-cased in
+;; And the fix this rules out: pan = ±1 must NOT be special-cased in
 ;; the library to return exactly (1, 0).  That would hide a general
 ;; imprecision by making two points of the range pretend to be exact.
 (define (near? a b)
@@ -133,7 +133,7 @@
 ;; enforces something the reserve is not for -- a louder sound losing to
 ;; a quieter one already playing, exactly when the pool is small.
 ;;
-;; ⭐ What did NOT change is why the cell is here.  A falsified
+;; What did NOT change is why the cell is here.  A falsified
 ;; expectation is a reason to correct the expectation, not to delete the
 ;; row: with the row gone, nothing in the file would say the reserve is
 ;; enforced at all, and the list would look tidier for it.  The question
@@ -143,7 +143,7 @@
 ;;
 ;; A free slot exists (n=2, cap=3) and it is the reserved one, so the
 ;; sfx count must not grow into it -- the reserve shows up as an
-;; EVICTION rather than a refusal.  ⚠️ Both lines are needed: with only
+;; EVICTION rather than a refusal.  Both lines are needed: with only
 ;; the first, "always evict the weakest resident" also passes.
 (let ((two-sfx (vector (v 'a 0.0 1 'sfx) (v 'b 1.0 4 'sfx))))
   (check "EVICT-RESERVE: with a free reserved slot a stronger sfx replaces, and does not add"

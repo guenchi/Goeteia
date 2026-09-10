@@ -13,7 +13,7 @@
 // by tint.a, so at t = 0 the fragment still contributes its full colour
 // through the ONE factor: a fade-out ends transparent and coloured.
 //
-// ⚠️ This is the first cell to use the frame probe, and it is the shape
+// This is the first cell to use the frame probe, and it is the shape
 // the probe was built for: draw the background, draw it again with the
 // sprite over it, and require the two frames to be IDENTICAL.  An
 // assertion about a pixel value would have to know what the right

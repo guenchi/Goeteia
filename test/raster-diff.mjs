@@ -990,7 +990,7 @@ async function sectionD(ref) {
           'D: every pixel of a nearest render is the atlas read at the '
           + 'texel frame-texel names, on 8630 triangles');
 
-    // ⚠️ A loop over an empty map runs zero times and leaves the flag
+    // A loop over an empty map runs zero times and leaves the flag
     // true, so "neither backend produced anything" used to read exactly
     // like "the two backends agree".  For a differential check that is
     // the worst possible failure: the whole point is that two
@@ -1067,12 +1067,12 @@ async function sectionD(ref) {
     // ---- against the Python reference, byte for byte ----
     for (const mode of ['nearest', 'bilinear']) {
         let same = 0, total = 0, worst = 0, diff = 0;
-        // ⛔ Separate from `diff`, and fatal on its own.  A camera whose
+        // Separate from `diff`, and fatal on its own.  A camera whose
         // two sides had different lengths -- or whose reference side was
         // empty because the oracle never ran -- used to be noted in
         // `where` and skipped, leaving diff at 0, so the check reported
         // "identical byte for byte" about bytes that were never
-        // compared.  ⭐ A differential test that passes when one side is
+        // compared.  A differential test that passes when one side is
         // missing has inverted its own purpose: the absence of the
         // reference is the one thing it must never call agreement.
         let broken = 0;

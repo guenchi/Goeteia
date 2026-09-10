@@ -5,7 +5,7 @@
 // rt/worker.mjs replaces globalThis.addEventListener with one that
 // pushes the handler into its own table, because forwarded events are
 // re-dispatched from that table rather than by the platform.  The word
-// removeEventListener does not appear in the file.  ⇒ A caller that
+// removeEventListener does not appear in the file.  A caller that
 // removes a listener reaches the native function, which knows nothing
 // about the table, and the handler keeps being called.
 //
@@ -14,11 +14,11 @@
 // pointer handler and later disposes has no way to detach -- and, on
 // the canvas, no method to call at all.
 //
-// ⚠️ An event handler that cannot be removed is not only a leak.  It
+// An event handler that cannot be removed is not only a leak.  It
 // is a handler belonging to a torn-down scene still running on every
 // keystroke, with whatever it closes over still live and still acting.
 //
-// ⭐ Loading this module in plain node is enough, and that is worth
+// Loading this module in plain node is enough, and that is worth
 // saying: the defect is in the shim's own bookkeeping, not in anything
 // a Worker provides.  The module is imported with the two globals it
 // touches replaced by recorders, so which path a call took is a
@@ -51,7 +51,7 @@ test('CONTROL a registered handler is called', () => {
 });
 
 test('CONTROL the message plumbing still reaches the native listener', () => {
-    // ⭐ Without this, "everything goes into the table" would look the
+    // Without this, "everything goes into the table" would look the
     // same as "the shim is installed correctly".
     const before = native.length;
     globalThis.addEventListener('message', () => {});

@@ -7,7 +7,7 @@
 ;; and discards the rest.  `(append '(1) '(2) '(3))` loses the third
 ;; list the same way.
 ;;
-;; ⚠️ Nothing is reported.  A macro that computes a wrong number emits a
+;; Nothing is reported.  A macro that computes a wrong number emits a
 ;; program that compiles, runs, and is wrong -- and the wrongness is
 ;; attributed to the macro's author, who wrote arithmetic that is
 ;; correct in every other position in the language.

@@ -1,23 +1,23 @@
 ;; expect: 4 ok; 20 ok; 34 ok; 35 ok;
 ;; RED ON PURPOSE: the HZB pyramid and the depth-sorting cull pipeline
 ;; live at hard-coded slots 250 and 251, and geometry groups are handed
-;; consecutive slots from 9 upward with no ceiling.  ⇒ Enough groups
+;; consecutive slots from 9 upward with no ceiling.  Enough groups
 ;; and the group allocator walks over both.
 ;;
-;; ⭐ MEASURED BOUNDARY: 34 groups work, 35 does not.  ⛔ It is not
+;; MEASURED BOUNDARY: 34 groups work, 35 does not.  It is not
 ;; derived.  Reading "eight slots each from 9" out of the source
 ;; predicts the 31st group, and that is wrong -- 31, 32, 33 and 34 all
 ;; survive.  The layout is not the arithmetic the comment suggests, and
 ;; a cell asserting the predicted number would have been red for the
 ;; wrong count and would have looked right.
 ;;
-;; ⚠️ The overwrite is not detected.  The next thing to use the HZB
+;; The overwrite is not detected.  The next thing to use the HZB
 ;; slot finds whatever the group put there and asks it for a texture
 ;; view, which is a scene that fails on its 31st distinct mesh with a
 ;; message about a missing method -- naming the symptom, in the render
 ;; loop, with nothing pointing at the allocator.
 ;;
-;; ⭐ Two allocators, one address space, and only one of them knows
+;; Two allocators, one address space, and only one of them knows
 ;; about the other: the group allocator counts upward from 9 with no
 ;; ceiling, and the two reserved slots were chosen to be "far away".
 ;; Far away is a distance, not an invariant.
@@ -26,10 +26,10 @@
 ;; -- they are what says the COUNT is the variable, since the scenes
 ;; differ in nothing else.
 ;;
-;; ⚠️ THE FAILURE CANNOT BE CAUGHT.  It surfaces as a host JS error
+;; THE FAILURE CANNOT BE CAUGHT.  It surfaces as a host JS error
 ;; ("slots[...].createView is not a function"), not a Scheme condition,
 ;; so `guard` goes straight past it exactly as it goes past a wasm
-;; trap.  ⇒ This file cannot collect verdicts and print them at the
+;; trap.  This file cannot collect verdicts and print them at the
 ;; end; it prints each count as that count survives, and the run simply
 ;; stops where it breaks.  The expected line is the whole sequence, so
 ;; a short answer names the count that failed.
@@ -178,7 +178,7 @@ globalThis.__gpulog = [];
     (sgpu-draw! sc))
   (display n) (display " ok; "))
 
-;; n distinct geometries, so each takes a group of its own.  ⭐ The
+;; n distinct geometries, so each takes a group of its own.  The
 ;; geometry spec is data rather than code, so the scene can be built
 ;; programmatically -- which is what makes the group COUNT the variable
 ;; instead of a hand-written wall of meshes.

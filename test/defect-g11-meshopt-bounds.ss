@@ -7,7 +7,7 @@
 ;; source is accepted and decoded, which means the bytes that were
 ;; decoded came from whatever happened to be after it.
 ;;
-;; ⚠️ In linear memory that is not a crash.  Reading past the end of a
+;; In linear memory that is not a crash.  Reading past the end of a
 ;; buffer returns the next buffer's contents, so the failure is silent
 ;; and the result is plausible -- a mesh made of somebody else's data.
 ;; The observable is not "it trapped" but "it RETURNED, from an input
@@ -17,7 +17,7 @@
 ;; that is carried but not enforced is the shape where a malformed asset
 ;; stops being a rendering problem.
 ;;
-;; ⚠️ KNOWN LIMITATION, recorded so nobody later tries to close it: a
+;; KNOWN LIMITATION, recorded so nobody later tries to close it: a
 ;; slen that is too LARGE is not detectable here.  The format allows
 ;; slack between the data and the tail, so a caller who reports more
 ;; bytes than the stream really has is indistinguishable from one whose
@@ -32,7 +32,7 @@
 (define failed 0)
 (define (check name ok)
   (unless ok (set! failed (+ failed 1)) (display "  FAIL ") (display name) (newline)))
-;; ⚠️ `guard` cannot catch a wasm trap, so a decoder that walked off the
+;; `guard` cannot catch a wasm trap, so a decoder that walked off the
 ;; end of memory would kill this file rather than fail a cell.  That is
 ;; a worse red than a FAIL line but it is still a red, and the file's
 ;; header says where to look.  What is being asked for here is a named
@@ -62,7 +62,7 @@
             (refuses? (lambda () (meshopt-index! SRC 0 DST 3 2)))
             (refuses? (lambda () (meshopt-index-sequence! SRC 0 DST 3 2)))))
 
-;; ⭐ And the twin, which matters as much: a decoder that refused
+;; And the twin, which matters as much: a decoder that refused
 ;; everything would pass every line above.  These are the real streams
 ;; the suite already decodes, at their real lengths, and they must go on
 ;; working -- so the bound has to be a bound and not a rejection.
@@ -73,7 +73,7 @@
 (load! SRC ok-comp)
 (check "G11-TWIN: a complete stream at its real length still decodes"
        (not (refuses? (lambda () (meshopt-vertex! SRC (llen ok-comp) DST 24 4)))))
-;; ⭐ The bound, from BOTH sides.  The first version of this cell asked
+;; The bound, from BOTH sides.  The first version of this cell asked
 ;; for "one byte short is refused" and was wrong -- not too weak, wrong.
 ;;
 ;; Slack is normal in this format: this sixty-byte stream's data ends at
@@ -81,7 +81,7 @@
 ;; middle are spare, and the canonical stream in test/meshopt.ss has
 ;; twenty-four spare the same way.  A length one byte short therefore
 ;; still contains every byte the decoder reads; what shrank was the
-;; slack.  ⇒ It is not a truncated stream, it is a length reported one
+;; slack.  It is not a truncated stream, it is a length reported one
 ;; too large -- and this format carries nothing that could tell the
 ;; difference.  A rule that demanded the data reach the tail exactly
 ;; would refuse the suite's own known-good stream, which was measured
@@ -89,7 +89,7 @@
 ;;
 ;; So the cell asks where the bound actually is.  28 bytes of data plus
 ;; a 4-byte tail is 32, and the decoder refuses at 31 and decodes at 32
-;; -- measured across the whole range, on all three targets.  ⛔ Both
+;; -- measured across the whole range, on all three targets.  Both
 ;; halves are needed: without the 32, a decoder that refused everything
 ;; short of the full sixty would pass; without the 31, one with no bound
 ;; at all would.

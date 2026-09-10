@@ -9,15 +9,15 @@
 // 24.  A reader following the example samples the atlas with a
 // normal's x and y.
 //
-// ⭐ NEITHER SIDE OF THIS COMPARISON IS WRITTEN DOWN HERE.  The
+// NEITHER SIDE OF THIS COMPARISON IS WRITTEN DOWN HERE.  The
 // expected offset is computed by asking (gfx glb) for the stride of
 // the layout up to the UV set, and the actual one is parsed out of the
-// document.  ⇒ If the layout ever changes, this cell moves with it
+// document.  If the layout ever changes, this cell moves with it
 // instead of becoming a second stale number beside the first.  A cell
 // asserting "the doc should say 24" would have no author for the 24.
 //
-// ⚠️ The review located this at docs/graphics.md:1304 and the line is
-// now 1483.  ⇒ The cell searches for the call rather than for a line,
+// The review located this at docs/graphics.md:1304 and the line is
+// now 1483.  The cell searches for the call rather than for a line,
 // because a line number in a document is a fact with a shelf life.
 //
 // The control is that the call is found at all: if the example is

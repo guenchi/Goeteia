@@ -20,6 +20,7 @@
           append-child! replace-child! insert-before! remove-child!
           remove-all-children!
           set-inner-html! inner-text set-text!
+          make-element-cache cached-element set-text-if-changed!
           set-attribute! set-style!
           computed-style computed-px
           add-event-listener! console-log alert)
@@ -47,6 +48,61 @@
       (if (js-truthy? el)
           el
           (error 'need-element-by-id "no element on the page has this id" id))))
+
+  ;; ---- writing the same value over and over ----
+  ;;
+  ;; A readout driven from a running loop is asked to show a value every
+  ;; frame and changes on very few of them.  Two costs come out of that,
+  ;; and both are paid before any of this library's other functions are
+  ;; reached: the lookup, which walks the document for an id that has
+  ;; not moved since the page loaded, and the write, which hands the
+  ;; browser a string identical to the one already there -- and a write
+  ;; to textContent is a change as far as the browser is concerned, so
+  ;; it costs layout whether or not the text differs.
+  ;;
+  ;; THE CACHE IS A VALUE THE CALLER HOLDS, not state inside this
+  ;; library.  A module-level cache would be shared by every unrelated
+  ;; part of a page and would outlive whatever put entries in it: a
+  ;; view that is torn down and rebuilt leaves handles to elements no
+  ;; longer in the document, and writes to them go nowhere and report
+  ;; nothing.  Owning the cache means that hazard has a scope the caller
+  ;; can see and end -- drop the cache and the stale handles go with it.
+  ;;
+  ;; WHAT IT REMEMBERS IS WHAT IT WROTE, WHICH IS NOT WHAT IS THERE.
+  ;; set-text-if-changed! skips the write when the text matches what
+  ;; this cache last put there.  If anything else -- another cache, a
+  ;; framework, a hand-written line, the browser's own form restore --
+  ;; changed that element in the meantime, the skip is wrong and the
+  ;; element keeps showing the other thing.  So one element belongs to
+  ;; one writer.  That is a real restriction and it is stated rather
+  ;; than guarded, because guarding it would mean reading the element
+  ;; back before every write, which is the cost this exists to avoid.
+  (define (make-element-cache)
+    (vector (make-hashtable string-hash string=?)
+            (make-hashtable string-hash string=?)))
+
+  ;; Resolved once and remembered.  This insists, like
+  ;; need-element-by-id: a cache that stored a falsy handle would answer
+  ;; it forever after, turning one missing id into a write that silently
+  ;; does nothing for the life of the page.
+  (define (cached-element cache id)
+    (let ((hit (hashtable-ref (vector-ref cache 0) id #f)))
+      (or hit
+          (let ((el (need-element-by-id id)))
+            (hashtable-set! (vector-ref cache 0) id el)
+            el))))
+
+  ;; Answers whether it wrote, so a caller can count the writes it is
+  ;; actually causing rather than the ones it asked for.
+  (define (set-text-if-changed! cache id text)
+    (unless (string? text)
+      (error 'set-text-if-changed! "the text is a string" id text))
+    (let ((last (hashtable-ref (vector-ref cache 1) id #f)))
+      (and (not (and last (string=? last text)))
+           (begin
+             (set-text! (cached-element cache id) text)
+             (hashtable-set! (vector-ref cache 1) id text)
+             #t))))
 
   (define (query-selector sel)
     (js-method (document) "querySelector" sel))

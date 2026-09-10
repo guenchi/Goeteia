@@ -192,7 +192,7 @@
         ;; read stays inside the buffer, and only the data's own extent
         ;; is wrong.
         ($src-window! (+ src 1) (- tail-at src 1))
-        ;; ⚠️ What is NOT checked, and cannot be: that the data ends
+        ;; What is NOT checked, and cannot be: that the data ends
         ;; exactly where the tail begins.  These streams carry slack --
         ;; the suite's canonical vertex stream decodes correctly with
         ;; its data ending 24 bytes before the tail -- so requiring

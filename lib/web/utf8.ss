@@ -23,7 +23,7 @@
 ;; format into four consumers to reach twenty lines.  So it moved here,
 ;; unchanged.
 ;;
-;; ⚠ WHERE THIS MAY BE USED, and where using it is a decision someone
+;; WHERE THIS MAY BE USED, and where using it is a decision someone
 ;; else has to be part of.  Today:
 ;;
 ;;   (web sexpr) writer   uses it     refusing to emit is unilateral

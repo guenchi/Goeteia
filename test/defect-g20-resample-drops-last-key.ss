@@ -5,18 +5,18 @@
 ;;
 ;; The grid is picked as k = (i * n) / limit for i in [0, limit).  With
 ;; n = 4097 and limit = 4096 the largest k is (4095 * 4097) / 4096 =
-;; 4095, so index 4096 -- the last key -- is unreachable.  ⭐ The
+;; 4095, so index 4096 -- the last key -- is unreachable.  The
 ;; endpoint is not lost to rounding; it is outside the range the
 ;; formula can produce, for every n greater than the limit.
 ;;
-;; ⚠️ And the damage does not stop at the grid.  The clip's duration is
+;; And the damage does not stop at the grid.  The clip's duration is
 ;; taken as the maximum of the sampled times, so it becomes the
 ;; second-to-last key's time.  Ask for `samples 2` -- two keys spanning
 ;; the clip, as explicit as a caller can be -- and the last one still
-;; lands at 4095 instead of 4096.  ⇒ A caller who never wanted
+;; lands at 4095 instead of 4096.  A caller who never wanted
 ;; decimation, and said so, inherits its error.
 ;;
-;; ⭐ The cells report the time they read, not whether it was right.
+;; The cells report the time they read, not whether it was right.
 ;; 4095.0 says the endpoint was dropped; any other number says
 ;; something else is happening and this file should be re-read rather
 ;; than believed.

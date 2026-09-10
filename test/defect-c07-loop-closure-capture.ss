@@ -8,7 +8,7 @@
 ;; loop parameter is declared once outside the `for` and assigned each
 ;; time round, so all three closures read the last value.
 ;;
-;; ⚠️ The two backends disagreeing about what a program means is the one
+;; The two backends disagreeing about what a program means is the one
 ;; thing this tree says must never happen -- run-tests.sh compares their
 ;; emitted text byte for byte for exactly that reason.  A cell that ran
 ;; only on wasm would be green, and the green would mean nothing.

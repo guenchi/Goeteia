@@ -102,7 +102,7 @@
 ;;                    a char, a procedure, a bytevector, an improper
 ;;                    pair, the unspecified value, and A SYMBOL in
 ;;                    either position -- key or value -- except `null`.
-;;                    ⚠ CHANGED, twice: those first five used to
+;;                    CHANGED, twice: those first five used to
 ;;                    serialize as `null`, silently, which is a legal
 ;;                    value of the wrong type and one the caller may
 ;;                    have meant; and a symbol used to serialize as the
@@ -518,7 +518,7 @@
                        (let-values (((ep ek j2)
                                      (scan-digits k $max-number-digits)))
                          (when (= ek 0) (jfail "bad number" i))
-                         ;; ⚠ WHY THIS LINE IS HERE.  When it was
+                         ;; WHY THIS LINE IS HERE.  When it was
                          ;; written, no test could tell: deleting it
                          ;; left every row in
                          ;; test/json-rfc-surface.ss green, because the

@@ -2,12 +2,12 @@
 ;; The primitive guards and the dispatcher must read the top-level
 ;; tables the same way.
 ;;
-;; ⭐ THIS CELL IS THE ONLY EVIDENCE FOR ONE THING: that a place asking
+;; THIS CELL IS THE ONLY EVIDENCE FOR ONE THING: that a place asking
 ;; "is this name a primitive?" resolves it exactly as the place that
 ;; then compiles the call.  Six guards consult those tables besides the
 ;; dispatcher, and if any of them keeps the old lookup while the tables
 ;; are keyed the new way, that guard answers "primitive" for a name the
-;; dispatcher has a definition for.  ⚠️ Nothing else in the suite
+;; dispatcher has a definition for.  Nothing else in the suite
 ;; notices: the program still compiles, still runs, and quietly calls
 ;; the built-in instead of the definition in front of it.
 ;;
@@ -21,15 +21,15 @@
 ;;   fl<?          the fl<?/fl=? branch of compile-test
 ;;   (fl* (fl+ ..)) a nested float context, which is compile-f64
 ;;   nested bitwise a nested i32 context
-;;   mvp           ⭐ a VARIABLE holding a procedure, called -- this is
+;;   mvp           a VARIABLE holding a procedure, called -- this is
 ;;                 the *vars* arm of compile-app and of jx-app, which
 ;;                 the procedure cases above never reach
 ;;
-;; ⚠️ THE FIRST VERSION OF THIS CELL COVERED FOUR OF TWELVE SUCH
+;; THE FIRST VERSION OF THIS CELL COVERED FOUR OF TWELVE SUCH
 ;; LOOKUPS.  That was not visible from the cell: it was red before the
 ;; fix and green after, which is what a working cell looks like.  It
 ;; took reverting each lookup one at a time and asking whether anything
-;; shouted -- eight of them did not.  ⇒ "This cell goes red when the
+;; shouted -- eight of them did not.  "This cell goes red when the
 ;; code is wrong" is a claim about the ways it was tried, and the four
 ;; positions above were added because a mutation matrix named them.
 ;;
@@ -40,7 +40,7 @@
 ;; what this implementation was reasoned to owe.  Measured at HEAD
 ;; before the fix, it answers (builtin 3.0 8 builtin).
 ;;
-;; ⭐ EVERY DEFINITION HERE IS SELF-RECURSIVE ON A BRANCH THAT NEVER
+;; EVERY DEFINITION HERE IS SELF-RECURSIVE ON A BRANCH THAT NEVER
 ;; RUNS, and that is not decoration.  A one-expression body is under
 ;; the inline cap, and the inliner erases the call before any table is
 ;; consulted -- which is exactly how an earlier control in this
@@ -48,23 +48,23 @@
 ;; 'never)` arm is what keeps each call alive long enough to be
 ;; dispatched.
 ;;
-;; ⛔ FOUR LOOKUPS REMAIN THAT NO BEHAVIOURAL CELL CAN REACH, and they
+;; FOUR LOOKUPS REMAIN THAT NO BEHAVIOURAL CELL CAN REACH, and they
 ;; are named rather than left as "covered": fl-expr?, $i32-prim-of,
 ;; fl-expr-in?, and the JS trampoline's tail scan.  Reverting any of
 ;; them changes which optimisation fires, not what is computed -- the
-;; module comes out a different size with byte-identical output.  ⇒
+;; module comes out a different size with byte-identical output.  
 ;; Only an assertion about the BUILD PRODUCT can see them (slot types,
 ;; the function-spec table, the bouncy-frame flag), and there is no
 ;; such assertion in this tree.  A cell cannot be written for them
 ;; here, so this comment is what stands in for one.
 ;;
-;; ⚠️ One of those four carries a measured price: with $i32-prim-of
+;; One of those four carries a measured price: with $i32-prim-of
 ;; reading the tables the old way the module is 53 bytes SMALLER,
 ;; because a marked shadow then keeps the i32 specialisation it is not
 ;; entitled to.  Resolving the name correctly costs those bytes.  That
 ;; is the right trade and it is not a free one.
 ;;
-;; ⚠️ This is NOT the C02 shadowing case.  These names are introduced
+;; This is NOT the C02 shadowing case.  These names are introduced
 ;; by a macro and referenced from the same template, so they carry the
 ;; same marks and must meet.  A top-level definition the USER wrote
 ;; shadowing a primitive is a separate, still-open finding with its own

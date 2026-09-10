@@ -350,7 +350,7 @@ export async function checkShader(page, vertexSrc, fragmentSrc) {
 // had a criterion, and writing the effect first would have been writing
 // code nobody could judge.
 //
-// ⚠️ The comparison happens INSIDE the page.  Two 256x256 frames are
+// The comparison happens INSIDE the page.  Two 256x256 frames are
 // half a megabyte of JSON if they come back raw, and -- the part that
 // matters more -- two frames read back separately have travelled
 // through two different moments of GPU and driver state.  Drawing both
@@ -363,11 +363,11 @@ export async function checkShader(page, vertexSrc, fragmentSrc) {
 // differ" would be unable to tell a real difference from a broken
 // probe, and there would be nothing to calibrate.
 //
-// ⚠️ Each of the three has a different floor, and a cell should say
+// Each of the three has a different floor, and a cell should say
 // which one it is leaning on:
 //
 //   fingerprint  changes for ANY changed byte.  One pixel, one channel,
-//                one unit -- it moves.  ⛔ It says nothing about how
+//                one unit -- it moves.  It says nothing about how
 //                much or where, and two different frames could in
 //                principle collide (this is FNV-1a, a fingerprint, not
 //                a cryptographic hash: crypto.subtle is async and this
@@ -380,7 +380,7 @@ export async function checkShader(page, vertexSrc, fragmentSrc) {
 //                d shows as round(d/64) -- a full-contrast pixel reads
 //                4 (measured in the self-check, which prints it), and
 //                anything under d = 32 rounds to 0 and disappears.
-//                ⛔ So the grid LOCATES a difference that `differing`
+//                So the grid LOCATES a difference that `differing`
 //                has already established; it must not be used to decide
 //                whether there is one.
 // The fingerprint FUNCTION, not an application of it: the first
@@ -479,7 +479,7 @@ async function selfCheck() {
 
         // ---- the frame probe, calibrated ----
         //
-        // ⭐ Three cases, because the useful thing about this probe is
+        // Three cases, because the useful thing about this probe is
         // not that it can say "different" -- it is the SIZE of the
         // smallest difference it can see, and that is a measurement,
         // not a design claim.
@@ -505,7 +505,7 @@ async function selfCheck() {
         if (all.differing !== all.pixels || all.maxDelta !== 255)
             problems.push(`black against white read as ${all.differing} of `
                           + `${all.pixels} pixels, max delta ${all.maxDelta}`);
-        // ⚠️ The grid's resolution, printed rather than asserted -- and
+        // The grid's resolution, printed rather than asserted -- and
         // then a case that measures where it gives up.  `differing`
         // exists separately precisely because the grid has a floor, and
         // the number belongs next to the claim rather than in a comment

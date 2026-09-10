@@ -574,7 +574,7 @@
     (when (< slen 5) (error 'zstd "truncated frame header"))
     (set! $src-start src)
     (set! $src-end (+ src slen))
-    ;; ⚠️ The window below bounds what may be READ.  These three checks
+    ;; The window below bounds what may be READ.  These three checks
     ;; are a different kind: the frame makes claims about itself, and
     ;; until now nothing compared them with the frame.  A reader that
     ;; cannot run off the end can still believe a header that describes
@@ -608,7 +608,7 @@
           ;; A promised checksum has to be present: four bytes after the
           ;; last block, within the length the caller gave us.
           ;;
-          ;; ⚠️ PREMISE, and it is load-bearing: this only decides
+          ;; PREMISE, and it is load-bearing: this only decides
           ;; anything when `slen` IS the frame's length.  Hand it a
           ;; roomy buffer -- the whole file, say -- and four bytes are
           ;; always "there", so a frame that carries no checksum
@@ -622,7 +622,7 @@
           ;; future caller that passes a buffer size instead gets no
           ;; protection from this line and no warning that it lost it.
           ;;
-          ;; ⛔ KNOWN GAP, not a trade-off: this asks whether four
+          ;; KNOWN GAP, not a trade-off: this asks whether four
           ;; bytes are present, never whether they are the right four.
           ;; Four wrong bytes pass.  And presence is not a question
           ;; that can be answered at all under a roomy buffer -- any

@@ -157,7 +157,7 @@
 (for-each trips-exactly? $names)
 (for-each trips-in-list? $names)
 ;; ---- non-ASCII names -----------------------------------------------
-;; ⚠ These names are built by reading a string at RUNTIME rather than
+;; These names are built by reading a string at RUNTIME rather than
 ;; written as source literals, and the reason is a defect somewhere
 ;; else: the Chez-hosted compiler truncates a \xNN...; escape at or
 ;; above U+0080 in a SOURCE literal to a single byte -- "\x3bb;" in

@@ -10,15 +10,15 @@
 ;;
 ;;   set! of unbound variable: #{mv <mark>}
 ;;
-;; ⚠️ THIS CELL WAS WRONG UNTIL 2026-09-09 and its earlier shape must
+;; THIS CELL WAS WRONG UNTIL 2026-09-09 and its earlier shape must
 ;; not come back.  It used to write the reference OUTSIDE the macro --
-;; `(m)` and then a bare `mv` -- and demand that it resolve.  ⛔ That is
+;; `(m)` and then a bare `mv` -- and demand that it resolve.  That is
 ;; a demand to BREAK HYGIENE: a name a macro introduces is fresh, and a
 ;; reference the user wrote must not see it.  Chez refuses that program
 ;; and so does this compiler, correctly.  The old cell would have been
 ;; satisfied by exactly the change that makes the compiler worse.
 ;;
-;; ⭐ Which is why test/macro-toplevel-hygiene.mjs exists: it fails if
+;; Which is why test/macro-toplevel-hygiene.mjs exists: it fails if
 ;; the fix reaches one inch further than this file's shape.
 ;;
 ;; The procedure case is NOT broken -- *fns* agrees with its lookup --

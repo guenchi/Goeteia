@@ -1,10 +1,10 @@
 // The browser harness removes a throwaway profile directory in a
 // `finally`.  On 2026-09-09 that removal threw EACCES once, and the
 // test it was tearing down went red -- a test whose shaders had all
-// compiled.  ⭐ The defect is not the EACCES; it is that a teardown
+// compiled.  The defect is not the EACCES; it is that a teardown
 // was in a position to author a verdict at all.
 //
-// ⚠️ A `finally` that throws also REPLACES an exception already in
+// A `finally` that throws also REPLACES an exception already in
 // flight, so the same line could hide a real failure behind a cleanup
 // error.  That is the half worth pinning, and the second case below is
 // the one that pins it.
@@ -55,7 +55,7 @@ test('a teardown failure does not replace an exception already in flight', () =>
 });
 
 test('a removable directory is still actually removed', () => {
-    // ⭐ the control: a teardown that never throws is trivially
+    // the control: a teardown that never throws is trivially
     // satisfied by a teardown that does nothing.
     const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'goeteia-teardown-'));
     const profile = path.join(parent, 'profile');

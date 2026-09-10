@@ -4,29 +4,29 @@
 ;; everything not in that handful is gone from the file.
 ;;
 ;; The write path takes 'mesh-node from its options and defaults it to
-;; 0 -- not to where the primitive actually was.  ⇒ A mesh parented to
+;; 0 -- not to where the primitive actually was.  A mesh parented to
 ;; a node with a transform comes back parented to the root, and the
 ;; model is somewhere else.  Nothing is reported: the file is valid,
 ;; the animation is correct, and the figure stands in the wrong place.
 ;;
-;; ⚠️ And the primitive is reassembled as layout, vertex base, count,
+;; And the primitive is reassembled as layout, vertex base, count,
 ;; index base, index count, colour and index width.  A material index,
 ;; a base-colour texture, morph targets, a per-primitive skin: none of
-;; those are read, so none of them are written.  ⭐ Losing them is
+;; those are read, so none of them are written.  Losing them is
 ;; quieter than moving the mesh, because the result still renders --
 ;; untextured, unlit, in the default material -- and looks like an
 ;; asset problem rather than a writer problem.
 ;;
-;; ⭐ THIS IS AN EXPORT PATH.  The failure is a file, and it is
+;; THIS IS AN EXPORT PATH.  The failure is a file, and it is
 ;; discovered by whoever opens that file, with no way back to what made
 ;; it.  Same shape as the GLB writer accepting invalid times
 ;; (defect-g15): a writer that silently drops what it cannot carry
 ;; hands the diagnosis to the person least able to make it.
 ;;
-;; ⚠️ gltf-prims answers a LIST.  Reading it with vector-ref is an
+;; gltf-prims answers a LIST.  Reading it with vector-ref is an
 ;; illegal cast, which is a trap, which takes the file's whole verdict
 ;; -- so a first draft of this cell reported nothing at all and looked
-;; like a library that could not read its own output.  ⭐ Three times
+;; like a library that could not read its own output.  Three times
 ;; tonight the trap in a cell was the cell's own code; each time the
 ;; first reading pointed at the library.
 ;;

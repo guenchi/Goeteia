@@ -20,7 +20,7 @@
 ;;     mock recorded t.toFixed(2), and a fade is exactly a question
 ;;     about small differences in time: two ramps 4 ms apart printed
 ;;     identically, so a cell comparing them compared two equal strings
-;;     and passed whatever the library did.  ⛔ Nothing here may round.
+;;     and passed whatever the library did.  Nothing here may round.
 ;;
 ;;   ABSENT IS NOT ZERO.  connect records outputIndex and inputIndex as
 ;;     they arrived, and an argument that was not passed is recorded as
@@ -34,12 +34,12 @@
 ;;   THE CLOCK IS DRIVEN.  currentTime advances only when a test says
 ;;     so.  A mock whose clock runs by itself makes "scheduled 0.5 s
 ;;     from now" and "scheduled at 2.5" indistinguishable, and makes
-;;     reruns differ.  ⭐ And `ended` is delivered by the test, never by
+;;     reruns differ.  And `ended` is delivered by the test, never by
 ;;     stop(): on the platform it arrives later and separately, so a
 ;;     mock that fires it inside stop() cannot tell a library that waits
 ;;     for it from one that assumes it.
 ;;
-;; ⚠️ What this cannot judge: whether any of it SOUNDS right, and
+;; What this cannot judge: whether any of it SOUNDS right, and
 ;; whether the platform's real nodes behave as assumed.  A graph is not
 ;; a signal.  That boundary is written down in
 ;; archive/goeteia-audio-design.md and is not narrowed by anything here.
@@ -81,7 +81,7 @@ globalThis.__audio = { log: [], now: 0, ids: 0, nodes: {}, edges: {} };
       connect(dst, out, inp) {
         const to = (dst && dst.id) || String(dst);
         rec('connect', [id, to, arg(out), arg(inp)]);
-        // ⭐ The edge is ALSO kept outside the log, and survives a
+        // The edge is ALSO kept outside the log, and survives a
         // reset.  The log is what happened in this section; the graph
         // is a structure that persists, and reading one out of the
         // other made every path assertion depend on where the section
@@ -112,7 +112,7 @@ globalThis.__audio = { log: [], now: 0, ids: 0, nodes: {}, edges: {} };
   // reader would have to guess what a recorded argument is, and guess
   // wrong exactly where an argument is 'absent'.
   // The node a given node currently feeds: the last edge added and not
-  // removed.  ⚠️ A node with several live outputs (the pan branch feeds
+  // removed.  A node with several live outputs (the pan branch feeds
   // two gains) answers with the last of them -- the same answer the
   // log-scanning version gave, kept deliberately so that this change
   // fixes the reset dependence without also changing what any existing
@@ -179,7 +179,7 @@ globalThis.__audio = { log: [], now: 0, ids: 0, nodes: {}, edges: {} };
   (define (call2 name a b)
     (js-call (js-get (A) name) (A) a b))
 
-  ;; How many nodes the mock has made, ever.  ⭐ This deliberately
+  ;; How many nodes the mock has made, ever.  This deliberately
   ;; SURVIVES audio-mock-reset!, and that is the whole reason it exists:
   ;; counting nodes out of the log counts only the ones whose connect is
   ;; still in the log, so a node made before a reset stops existing as
@@ -187,18 +187,18 @@ globalThis.__audio = { log: [], now: 0, ids: 0, nodes: {}, edges: {} };
   ;; were made" over a reset then answers about a smaller world than the
   ;; one it means, and it answers it confidently.
   ;;
-  ;; ⚠️ Measured, not argued: a cell counting connect-sources could not
+  ;; Measured, not argued: a cell counting connect-sources could not
   ;; see a mutant that built the bus during audio-init! -- the bus's
   ;; connect was cleared by the reset, so the count came out at exactly
   ;; the number the cell expected.  Counting creations sees it (5, not
   ;; 4).  Take a mark and subtract; do not reset.
   (define (audio-nodes-created) (js->number (js-get (A) "ids")))
 
-  ;; ⚠️ Empties the log AND the clock.  In this instrument the log IS
+  ;; Empties the log AND the clock.  In this instrument the log IS
   ;; the graph -- audio-target-of reads edges out of it -- so an edge
   ;; made before a reset is not merely unlisted, it is gone, and a path
   ;; that crosses it stops early with no sign that anything was lost.
-  ;; ⇒ A section that wants a fresh count and a whole graph must take a
+  ;; A section that wants a fresh count and a whole graph must take a
   ;; mark (audio-log-length) and count from it, not reset.
   (define (audio-mock-reset!)
     (js-eval "globalThis.__audio.log.length = 0; globalThis.__audio.now = 0;"))
@@ -250,7 +250,7 @@ globalThis.__audio = { log: [], now: 0, ids: 0, nodes: {}, edges: {} };
   ;; them, and a copied instrument is two instruments that drift.
   ;;
   ;; A node's current target is the destination of its LAST connect that
-  ;; no later disconnect has undone.  ⚠️ A graph that is rewired -- a
+  ;; no later disconnect has undone.  A graph that is rewired -- a
   ;; bus switched between two downstreams, say -- legitimately has more
   ;; than one connect per node over its life, and only the last one is
   ;; the graph as it now stands.  Reading the FIRST would make every

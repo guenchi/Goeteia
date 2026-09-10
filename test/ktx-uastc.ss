@@ -53,12 +53,12 @@
 ;; imply and reads that many, without asking whether the level it was
 ;; handed contains them.
 ;;
-;; ⚠️ The bytes after the first one are whatever is next in linear
+;; The bytes after the first one are whatever is next in linear
 ;; memory, so this is not a crash -- it is a texture assembled partly
 ;; from another buffer, out of a file off the network.  The same shape
 ;; as the meshopt and GLB defects: a length is carried and not enforced.
 ;;
-;; ⭐ The control above is what makes this cell mean anything.  The
+;; The control above is what makes this cell mean anything.  The
 ;; unmodified fixture must still decode to the golden RGBA, so a repair
 ;; that simply refused UASTC levels would fail that and not this.
 (define (has-sub? hay needle)
@@ -89,7 +89,7 @@
          (u8! (+ BAD 88) 1)
          (let z ((i 89)) (when (< i 96) (u8! (+ BAD i) 0) (z (+ i 1))))
          (let ((k (ktx-parse BAD (+ off 1))))
-           ;; ⚠️ The MESSAGE is checked, not merely that something was
+           ;; The MESSAGE is checked, not merely that something was
            ;; raised.  A bare (guard (e (#t #t))) would go green if
            ;; ktx-parse threw for its own unrelated reason -- and it
            ;; would then be reporting on a check it never reached.  The
@@ -108,7 +108,7 @@
              (newline)
              #f)))))
 
-;; ⭐ And the zstd path, which is a SECOND raise site with the same
+;; And the zstd path, which is a SECOND raise site with the same
 ;; message -- measured: mutating only the first of the two leaves this
 ;; file green, and mutating both reds it.  So the cell above reaches one
 ;; of them and this one reaches the other; without this, half the repair

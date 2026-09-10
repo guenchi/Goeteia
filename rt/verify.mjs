@@ -440,7 +440,7 @@ export function makeWorld({ width = 800, height = 600 } = {}) {
             },
             removeChild(c) {
                 this.children = this.children.filter(k => k !== c);
-                // ⚠️ And the child stops pointing at us.  Leaving the
+                // And the child stops pointing at us.  Leaving the
                 // parent link behind made a removed node still look
                 // mounted to anything that walks upward: a button
                 // created, appended and removed still counted as one
@@ -703,7 +703,7 @@ export function makeWorld({ width = 800, height = 600 } = {}) {
             now += 1000 / 60;
             const due = timers.filter(t => t.at <= now);
             timers = timers.filter(t => t.at > now);
-            // ⛔ Not discarded.  A timer callback that throws used to
+            // Not discarded.  A timer callback that throws used to
             // vanish into an empty catch, so a page whose asynchronous
             // initialisation failed went on to pass every static
             // assertion about it -- the program was broken in the one
@@ -794,7 +794,7 @@ export async function scenario(bytes, {
         trace.gl = w.gl;
         trace.world = w;
         trace.stdout = Buffer.from(stdout).toString('utf8');
-        // ⚠️ An error inside a callback the page scheduled is the
+        // An error inside a callback the page scheduled is the
         // program failing, not an incident: it happens after the module
         // has returned, so nothing in the synchronous path sees it.
         // The first one becomes the trace's error, and it says where it
@@ -1003,7 +1003,7 @@ export const CUSTOM = {
     dom_text_matches: (s, ctx) => {
         const re = new RegExp(s.pattern, s.flags || '');
         const t = ctx.base.postText;
-        // ⚠️ ONE evaluation, reused.  A RegExp with the g or y flag
+        // ONE evaluation, reused.  A RegExp with the g or y flag
         // carries lastIndex between calls, so testing twice gave the
         // verdict and the explanation different answers: pattern
         // `hello` with flag g against the text `hello` returned
@@ -1303,7 +1303,7 @@ export async function verifyBytes(bytes, checks = DEFAULT_CHECKS, opts = {}) {
         const e = base.error;
         errors.push({
             stage: 'smoke',
-            // ⚠️ Two different stories, and the wrong one is worse than
+            // Two different stories, and the wrong one is worse than
             // none: an error inside a callback the page scheduled did
             // NOT happen as soon as the module ran, and telling someone
             // it did sends them to read the wrong part of their

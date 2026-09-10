@@ -50,7 +50,7 @@ export function makeJsBridge(getExports) {
     });
     const takeName = () => {
         // Goeteia strings are UTF-8 byte arrays; decode to a real JS
-        // string so non-ASCII (Γ, —, →) crosses correctly
+        // string so non-ASCII (Γ, —, ) crosses correctly
         const s = utf8Decoder.decode(new Uint8Array(nameBuf));
         nameBuf = [];
         return s;

@@ -64,7 +64,7 @@ if (!fs.existsSync(reexport)) process.exit(1);
 // ---- structural check by an independent parser ----
 const chk = spawnSync('python3', [checker, reexport], { encoding: 'utf8' });
 require_(chk.status === 0, 'the re-export passes the structural checker', chk.stdout + chk.stderr);
-// ⚠️ And nothing in it went unchecked.  The checker declines parts it
+// And nothing in it went unchecked.  The checker declines parts it
 // cannot read -- a compressed bufferView, say -- and reports them
 // without failing, which is right for a file that is allowed to have
 // them.  A re-export produced by this probe is not: if its interesting
