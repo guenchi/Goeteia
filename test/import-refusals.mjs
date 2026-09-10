@@ -36,6 +36,9 @@ const rows = [
     ['set! of an imported variable', '(import (rnrs))\n(set! car 5)',                            /car is imported by \(rnrs\).*except \(rnrs\) car/],
     ['two bindings under one name',  '(import (rnrs) (rename (rnrs) (cdr car)))\n(display 1)',   /two different bindings imported under one name/],
     ['a component library',          '(import (rnrs base))\n(display 1)',                        /component libraries of \(rnrs\) are not supported/],
+    // a library body is judged against its own clause
+    ['a library defining a name it imports',  '(import (rnrs))\n(begin (library (o l) (export f) (import (rnrs)) (define (car x) 9) (define (f) 1)) (import (o l)))\n(display (f))', /car is imported by \(rnrs\)/],
+    ['a library assigning a name it imports', '(import (rnrs))\n(begin (library (o l) (export f) (import (rnrs)) (define (f) (set! car 5) 1)) (import (o l)))\n(display (f))',    /car is imported by \(rnrs\)/],
 ];
 
 for (const [title, src, want] of rows) {
