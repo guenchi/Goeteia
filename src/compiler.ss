@@ -1785,6 +1785,77 @@
     (%big-norm . 1) (%fx->big . 1) (%big->fl . 1) (%big->str . 1)
     (%js-await . 1)))
 
+;; ---- the export manifest of (rnrs) --------------------------------
+;;
+;; A written list, not a rule that computes one.  It was DERIVED from
+;; the prelude's plainly-named definitions plus the primitives whose
+;; names carry neither the dollar nor the percent prefix, but that
+;; derivation is history: from here the list IS the manifest, and a
+;; name enters or leaves it by being edited here, where the change
+;; shows in a diff.
+;;
+;; Nine of these are not R6RS and are goeteia's own, living in the
+;; composite because there is no component to put them in: void,
+;; gensym, errorf, string-map, open-input-string, open-output-string,
+;; get-output-string, with-output-to-string, with-input-from-string.
+;;
+;; COMPONENT LIBRARIES ARE REJECTED, NOT IMPLEMENTED.  (rnrs base) and
+;; its siblings would need every name here assigned to a component by
+;; hand from R6RS's own library lists, and a misassignment would be
+;; silent because nothing would exercise it: measured on this tree,
+;; ZERO files import a component while 323 import plain (rnrs).  The
+;; split is recorded as KNOWN OPEN, and an rnrs spec with anything
+;; after the name is refused by name -- which at least ends the
+;; silence, since today both drivers accept (rnrs base) and quietly
+;; hand back the whole of (rnrs).
+;;
+;; A primitive that no imported library exports -- every dollar- and
+;; percent-prefixed one, which is to say the implementation's own
+;; vocabulary -- is in scope under its own name and cannot be shadowed
+;; by an import, there being nothing to shadow it with.  Read that as
+;; an implicit import of the implementation's primitives: should they
+;; ever want a library of their own, it is one additive step (a library
+;; exporting exactly that set) and this rule's wording does not change.
+;; Defining one is refused like any other collision.  The manifest
+;; decides which names an import clause governs, never the spelling.
+(define $rnrs-exports
+  '(
+    * + - / < <= = > >= abs append assert assoc assq assv bitwise-and
+    bitwise-arithmetic-shift-left bitwise-arithmetic-shift-right
+    bitwise-ior bitwise-xor boolean? bytevector bytevector-length
+    bytevector-u8-ref bytevector-u8-set! bytevector=? bytevector? caadr
+    caar cadar cadddr caddr cadr call-with-input-file
+    call-with-output-file call-with-values car cdadr cdar cdddr cddr cdr
+    char->integer char-alphabetic? char-downcase char-numeric?
+    char-upcase char-whitespace? char<=? char<? char=? char>=? char>?
+    char? close-input-port close-output-port close-port complex? cons
+    cons* cos current-input-port current-output-port denominator display
+    div div0 dynamic-wind eof-object eof-object? eq? equal-hash equal?
+    eqv? error errorf exact exact->inexact exact? file-exists? filter
+    fixnum->flonum fixnum? fl* fl+ fl- fl/ fl<? fl=? flfloor flonum?
+    floor flsqrt fltruncate fold-left fold-right for-each gcd gensym
+    get-output-string guard hashtable-contains? hashtable-delete!
+    hashtable-keys hashtable-ref hashtable-set! hashtable-size
+    hashtable-update! imag-part inexact inexact->exact inexact?
+    input-port? integer->char integer? lcm length let*-values let-values
+    list list->string list->vector list-ref list-tail list? magnitude
+    make-bytevector make-eq-hashtable make-eqv-hashtable make-hashtable
+    make-list make-rectangular make-string make-vector map max member
+    memq memv min mod mod0 newline null? number->string number?
+    numerator open-input-file open-input-string open-output-file
+    open-output-string output-port? pair? peek-char procedure? quotient
+    raise raise-continuable rational? read read-char real-part real?
+    remainder remq reverse set-car! set-cdr! sin sqrt string
+    string->list string->number string->symbol string->utf8
+    string-append string-copy string-downcase string-fill!
+    string-for-each string-hash string-length string-map string-ref
+    string-set! string-upcase string<=? string<? string=? string>=?
+    string>? string? substring symbol->string symbol? tan truncate
+    utf8->string values vector vector->list vector-fill! vector-for-each
+    vector-length vector-map vector-ref vector-set! vector? void
+    with-input-from-file with-input-from-string with-output-to-file
+    with-output-to-string write write-char zero?))
+
 (define primitives
   '(+ - * quotient remainder = < eq? cons car cdr pair? null? zero?
     set-car! set-cdr! fixnum? char? string? symbol? boolean? procedure?
