@@ -78,6 +78,21 @@ const OPENER = {
     '.sh': /^\s*#/, '.py': /^\s*#/,
 };
 
+// One line, named rather than matched by a pattern.  It is a comment
+// ABOUT non-ASCII text crossing the JS bridge, and the characters in
+// it are the example: replacing them with ASCII leaves a sentence that
+// claims to demonstrate something it no longer contains.  Measured the
+// hard way -- a sweep did replace the arrow, and the packaged-page
+// golden went red on that one character, which is the only reason
+// anybody noticed.
+//
+// An exact line rather than a rule: a rule for "comments that are
+// about their own characters" would have to guess, and a named
+// exception is visible to whoever changes the line next.
+const EXEMPT = new Set([
+    '// string so non-ASCII (\u0393, \u2014, \u2192) crosses correctly',
+]);
+
 function tracked() {
     const listed = execFileSync('git', ['ls-files'], { cwd: root, encoding: 'utf8' })
         .split('\n').filter(Boolean);
@@ -97,6 +112,7 @@ test('every comment is English prose, with no pictographs carrying its emphasis'
         try { s = fs.readFileSync(path.join(root, f), 'utf8'); } catch { continue; }
         s.split('\n').forEach((line, i) => {
             if (i === 0 && /^;;\s*expect:/.test(line)) return;   // an expectation, not prose
+            if (EXEMPT.has(line.trim())) return;
             if (!open.test(line)) return;
             if (HAN.test(line)) bad.push(`${f}:${i + 1}  [CJK]  ${line.trim()}`);
             else if (MARKS.test(line)) bad.push(`${f}:${i + 1}  [mark] ${line.trim()}`);
