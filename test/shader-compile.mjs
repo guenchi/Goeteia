@@ -68,7 +68,7 @@ function emitAll() {
 }
 
 if (!findChrome()) {
-    console.log('NOT EXERCISED HERE (no Chrome beside this tree; the shaders this tree emits are not put in front of a real GLSL compiler, and the recording GL in rt/verify.mjs accepts every one of them)');
+    console.log('NOT EXERCISED HERE (no Chrome beside this tree; the shaders this tree emits are not put in front of a real GLSL compiler here. rt/verify.mjs compiles a PAGE\'s shaders for real, but only the ones a page links, and it needs the same Chrome this check could not find)');
 } else {
     console.log('EXERCISED HERE: the shaders this tree emits are compiled by a real GLSL compiler');
     const entries = emitAll();

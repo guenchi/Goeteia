@@ -13,10 +13,21 @@
 ;; being looked at, so a negative count produces a token that is not a
 ;; number at all.
 ;;
-;; Neither is caught anywhere: the page verifier's GL is a stub whose
-;; compileShader does nothing and whose getShaderParameter returns true
-;; (rt/verify.mjs:313-316), so an invalid shader passes every page test
-;; with draws counted and frames animated.
+;; Neither is caught by anything that reads the DSL, which is why this
+;; cell exists.  It used to say more than that: for most of this tree's
+;; life the page verifier's GL was a stub whose compileShader did
+;; nothing and whose getShaderParameter answered true, so an invalid
+;; shader passed every page test with draws counted and frames
+;; animated.  That is no longer so -- a page's shaders now go in front
+;; of a real GLSL compiler after the replay, and a page whose shader
+;; will not compile fails verification.
+;;
+;; So this cell's job has narrowed and is worth stating: the compiler
+;; catches text that is not valid GLSL, and it catches it at the page.
+;; This catches the emitter producing a token that is not a number, at
+;; the emitter, from the DSL form that produced it -- which is where a
+;; reader can see what to change.  The two do not replace each other,
+;; and a page that never links the affected shader reaches neither.
 (import (rnrs) (gfx glsl))
 
 (define (has-sub? hay needle)

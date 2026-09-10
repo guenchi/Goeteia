@@ -4,9 +4,13 @@
 // tools/cdp.mjs can put one in front of a real GLSL compiler, but only
 // if something outside the library can get hold of it, and for most of
 // this tree's shaders the forms were private constants: fifteen of them
-// across five libraries, unreachable, and so never compiled by anything
-// but the recording stub in rt/verify.mjs, whose compileShader does
-// nothing and whose getShaderParameter answers true.
+// across five libraries, unreachable, and so never compiled by
+// anything at all.  The recording context in rt/verify.mjs did not
+// compile them either -- its compileShader did nothing and its
+// getShaderParameter answered true -- and although a page's shaders
+// now go in front of a real compiler, that only reaches shaders a page
+// actually links.  A private constant no page reaches is still
+// compiled by nothing, which is what this guard is about.
 //
 // So each such library exports a `*-shaders` accessor, and this is the
 // guard on that list -- because a list of names does not shout when a
