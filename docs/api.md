@@ -627,6 +627,11 @@ An orbit camera: a point it looks at, an angle and distance it watches from, and
 - `fl-damp` — moves x toward a target at a rate per unit of TIME, not per call: sixty steps of 1/60 and six of 1/6 land in the same place. It cannot overshoot however large rate*dt grows, and a dt of zero answers x itself
 - `fl-turn` — the same damping on an angle, taking the short way across the 0/tau seam; the answer is NOT folded back into a canonical range, so a caller integrating it sees a continuous quantity
 - `fl-smooth` — smoothstep between two edges, flat outside them and eased at both ends; edges that are equal or reversed are refused rather than dividing by zero and answering a plausible 0.0
+- `fl-pi` — pi, exported so a caller computing an angle of its own does not re-derive a constant this library already holds
+- `fl-tau` — two pi, for the same reason; the seam a heading crosses is at tau, not at 360
+- `fl-length2` — the length of a two-component vector given as loose scalars, so a caller holding x and z in two locals asks without allocating a vector; squaring first, so the usable range ends near 1.3e154 rather than wherever a general-purpose hypot would take it
+- `fl-dist2` — the distance between two points on a plane, same shape and same range
+- `fl-heading` — the heading of a direction on the ground plane: zero toward -Z, positive turning toward +X, which is the convention the view and rotation matrices here already use; the origin answers zero. Offered instead of a two-component normalize, because normalizing needs a policy for the zero vector and none of them is right for every caller -- a caller who needs unit components has the length from fl-length2 and can divide, having decided what a zero length means for itself
 
 ## `(gfx mesh)`
 
