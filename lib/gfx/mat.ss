@@ -44,7 +44,8 @@
           m4-from-quat m4-perspective m4-ortho m4-look-at
           m4-inverse m4-unproject
           m4-frustum-planes sphere-in-frustum? sphere-in-frustum-xyz?
-          fl-clamp fl-lerp fl-damp fl-turn fl-smooth)
+          fl-clamp fl-lerp fl-damp fl-turn fl-smooth
+          fl-pi fl-tau fl-length2 fl-dist2 fl-heading)
   (import (rnrs))
 
   (define ($mat-fl v) (if (flonum? v) v (exact->inexact v)))
@@ -181,6 +182,50 @@
       (let* ((raw (/ (- x e0) (- e1 e0)))
              (t (cond ((< raw 0.0) 0.0) ((> raw 1.0) 1.0) (else raw))))
         (* t (* t (- 3.0 (* 2.0 t)))))))
+
+  ;; ---- the ground plane -------------------------------------------
+  ;;
+  ;; Two components rather than three, because a walking surface, a
+  ;; heading and a top-down distance all live in one plane and the third
+  ;; axis is noise in the arithmetic.  These take loose scalars, not a
+  ;; vector, so a caller holding x and z in two locals does not allocate
+  ;; a vector to ask a question about them.
+  ;;
+  ;; Both circle constants are exported because a caller computing an
+  ;; angle of its own needs them and re-deriving a constant is how two
+  ;; parts of one program come to disagree in the last digit.
+  (define fl-pi $pi)
+  (define fl-tau $tau)
+
+  ;; Length of a two-component vector.  Squaring first, so the usable
+  ;; range ends where x*x overflows: about 1.3e154, which is past any
+  ;; distance a scene holds and short of what a general-purpose hypot
+  ;; would promise.  The name says two components, not that.
+  (define (fl-length2 x y)
+    (let ((x ($mat-fl x)) (y ($mat-fl y)))
+      (flsqrt (fl+ (fl* x x) (fl* y y)))))
+
+  (define (fl-dist2 ax ay bx by)
+    (fl-length2 (fl- ($mat-fl ax) ($mat-fl bx))
+                (fl- ($mat-fl ay) ($mat-fl by))))
+
+  ;; The heading of a direction on the ground plane: zero points toward
+  ;; -Z and a positive angle turns toward +X, which is the convention
+  ;; the view and rotation matrices here already use.  At the origin the
+  ;; answer is zero, inherited from flatan2, where an angle is
+  ;; meaningless and a NaN would be worse.
+  ;;
+  ;; This is offered instead of a two-component normalize.  Normalizing
+  ;; needs a policy for the zero vector, and there is no policy that is
+  ;; right for every caller: some want a zero direction, some the
+  ;; previous heading, some a refusal.  v3-normalize next door divides
+  ;; and hands back what division gives, and a second helper in the same
+  ;; library answering differently would be two policies for one idea.
+  ;; A caller who needs the unit components has the length from
+  ;; fl-length2 and can divide, having decided for itself what a zero
+  ;; length means.
+  (define (fl-heading x z)
+    (flatan2 ($mat-fl x) (fl- 0.0 ($mat-fl z))))
 
   ;; ---- trig: the prelude carries the implementation (reduce to
   ;; [-pi/2, pi/2], one odd polynomial); these names stay so the
