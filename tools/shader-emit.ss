@@ -16,7 +16,7 @@
 ;; compiled" could also mean the compiler was never reached: the page
 ;; verifier's GL answers true to every shader it is shown, so a run
 ;; against a stub would look identical to a run against a compiler.
-(import (rnrs) (gfx glsl)
+(import (rnrs) (gfx glsl) (gfx surface)
         (gfx fx) (gfx ibl) (gfx post) (gfx sprite) (gfx scene)
         (gfx mat) (gfx lod)
         (gfx gltf) (gfx mesh) (gfx particles))
@@ -49,9 +49,14 @@
 ;; call sites make the compiler check the signatures, and a function
 ;; nobody calls is dead code a driver is free to discard before it ever
 ;; looks at the body.
-(define (emit-functions! lib fns calls)
+;; The dialect is a parameter because derivatives are not in every
+;; one: dFdx and dFdy are core in ES 3.00 and need
+;; GL_OES_standard_derivatives in ES 1.00, and a set that uses them
+;; compiled here as es100 fails on a real compiler with "no matching
+;; overloaded function" -- which is the emitter doing its job.
+(define (emit-functions! lib fns calls . dialect)
   (emit! lib
-         (list (list "functions" 'es100
+         (list (list "functions" (if (pair? dialect) (car dialect) 'es100)
                      '((attribute vec2 a_pos)
                        (define (main) void
                          (set! gl_Position (vec4 a_pos (fl 0) (fl 1)))))
@@ -75,6 +80,24 @@
                                       (vec2 (fl 3) (fl 4)) (fl 1))
                         (dither_threshold gl_FragCoord.xy)
                         (fl 1)))
+(emit-functions! "surface" (append (mat-shader-functions)
+                                  (surface-shader-functions))
+                 '(vec4 (surface_normal (vec3 (fl 0) (fl 1) (fl 0))
+                                        (vec3 gl_FragCoord.x gl_FragCoord.y (fl 0))
+                                        gl_FragCoord.xy
+                                        (vec3 (fl 0 5) (fl 0 5) (fl 1))
+                                        (fl 1)
+                                        (?: (> gl_FragCoord.x (fl 0)) true false))
+                        (dot (apply_normal_map
+                              (tangent_frame (vec3 (fl 0) (fl 1) (fl 0))
+                                             (vec3 gl_FragCoord.x gl_FragCoord.y (fl 0))
+                                             gl_FragCoord.xy
+                                             true)
+                              (vec3 (fl 0 5) (fl 0 5) (fl 1))
+                              (fl 1))
+                             (vec3 (fl 1) (fl 1) (fl 1))))
+                 'es300)
+
 (emit! "mesh" (mesh-shaders))
 (emit! "particles" (particles-shaders))
 
