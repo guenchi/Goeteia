@@ -114,6 +114,19 @@ than re-verified item by item for this document.
   escape helper) stays listed out of specialisation by name, and dead
   code elimination still keeps such a function alive, which is its own
   open entry below.
+- Compiler, import discipline: a program that imports `(rnrs)` may
+  no longer define a name the import brings in -- either `define`
+  spelling, `define-syntax`, or the names a record definition
+  generates -- and is told which import the name comes from and that
+  `(import (except (rnrs) NAME))` makes the definition legal, as R6RS
+  says. A definition made after excluding the name shadows the
+  program's own calls in both forms; before this the function form
+  shadowed and the value form was silently ignored, at every site that
+  recognised a primitive by its name. `except`, `only`, `rename` and
+  `prefix` on the import clause are honoured and two different
+  bindings under one local name are refused; a component library such
+  as `(rnrs base)` is refused by name rather than silently widened to
+  `(rnrs)`.
 - Compiler, every primitive: the prelude, an imported library and the
   compiler's own expansions call primitives by their bare names, and a
   program's top-level definition of `null?`, `cdr`, `eq?`, `+` or `<`
@@ -212,18 +225,15 @@ Six defects are known, reproduced, and NOT fixed in this release. They
 are listed here because an unfixed defect that scrolls off a list is one
 nobody re-reads at the next decision.
 
-- **A program may define a name it imports, and the two definition
-  forms then disagree.** R6RS says a program body may not define an
-  identifier it imports from `(rnrs)`; here `(define (car x) 99)` is
-  accepted and shadows the program's own calls, `(define car (lambda
-  (x) 99))` is accepted and does not, and `(import (except (rnrs)
-  car))` -- the legal way to say it -- constrains nothing. The next
-  release refuses the definition under a plain import, naming the
-  `except` spelling, and honours `except`, `only` and `rename`; a
-  definition made after excluding the name then shadows the program's
-  own calls in both forms, while the prelude's, a library's and the
-  compiler's uses stay on the primitive (see Fixed). Held red by
-  `defect-c02-shadow-primitive`, now written with `except`.
+- **Excluding a prelude procedure's name does not yet let the program
+  define it.** `(import (except (rnrs) append))` followed by `(define
+  (append . xs) ...)` is still refused as defined twice, because the
+  prelude's own `append` and the program's would have to coexist at the
+  flat top level and the prelude's references be resolved to its own.
+  Primitives (`car`, `fl+`, ...) are excluded and redefined correctly;
+  procedures the prelude defines in Scheme are not yet. Held red by
+  `c02-excluded-append-program-and-quasiquote` and
+  `defect-library-redefines-imported-name`.
 - **Component libraries such as `(rnrs base)` are not implemented.**
   Until now both compilers accepted `(import (rnrs base))` and quietly
   handed back the whole of `(rnrs)`; an rnrs spec with anything after
