@@ -114,6 +114,14 @@ than re-verified item by item for this document.
   escape helper) stays listed out of specialisation by name, and dead
   code elimination still keeps such a function alive, which is its own
   open entry below.
+- Compiler, dead-code elimination: a `let` binding, a loop parameter
+  or a `lambda` formal spelled like a top-level function no longer
+  keeps that function in the module when nothing calls it. Binder
+  positions are not references; a reference in any init or body still
+  is, and so is a reference to a name that also happens to be bound
+  around it, by design. Twenty-four rows on the emitted module's name
+  section, three of them written against a first version that read a
+  list tail as a binding form and pruned a live definition.
 - Compiler: a loop parameter captured by an inner lambda no longer
   lives in a raw slot, so closures made in a loop stop sharing the
   loop's last value; a transformer's arithmetic stops discarding
@@ -180,7 +188,7 @@ than re-verified item by item for this document.
 
 ### KNOWN OPEN
 
-Seven defects are known, reproduced, and NOT fixed in this release. They
+Six defects are known, reproduced, and NOT fixed in this release. They
 are listed here because an unfixed defect that scrolls off a list is one
 nobody re-reads at the next decision.
 
@@ -220,13 +228,6 @@ nobody re-reads at the next decision.
   defined twice. Present in 1.7.0. Held red by
   `defect-library-redefines-imported-name`, which reports once because
   it is a compile error rather than a wrong value.
-- **A `let` binding of a top-level function's name keeps the function
-  alive.** Dead-code elimination collects references by symbol and a
-  binder's name counts, so a function nothing calls survives into the
-  module when its name is bound somewhere. Code size only; the
-  specialisation half of this, which made it observable, is fixed
-  above. Held red by `defect-dce-binder-counts-as-reference`, with two
-  twins that keep a called or value-used function alive.
 - **A local that shadows a float parameter is taken for the parameter,
   and its value lands in the float slot.** In `(define (zq a b) (let
   ((a 5)) (if (fl<? b 0.0) (zq a (fl+ b 1.0)) a)))` the recursive call
