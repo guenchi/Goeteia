@@ -2,7 +2,15 @@
 ;; does and prints, for one fixture, the compiler PRODUCTS a compiled cell
 ;; cannot see: which parameters *fn-specs* classified as f64.  Used by
 ;; test/c02-product-fn-specs.mjs.  Usage:
-;;   chez --script test/lib/c02-products.sc <tree-root> <fixture.ss>
+;;   chez --script test/lib/c02-products.sc <tree-root> <fixture.ss>            -> fn-specs
+;;   chez --script test/lib/c02-products.sc <tree-root> <fixture.ss> --js name...  -> jbouncy
+;;
+;; With --js it compiles for the JS target instead and prints, for each
+;; name given, whether the trampoline scan classified that function as
+;; bouncy -- a function whose tail is a primitive application is not,
+;; and its callers skip the TR wrapper; one whose tail calls a procedure
+;; parameter is.  That is decider site #14 of the C02 design, and this
+;; is the only reading of it that does not go through the emitted text.
 ;;
 ;; Its known answer on test/c02-products-fixture.ss is (run #f #t);
 ;; disabling compute-fn-specs! makes it (), and both were seen before
@@ -19,11 +27,22 @@
 (define user (cdr (read-all (cadr (command-line-arguments)))))
 (define forms (append prelude (list '(%prelude-end)) user))
 (define locs (map (lambda (f) "?:0") forms))
-;; run the whole pipeline once for its side effects (prelude marker, embed state),
-;; then run the analysis seam again on the prepared forms and read the products
-;; BEFORE compile-program-wasm's final reset clears them.
-(define bytes (compile-program forms locs))
-(display (list 'wasm-bytes (length bytes))) (newline)
-(define prep (prepare-program forms locs))
-(display (list 'prepared-fn-defs (map (lambda (d) (car (cadr d))) (filter (lambda (d) (and (pair? d) (eq? (car d) 'define) (pair? (cadr d)))) (caddr prep))))) (newline)
-(display (list 'fn-specs-after-prepare (filter (lambda (e) (memq (car e) '(norm twice run))) *fn-specs*))) (newline)
+(define args (cddr (command-line-arguments)))
+(if (and (pair? args) (string=? (car args) "--js"))
+    (begin
+      (set! *target* 'js)
+      (compile-program forms locs)
+      (display (list 'jbouncy
+                     (map (lambda (n) (cons n (jbouncy? n)))
+                          (map string->symbol (cdr args)))))
+      (newline))
+    (begin
+      ;; run the whole pipeline once for its side effects (prelude marker,
+      ;; embed state), then run the analysis seam again on the prepared
+      ;; forms and read the products BEFORE compile-program-wasm's final
+      ;; reset clears them.
+      (compile-program forms locs)
+      (prepare-program forms locs)
+      (display (list 'fn-specs-after-prepare
+                     (filter (lambda (e) (memq (car e) '(norm twice run))) *fn-specs*)))
+      (newline)))
