@@ -84,7 +84,10 @@ const rows = [
     // like a binding form.
     ['a variable named lambda before a reference in a call',  ['(define bar 42)', '(let ((lambda 0)) (display (vector-ref (vector lambda foo) 1)))'],  'present'],
     ['a variable named let before a reference in a call',     ['(define bar 42)', '(let ((let 0)) (display (vector-ref (vector let foo) 1)))'],        'present'],
-    ['a variable named %loop before a reference in a call',   ['(define bar 42)', '(let ((%loop 0)) (display (vector-ref (vector %loop foo) 1)))'],    'present'],
+    // the %loop arm guards on a tail of at least four elements, so the
+    // call needs two more arguments than the other two rows or the arm
+    // never runs and the row is green on the broken walk as well
+    ['a variable named %loop before a reference in a call',   ['(define bar 42)', '(let ((%loop 0)) (display (vector-ref (vector %loop foo (quote ()) (quote ())) 1)))'], 'present'],
     // hygiene: a macro's binder is not the program's reference, and vice versa
     ['macro binder with the reference in the hole',  ['(define-syntax with-foo (syntax-rules () ((_ e) (let ((foo 5)) e))))', `(display (with-foo ${R}))`], 'present'],
     ['macro binder with nothing in the hole',        ['(define-syntax with-foo (syntax-rules () ((_ e) (let ((foo 5)) e))))', '(display (with-foo 1))'],     'absent'],
