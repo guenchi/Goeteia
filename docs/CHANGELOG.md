@@ -168,7 +168,7 @@ than re-verified item by item for this document.
 
 ### KNOWN OPEN
 
-Seven defects are known, reproduced, and NOT fixed in this release. They
+Eight defects are known, reproduced, and NOT fixed in this release. They
 are listed here because an unfixed defect that scrolls off a list is one
 nobody re-reads at the next decision.
 
@@ -230,6 +230,16 @@ nobody re-reads at the next decision.
   `defect-spec-candidate-by-name`, `defect-dce-binder-counts-as-reference`
   (one per half, because a fix for either leaves the other) and
   `defect-spec-prelude-binder-collides-with-user-name`.
+- **A local that shadows a float parameter is taken for the parameter,
+  and its value lands in the float slot.** In `(define (zq a b) (let
+  ((a 5)) (if (fl<? b 0.0) (zq a (fl+ b 1.0)) a)))` the recursive call
+  passes the `let`'s exact 5, but the specialiser reads that `a` as the
+  parameter it shadows, keeps the parameter as a float, and the call
+  traps with an illegal cast where the same program answers 5 on the
+  host. Passing the value through a local of any other name is fine.
+  Present in 1.7.0. Held red by
+  `defect-spec-shadowed-parameter-demotes-nothing`, with the renamed
+  twin green beside it.
 - **A morph target's POSITION accessor can declare a `max` below a
   value the file stores.** The bounds are computed over the values as
   given, and the file holds them as `f32`, so a value that rounds
