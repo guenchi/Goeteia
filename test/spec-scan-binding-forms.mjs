@@ -89,6 +89,19 @@ const rows = [
     // unmarked comparison reads the hole's call as local and drops it.
     ['a macro-introduced binder does not hide the program\'s call',
         [REC, CALL, '(define-syntax with-zq (syntax-rules () ((_ e) (let ((zq 1)) e))))', '(display (with-zq (zq 5 0.0)))'], '#f #t'],
+    // a bare candidate symbol in value position is an escape wherever
+    // the walk meets it, including as a whole init or a whole body: the
+    // first fix enqueued inits and bodies one form at a time and
+    // dropped every non-pair, so (let ((alias zq)) ...) stopped
+    // escaping zq and an all-f64 seed reached a call with eqref
+    // operands (instantiate failed).  Every escape row above wraps the
+    // name in an application, which is why none of them saw it.
+    ['bare symbol as a let init is an escape',       [REC, CALL, '(let ((alias zq)) (display (alias 5 0.0)))'],  'no entry'],
+    ['bare symbol as a lambda body is an escape',    [REC, CALL, '(display (((lambda () zq)) 5 0.0))'],          'no entry'],
+    ['bare symbol as a let body is an escape',       [REC, CALL, '(display ((let () zq) 5 0.0))'],               'no entry'],
+    ['bare symbol as a named-let body is an escape', [REC, CALL, '(display ((let lp ((i 0)) zq) 5 0.0))'],       'no entry'],
+    // a top-level function's own parameters are binders in its body
+    ['a parameter named like a candidate is a binder', [REC, CALL, '(define (h zq) (zq 1))', '(display (h (lambda (x) x)))'], '#t #t'],
     ['a macro-introduced binder\'s own use is not an escape',
         [REC, CALL, '(define-syntax with-zq (syntax-rules () ((_ e) (let ((zq 1)) (+ zq e)))))', '(display (with-zq (zq 5 0.0)))'], '#f #t'],
 ];
