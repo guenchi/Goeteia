@@ -40,8 +40,16 @@
 (define I (vector 0.0 0.0 0.0 1.0))
 (define nodes (list (list "mesh" -1) (list "Root" -1 (v3 0.0 0.0 0.0))))
 
-(define (write-with times material)
-  (let ((prim (list vlayout vbase 3 #f material)))
+;; The caller's primitive is (layout vbase vcount ibase icount . options),
+;; so the fifth position is icount and NOT the material -- a material is
+;; an option key.  This procedure names the fifth position for what it
+;; is; the row that used to be called `material-out-of-range' was
+;; putting 99 here and testing something else entirely, which is a
+;; defect in this file rather than in the writer, and the name is the
+;; only thing that was wrong: an index count for an index array that is
+;; not there is also invalid, and nothing else was checking it.
+(define (write-with times icount)
+  (let ((prim (list vlayout vbase 3 #f icount)))
     (glb-write! (list prim) 'nodes nodes 'mesh-node 0
                 'anims (list (list "clip"
                                    (list (list 1 'rotation times
@@ -60,7 +68,28 @@
       (refuses? (lambda () (write-with (vector 1.0 1.0) 0))) #t)
 (want 'g15-decreasing-times
       (refuses? (lambda () (write-with (vector 1.0 0.0) 0))) #t)
-(want 'g15-material-out-of-range
+(want 'g15-icount-without-an-index-array
       (refuses? (lambda () (write-with (vector 0.0 1.0) 99))) #t)
+
+;; The material really out of range, through the option key it actually
+;; travels in.  Written as its own primitive rather than through
+;; write-with, because write-with's fifth argument is not this.
+(want 'g15-material-out-of-range
+      (refuses?
+        (lambda ()
+          (glb-write! (list (list vlayout vbase 3 #f 0 'material 99))
+                      'nodes nodes 'mesh-node 0))) #t)
+
+;; And the control it needs: a material index that DOES name a material
+;; must go through, or the row above is satisfied by refusing every
+;; material there is.
+(want 'g15-CONTROL-material-in-range
+      (refuses?
+        (lambda ()
+          (glb-write! (list (list vlayout vbase 3 #f 0 'material 0))
+                      'nodes nodes 'mesh-node 0
+                      'materials
+                      (list (list #f (cons 1.0 1.0) (vector 0.0 0.0 0.0)
+                                  #f #f #f #f #f))))) #f)
 
 (if (null? fails) (display #t) (begin (display fails) (newline)))
