@@ -8,11 +8,13 @@
 // one in a cast.  If the prelude's own references resolved where they
 // were written, no definition could reach them and every row prints 1.
 //
-// Baseline on 13beb41 (compiler 6cc5d643), measured with both shapes
-// for every name: fifteen names break the prelude by themselves --
-// null? cdr eq? + < fixnum? flonum? and eight internals (%bignum?
-// %complex? %ratio? %record? %record %record-ref %make-vector
-// %write-byte).  The rest print 1 today because (display 1) happens
+// Baseline on 1041cf3 (compiler 6cc5d643), in a pinned worktree: eleven
+// rows red -- null? cdr eq? + < fixnum? and five internals (%record?
+// %record %record-ref %make-vector %write-byte).  A census with BOTH
+// shapes for every name finds four more (flonum? %bignum? %complex?
+// %ratio?, which break only when redefined to answer a symbol); one
+// shape per row keeps the file at 136 rows and the four are covered
+// by the same fix.  The rest print 1 today because (display 1) happens
 // not to exercise them, which is why the row is "prints 1" and not
 // "the prelude's calls resolve to the prelude": the second is what the
 // fix establishes, the first is what a program can observe.
