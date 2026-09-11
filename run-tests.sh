@@ -423,7 +423,7 @@ for m in test/macro-toplevel-hygiene.mjs \
          test/intrinsic-head-costs-nothing.mjs \
          test/js-lowered-head-costs-nothing.mjs \
          test/import-refusals.mjs \
-         test/defect-unbound-reference-not-checked.mjs \
+         test/import-unbound-reference.mjs \
          test/defect-b01-build-ignores-library-deps.mjs; do
     if $CAP ${NODE-node} --test "$m" >/dev/null 2>&1; then
         echo "ok   $m"

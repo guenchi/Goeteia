@@ -1,18 +1,13 @@
-// RED ON PURPOSE: a reference to a name the import clause does not
-// bring in should be an unbound-variable error at compile time, in
-// call and value position, judged per scope -- the program against
-// its clause, a library body against its own.  Today the reference
-// resolves anyway: except and only constrain what may be DEFINED (the
-// refusal half of the import rule, which is in) but not what may be
-// REFERENCED.  A first implementation of the check turned 179 cells
-// red for five distinct reasons -- export declarations read as
-// references, internal definitions not bound, inline libraries'
-// imports never reaching the importing scope's map, builtins such as
-// apply and call/cc missing from the manifest, and libraries reaching
-// prelude internals -- and was withdrawn; it returns as its own step
-// with those designed first.  The controls below must stay green
-// throughout: a name the clause brings in, a primitive no library
-// exports, a renamed import.
+// A reference to a name the import clause does not bring in is an
+// unbound-variable error at compile time, in call and value position,
+// judged per scope -- the program against its clause, a library body
+// against its own.  The rows read the compiler's message for an
+// excluded name and for a name outside an only list; the controls are
+// the references that must keep compiling: a name the clause brings
+// in, a primitive no library exports, a renamed import.  This file was
+// red as defect-unbound-reference-not-checked while the check was
+// withdrawn (its first version turned 179 cells red for five causes,
+// all fixed before it was turned on) and is green since 60ac2bd.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
