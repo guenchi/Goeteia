@@ -497,6 +497,37 @@
       (set! *expand-bound* saved)
       out)))
 
+;; Which macro a spelling means, when two libraries export one.
+;;
+;; *macros* is keyed by the bare name and add-macro! conses, so assq
+;; answers with whichever was registered LAST -- and a rename does not
+;; separate them, because both spellings resolve to the same origin
+;; name.  Both importers then reached the same transformer and the
+;; program compiled, wrongly and quietly.
+;;
+;; No new table is needed: every entry already carries the scope it was
+;; written in, because apply-macro installs that scope to resolve what
+;; the template introduces.  The identity was recorded all along; only
+;; the lookup threw it away.  So select on (library, name) -- the
+;; identity the pre-expansion table already holds for this spelling --
+;; and fall back to assq when the spelling is not an import at all,
+;; which is every macro the program or the prelude defines itself.
+(define (macro-by-identity x)
+  (let ((en (expand-entry (unmark x))))
+    (and en
+         (eq? (entry-kind en) 'keyword)
+         (let ((id (entry-identity en)))
+           (and (pair? id)
+                (let scan ((ms *macros*))
+                  (cond
+                   ((not (pair? ms)) #f)
+                   ((and (eq? (car (car ms)) (cdr id))
+                         (let ((sc (macro-scope (cdr (car ms)))))
+                           (and sc (pair? sc)
+                                (string=? (lib-name-string sc) (car id)))))
+                    (car ms))
+                   (else (scan (cdr ms))))))))))
+
 (define (xpand e)
   (if (pair? e)
       (let ((macro (let ((tag (resolve-tag (car e))))
@@ -504,7 +535,8 @@
                           (not (lexically-bound? (car e)))
                           (not (eq? tag 'quote))
                           (not (eq? tag 'define-syntax))
-                          (assq tag *macros*)))))
+                          (or (macro-by-identity (car e))
+                              (assq tag *macros*))))))
         (if macro
             (xpand (apply-macro (cdr macro) e))
             (xpand-core e)))
