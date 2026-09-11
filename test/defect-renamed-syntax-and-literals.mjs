@@ -39,7 +39,7 @@ const rows = [
     // a renamed library macro is the macro under its new name.
     // Today: "cannot call: dbl".
     ['a renamed library macro', '(import (rnrs))\n' + MAC + '(display (dbl 4))', { out: '8' }],
-    ['twin: a renamed library macro under a lexical shadow', '(import (rnrs))\n' + MAC + '(display (let ((dbl (lambda (x) 0))) (dbl 4)))', { out: '0' }],
+    ['a renamed library macro under a lexical shadow', '(import (rnrs))\n' + MAC + '(display (let ((dbl (lambda (x) 0))) (dbl 4)))', { out: '0' }],  // NOT a twin: red, the macro-shadowing defect (defect-macro-name-lexically-shadowed.ss) seen through rename
     // syntax-rules literals match by binding identity.  A literal
     // written in the program where my-else is NOT bound (the program
     // imported it renamed) denotes a free identifier, and els denotes
