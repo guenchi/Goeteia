@@ -516,7 +516,17 @@
                                          bs))))))))
         ((quasiquote) (xpand-qq (cadr e) 0))
         ((define-record-type) (xpand-record e))
-        ((import) '(begin))            ; resolved by the driver
+        ((import)
+         ;; resolved by the driver, but the CLAUSE is read here.  An
+         ;; inline library's (import (a)) sits inside the (begin ...)
+         ;; that defines the library, so it is not a top-level form and
+         ;; the driver never marked it -- the marker was a stopgap for
+         ;; the clause the driver dropped, not the design.  Read at
+         ;; program level it reaches the importing scope's map exactly
+         ;; as a top-level one does.
+         (when *program-form?*
+           (set! *import-specs* (append *import-specs* (cdr e))))
+         '(begin))
         ;; (%imports spec ...) is the clause the driver kept; the
         ;; specs are collected here and read after expansion, when
         ;; every inline library has registered its exports
@@ -1978,9 +1988,19 @@
                     (filter (lambda (b) (not (memq (car b) olds))) base)
                     pairs)))
       ((prefix)
-       (let ((base (import-spec-bindings (cadr spec)))
-             (p (unmark (caddr spec))))
-         (map (lambda (b) (cons (sym-cat (list p (car b))) (cdr b))) base)))
+       ;; REFUSED, not implemented, and the map is why.  A prefixed
+       ;; name needs an alias binding to exist -- rename gets one from
+       ;; the driver's spec-aliases -- and the aliases for a prefix are
+       ;; the whole export set, which the driver cannot enumerate
+       ;; because the manifest lives here.  Generating them here
+       ;; instead collides with the refusal this same slice adds: every
+       ;; generated (define r:car car) defines a name the map brings
+       ;; in.  Measured: NO file in the tree imports with a prefix, so
+       ;; what a map without bindings buys is a claim that a name is
+       ;; bound when nothing binds it.  KNOWN OPEN.
+       (errorf 'goeteia
+               "prefix import specs are not supported; use rename or a plain import:"
+               spec))
       (else (import-binding-set spec)))))
 
 ;; A program may not define a name its own clause brings in.  The
@@ -2064,9 +2084,112 @@
   (for-each (lambda (f) (refuse-imported-assignment! f '()))
             (reverse forms)))
 
+;; A reference the scope's clause does not bring in is unbound, at
+;; compile time, in call and value position alike.  Four things are NOT
+;; program references and must not trip it:
+;;
+;;   an intrinsic head            the compiler put it there
+;;   a compiler-introduced token  likewise -- it carries its own scope
+;;   a name the scope defines     including the bindings a record makes
+;;   a primitive no library exports   the implementation's own vocabulary
+;;
+;; The last is the allowance: the manifest decides which names a clause
+;; governs, so a primitive outside it is reachable and a primitive
+;; inside it (car, cdr) is governed like any other name.
+(define (reference-bound? r map defined bound)
+  (or (not (symbol? r))
+      (memq r bound)
+      (intro-context r)
+      (let ((n (unmark r)))
+        (or (assq n map)
+            (memq n defined)
+            (and (memq n primitives) (not (memq n $rnrs-exports)))
+            ;; The prelude's implementation scope.  Its dollar- and
+            ;; percent-prefixed internals are exported by nothing and
+            ;; brought in by no clause, yet a library that uses one --
+            ;; $trig-pi, say -- is using the implementation, not a name
+            ;; the program could have meant.  The same allowance as the
+            ;; implementation's primitives, and the same refusal to
+            ;; define one.  This DOES make the convention load-bearing,
+            ;; for the prelude's own internals and nothing else.
+            (scope-binds? *prelude-scope* n)))))
+
+(define (check-references! form bound map defined where)
+  (cond
+   ((symbol? form)
+    (unless (reference-bound? form map defined bound)
+      (errorf 'goeteia
+              (string-append (symbol->string (unmark form))
+                             " is not bound: the import clause does not"
+                             " bring it in")
+              where)))
+   ((not (pair? form)) #f)
+   ((intrinsic? (car form))
+    (walk-refs (cdr form) bound map defined where))
+   ((not (symbol? (car form)))
+    (walk-refs form bound map defined where))
+   ((eq? (resolve-tag (car form)) 'quote) #f)
+   ;; (export name ...) declares, it does not reference
+   ((eq? (resolve-tag (car form)) 'export) #f)
+   ((and (eq? (resolve-tag (car form)) 'lambda) (pair? (cdr form)))
+    (walk-refs (cddr form)
+               (body-bound (cddr form)
+                           (append (binder-names (cadr form)) bound))
+               map defined where))
+   ((and (eq? (resolve-tag (car form)) 'let) (pair? (cdr form)))
+    (let* ((named (symbol? (cadr form)))
+           (bs (if named (caddr form) (cadr form)))
+           (body (if named (cdddr form) (cddr form)))
+           (names (let f ((l bs))
+                    (if (pair? l)
+                        (if (pair? (car l)) (cons (car (car l)) (f (cdr l))) (f (cdr l)))
+                        '())))
+           (inner (body-bound body
+                              (append names
+                                      (if named (list (cadr form)) '())
+                                      bound))))
+      (walk-refs (let-binding-inits bs) bound map defined where)
+      (walk-refs body inner map defined where)))
+   ((and (eq? (resolve-tag (car form)) '%loop)
+         (pair? (cdr form)) (pair? (cddr form)) (pair? (cdddr form)))
+    (let ((inner (body-bound (cdr (cdddr form))
+                            (cons (cadr form)
+                                  (append (caddr form) bound)))))
+      (walk-refs (cadddr form) bound map defined where)
+      (walk-refs (cdr (cdddr form)) inner map defined where)))
+   ((and (eq? (resolve-tag (car form)) 'define) (pair? (cdr form)))
+    (let ((target (cadr form)))
+      (walk-refs (cddr form)
+                 (body-bound (cddr form)
+                             (if (pair? target)
+                                 (append (binder-names (cdr target)) bound)
+                                 bound))
+                 map defined where)))
+   (else (walk-refs form bound map defined where))))
+
+(define (walk-refs fs bound map defined where)
+  (cond ((pair? fs)
+         (check-references! (car fs) bound map defined where)
+         (walk-refs (cdr fs) bound map defined where))
+        ((symbol? fs) (check-references! fs bound map defined where))
+        (else #f)))
+
 (define (judge-scopes!)
   (for-each (lambda (u)
               (refuse-imported-definitions! (car u) (cadr u))
+              ;; The reference check is NOT called.  walk-refs below is
+              ;; written and wrong in five distinct ways, measured on
+              ;; the whole suite: 179 of 293 cells red.  It skips no
+              ;; export declaration, does not add a body's internal
+              ;; definitions to the bound set, never sees an inline
+              ;; library's import clause (the driver marks only
+              ;; top-level ones), is missing (rnrs) names the manifest
+              ;; derivation could not see such as apply and call/cc,
+              ;; and has no allowance for the prelude's own internals.
+              ;; Each is addressed in design section 27.6 and pinned by
+              ;; test/defect-unbound-reference-not-checked.mjs; step 2b
+              ;; turns it on.  Left in the file rather than deleted so
+              ;; the five causes have something to be fixes OF.
               (refuse-imported-assignments! (car u) (caddr u)))
             (reverse *judgement-units*)))
 
