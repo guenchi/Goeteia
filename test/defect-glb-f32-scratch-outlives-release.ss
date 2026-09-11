@@ -1,5 +1,6 @@
 ;; expect: #t
-;; EXPECTED FAIL against lib/gfx/glb.ss at 61b4a3f.  $as-f32 takes a
+;; REGRESSION GUARD.  Written as a red witness against lib/gfx/glb.ss at
+;; 61b4a3f, where $as-f32 took a
 ;; four byte scratch word on first use and caches it in $f32-cell
 ;; FOREVER.  fx-release! is a bump reset -- (set! $fx-heap m) -- so an
 ;; allocation taken before a mark and kept across the release is handed
@@ -24,7 +25,20 @@
 ;; word can check whether the water level has dropped to or below it
 ;; and take a fresh one when it has.
 ;;
-;; Measured on this fixture: 4 bytes of a 1460 byte victim allocation.
+;; Measured on this fixture when it was red: 4 bytes of a 1460 byte
+;; victim allocation.
+;;
+;; FIXED by giving the word the EXPORT's lifetime -- glb-write! takes it
+;; once at the top, from that export's own allocations, so a release to
+;; any mark taken before the export frees it too.  The repair suggested
+;; in the paragraph above, comparing against the water level at call
+;; time, WAS TRIED AND IS WRONG: by the time the next export runs the
+;; level has been pushed back above the released word by whoever
+;; allocated after the release -- here by the very allocation the stale
+;; word then corrupts -- so the level cannot tell "still ours" from
+;; "released and handed to someone else".  It is not monotonic and it
+;; carries no history.  Only this cell said so; the sketch read as
+;; correct to two of us.
 (import (rnrs) (web js) (gfx gl) (gfx fx) (gfx gltf) (gfx glb) (web json))
 (js-eval "globalThis.__mockcanvas = { width:64, height:64, addEventListener(k,f){}, getContext(kind) { return { createShader(){return {}}, shaderSource(){}, compileShader(){}, getShaderParameter(){return true}, createProgram(){return {}}, attachShader(){}, linkProgram(){}, getProgramParameter(){return true}, bindAttribLocation(){}, getUniformLocation(){return {}}, createBuffer(){return {}}, createVertexArray(){return {}}, createTexture(){return {}}, viewport(){}, enable(){}, clearColor(){}, clear(){} } } }")
 (fx-init! (js-get (js-global) "__mockcanvas"))

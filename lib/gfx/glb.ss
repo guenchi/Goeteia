@@ -903,15 +903,44 @@
                                 "'anims takes a list of clips" as)))))
       (map (lambda (c) ($clip-plan c nnodes)) l)))
 
-  ;; A time as the FILE will carry it.  An animation input is written
-  ;; as f32, so two times that differ in f64 can arrive identical in
-  ;; the file; a check made before the conversion would pass input that
-  ;; the file then carries as a duplicate.  The scratch word is taken
-  ;; on first use rather than at load time, because the heap is not
-  ;; ours to claim from before a caller has asked for anything.
+  ;; A value as the FILE will carry it.  An animation input and a morph
+  ;; POSITION are written as f32, so two values that differ in f64 can
+  ;; arrive identical in the file; a check made before the conversion
+  ;; would pass input that the file then carries differently.
+  ;;
+  ;; The scratch word is not taken at load time, because the heap is
+  ;; not ours to claim from before a caller has asked for anything.
+  ;; But a lazily grabbed static is the other horn and it is worse:
+  ;; fx-release! is a bump reset, so a word taken before a mark and
+  ;; kept across the release to that mark is handed out again to the
+  ;; next caller, and writing through the stale address then corrupts
+  ;; whatever now lives there, with no diagnostic.  gltf.ss says the
+  ;; same of the CPU skinning scratch and takes it from the asset's
+  ;; arena for exactly this reason.
+  ;;
+  ;; So neither horn: the word SHARES THE EXPORT'S LIFETIME.
+  ;; glb-write! takes it once, at the top, and every bound computed
+  ;; during that export writes through a word allocated by that same
+  ;; export -- so a release to any mark taken before the export frees
+  ;; the word along with everything else the export claimed, and the
+  ;; next export takes a fresh one.
+  ;;
+  ;; A comparison against the water level at CALL time cannot do this
+  ;; job, which is worth recording because it is the obvious repair
+  ;; and it is wrong.  By the time the next export runs, the level has
+  ;; been pushed back ABOVE the released word by whoever allocated
+  ;; after the release -- in the witness, by the very allocation the
+  ;; stale word then corrupts.  The level is not monotonic and carries
+  ;; no history, so no reading of it at call time distinguishes "still
+  ;; ours" from "released and handed to someone else".
+  ;;
+  ;; Once per export rather than once per call: the bounds loops reach
+  ;; this once per component per element, and four fresh bytes each
+  ;; time would climb the water line for the length of an export.
   (define $f32-cell #f)
   (define ($as-f32 v)
-    (unless $f32-cell (set! $f32-cell (fx-alloc! 4)))
+    (unless $f32-cell
+      (error 'glb-write! "the f32 scratch word was not taken for this export"))
     (%mem-f32-set! $f32-cell v)
     (%mem-f32-ref $f32-cell))
 
@@ -1761,6 +1790,9 @@
     (when (or (not (list? prims)) (null? prims))
       (error 'glb-write! "no primitives to write" prims))
     ($check-options 'glb-write! $top-keys opts)
+    ;; the f32 scratch word, taken from THIS export's allocations so it
+    ;; cannot outlive them -- see $as-f32
+    (set! $f32-cell (fx-alloc! 4))
     (let* ((nds ($nodes-plan ($option opts 'nodes #f)))
            (nnodes (vector-length nds))
            ;; an index has to be EXACT to be looked up: 0.0 passes
