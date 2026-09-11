@@ -1,5 +1,7 @@
 ;; expect: #t
-;; EXPECTED FAIL against the reader/writer at 86a2e50.  glTF makes a
+;; REGRESSION GUARD.  Written as a red witness against lib/gfx/glb.ss at
+;; 86a2e50 and turned green by the narrowing described at the foot of
+;; this comment.  glTF makes a
 ;; POSITION accessor's min/max mandatory because a viewer culls and
 ;; frames the scene with them, so a bound that does not contain the
 ;; data it describes is not a rounding nicety -- geometry disappears
@@ -165,4 +167,10 @@
     (want 'keyframe-time-above-the-written-max
           (list 'stored (as-f32 1.1) 'max mx3) 'contained)))
 
+;; HOW IT WAS FIXED, recorded here because the tool and the argument
+;; were both already in the file: $as-f32 (glb.ss:913) now wraps the
+;; READ in both $src-bounds and $times-bounds, so a bound is computed
+;; over the value as stored.  The ordering guard lost its own pair of
+;; $as-f32 calls in the same change, the values reaching it having
+;; already been narrowed.
 (display (if (null? fails) #t fails))

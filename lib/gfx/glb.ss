@@ -920,20 +920,33 @@
   ;; both, and all of it is answered by one scan of the times
   ;; themselves.
   ;;
-  ;; The ordering is compared on the f32 values because that is what
-  ;; the file will hold; the bounds stay as they were read, since they
-  ;; describe the same numbers the accessor describes.
+  ;; Everything here works on the value the FILE will carry.  The
+  ;; accessor is componentType 5126, so a time read as f64 is narrowed
+  ;; once, at the read, and every later comparison and bound is in that
+  ;; domain.
+  ;;
+  ;; The bounds used to keep the f64 on the stated grounds that they
+  ;; "describe the same numbers the accessor describes".  They do not:
+  ;; the accessor holds the f32 and the bound held the f64, and
+  ;; narrowing moves a value in BOTH directions, so the written bound
+  ;; could sit inside its own data at either end -- 0.1 stored as f32
+  ;; is 0.10000000149011612, above a written max of 0.1, and 0.7 is
+  ;; 0.699999988079071, below a written min of 0.7.  glTF makes a
+  ;; POSITION accessor's min/max mandatory because a viewer culls and
+  ;; frames with them, so a bound that does not contain its own data is
+  ;; not a rounding nicety: geometry vanishes at the edge of a frustum
+  ;; test that trusted the file.
   (define ($times-bounds src count)
-    (let ((t0 ($src-ref 'glb-write! src 0 0 1)))
+    (let ((t0 ($as-f32 ($src-ref 'glb-write! src 0 0 1))))
       (when (fl<? t0 0.0)
         (error 'glb-write! "a keyframe time is negative" t0))
       (let loop ((i 1) (mn t0) (mx t0) (prev t0))
         (if (= i count)
             (cons (vector mn) (vector mx))
-            (let ((t ($src-ref 'glb-write! src i 0 1)))
+            (let ((t ($as-f32 ($src-ref 'glb-write! src i 0 1))))
               (when (fl<? t 0.0)
                 (error 'glb-write! "a keyframe time is negative" t))
-              (unless (fl<? ($as-f32 prev) ($as-f32 t))
+              (unless (fl<? prev t)
                 (error 'glb-write!
                        "keyframe times must strictly increase" prev t))
               (loop (+ i 1)
@@ -1261,13 +1274,18 @@
 
   ;; min/max over a source, component by component -- the same thing
   ;; $pos-bounds computes over an interleave, for data that arrives
-  ;; as a source instead
+  ;; as a source instead.
+  ;;
+  ;; $pos-bounds reads %mem-f32-ref, so it already sees the values as
+  ;; stored.  This one reads a source, which is f64, while the accessor
+  ;; it describes is componentType 5126 -- so the value is narrowed at
+  ;; the read, for the reason set out above $times-bounds.
   (define ($src-bounds src elems ncomp)
     (let ((mn (make-vector ncomp 0.0))
           (mx (make-vector ncomp 0.0)))
       (let seed ((c 0))
         (when (< c ncomp)
-          (let ((v ($src-ref 'glb-write! src 0 c ncomp)))
+          (let ((v ($as-f32 ($src-ref 'glb-write! src 0 c ncomp))))
             (vector-set! mn c v)
             (vector-set! mx c v))
           (seed (+ c 1))))
@@ -1275,7 +1293,7 @@
         (when (< i elems)
           (let comp ((c 0))
             (when (< c ncomp)
-              (let ((x ($src-ref 'glb-write! src i c ncomp)))
+              (let ((x ($as-f32 ($src-ref 'glb-write! src i c ncomp))))
                 (when (fl<? x (vector-ref mn c)) (vector-set! mn c x))
                 (when (fl<? (vector-ref mx c) x) (vector-set! mx c x)))
               (comp (+ c 1))))
