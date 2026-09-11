@@ -44,17 +44,47 @@
            bytes)))
  (json-array->list (json-ref doc "accept")))
 
-;; a hex escape inside a SYMBOL, which is where a writer puts one when a
-;; name would otherwise be unreadable
+;; A hex escape inside a SYMBOL, which is where a writer puts one when a
+;; name would otherwise be unreadable.  Three things are asserted per
+;; row and they fail differently: the LENGTH, because a reader that ran
+;; past the escape's semicolon swallows the following token and still
+;; reports the right name for the element it did build; that the element
+;; is a SYMBOL, because R6RS makes an inline hex escape identifier
+;; syntax, so \x31; is the symbol whose name is "1" and not the number
+;; -- a reader that re-classifies the decoded text answers 1 to a name
+;; comparison while being wrong about the type; and the name's BYTES.
 (for-each
  (lambda (row)
-   (let ((src (json-ref row "src"))
-         (idx (json-ref row "sym_index")))
-     (want 'symbol-hex-escape
-           (guard (e (#t 'refused))
-             (symbol->string (list-ref (string->sexpr src) idx)))
-           (json-ref row "want_symbol"))))
+   (let* ((src (json-ref row "src"))
+          (idx (json-ref row "sym_index"))
+          (name (string->symbol (json-ref row "want"))))
+     (let ((v (guard (e (#t 'refused)) (string->sexpr src))))
+       (cond
+        ((eq? v 'refused) (want name 'refused (json-array->list (json-ref row "bytes"))))
+        (else
+         (want name (length v) (json-ref row "len"))
+         (let ((e (list-ref v idx)))
+           (want name
+                 (if (symbol? e) (string-bytes (symbol->string e)) (list 'not-a-symbol e))
+                 (json-array->list (json-ref row "bytes")))))))))
  (json-array->list (json-ref doc "symbols")))
+
+;; The invariant decode-name's own comment states -- "the decoded name
+;; still has to be a name this implementation could write back" -- read
+;; from BOTH sides.  Neither half is evidence alone: a reader that
+;; refused every escape satisfies the read half, and a writer that
+;; wrote every name satisfies the write half.  Together they pin one
+;; boundary, and they are independent implementations of it.
+(for-each
+ (lambda (row)
+   (let* ((name (list->string (map integer->char
+                                   (json-array->list (json-ref row "name")))))
+          (tag (string->symbol (json-ref row "why"))))
+     (want tag
+           (list 'writer (raises? (lambda () (sexpr->string (list (string->symbol name)))))
+                 'reader (raises? (lambda () (string->sexpr (json-ref row "src")))))
+           (list 'writer #t 'reader #t))))
+ (json-array->list (json-ref doc "wire_unsafe")))
 
 ;; THE CONTROL, and it is the half that keeps the widening honest: a
 ;; malformed or unknown escape must still be refused.  A reader that
