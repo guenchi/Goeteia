@@ -68,15 +68,16 @@
 ;; merely declined by transition!, which is the only difference between
 ;; them: one is for an event the caller chose, the other for one it did
 ;; not.
-;; What state-send! does with an unavailable event is NOT pinned here.
-;; It is documented as raising and does not, and that disagreement has
-;; its own cell -- defect-s01-send-is-quiet-about-impossible-events.ss
-;; -- because it is a defect rather than a property.  Pinning today's
-;; behaviour here would make this file argue against that one.
+;; What state-send! does with an unavailable event is exercised by its
+;; own cell, defect-s01-send-is-quiet-about-impossible-events.ss, and
+;; pinned once, there: a machine from the shorthand now carries
+;; (on-unknown error), so an event that cannot happen raises rather than
+;; being dropped in silence.  This block is about state-transition!,
+;; which reports availability as a boolean instead of raising, so it is
+;; the procedure the row below uses to show an unavailable event does
+;; not move the machine.
 (let ((s (door)))
-  (want 'sending-an-unavailable-event-does-not-move-it
-        (begin (state-send! s 'locked) (state-current s)) 'shut)
-  (want 'transition-declines-instead (state-transition! s 'locked) #f)
+  (want 'transition-declines-an-unavailable-event (state-transition! s 'locked) #f)
   (want 'still-alone (state-current s) 'shut)
   (want 'and-takes-an-available-one (state-transition! s 'open) #t)
   (want 'having-moved (state-current s) 'open))

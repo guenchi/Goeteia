@@ -41,7 +41,13 @@
 ;;
 ;; WITHOUT THAT CLAUSE AN UNKNOWN EVENT IS A QUIET NO-OP: the machine
 ;; comes back unchanged and the actions are empty.  That default is the
-;; reason state-transition! is worth having beside state-send!.  On such
+;; reason state-transition! is worth having beside state-send! -- on a
+;; spec that does not ask to raise.  THE ADJACENCY-TABLE SHORTHAND IS
+;; THE EXCEPTION: make-state-machine emits (on-unknown error) itself,
+;; because every event it can express is named after its destination,
+;; so an unavailable one is a destination the caller named and cannot
+;; reach -- a fault in the caller rather than an ordinary answer.  A
+;; machine built from a raw spec still decides this for itself.  On such
 ;; a spec, state-send! cannot tell a caller whether anything happened --
 ;; empty actions are what an unavailable event answers AND what a
 ;; transition carrying no actions answers -- so a caller that needs to
@@ -157,10 +163,26 @@
           (lambda (next) (set! edges (cons (list (car row) next next) edges)))
           (cdr row)))
        transitions)
+      ;; (on-unknown error), which the shorthand did not emit.
+      ;;
+      ;; state-send! is documented as raising where state-transition!
+      ;; declines -- that distinction is why both exist -- and without
+      ;; this clause it held for no machine built here: an event the
+      ;; caller CHOSE and that cannot happen answered no actions and
+      ;; left the machine where it was.  Silence and a thing that did
+      ;; not move is the worst symptom to debug, because it surfaces
+      ;; later as something that "sometimes doesn't work".
+      ;;
+      ;; Only the shorthand changes.  make-event-state-machine takes
+      ;; the clause from the caller's own spec, so a machine assembled
+      ;; from a raw spec keeps deciding this for itself, and a caller
+      ;; who wants the quiet default still has state-transition!, which
+      ;; reports availability as a boolean rather than raising.
       (make-event-state-machine
        (list (list 'states (reverse states))
              (list 'initial initial)
-             (list 'transitions (reverse edges)))
+             (list 'transitions (reverse edges))
+             (list 'on-unknown 'error))
        '())))
 
   ;; Answers whether it went, rather than raising when it did not.  This

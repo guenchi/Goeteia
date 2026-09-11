@@ -591,13 +591,19 @@ partial step has been applied to. This is the property that makes a
 mutable owner safe to have, and it is worth stating because it is
 invisible at the call site.
 
-**Without that clause an unknown event is a quiet no-op**, and that is
-the default. The machine comes back unchanged and the actions are empty
-— which is also what a transition carrying no actions answers, so on
-such a spec `state-send!` cannot tell a caller whether anything
-happened. That is why `state-transition!` exists beside it: it reports
-as a boolean whether the event was available. A caller that would rather
-the mistake raise puts `(on-unknown error)` in the spec.
+**Without that clause an unknown event is a quiet no-op**: the machine
+comes back unchanged and the actions are empty — which is also what a
+transition carrying no actions answers, so on such a spec `state-send!`
+cannot tell a caller whether anything happened. That is why
+`state-transition!` exists beside it: it reports as a boolean whether
+the event was available. A caller that would rather the mistake raise
+puts `(on-unknown error)` in the spec.
+
+That quiet no-op is the default for a machine built from a raw spec.
+The adjacency-table shorthand `make-state-machine` is the exception: it
+emits `(on-unknown error)` itself, because every event it can express
+is named after its destination, so an unavailable one is a destination
+the caller named and cannot reach.
 
 **`state->datum` carries the spec, the current state, the context and
 the strictness. It does not carry the bindings, and it cannot.** Those
