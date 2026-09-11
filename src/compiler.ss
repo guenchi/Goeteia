@@ -942,8 +942,10 @@
     ;; the library's own clause, its own definitions, its own forms
     (record-judgement-unit!
      (merge-import-bindings (if (pair? import-clause) (cdr import-clause) '()))
-     (map (lambda (n) (list n 'define name)) (expanded-defined-names out))
-     out)
+     (map (lambda (n) (list n 'define name))
+          (append (expanded-defined-names out) (scope-macro-names name)))
+     out
+     name)
     (cons '%library-body out)))
 
 ;; The prelude is not a library: no header, no exports, no imports, and
@@ -1028,6 +1030,15 @@
          (set! *scope-defines*
                (cons (cons name (library-defined-names body)) *scope-defines*))
          (set! *collecting-scope* name)
+         (set! *scope-macro-names*
+               (cons (cons name
+                           (let loop ((fs body) (acc '()))
+                             (cond ((not (pair? fs)) acc)
+                                   ((macro-def? (car fs))
+                                    (loop (cdr fs)
+                                          (cons (unmark (cadr (car fs))) acc)))
+                                   (else (loop (cdr fs) acc)))))
+                     *scope-macro-names*))
          (for-each collect-macros! body)
          (set! *collecting-scope* saved)))
       (else #f)))
@@ -1872,6 +1883,12 @@
     ;; manifest built from definitions alone silently omits every one
     ;; of them -- which would let a program define `case' or `lambda'
     ;; and be told nothing.
+    ;; apply, call/cc and call-with-current-continuation are R6RS
+    ;; exports the derivation could not see for the same reason the
+    ;; keywords were missed: they are handled by the compiler rather
+    ;; than defined by the prelude.  The check itself found them --
+    ;; one missing name accounted for 111 red cells in a sweep.
+    apply call/cc call-with-current-continuation
     and begin case cond define define-record-type define-syntax do
     else if lambda let let* letrec letrec* or parameterize
     quasiquote quote set! syntax-rules unless unquote
@@ -2014,9 +2031,26 @@
 ;; unreachable.
 (define *judgement-units* '())
 
-(define (record-judgement-unit! map defines forms)
+;; The macro names each library defines.  expanded-defined-names sees
+;; `define' and nothing else, and by the time a library's scope closes
+;; its macro definitions have already been consumed -- so a library
+;; that defines a macro and mentions the name has no record that it
+;; owns it.  collect-macros! walks the body before expansion, which is
+;; the last moment the definitions are there to be counted.
+(define *scope-macro-names* '())
+
+(define (scope-macro-names name)
+  (let ((e (assoc name *scope-macro-names*)))
+    (if e (cdr e) '())))
+
+;; The scope's NAME rides along so a diagnostic can say whose clause
+;; failed to bring a name in.  Without it every unbound message reads
+;; the same whether the program or some library three levels down is
+;; the one missing the import, and the reader cannot tell which file to
+;; open.
+(define (record-judgement-unit! map defines forms who)
   (set! *judgement-units*
-        (cons (list map defines forms) *judgement-units*)))
+        (cons (list map defines forms who) *judgement-units*)))
 
 (define (refuse-imported-definitions! map defines)
   (for-each
@@ -2041,6 +2075,7 @@
 (define (refuse-imported-assignment! form bound)
   (cond
    ((not (pair? form)) #f)
+   ((macro-def? form) #f)
    ((not (symbol? (car form)))
     (walk-forms-for-set! form bound))
    ((eq? (resolve-tag (car form)) 'quote) #f)
@@ -2124,6 +2159,13 @@
                              " bring it in")
               where)))
    ((not (pair? form)) #f)
+   ;; A macro definition is not code: its patterns and templates are
+   ;; data until something applies it, and the wildcard `_' inside a
+   ;; syntax-rules pattern is not a reference to anything.  Top-level
+   ;; macro definitions never reach here because expand-forms drops
+   ;; them, but a LIBRARY body goes through xpand*, which does not --
+   ;; so a library's macros arrive here intact.
+   ((macro-def? form) #f)
    ((intrinsic? (car form))
     (walk-refs (cdr form) bound map defined where))
    ((not (symbol? (car form)))
@@ -2177,20 +2219,18 @@
 (define (judge-scopes!)
   (for-each (lambda (u)
               (refuse-imported-definitions! (car u) (cadr u))
-              ;; The reference check is NOT called.  walk-refs below is
-              ;; written and wrong in five distinct ways, measured on
-              ;; the whole suite: 179 of 293 cells red.  It skips no
-              ;; export declaration, does not add a body's internal
-              ;; definitions to the bound set, never sees an inline
-              ;; library's import clause (the driver marks only
-              ;; top-level ones), is missing (rnrs) names the manifest
-              ;; derivation could not see such as apply and call/cc,
-              ;; and has no allowance for the prelude's own internals.
-              ;; Each is addressed in design section 27.6 and pinned by
-              ;; test/defect-unbound-reference-not-checked.mjs; step 2b
-              ;; turns it on.  Left in the file rather than deleted so
-              ;; the five causes have something to be fixes OF.
-              (refuse-imported-assignments! (car u) (caddr u)))
+              (refuse-imported-assignments! (car u) (caddr u))
+              ;; A reference the scope's clause does not bring in is
+              ;; unbound here, before dead-code elimination, in call
+              ;; and value position alike.  Turning this on cost five
+              ;; passes over the whole suite: 179 red, then 128, then
+              ;; 37, then 24, then 12 -- and every drop was a cause,
+              ;; not a tweak.  The suite is the measurement for a check
+              ;; that touches every reference in the tree; seven
+              ;; hand-written programs said it was fine when 179 cells
+              ;; said otherwise.
+              (walk-refs (reverse (caddr u)) '() (car u)
+                         (map car (cadr u)) (cadddr u)))
             (reverse *judgement-units*)))
 
 (define (merge-import-bindings specs)
@@ -5398,6 +5438,7 @@
   (set! *program-defines* '())
   (set! *program-forms* '())
   (set! *judgement-units* '())
+  (set! *scope-macro-names* '())
   ;; library privates get their namespace before anything reads the
   ;; forms -- collect-macros! descends into libraries and would
   ;; otherwise register a library's macros under their bare names
@@ -5442,7 +5483,8 @@
                                   (merge-import-bindings *import-specs*))
                             (record-judgement-unit! *import-map*
                                                     *program-defines*
-                                                    *program-forms*)
+                                                    *program-forms*
+                                                    'the-program)
                             (judge-scopes!)
                             *import-map*))
          ;; top-level (export name ...): keep through DCE, expose as
