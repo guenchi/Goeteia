@@ -160,7 +160,7 @@ adds up to.
 
 ## `(gam state)`
 
-- `make-state-machine` — a machine from an adjacency table of (from to ...) rows, in which every event is named after its destination; it cannot express an event whose name differs from its destination, two events from one state to the same destination, or any guard or action, all of which want the spec form
+- `make-state-machine` — a machine from an adjacency table of (from to ...) rows, in which every event is named after its destination; it cannot express an event whose name differs from its destination, two events from one state to the same destination, or any guard or action, all of which want the spec form; it emits `(on-unknown error)`, so `state-send!` of an event this machine cannot take raises rather than answering quietly
 - `make-event-state-machine` — a machine from a full `(lng machine)` spec, bindings for the guard and action names, and an optional context; this is the general constructor
 - `state?` — whether a value is a state
 - `state-machine` — the machine value inside, for the questions `(lng machine)` answers and this does not; it is immutable, so handing it out is not a second way to alter the cell
