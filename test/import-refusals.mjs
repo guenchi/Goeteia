@@ -37,6 +37,11 @@ const rows = [
     ['two bindings under one name',  '(import (rnrs) (rename (rnrs) (cdr car)))\n(display 1)',   /two different bindings imported under one name/],
     ['a component library',          '(import (rnrs base))\n(display 1)',                        /component libraries of \(rnrs\) are not supported/],
     // a library body is judged against its own clause
+    // renaming a procedure ONTO a keyword's spelling brings two bindings
+    // under one name (rnrs's if, and list renamed to if), which R6RS 7.2
+    // makes an error; the collision check is authoritative and must stay
+    // so when the expander becomes scope-aware.  Chez is permissive here.
+    ['a rename onto a keyword spelling collides', '(import (rename (rnrs) (list if)))\n(display (if 1 2))', /two different bindings imported under one name/],
     ['a library defining a name it imports',  '(import (rnrs))\n(begin (library (o l) (export f) (import (rnrs)) (define (car x) 9) (define (f) 1)) (import (o l)))\n(display (f))', /imported name may not be defined; exclude it with except: car/],
     // a library the program does not define is still looked for on disk
     ['an import of a library that exists nowhere', '(import (rnrs) (no such lib))\n(display 1)',                                  /library not found: \(no such lib\)/],
