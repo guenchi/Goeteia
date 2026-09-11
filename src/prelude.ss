@@ -771,6 +771,11 @@
   (let ((b (%peek-byte)))
     (cond
      ((%delimiter? b) (cons esc (reverse acc)))
+     ;; a bare `#` ends a name.  Both spellings that PUT one in a name
+     ;; are unaffected: |a#b| is consumed by the bar loop below, and
+     ;; a\x23;b arrives through the escape branch, so neither reaches
+     ;; this test.
+     ((= b 35) (cons esc (reverse acc)))
      ((= b 124)                                    ; | ... |
       (%next-byte)
       (let bar ((acc acc))
@@ -824,6 +829,31 @@
   (if (%delimiter? (%peek-byte))
       (reverse acc)
       (%read-token (cons (%next-byte) acc))))
+
+;; The same scan, for a NAME rather than a number token: `#` ends it
+;; too.  R6RS does not let a bare `#` sit inside an identifier, and the
+;; writer already agrees -- test/symbol-quoting.ss pins that the name
+;; "a#b" is emitted as a\x23;b -- so only the reader disagreed, and
+;; `abc#|c|#` came back as the symbol abc#c# with the comment eaten.
+;;
+;; This is a SIBLING rather than a flag on %read-token, and %read-token
+;; keeps its behaviour exactly.  Its one remaining caller reads a
+;; NUMBER token, where `#` must NOT end the scan: %read-prefixed gathers
+;; the whole token and peels the prefixes off afterwards, so the `#` of
+;; `#x` in `#e#x10` is INSIDE the token it is reading.  Widening the
+;; shared scanner would break every stacked prefix, and it would break
+;; them far from the edit; a caller that wants the other shape asks for
+;; it by name.
+;;
+;; Nothing ENFORCES that choice: both scanners take the same argument,
+;; so a future name scan that reached for %read-token would compile and
+;; be wrong.  What carries the weight is that %read-token has exactly
+;; ONE caller, the number path, and this comment names it.
+(define (%read-name-token acc)
+  (let ((b (%peek-byte)))
+    (if (or (%delimiter? b) (= b 35))
+        (reverse acc)
+        (%read-name-token (cons (%next-byte) acc)))))
 
 (define (%finish-atom bs escaped?)
   (cond
@@ -1495,7 +1525,7 @@
         (if (%delimiter? (%peek-byte))
             (integer->char first)
             (%named-char (%bytes->string
-                          (cons first (%read-token '())))))))
+                          (cons first (%read-name-token '())))))))
      ;; Anything else is an error, and it has to be: this branch used
      ;; to answer (eof-object), which is not a weak error but the wrong
      ;; KIND of value.  End-of-input is a control signal, so a form the
@@ -1569,7 +1599,7 @@
 ;; author asked for would simply not be in effect.  "#!" with nothing
 ;; after it arrives here with an empty name and is refused the same way.
 (define (%skip-directive)
-  (let ((name (%bytes->string (%read-token '()))))
+  (let ((name (%bytes->string (%read-name-token '()))))
     (unless (%known-directive? name %lexical-directives)
       (errorf 'read
               (string-append "unrecognised lexical directive: #!" name
