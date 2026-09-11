@@ -1987,13 +1987,13 @@
 ;; between two different bindings.  Tracing an export the library does
 ;; not define back through the library's own clause is what makes the
 ;; two agree.
-(define *lib-origins* '())
-(define *origin-seen* '())
+(define *lib-provenance* '())
+(define *provenance-seen* '())
 
 (define (record-lib-origin! name f body)
   (let ((k (lib-name-string name)))
-    (unless (assoc k *lib-origins*)
-      (set! *lib-origins*
+    (unless (assoc k *lib-provenance*)
+      (set! *lib-provenance*
             (cons (list k
                         (append (library-defined-names body)
                                 (body-macro-names body))
@@ -2002,29 +2002,29 @@
                                  (eq? (unmark (car (cadddr f))) 'import))
                             (cdr (cadddr f))
                             '()))
-                  *lib-origins*)))))
+                  *lib-provenance*)))))
 
 ;; A library that names itself somewhere up its own import chain would
 ;; otherwise be followed forever, so a library already on the chain
 ;; answers for the name itself.
 (define (binding-origin lib name)
-  (let ((e (assoc lib *lib-origins*)))
+  (let ((e (assoc lib *lib-provenance*)))
     (cond
      ((not e) (cons lib name))
      ((memq name (cadr e)) (cons lib name))
-     ((member lib *origin-seen*) (cons lib name))
+     ((member lib *provenance-seen*) (cons lib name))
      (else
-      (let ((saved *origin-seen*))
-        (set! *origin-seen* (cons lib *origin-seen*))
+      (let ((saved *provenance-seen*))
+        (set! *provenance-seen* (cons lib *provenance-seen*))
         (let scan ((specs (caddr e)))
           (cond
            ((not (pair? specs))
-            (set! *origin-seen* saved)
+            (set! *provenance-seen* saved)
             (cons lib name))
            (else
             (let ((b (assq name (import-spec-bindings (car specs)))))
               (cond
-               (b (set! *origin-seen* saved) (cdr b))
+               (b (set! *provenance-seen* saved) (cdr b))
                (else (scan (cdr specs))))))))))))) 
 
 (define (import-binding-set target)
@@ -5215,6 +5215,10 @@
               (string-append acc (if (string=? acc "") "" " ")
                              (symbol->string (unmark (car l))))))))
 
+;; loc string -> the library name that form came from, so a duplicate
+;; can say WHICH library, not just which file
+(define *lib-origins* '())
+
 (define (record-lib-origins! forms locs)
   (set! *lib-origins* '())
   (let loop ((fs forms) (ls locs))
@@ -5582,8 +5586,8 @@
   (set! *collecting-scope* #f)
   (set! *form-locs* '())
   (set! *lib-exports* '())
-  (set! *lib-origins* '())
-  (set! *origin-seen* '())
+  (set! *lib-provenance* '())
+  (set! *provenance-seen* '())
   (set! *import-specs* '())
   (set! *import-map* '())
   (set! *program-form?* #f)
