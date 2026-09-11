@@ -1,5 +1,6 @@
 ;; expect: #t
-;; EXPECTED FAIL against lib/gfx/glb.ss at 10c2f44.  A bound has to be a
+;; REGRESSION GUARD.  Written as a red witness against lib/gfx/glb.ss at
+;; 10c2f44.  A bound has to be a
 ;; number the file can carry.  glTF's min and max are arrays of numbers
 ;; and JSON has no spelling for an infinity, so the writer emits null --
 ;; and a null there is not an inaccurate file, it is an INVALID one.
@@ -28,6 +29,11 @@
 ;;
 ;; Refusing is right rather than clamping: glTF cannot spell these, and
 ;; a clamp would invent data the caller never gave.
+;;
+;; FIXED by testing $finite? after the narrowing at all four read sites.
+;; Verified to discriminate rather than merely to pass: run against the
+;; tree at ddb6c23, the three raises? rows go red AND the sweep names
+;; the three inputs that put a null in the file.
 (import (rnrs) (web js) (gfx gl) (gfx fx) (gfx gltf) (gfx glb) (web json))
 (js-eval "globalThis.__mockcanvas = { width:64, height:64, addEventListener(k,f){}, getContext(kind) { return { createShader(){return {}}, shaderSource(){}, compileShader(){}, getShaderParameter(){return true}, createProgram(){return {}}, attachShader(){}, linkProgram(){}, getProgramParameter(){return true}, bindAttribLocation(){}, getUniformLocation(){return {}}, createBuffer(){return {}}, createVertexArray(){return {}}, createTexture(){return {}}, viewport(){}, enable(){}, clearColor(){}, clear(){} } } }")
 (fx-init! (js-get (js-global) "__mockcanvas"))
@@ -77,7 +83,32 @@
 ;; a nan with ONE keyframe, where no ordering comparison exists to
 ;; catch it: the seed becomes both bounds and both serialise as null
 (want 'keyframe-time-nan-single-key (raises? (lambda () (times1 (vector +nan.0)))) #t)
-(want 'single-key-nan-writes-null (has? (jtext (times1 (vector +nan.0))) "null") #f)
+
+;; THE INVARIANT THE WHOLE CELL IS ABOUT, swept rather than asserted at
+;; one point: no export that is ACCEPTED may write a null.  Each entry
+;; answers 'refused or the presence of a null, and refused is a fine
+;; answer -- what may not happen is a file going out with a null in it.
+;;
+;; This row must run its calls INSIDE the guard.  An earlier version
+;; asked the same question with a bare (jtext (times1 (vector +nan.0)))
+;; beside a raises? row that wrapped the identical call.  Once the call
+;; raises, that is not a red: the cell TRAPS, the run reports
+;; "unhandled exception ... (trap: unreachable)" instead of a verdict,
+;; and every row after it never executes.  A cell that checks for a
+;; raise has to catch it everywhere it provokes it, not only where it
+;; is looking.
+(define (null-or-refused thunk)
+  (guard (e (#t 'refused)) (if (has? (jtext (thunk)) "null") 'WROTE-NULL 'clean)))
+(for-each
+ (lambda (entry)
+   (let ((got (null-or-refused (cdr entry))))
+     (want (car entry) (if (eq? got 'WROTE-NULL) 'WROTE-NULL 'ok) 'ok)))
+ (list (cons 'sweep-finite-morph (lambda () (morph 0.5)))
+       (cons 'sweep-overflowing-morph (lambda () (morph 1e40)))
+       (cons 'sweep-finite-times (lambda () (times (vector 0.0 1.0))))
+       (cons 'sweep-overflowing-times (lambda () (times (vector 0.0 1e40))))
+       (cons 'sweep-nan-single-key (lambda () (times1 (vector +nan.0))))
+       (cons 'sweep-finite-single-key (lambda () (times1 (vector 0.25))))))
 
 ;; CONTROL, and it names which guard owns which case: a nan with TWO
 ;; keyframes is ALREADY refused, by strict ordering rather than by any

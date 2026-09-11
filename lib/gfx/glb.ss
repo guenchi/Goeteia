@@ -937,6 +937,15 @@
   ;; Once per export rather than once per call: the bounds loops reach
   ;; this once per component per element, and four fresh bytes each
   ;; time would climb the water line for the length of an export.
+  ;; glTF has no spelling for an infinity or a NaN, and the JSON writer
+  ;; emits null for both -- so a bound that is not finite makes the
+  ;; file INVALID rather than merely inaccurate.  Checked after the
+  ;; narrowing, which is the cheaper place to stand: one test catches
+  ;; a value that arrived non-finite AND a finite f64 that overflows
+  ;; f32, which the narrowing itself can produce.  Refused rather than
+  ;; clamped: there is no number to substitute that the caller meant.
+  (define ($finite? v) (fl=? 0.0 (fl- v v)))
+
   (define $f32-cell #f)
   (define ($as-f32 v)
     (unless $f32-cell
@@ -967,12 +976,16 @@
   ;; test that trusted the file.
   (define ($times-bounds src count)
     (let ((t0 ($as-f32 ($src-ref 'glb-write! src 0 0 1))))
+      (unless ($finite? t0)
+        (error 'glb-write! "a keyframe time is not finite" t0))
       (when (fl<? t0 0.0)
         (error 'glb-write! "a keyframe time is negative" t0))
       (let loop ((i 1) (mn t0) (mx t0) (prev t0))
         (if (= i count)
             (cons (vector mn) (vector mx))
             (let ((t ($as-f32 ($src-ref 'glb-write! src i 0 1))))
+              (unless ($finite? t)
+                (error 'glb-write! "a keyframe time is not finite" t))
               (when (fl<? t 0.0)
                 (error 'glb-write! "a keyframe time is negative" t))
               (unless (fl<? prev t)
@@ -1315,6 +1328,8 @@
       (let seed ((c 0))
         (when (< c ncomp)
           (let ((v ($as-f32 ($src-ref 'glb-write! src 0 c ncomp))))
+            (unless ($finite? v)
+              (error 'glb-write! "a morph position component is not finite" v))
             (vector-set! mn c v)
             (vector-set! mx c v))
           (seed (+ c 1))))
@@ -1323,6 +1338,8 @@
           (let comp ((c 0))
             (when (< c ncomp)
               (let ((x ($as-f32 ($src-ref 'glb-write! src i c ncomp))))
+                (unless ($finite? x)
+                  (error 'glb-write! "a morph position component is not finite" x))
                 (when (fl<? x (vector-ref mn c)) (vector-set! mn c x))
                 (when (fl<? (vector-ref mx c) x) (vector-set! mx c x)))
               (comp (+ c 1))))
@@ -1897,5 +1914,13 @@
                          (copy (+ i 1))))
                      ($copy! at src len))))
              images)))
+        ;; the word belongs to THIS export.  Left set, the guard in
+        ;; $as-f32 would read a previous export's address as "taken
+        ;; for this one", which is the same stale-address shape the
+        ;; word's lifetime was changed to close.  An error exit does
+        ;; not reach here and leaves it set; that residual is stated
+        ;; rather than guarded, since every path to $as-f32 today runs
+        ;; inside an export and takes the word afresh at the top.
+        (set! $f32-cell #f)
         (cons out total))))
   )
