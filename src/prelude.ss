@@ -823,6 +823,7 @@
                        ;; that treated ten specially.
                        (whole (+ (* int-v (%expt-int radix frac-n)) frac-v))
                        (scale (- (if (eq? e 'none) 0 e) frac-n))
+                       (%bounded (%check-scale! scale))
                        (mag (if (< scale 0)
                                 ($make-rat whole (%expt-int radix (- 0 scale)))
                                 (* whole (%expt-int radix scale)))))
@@ -831,6 +832,36 @@
                   (list mag (or dotted (not (eq? e 'none))) neg)))))))))) 
 
 (define (%expt-int b n) (let loop ((i n) (a 1)) (if (= i 0) a (loop (- i 1) (* a b)))))
+
+;; An exponent in a numeral is chosen by whoever wrote the text, and
+;; this reader is the one the compiler reads its own source with, so
+;; the text is not always ours.  (%expt-int radix scale) costs scale
+;; bignum multiplications against a growing accumulator: the work is
+;; quadratic in a number the input picks.  Measured on this runtime,
+;; 10^10000 reads in 0.16s, 10^50000 in 2.9s, and 10^200000 does not
+;; finish inside 40 seconds.
+;;
+;; So the bound is on the VALUE and is checked BEFORE the power is
+;; built, which is the shape (web json)'s $max-exponent already uses
+;; for the same reason.  BOTH signs need it: the negative branch
+;; reaches the identical %expt-int through $make-rat's denominator,
+;; and "#e1e-999999" hangs exactly as "#e1e999999" does.
+;;
+;; What this costs: a numeral R6RS allows is refused, and the refusal
+;; is an error rather than #f -- including for the inexact spelling,
+;; where Chez answers +inf.0 for "1e999999" and 0.0 for "1e-999999".
+;; Answering the limit instead would mean carrying the overflow past
+;; the exactness prefix, since only #e/#i decides whether the answer
+;; is a flonum or a refused bignum.  Erring here is the same trade the
+;; division-by-zero refusal above already makes in this parser.
+(define $max-scale 10000)
+(define (%check-scale! scale)
+  (when (< $max-scale (if (< scale 0) (- 0 scale) scale))
+    (errorf 'read
+            (string-append
+             "exponent out of range -- at most 10^"
+             (number->string $max-scale) " at "
+             (%at-line $reader-line $reader-column)))))
 
 ;; Turn (magnitude inexact? neg) into the number, under an exactness
 ;; that is 'exact, 'inexact, or #f for "whatever the spelling said".
