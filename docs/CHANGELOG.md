@@ -243,7 +243,7 @@ than re-verified item by item for this document.
 
 ### KNOWN OPEN
 
-Seven defects are known, reproduced, and NOT fixed in this release. They
+Eight defects are known, reproduced, and NOT fixed in this release. They
 are listed here because an unfixed defect that scrolls off a list is one
 nobody re-reads at the next decision.
 
@@ -256,6 +256,16 @@ nobody re-reads at the next decision.
   procedures the prelude defines in Scheme are not yet. Held red by
   `c02-excluded-append-program-and-quasiquote` and
   `defect-library-redefines-imported-name`.
+- **The import rule still gets five shapes wrong.** A name imported
+  directly and through a library that re-exports it is refused as two
+  bindings; `set!` of a parameter or an internal definition spelled
+  like an imported name is refused as assigning the import; a
+  `syntax-rules` template is not judged against its own library's
+  clause, so a library that excludes `car` may still write it in a
+  template; a `define-syntax` inside a `begin` in a library body
+  escapes the rule; and a program with no import clause at all is not
+  judged. Each has a row in `defect-import-rule-holes`, red, beside two
+  green twins for what the rule already refuses in the same family.
 - **`prefix` imports were never implemented and are now refused by
   name.** The compiler driver emitted aliases for `rename` only, so
   `(import (prefix (rnrs) r:))` silently meant `(import (rnrs))` with
