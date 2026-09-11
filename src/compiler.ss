@@ -4959,6 +4959,103 @@
      *lib-exports*))
   forms)
 
+;; ---- canonical keys ----------------------------------------------
+;;
+;; The flat splice puts every scope's definitions in one namespace, so
+;; two scopes that define one spelling meet as a duplicate.  R6RS says
+;; they are two bindings: a program that excludes (rnrs)'s length and
+;; defines its own has its own, while the prelude's list->vector keeps
+;; calling the prelude's.
+;;
+;; The key is a SYMBOL, scope-prefixed, the way namespace-library
+;; already renames a library's privates.  Every pass that keys on a
+;; symbol therefore keeps working untouched, which is where the risk
+;; would otherwise concentrate.  It is deterministic per compile --
+;; cross-host byte identity depends on that, so no gensym -- and
+;; forgeable, with the duplicate check as the guard: a program that
+;; writes %prelude:length itself meets a refusal, not a miscompile.
+;;
+;; Only names that CAN collide are keyed.  The prelude's $- and
+;; %-prefixed internals cannot: the import rule's own allowance is
+;; "the prelude binds it AND it is not an (rnrs) export", so a program
+;; cannot write one, and $spec-denylist, $escape and the emitter
+;; helpers keep their spellings and their lookups.
+(define (scope-key scope n)
+  (sym-cat (list scope ":" n)))
+
+;; The walker does not visit a define's target -- it is a binder, not a
+;; reference -- so the definition itself is renamed here.
+(define (rename-scope-form f table)
+  (let ((out (walk-refs-too
+              f '()
+              (lambda (n bnd)
+                (and (not (memq n bnd))
+                     (let ((e (assq (unmark n) table)))
+                       (and e (cdr e))))))))
+    (if (and (pair? out) (symbol? (car out))
+             (eq? (unmark (car out)) 'define) (pair? (cdr out)))
+        (let* ((t (cadr out))
+               (nm (if (pair? t) (car t) t))
+               (e (assq (unmark nm) table)))
+          (if e
+              (cons (car out)
+                    (cons (if (pair? t) (cons (cdr e) (cdr t)) (cdr e))
+                          (cddr out)))
+              out))
+        out)))
+
+;; The prelude's definitions get keys only where another scope defines
+;; the same spelling.  Keying every prelude name would move every
+;; reference in every program for no gain, and would break the four
+;; lookups that name prelude internals by spelling.
+(define (canonicalise-prelude forms prefix-len)
+  (let* ((prefix (first-n forms prefix-len))
+         (rest (list-tail forms prefix-len))
+         (mine (expanded-defined-names prefix))
+         (theirs (expanded-defined-names rest))
+         (dup (filter (lambda (n) (memq n theirs)) mine)))
+    (if (null? dup)
+        forms
+        (let ((table (map (lambda (n) (cons n (scope-key "%prelude" n))) dup)))
+          (append (map (lambda (f) (rename-scope-form f table)) prefix)
+                  (map (lambda (f) (rename-introduced-form f table))
+                       rest))))))
+
+;; A token the COMPILER introduced under the prelude's scope means the
+;; prelude's binding wherever it appears -- quasiquote's append is the
+;; prelude's append even inside a program that defined its own.  It
+;; carries that scope in *intro-scope*, so it is recognisable in the
+;; middle of another scope's forms, which a spelling never would be.
+(define (scope-map-of scope)
+  (let scan ((us *judgement-units*))
+    (cond ((not (pair? us)) '())
+          ((equal? (cadddr (car us)) scope) (car (car us)))
+          (else (scan (cdr us))))))
+
+;; An introduced token means the PRELUDE's binding when the scope that
+;; wrote it meant the prelude's: either the compiler introduced it
+;; under the prelude's own scope, or a library's template wrote it and
+;; that library's clause brings the name in from (rnrs).  A library
+;; macro's append is the prelude's append even when it lands in a
+;; program that excluded and redefined its own.
+(define (introduced-means-prelude? ic)
+  (or (eq? (cdr ic) *prelude-scope*)
+      (let ((b (assq (car ic) (scope-map-of (cdr ic)))))
+        (and b (pair? (cdr b))
+             (string=? (car (cdr b)) "rnrs")
+             (eq? (cdr (cdr b)) (car ic))))))
+
+(define (rename-introduced-form f table)
+  (walk-refs-too
+   f '()
+   (lambda (n bnd)
+     (and (not (memq n bnd))
+          (let ((ic (intro-context n)))
+            (and ic
+                 (introduced-means-prelude? ic)
+                 (let ((e (assq (unmark n) table)))
+                   (and e (cdr e)))))))))
+
 (define (check-duplicate-defines! forms)
   (let loop ((fs forms) (seen '()))
     (cond
@@ -5735,9 +5832,19 @@
 ;;
 ;; visit receives a call-position symbol head and the names in scope,
 ;; and returns a replacement head or #f to leave it alone.
-(define (walk-heads f bound visit)
+(define (walk-heads f bound visit) (walk-heads* f bound visit #f))
+
+;; The same walk, also visiting symbols in VALUE position.
+;; Canonicalisation has to rewrite every reference, not only the
+;; ones in call position, and it must respect exactly the lexical
+;; accounting this walker already owns -- writing a second walker
+;; for it would put that accounting in two places, which is the
+;; thing the set! rule was folded in here to stop.
+(define (walk-refs-too f bound visit) (walk-heads* f bound visit #t))
+
+(define (walk-heads* f bound visit refs?)
   (if (not (pair? f))
-      f
+      (if (and refs? (symbol? f)) (or (visit f bound) f) f)
       (let ((h (car f)))
         (cond
          ((and (symbol? h) (eq? (unmark h) 'quote)) f)
@@ -5745,16 +5852,16 @@
           (let ((inner (body-bound (cddr f)
                                    (append (binder-names (cadr f)) bound))))
             (cons h (cons (cadr f)
-                          (map-tail (lambda (b) (walk-heads b inner visit))
+                          (map-tail (lambda (b) (walk-heads* b inner visit refs?))
                                     (cddr f))))))
          ((and (symbol? h) (eq? (unmark h) 'let))
           (let* ((bs (cadr f))
                  (inner (body-bound (cddr f) (append (map car bs) bound))))
             (cons h
                   (cons (map-tail (lambda (b)
-                                    (list (car b) (walk-heads (cadr b) bound visit)))
+                                    (list (car b) (walk-heads* (cadr b) bound visit refs?)))
                                   bs)
-                        (map-tail (lambda (b) (walk-heads b inner visit))
+                        (map-tail (lambda (b) (walk-heads* b inner visit refs?))
                                   (cddr f))))))
          ;; (%loop name (param ...) (init ...) body ...): the label and
          ;; the parameters are bound in the body; the inits are not,
@@ -5766,9 +5873,9 @@
             (cons h
                   (cons (cadr f)
                         (cons (caddr f)
-                              (cons (map-tail (lambda (i) (walk-heads i bound visit))
+                              (cons (map-tail (lambda (i) (walk-heads* i bound visit refs?))
                                               (cadddr f))
-                                    (map-tail (lambda (b) (walk-heads b inner visit))
+                                    (map-tail (lambda (b) (walk-heads* b inner visit refs?))
                                               body)))))))
          ;; a define's target may be a dotted formals list, which is not
          ;; a form and must not be walked as one
@@ -5776,7 +5883,7 @@
           (let ((target (cadr f)))
             (cons h (cons target
                           (map-tail (lambda (b)
-                                      (walk-heads
+                                      (walk-heads*
                                        b
                                        (if (pair? target)
                                            (body-bound
@@ -5784,12 +5891,12 @@
                                             (append (binder-names (cdr target))
                                                     bound))
                                            bound)
-                                       visit))
+                                       visit refs?))
                                     (cddr f))))))
          (else
           (let ((head (if (symbol? h) (or (visit h bound) h) h)))
-            (cons (if (pair? h) (walk-heads h bound visit) head)
-                  (map-tail (lambda (a) (walk-heads a bound visit)) (cdr f)))))))))
+            (cons (if (pair? h) (walk-heads* h bound visit refs?) head)
+                  (map-tail (lambda (a) (walk-heads* a bound visit refs?)) (cdr f)))))))))
 
 (define (lower-intrinsics f bound)
   ;; the operation is the identifier's own lookup name, not a constant
@@ -5930,6 +6037,13 @@
                                                       'the-program))
                             (judge-scopes!)
                             *import-map*))
+         ;; Canonicalisation runs HERE: after the judgement, which has
+         ;; to read the spellings the program WROTE, and before every
+         ;; pass that keys on a symbol.  Resolving earlier erases the
+         ;; distinction the import rule draws -- a rename frees the
+         ;; original, and once the alias has been rewritten to it the
+         ;; legal program and the illegal one are the same text.
+         (expanded (canonicalise-prelude expanded pre-n))
          ;; top-level (export name ...): keep through DCE, expose as
          ;; wasm exports so the host can call them
          (export-names
