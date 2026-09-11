@@ -127,6 +127,15 @@ than re-verified item by item for this document.
   a dozen characters -- used to construct 10^999999 and never return,
   a denial of service reachable from any text a program reads or a user
   types. The magnitude is refused once its scale passes a bound.
+- Compiler, the import rule reaches procedures and macros: a program
+  that excludes a prelude procedure (`append`, `length`) and defines
+  its own gets its own at its own calls while the prelude keeps its;
+  two libraries exporting one spelling separate under a rename; a
+  library's own written reference to an excluded name keeps the
+  prelude's; a macro export is selected by the library it came from,
+  not its spelling; and `apply` is first-class through a rename or
+  prefix. References resolve to a per-binding key in one pass rather
+  than through generated aliases.
 - Compiler, syntax under the import rule: a `let` or `lambda` shadows a
   macro's name, so `(let ((d2 ...)) (d2 4))` calls the binding rather
   than expanding the macro; a renamed syntactic keyword and a renamed
@@ -256,22 +265,10 @@ than re-verified item by item for this document.
 
 ### KNOWN OPEN
 
-Seven defects are known, reproduced, and NOT fixed in this release. They
+Six defects are known, reproduced, and NOT fixed in this release. They
 are listed here because an unfixed defect that scrolls off a list is one
 nobody re-reads at the next decision.
 
-- **Excluding a prelude procedure's name does not yet let the program
-  define it.** `(import (except (rnrs) append))` followed by `(define
-  (append . xs) ...)` is still refused as defined twice, because the
-  prelude's own `append` and the program's would have to coexist at the
-  flat top level and the prelude's references be resolved to its own.
-  Primitives (`car`, `fl+`, ...) are excluded and redefined correctly;
-  procedures the prelude defines in Scheme are not yet, and a
-  `rename` of a library's export does not yet reach a variable export
-  or separate two libraries' exports of one spelling. Held red by
-  `c02-excluded-append-program-and-quasiquote`,
-  `defect-library-redefines-imported-name` and the rows of
-  `defect-prelude-procedure-excluded`.
 - **The import rule still gets five shapes wrong.** A name imported
   directly and through a library that re-exports it is refused as two
   bindings; `set!` of a parameter or an internal definition spelled
