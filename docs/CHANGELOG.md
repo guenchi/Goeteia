@@ -1,8 +1,8 @@
 # Changelog
 
-## Unreleased
+## 1.7.1 — 2026-09-12
 
-*185 commits.* Two new families of libraries -- `(gam …)` for the
+*285 commits.* Two new families of libraries -- `(gam …)` for the
 bookkeeping a game repeats and `(sim …)` for the machinery under it --
 and a real GLSL compiler behind page verification, which every shader
 defect this tree can produce used to pass.
@@ -245,6 +245,36 @@ than re-verified item by item for this document.
 - Compile cache: the key now covers all of `src/`, not a list of files
   the driver was known to read.
 
+- Quasiquote is one walker serving both expanders. Vector templates are
+  processed at last -- `` `#(1 ,x) `` was coming back holding the literal
+  unquote -- and with them, element-position unquote carrying zero or
+  many operands, in lists as well as vectors. The old list arm read only
+  the first operand of a multi-operand splice and dropped the rest, which
+  was quiet data loss rather than a visible unexpanded form. A quasiquote
+  inside a macro body reaches the transformer-level expander, which had
+  no splicing at all; the two are now one rule rather than two that
+  drifted.
+- A flonum written and read back is the number that was written. The
+  printer is exact rather than a twelve-digit walk, so printing is
+  idempotent and a golden sample refreshed from an older one is the
+  sample it replaced. Claims of byte-for-byte identity across hosts are
+  no longer claims about twelve decimal places.
+- `state-send!` raises for an event that cannot happen. The adjacency
+  shorthand emits `(on-unknown error)`, since every event it can express
+  is named after its destination and an unavailable one is therefore a
+  destination the caller named and cannot reach. A machine from a raw
+  spec still decides for itself, and `state-transition!` still reports
+  availability as a boolean.
+- Flonum specialisation stops reading a shadowed name as the thing it
+  shadows. A local shadowing an f64 parameter no longer puts an exact
+  value in an f64 slot, and a lexically bound head -- `fl+` rebound by a
+  let, a let*, a named let, an inner lambda or a parameter -- is declined
+  rather than taken for the primitive.
+- The reader implements R6RS lexical directives. `#!r6rs` and
+  `#!chezscheme` are consumed as atmosphere beside `#|` and `#;`, so they
+  may sit anywhere a comment may; an unknown directive raises rather than
+  being silently skipped.
+
 ### Tests and tooling
 
 - Page verification puts a page's shaders in front of a **real GLSL
@@ -274,91 +304,53 @@ than re-verified item by item for this document.
 
 Five defects are known, reproduced, and NOT fixed in this release. They
 are listed here because an unfixed defect that scrolls off a list is one
-nobody re-reads at the next decision.
+nobody re-reads at the next decision. Two of them are held red by cells;
+where no cell holds one, this says so, because a reader deciding what to
+trust cannot otherwise tell the two grades of evidence apart.
 
 - **Component libraries such as `(rnrs base)` are not implemented.**
-  Until now both compilers accepted `(import (rnrs base))` and quietly
-  handed back the whole of `(rnrs)`; an rnrs spec with anything after
-  the name is now refused by name. Implementing the components means
-  assigning every exported name to a component by hand, and nothing in
-  this tree imports one (zero files against 323 importing `(rnrs)`), so
-  a wrong assignment would go unnoticed. **Workaround**: import
-  `(rnrs)`.
-- **A morph target's POSITION accessor can declare a `max` below a
-  value the file stores.** The bounds are computed over the values as
-  given, and the file holds them as `f32`, so a value that rounds
-  upward on the way in lands outside the declared range. This is
-  invalid per the glTF specification, and a loader that culls on
-  accessor bounds will clip the target. It affects morph-target
-  positions only: a primitive's own POSITION bounds are read back out
-  of the stored `f32`. **No cell holds this red** -- it is known from
-  reading the writer, which is a weaker footing than the others, and a
-  reader deciding what to trust cannot tell the two grades of evidence
-  apart unless it is said which is which.
-  **Computing the bounds correctly is necessary and not sufficient**:
-  the declared value is written into JSON by the flonum printer, the
-  subject of its own entry here, and does not survive that round trip
-  either. The
-  two compose, and fixing this one alone would leave the accessor still
-  declaring a bound the file does not honour.
-- **`state-send!` is documented as raising for an event that cannot
-  happen, and does not.** Whether an unknown event raises is decided by
-  an `on-unknown` clause in the spec; `make-state-machine` emits no
-  such clause, and the default is to answer no actions and stay put. So
-  a caller that sends an event its own code chose gets silence and a
-  machine that did not move. The comment describes the intended
-  behaviour and the shorthand is what should change. Held red by
-  `defect-s01-send-is-quiet-about-impossible-events`.
-- **A flonum written and read back is not the number that was
-  written.** This is a property of the printer this release ships, not
-  a limit of the representation: it walks the fraction by repeated
-  multiplication by ten and stops after twelve digits, so the loss
-  begins at two significant figures and gets worse downward:
-
-  ```
-  0.12    prints as  0.119999999999   reads back as  0.119999999999, not 0.12
-  1e-11   prints as  0.000000000009   reads back as  9e-12, low by ten per cent
-  9e-12   prints as  0.000000000009   reads back as  9e-12, unchanged
-  5e-12   prints as  0.000000000004   reads back as  4e-12
-  2e-12   prints as  0.000000000001   reads back as  1e-12
-  1e-12   prints as  0.000000000000   reads back as  0
-  ```
-
-  The values in the right-hand column are exact, taken outside the
-  printer; printing them would show something else again, which is the
-  whole subject of this entry.
-
-  **There is no clean threshold, and looking for one is the mistake.**
-  Which values survive does not follow their size: 9e-12 comes back
-  unchanged while 1e-11, which is larger, comes back a tenth short; and
-  1e-12 collapses to zero while 2e-12, just above it, comes back as a
-  different non-zero number instead. Losing a value entirely and
-  shifting it to another are two views of one walk, not two ranges with
-  a line between them. The fate of any particular value belongs to the
-  cell rather than to this entry.
-
-  **Printing is not idempotent**, which is the part that spreads:
-  0.119999999999 reprints as 0.119999999998, so a golden sample
-  refreshed from an older golden sample is not the sample it replaced.
-  Not every value moves -- once one has collapsed to 9e-12 it reprints
-  unchanged -- and a rule that held for every value would be easier to
-  work around than one that holds for some. And this is the property much of the rest of the tree
-  leans on without saying so -- **any claim of byte-for-byte identity
-  across hosts in this release is a claim about twelve decimal places**,
-  since identity is checked by comparing printed output, and not even a
-  stable claim about those, since reprinting moves the value. Held red
-  on all three hosts by
-  `test/defect-n01-flonum-print-does-not-round-trip.ss`, whose
-  expectation was verified to be reachable under the host Scheme.
-  **A repaired printer that round-trips every double has been written
-  and measured, and is deliberately not in this release**, held out on
-  its cost at extreme exponents. So a reader who later finds this fixed
-  should not conclude the entry was wrong: it describes what ships
-  here.
-
-  **Workaround**: do not use printed output as the carrier for a value
-  that has to survive; compare flonums by tolerance rather than by
-  their text.
+  Both compilers used to accept `(import (rnrs base))` and quietly hand
+  back the whole of `(rnrs)`; an rnrs spec with anything after the name
+  is now refused by name. Implementing the components means assigning
+  every exported name to a component by hand, and nothing in this tree
+  imports one (zero files against 323 importing `(rnrs)`), so a wrong
+  assignment would go unnoticed. **Workaround**: import `(rnrs)`.
+- **A morph target's POSITION accessor can declare a `max` below a value
+  the file stores.** The bounds are computed over the values as given and
+  the file holds them as `f32`, so a value that rounds upward on the way
+  in lands outside the declared range -- `f32(0.1)` is `0.10000000149…`,
+  above the `0.1` the accessor would declare. This is invalid per the
+  glTF specification, and a loader that culls on accessor bounds will
+  clip the target. It affects morph-target positions only: a primitive's
+  own POSITION bounds are read back out of the stored `f32`. **No cell
+  holds this red** -- it is known from reading the writer and confirming
+  the rounding, which is a weaker footing than the others. Note that the
+  flonum printer no longer compounds it: the declared value now survives
+  the JSON round trip, so computing the bounds over the stored `f32` is
+  now sufficient rather than merely necessary.
+- **`#` is not a delimiter, so a token runs on through a block comment
+  that touches it.** Chez ends the symbol at the `#|` and reads `abc`;
+  this reader answers the symbol `abc#c#` -- a different symbol, silently,
+  with nothing refused. The same gap refuses `#!r6rs#|c|#`, where the
+  directive token absorbs the comment. It is not specific to directives.
+  A fix is not one line: R6RS uses `#` as a digit placeholder inside
+  numbers, so `2#|c|#3` is a single token, and adding `#` to the
+  delimiter set changes number lexing. Held red by
+  `test/defect-reader-hash-is-not-a-delimiter.ss`.
+- **After a dot, the reader skips only blanks.** It reaches neither the
+  atmosphere layer that consumes `#|` and `#;` nor the hash reader, so a
+  block comment between the tail datum and the close paren is counted as
+  a second item: `(1 . 2 #|c|#)` is refused where Chez answers `(1 . 2)`.
+  Held red by `test/defect-reader-dotted-tail-skips-only-blanks.ss`.
+- **The S-expression reader accepts fewer string escapes than a
+  conforming writer emits.** `rt/sexpr.mjs` and `(web sexpr)` take
+  `\n \t \r \" \\` and nothing else, so `\a \b \v \f`, `\x<hex>;` in a
+  string, and `\x<hex>;` in a symbol are all refused -- output a
+  standard writer produces cannot be read back. A form feed inside a
+  stored value is enough to make that value unreadable to a consumer,
+  with nothing reporting a problem. This is the read side being narrower
+  than the write side, which is backwards. **Workaround**: avoid those
+  escapes in values that have to survive a round trip.
 
 ## 1.7.0 — 2026-09-08
 
