@@ -29,16 +29,16 @@ function compileError(src) {
 }
 
 const rows = [
-    ['define, function form',        '(import (rnrs))\n(define (car x) 99)',                     /car is imported by \(rnrs\).*except \(rnrs\) car/],
-    ['define, value form',           '(import (rnrs))\n(define car (lambda (x) 99))',            /car is imported by \(rnrs\).*except \(rnrs\) car/],
-    ['define-syntax of a keyword',   '(import (rnrs))\n(define-syntax case (syntax-rules () ((_ x) x)))', /case is imported by \(rnrs\)/],
-    ['record whose name collides',   '(import (rnrs))\n(define-record-type vector (fields ref))', /is imported by \(rnrs\)/],
-    ['set! of an imported variable', '(import (rnrs))\n(set! car 5)',                            /car is imported by \(rnrs\).*except \(rnrs\) car/],
+    ['define, function form',        '(import (rnrs))\n(define (car x) 99)',                     /imported name may not be defined; exclude it with except: car/],
+    ['define, value form',           '(import (rnrs))\n(define car (lambda (x) 99))',            /imported name may not be defined; exclude it with except: car/],
+    ['define-syntax of a keyword',   '(import (rnrs))\n(define-syntax case (syntax-rules () ((_ x) x)))', /imported name may not be defined; exclude it with except: case/],
+    ['record whose name collides',   '(import (rnrs))\n(define-record-type vector (fields ref))', /imported name may not be defined; exclude it with except:/],
+    ['set! of an imported variable', '(import (rnrs))\n(set! car 5)',                            /imported name may not be assigned; exclude it with except: car/],
     ['two bindings under one name',  '(import (rnrs) (rename (rnrs) (cdr car)))\n(display 1)',   /two different bindings imported under one name/],
     ['a component library',          '(import (rnrs base))\n(display 1)',                        /component libraries of \(rnrs\) are not supported/],
     // a library body is judged against its own clause
-    ['a library defining a name it imports',  '(import (rnrs))\n(begin (library (o l) (export f) (import (rnrs)) (define (car x) 9) (define (f) 1)) (import (o l)))\n(display (f))', /car is imported by \(rnrs\)/],
-    ['a library assigning a name it imports', '(import (rnrs))\n(begin (library (o l) (export f) (import (rnrs)) (define (f) (set! car 5) 1)) (import (o l)))\n(display (f))',    /car is imported by \(rnrs\)/],
+    ['a library defining a name it imports',  '(import (rnrs))\n(begin (library (o l) (export f) (import (rnrs)) (define (car x) 9) (define (f) 1)) (import (o l)))\n(display (f))', /imported name may not be defined; exclude it with except: car/],
+    ['a library assigning a name it imports', '(import (rnrs))\n(begin (library (o l) (export f) (import (rnrs)) (define (f) (set! car 5) 1)) (import (o l)))\n(display (f))',    /imported name may not be assigned; exclude it with except: car/],
     ['a prefix import',                      '(import (prefix (rnrs) r:))\n(r:display 1)',                          /prefix/],
 ];
 

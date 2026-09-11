@@ -87,7 +87,7 @@
 ;; the body may import libraries in its own scope
 (define auto-section
   (conjure auto
-    (import (web js))
+    (import (rnrs) (web js))
     (display (if (js-truthy? (js-eval "1")) 1 0))))
 (define auto-id (section-id auto-section))
 (define auto-ok

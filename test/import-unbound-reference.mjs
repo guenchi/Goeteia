@@ -31,8 +31,8 @@ function compileError(src) {
 }
 
 const rows = [
-    ['a reference to an excluded name',   '(import (except (rnrs) car))\n(display (car (list 1)))',   /car is not bound/],
-    ['a reference outside an only list',  '(import (only (rnrs) display))\n(display (car (list 1)))', /car is not bound/],
+    ['a reference to an excluded name',   '(import (except (rnrs) car))\n(display (car (list 1)))',   /unbound variable: car/],
+    ['a reference outside an only list',  '(import (only (rnrs) display))\n(display (car (list 1)))', /unbound variable: car/],
 ];
 
 for (const [title, src, want] of rows) {
