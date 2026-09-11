@@ -5,5 +5,5 @@
   (export lib-section)
   (import (rnrs))
   (define-wasm-js lib-section
-    (import (web js))
+    (import (rnrs) (web js))
     (display (js->number (js-eval "7")))))

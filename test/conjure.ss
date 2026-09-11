@@ -112,7 +112,7 @@
   '(conjure js (import (mountlib)) (display lib-section)))
 (define quoted-long
   (quote (define-wasm-js quoted-section
-           (import (rnrs) (web js))
+           (import (web js))
            (display 1))))
 (define quoted-ok
   (and (equal? (caddr quoted-short) '(import (mountlib)))

@@ -425,6 +425,7 @@ for m in test/macro-toplevel-hygiene.mjs \
          test/import-refusals.mjs \
          test/import-unbound-reference.mjs \
          test/import-legal-programs.mjs \
+         test/embed-body-clause-inheritance.mjs \
          test/defect-b01-build-ignores-library-deps.mjs; do
     if $CAP ${NODE-node} --test "$m" >/dev/null 2>&1; then
         echo "ok   $m"
