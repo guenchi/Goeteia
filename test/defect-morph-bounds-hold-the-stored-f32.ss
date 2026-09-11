@@ -126,4 +126,43 @@
         (comp (+ c 1))))
     (vert (+ v 1))))
 
+
+;; THE SAME DEFECT, SECOND SITE.  $times-bounds does it too, and there
+;; the reasoning is written down: "The ordering is compared on the f32
+;; values because that is what the file will hold; the bounds stay as
+;; they were read, since they describe the same numbers the accessor
+;; describes."  The last clause is the defect.  They are not the same
+;; numbers -- the accessor holds the f32 and the bound holds the f64 --
+;; and the line above it already reaches for $as-f32 to compare the
+;; ordering, for exactly the reason that also applies to the bounds.
+;;
+;; A range needs different values than a single component does: the low
+;; end has to round DOWN and the high end UP, or the narrowed values
+;; land inside the written interval and nothing shows.  Keyframe times
+;; must also strictly increase, which 0.7 < 1.1 satisfies.
+;;   0.7 stored as f32 is 0.699999988079071, BELOW the written min
+;;   1.1 stored as f32 is 1.100000023841858, ABOVE the written max
+(define scratch (fx-alloc! 4))
+(define (as-f32 v) (%mem-f32-set! scratch v) (%mem-f32-ref scratch))
+(define nodes (list (list "root" -1 (vector 0.0 0.0 0.0) (vector 0.0 0.0 0.0 1.0) (vector 1.0 1.0 1.0))))
+(define loc3
+  (glb-write! (list (list layout vbase vcount ibase 3))
+              'nodes nodes
+              'anims (list (list "slide"
+                                 (list (list 0 'translation
+                                             (vector 0.7 1.1)
+                                             (vector (vector 0.0 0.0 0.0) (vector 2.0 0.0 0.0))
+                                             2 'linear))))))
+(define j3 (glb-json loc3))
+(define a3 (json-ref j3 "accessors"
+                     (json-ref j3 "animations" 0 "samplers" 0 "input")))
+(let ((mn3 (exact->inexact (vector-ref (json-ref a3 "min") 0)))
+      (mx3 (exact->inexact (vector-ref (json-ref a3 "max") 0))))
+  (when (fl<? (as-f32 0.7) mn3)
+    (want 'keyframe-time-below-the-written-min
+          (list 'stored (as-f32 0.7) 'min mn3) 'contained))
+  (when (fl<? mx3 (as-f32 1.1))
+    (want 'keyframe-time-above-the-written-max
+          (list 'stored (as-f32 1.1) 'max mx3) 'contained)))
+
 (display (if (null? fails) #t fails))
