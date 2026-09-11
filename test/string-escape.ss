@@ -1,5 +1,6 @@
 ;; expect: #t
 ;; string-literal escapes: \n \t \r become control chars; \" \\ literal
+(import (rnrs))
 (and (= (string-length "a\nb") 3)
      (= (char->integer (string-ref "a\nb" 1)) 10)
      (= (char->integer (string-ref "x\ty" 1)) 9)

@@ -1,4 +1,5 @@
 ;; expect: #t
+(import (rnrs))
 (define (sign n)
   (cond ((< n 0) 0)
         ((= n 0) 1)

@@ -1,6 +1,7 @@
 ;; expect: #t
 ;; named character literals read identically on both hosts; #\return
 ;; once silently read as #\r in the self-hosted reader
+(import (rnrs))
 (and (= (char->integer #\return) 13)
      (= (char->integer #\newline) 10)
      (= (char->integer #\tab) 9)

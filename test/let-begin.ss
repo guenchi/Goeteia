@@ -1,4 +1,5 @@
 ;; expect: 42
+(import (rnrs))
 (define (f a b)
   (begin
     (+ a b)

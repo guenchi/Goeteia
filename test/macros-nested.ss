@@ -1,4 +1,5 @@
 ;; expect: #t
+(import (rnrs))
 (define-syntax def-const
   (syntax-rules ()
     ((_ name val)

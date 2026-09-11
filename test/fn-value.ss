@@ -1,4 +1,5 @@
 ;; expect: 25
+(import (rnrs))
 (define (twice f x) (f (f x)))
 (define (inc n) (+ n 1))
 (+ (twice (lambda (n) (* n 3)) 2)

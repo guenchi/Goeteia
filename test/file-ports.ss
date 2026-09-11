@@ -1,4 +1,5 @@
 ;; expect: #t
+(import (rnrs))
 (define path "/tmp/goeteia-io-test.txt")
 (with-output-to-file path
   (lambda ()

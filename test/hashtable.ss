@@ -1,4 +1,5 @@
 ;; expect: #t
+(import (rnrs))
 (define ht (make-eq-hashtable))
 (hashtable-set! ht 'a 1)
 (hashtable-set! ht 'b 2)

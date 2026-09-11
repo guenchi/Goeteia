@@ -4,6 +4,7 @@
 ;; finally noticed, which for an unbalanced file is its very end.
 ;; Every expected line/column below is counted out by hand from the
 ;; input string beside it.
+(import (rnrs))
 (define (msg thunk)
   (guard (e ((error? e) (condition-message e)))
     (thunk)

@@ -1,4 +1,5 @@
 ;; expect: #t
+(import (rnrs))
 (define (fact n) (if (zero? n) 1 (* n (fact (- n 1)))))
 (and ;; exact division makes exact ratios
      (= (/ 7 2) 7/2)

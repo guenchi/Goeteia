@@ -16,6 +16,7 @@
 ;; near the fixnum cap and their output must not move.  Without them a
 ;; repair that reroutes everything through the new path would look
 ;; correct.
+(import (rnrs))
 (define (p x) (display x) (display "|"))
 (define inf (fl/ 1.0 0.0))
 (p 536870911.0)                       ; the last one that printed

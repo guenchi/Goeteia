@@ -1,4 +1,5 @@
 ;; expect: #t
+(import (rnrs))
 (and (char? #\a)
      (not (char? 65))
      (number? 65)

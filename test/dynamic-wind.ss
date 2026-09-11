@@ -1,4 +1,5 @@
 ;; expect: (b1 in1 a1 b2 pre a2 b3 in3 a3 42)
+(import (rnrs))
 (define log '())
 (define (note x) (set! log (cons x log)))
 ;; plain in/out

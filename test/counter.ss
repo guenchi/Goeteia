@@ -1,4 +1,5 @@
 ;; expect: 5
+(import (rnrs))
 (define (make-counter)
   (let ((n 0))
     (lambda ()

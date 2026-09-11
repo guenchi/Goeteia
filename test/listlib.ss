@@ -8,6 +8,7 @@
 ;; running" from "never returning".  So the cases below are the whole
 ;; report this file can give, and the run itself -- reaching the last
 ;; line at all -- is the other half of it.
+(import (rnrs))
 (define circ (let ((l (list 1))) (set-cdr! l l) l))
 (define circ2                          ; a longer cycle: the spine
   (let ((l (list 1 2 3)))              ; returns to its own head

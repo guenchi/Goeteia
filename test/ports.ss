@@ -1,4 +1,5 @@
 ;; expect: #t
+(import (rnrs))
 (define op (open-output-string))
 (display 'hello op)
 (display " " op)

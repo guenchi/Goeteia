@@ -1,4 +1,5 @@
 ;; expect: 10
+(import (rnrs))
 (define total 0)
 (define (add! n)
   (set! total (+ total n)))

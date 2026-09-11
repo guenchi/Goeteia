@@ -1,4 +1,5 @@
 ;; expect: #t
+(import (rnrs))
 (define z (make-rectangular 3 4))
 (and (complex? z)
      (not (real? z))

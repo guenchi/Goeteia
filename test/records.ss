@@ -1,4 +1,5 @@
 ;; expect: #t
+(import (rnrs))
 (define-record-type point (fields x (mutable y)))
 (define-record-type (box mk-box box?) (fields (mutable v box-val box-val!)))
 (define p (make-point 3 4))

@@ -1,4 +1,5 @@
 ;; expect: #t
+(import (rnrs))
 (and (= (string-length "hello") 5)
      (eq? (string-ref "abc" 1) #\b)
      (string=? "foo" "foo")

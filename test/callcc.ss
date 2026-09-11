@@ -1,4 +1,5 @@
 ;; expect: #t
+(import (rnrs))
 (define (product ls)
   (call/cc
    (lambda (break)

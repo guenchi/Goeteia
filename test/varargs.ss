@@ -1,4 +1,5 @@
 ;; expect: #t
+(import (rnrs))
 (define k (lambda x x))
 (define (f a . rest) (cons a rest))
 (define g (lambda (a b . r) (cons b (cons a r))))

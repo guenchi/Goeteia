@@ -1,4 +1,5 @@
 ;; expect: #t
+(import (rnrs))
 (let ((s (list->string '(#\h #\e #\y))))
   (and (string=? s "hey")
        (equal? (string->list "ab") '(#\a #\b))

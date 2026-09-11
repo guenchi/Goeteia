@@ -1,4 +1,5 @@
 ;; expect: #t
+(import (rnrs))
 (define v (make-vector 3 7))
 (vector-set! v 1 42)
 (and (vector? v)

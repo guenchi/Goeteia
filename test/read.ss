@@ -1,4 +1,5 @@
 ;; expect: #t
+(import (rnrs))
 (let ((x (read)))
   (and (equal? x '(1 (2 3) abc "str" #\a -45 #t (7 . 8)))
        ;; symbols built by read are eq? to compile-time literals

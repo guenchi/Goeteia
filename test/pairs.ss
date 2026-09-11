@@ -1,4 +1,5 @@
 ;; expect: #t
+(import (rnrs))
 (define (len ls)
   (if (null? ls) 0 (+ 1 (len (cdr ls)))))
 (let ((p (cons 1 (cons 2 '()))))

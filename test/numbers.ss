@@ -1,4 +1,5 @@
 ;; expect: #t
+(import (rnrs))
 (define (fact n) (if (zero? n) 1 (* n (fact (- n 1)))))
 (define f20 (fact 20))
 (and ;; bignum promotion and arithmetic

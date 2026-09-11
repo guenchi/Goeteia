@@ -1,4 +1,5 @@
 ;; expect: #t
+(import (rnrs))
 (define (add a b) (+ a b))
 (define (weird a . rest) (cons a rest))
 (and (eq? (apply add '(20 22)) 42)

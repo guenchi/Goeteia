@@ -1,4 +1,5 @@
 ;; expect: #t
+(import (rnrs))
 (and (string=? (substring "hello world" 6 11) "world")
      (string=? (string-copy "abc") "abc")
      (string=? (string-append) "")

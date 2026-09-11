@@ -1,4 +1,5 @@
 ;; expect: #t
+(import (rnrs))
 (define-syntax swap2
   (lambda (x)
     (syntax-case x ()

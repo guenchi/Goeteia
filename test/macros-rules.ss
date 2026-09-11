@@ -1,4 +1,5 @@
 ;; expect: #t
+(import (rnrs))
 (define-syntax my-when2
   (syntax-rules ()
     ((_ t e ...) (if t (begin e ...) #f))))

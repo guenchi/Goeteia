@@ -1,4 +1,5 @@
 ;; expect: #t
+(import (rnrs))
 (define log '())
 (define (note x) (set! log (cons x log)))
 (and ;; catch a raised value

@@ -1,4 +1,5 @@
 ;; expect: #t
+(import (rnrs))
 (define bv (make-bytevector 3 255))
 (bytevector-u8-set! bv 1 7)
 (and (bytevector? bv)

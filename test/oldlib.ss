@@ -1,4 +1,5 @@
 ;; expect: #t
+(import (rnrs))
 (and (let-values (((q r) (values 3 2))
                   ((x . more) (values 1 4 5)))
        (and (eq? (+ q (+ r x)) 6) (equal? more '(4 5))))

@@ -1,4 +1,5 @@
 ;; expect: #t
+(import (rnrs))
 (define (kindof x)
   (case x
     ((1 2 3) 'small)

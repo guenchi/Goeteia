@@ -1,4 +1,5 @@
 ;; expect: 120
+(import (rnrs))
 (define (fact n)
   (if (< n 1)
       1

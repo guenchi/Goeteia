@@ -1,4 +1,5 @@
 ;; expect: #t
+(import (rnrs))
 (define (div-mod a b)
   (values (quotient a b) (remainder a b)))
 (and (eq? (call-with-values (lambda () (values 1 2 3))
