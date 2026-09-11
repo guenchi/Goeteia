@@ -243,7 +243,7 @@ than re-verified item by item for this document.
 
 ### KNOWN OPEN
 
-Eight defects are known, reproduced, and NOT fixed in this release. They
+Nine defects are known, reproduced, and NOT fixed in this release. They
 are listed here because an unfixed defect that scrolls off a list is one
 nobody re-reads at the next decision.
 
@@ -269,6 +269,15 @@ nobody re-reads at the next decision.
   escapes the rule; and a program with no import clause at all is not
   judged. Each has a row in `defect-import-rule-holes`, red, beside two
   green twins for what the rule already refuses in the same family.
+- **A renamed syntactic keyword or library macro does not resolve, and
+  `syntax-rules` literals match by spelling.** `(import (rename (rnrs)
+  (if when-else)))` leaves `if` unbound and `when-else` unknown, and a
+  renamed library macro is "cannot call"; the import map is built after
+  expansion, where syntax has already been recognised. A literal such
+  as `else` matches a lexically shadowed `else` that R6RS says is a
+  different binding. Held red by `defect-renamed-syntax-and-literals`
+  beside three twins for what already holds. **Workaround**: do not
+  rename syntax; do not shadow a literal.
 - **`prefix` imports were never implemented and are now refused by
   name.** The compiler driver emitted aliases for `rename` only, so
   `(import (prefix (rnrs) r:))` silently meant `(import (rnrs))` with
