@@ -517,25 +517,29 @@
         ((quasiquote) (xpand-qq (cadr e) 0))
         ((define-record-type) (xpand-record e))
         ((import)
-         ;; resolved by the driver, but the CLAUSE is read here.  An
-         ;; inline library's (import (a)) sits inside the (begin ...)
-         ;; that defines the library, so it is not a top-level form and
-         ;; the driver never marked it -- the marker was a stopgap for
-         ;; the clause the driver dropped, not the design.  Read at
-         ;; program level it reaches the importing scope's map exactly
-         ;; as a top-level one does.
+         ;; Resolved by the driver, but the CLAUSE is read here, from
+         ;; the program's own text.  An inline library's (import (a))
+         ;; sits inside the (begin ...) that defines the library, so it
+         ;; is not a top-level form and no driver ever marked it; read
+         ;; at program level it reaches the importing scope's map
+         ;; exactly as a top-level one does.  That this arm already
+         ;; worked for the unmarked case is why the marker could go.
          (when *program-form?*
+           (set! *program-clause?* #t)
            (set! *import-specs* (append *import-specs* (cdr e))))
-         '(begin))
-        ;; (%imports spec ...) is the clause the driver kept; the
-        ;; specs are collected here and read after expansion, when
-        ;; every inline library has registered its exports
-        ((%imports)
-         (set! *import-specs* (append *import-specs* (cdr e)))
-         ;; everything expanded from here on is the program's own,
-         ;; until a library arm says otherwise
-         (set! *program-form?* #t)
-         '(begin))
+         ;; A rename needs the alias to exist, not merely to be in the
+         ;; map, and the aliases belong to the clause -- so the clause
+         ;; emits them, under the tag that says "spliced, and none of
+         ;; this is the program's own definition".  Both drivers used
+         ;; to emit them instead, which worked only because the old
+         ;; marker was placed AFTER them: they fell outside the
+         ;; program's forms by accident of position.  Once the boundary
+         ;; moved to where it belongs, the program was refused for
+         ;; defining the very name its own clause had just aliased.
+         (let ((aliases (rename-alias-defines (cdr e))))
+           (if (null? aliases)
+               '(begin)
+               (cons '%library-body aliases))))
         ((export) e)                   ; top-level export declaration
         ((library)
          ;; (library (name ...) (export ...) (import ...) body ...)
@@ -959,13 +963,28 @@
 ;; Without the tag a library's definitions are recorded as the
 ;; program's own, because at splice time they look exactly like them.
 (define (close-library-scope name import-clause body)
-  (let ((out (close-scope name body (imported-names import-clause))))
-    ;; the library's own clause, its own definitions, its own forms
+  ;; A library's clause is not expanded through the (import) arm -- it
+  ;; is read here, from the header -- so its renames emit their aliases
+  ;; here, ahead of the body that uses them.
+  (let* ((aliases (if (pair? import-clause)
+                      (rename-alias-defines (cdr import-clause))
+                      '()))
+         (out (close-scope name (append aliases body)
+                           (imported-names import-clause))))
+    ;; The library's own clause, its own definitions, its own forms --
+    ;; and the clause's aliases are none of those three.  An alias IS
+    ;; the import, so it is not a definition the library made; and its
+    ;; right-hand side names the original, which a rename FREES from
+    ;; the map, so judging it would refuse the clause for mentioning
+    ;; the very name it renamed.  They lead `out' because they were
+    ;; prepended, so the body is what follows them.
     (record-judgement-unit!
      (merge-import-bindings (if (pair? import-clause) (cdr import-clause) '()))
      (map (lambda (n) (list n 'define name))
-          (append (expanded-defined-names out) (scope-macro-names name)))
-     out
+          (append (expanded-defined-names
+                   (list-tail out (length aliases)))
+                  (scope-macro-names name)))
+     (list-tail out (length aliases))
      name)
     (cons '%library-body out)))
 
@@ -1971,6 +1990,9 @@
 ;; is a landing later: collecting and checking cannot happen at the
 ;; same moment because the map is not built until expansion is done.
 (define *program-form?* #f)
+;; whether the program wrote an import clause at all, which is a
+;; different question from whether the clause brought anything in
+(define *program-clause?* #f)
 (define *program-defines* '())
 (define *program-forms* '())
 
@@ -2045,6 +2067,22 @@
                    (cons (unmark x) (binding-origin (car e) (unmark x))))
                  (cdr e))
             '()))))))
+
+(define (rename-alias-defines specs)
+  (fold-left
+   (lambda (acc spec)
+     (if (and (pair? spec) (symbol? (car spec))
+              (eq? (unmark (car spec)) 'rename))
+         (fold-left
+          (lambda (a pr)
+            (if (and (pair? pr) (pair? (cdr pr)))
+                (cons (list 'define (cadr pr) (car pr)) a)
+                a))
+          acc
+          (cddr spec))
+         acc))
+   '()
+   specs))
 
 (define (import-spec-bindings spec)
   (let ((tag (and (pair? spec) (symbol? (car spec)) (unmark (car spec)))))
@@ -5591,6 +5629,7 @@
   (set! *import-specs* '())
   (set! *import-map* '())
   (set! *program-form?* #f)
+  (set! *program-clause?* #f)
   (set! *program-defines* '())
   (set! *program-forms* '())
   (set! *judgement-units* '())
@@ -5617,12 +5656,20 @@
          ;; on its own" was a sentence the code did not implement.  A
          ;; pass whose correctness is an ordering must say the ordering
          ;; where the reader can see it.
+         ;; The prelude's forms are not the program's and the
+         ;; program's are.  That boundary is right here, in the two
+         ;; calls below, and it is the only place it has ever been --
+         ;; the (%imports) marker used to announce it from the drivers,
+         ;; which meant a program with no clause got no announcement
+         ;; and was never judged at all.
+         (%program-form-off (set! *program-form?* #f))
          (expanded-prefix (if (> pre-n 0)
                               (close-scope *prelude-scope*
                                            (expand-forms (first-n forms pre-n)
                                                          (first-n locs pre-n))
                                            '())
                               '()))
+         (%program-form-on (set! *program-form?* #t))
          (expanded (if (> pre-n 0)
                        (append expanded-prefix
                                (expand-forms (list-tail forms pre-n)
@@ -5637,10 +5684,24 @@
          ;; import and the spelling that fixes it.
          (import-map (begin (set! *import-map*
                                   (merge-import-bindings *import-specs*))
-                            (record-judgement-unit! *import-map*
-                                                    *program-defines*
-                                                    *program-forms*
-                                                    'the-program)
+                            ;; A program that wrote no clause imports
+                            ;; nothing, and R6RS says a top-level
+                            ;; program begins with an import form -- so
+                            ;; the empty map is the right answer and
+                            ;; every reference in such a program should
+                            ;; be refused.  Turning that on is its own
+                            ;; commit: 49 of the tree's own cells are
+                            ;; written without a clause, and refusing
+                            ;; them in the same change that moved the
+                            ;; boundary would make a regression here
+                            ;; indistinguishable from a cell that
+                            ;; genuinely needed one.  Delete the guard
+                            ;; to turn the rule on.
+                            (when *program-clause?*
+                              (record-judgement-unit! *import-map*
+                                                      *program-defines*
+                                                      *program-forms*
+                                                      'the-program))
                             (judge-scopes!)
                             *import-map*))
          ;; top-level (export name ...): keep through DCE, expose as
@@ -5941,10 +6002,8 @@
 ;; written inside -- it is written in that program's text, and the
 ;; manual's examples are written that way.  Deciding it in the
 ;; compiler is what keeps the hosts in step: a body's meaning must
-;; not depend on where a driver's marker fell.  The drivers still
-;; REPORT whether a clause was written, as (%imports spec ...) in
-;; place of the text they resolved; they no longer decide what its
-;; absence means.
+;; not depend on where a driver's marker fell.  The drivers leave the
+;; body's clause exactly as it was written and decide nothing.
 ;;
 ;; An enclosing map that is itself empty is inherited as empty, which
 ;; is the same "unjudged" a clause-less top level gets -- inheriting
@@ -5954,7 +6013,7 @@
 (define (body-import-specs body)
   (cond ((not (pair? body)) #f)
         ((and (pair? (car body))
-              (memq (unmark (car (car body))) '(import %imports)))
+              (eq? (unmark (car (car body))) 'import))
          (cdr (car body)))
         (else (body-import-specs (cdr body)))))
 
@@ -5969,7 +6028,7 @@
       (set! *enclosing-import-specs* saved)
       (if (or own (null? saved))
           out
-          (cons (cons '%imports saved) out)))))
+          (cons (cons 'import saved) out)))))
 
 (define (embed-compile form)
   ;; the text-level driver's import resolution leaves (%loc ...)

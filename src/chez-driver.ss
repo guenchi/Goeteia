@@ -303,12 +303,14 @@
       (cadr spec)
       spec))
 (define (spec-aliases spec)
-  ;; rename introduces top-level aliases; only/except are advisory in
-  ;; the flat-splice model (dead code elimination prunes the unused)
-  (if (eq? (car spec) 'rename)
-      (map (lambda (pr) (cons "?:0" `(define ,(cadr pr) ,(car pr))))
-           (cddr spec))
-      '()))
+  ;; The compiler emits a rename's aliases now, from the clause it
+  ;; reads.  Emitting them here put them at top level where nothing
+  ;; said they came from the clause, so once the program/prelude
+  ;; boundary stopped depending on a marker's position they were read
+  ;; as the program defining a name its own clause had aliased.
+  ;; only/except are advisory in the flat-splice model (dead code
+  ;; elimination prunes the unused).
+  '())
 (define (load-specs specs dirs)
   ;; explicitly sequenced: the order load-library marks `visited`
   ;; must be the structural order, not the host's argument order
@@ -329,16 +331,21 @@
       (set! *opt-level* (cadr (cdar fs)))
       (loop (cdr fs) acc))
      ((and (pair? (cdar fs)) (eq? (car (cdar fs)) 'import))
-      ;; The clause itself survives as (%imports spec ...), placed
+      ;; The clause is left exactly as the program wrote it, placed
       ;; after the libraries it pulled in.  Inlining the libraries is
       ;; what the flat-splice model needs; knowing WHICH NAMES the
       ;; program asked for is what the import rule needs, and that
       ;; question cannot be answered from the spliced result -- a
       ;; library's definitions look the same however they got there.
+      ;;
+      ;; It used to be rewritten to (%imports spec ...), which made the
+      ;; drivers the authority on what a clause means and on whether
+      ;; one was written at all.  The compiler reads the program's own
+      ;; text now; the drivers resolve and splice, and decide nothing.
       (loop (cdr fs)
             (cons (cons (string-append file ":"
                                        (number->string (caar fs)))
-                        (cons '%imports (cdr (cdar fs))))
+                        (cdar fs))
                   (append (reverse (load-specs (cdr (cdar fs)) dirs))
                           acc))))
      (else
@@ -383,18 +390,17 @@
                      (cond
                       ((null? bs) (reverse acc))
                       ((and (pair? (car bs)) (eq? (car (car bs)) 'import))
-                       ;; The clause survives here too, as (%imports
-                       ;; spec ...).  An embed body is compiled as its
-                       ;; own program against its own clause, so it has
-                       ;; to carry one -- and rt/compile.mjs's embed
-                       ;; path already did, because it reuses the
-                       ;; top-level resolveImports.  This path is
-                       ;; separate and did not, which made the two
-                       ;; hosts judge the same body against different
-                       ;; maps: stage0 saw the host program's, stage1
-                       ;; the body's own.
+                       ;; The clause survives here too, verbatim.  An
+                       ;; embed body is compiled as its own program
+                       ;; against its own clause, so it has to carry
+                       ;; one -- and rt/compile.mjs's embed path
+                       ;; already did, because it reuses the top-level
+                       ;; resolveImports.  This path is separate and
+                       ;; did not, which made the two hosts judge the
+                       ;; same body against different maps: stage0 saw
+                       ;; the host program's, stage1 the body's own.
                        (loop (cdr bs)
-                             (cons (cons '%imports (cdr (car bs)))
+                             (cons (car bs)
                                    (append (reverse
                                             (map cdr (load-specs
                                                       (cdr (car bs)) dirs)))

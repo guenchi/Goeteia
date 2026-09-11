@@ -134,11 +134,13 @@ function specTarget(spec) {
     return ['only', 'except', 'rename', 'prefix'].includes(spec[0])
         ? spec[1] : spec;
 }
+// The compiler emits a rename's aliases now, from the clause it reads.
+// Emitting them here put them at top level where nothing said they came
+// from the clause, so once the program/prelude boundary stopped
+// depending on a marker's position they were read as the program
+// defining a name its own clause had aliased.
 function specAliases(spec) {
-    if (spec[0] !== 'rename') return '';
-    return spec.slice(2)
-        .map(pr => `(define ${pr[1]} ${pr[0]})`)
-        .join('\n');
+    return '';
 }
 
 function libraryImports(text) {
@@ -306,9 +308,6 @@ function resolveEmbedImports(text, dirs, file) {
 
 // a parsed spec back to source text, so the marker carries exactly
 // what was written
-function writeSpec(spec) {
-    return Array.isArray(spec) ? '(' + spec.map(writeSpec).join(' ') + ')' : String(spec);
-}
 
 function resolveImports(text, dirs, visited = new Set(), file = 'input') {
     // replace top-level (import ...) spans with the inlined
@@ -326,10 +325,13 @@ function resolveImports(text, dirs, visited = new Set(), file = 'input') {
                                          inline)
                              + '\n' + specAliases(spec))
                 .join('\n');
-            // the clause itself, after the libraries it pulled in: the
-            // spliced result cannot say which names the program asked
-            // for, and that is what the import rule reads
-            result += '\n(%imports ' + specs.map(writeSpec).join(' ') + ')\n';
+            // the clause itself, after the libraries it pulled in,
+            // exactly as the program wrote it: the spliced result
+            // cannot say which names the program asked for, and that
+            // is what the import rule reads.  Rewriting it to a marker
+            // made this driver the authority on what a clause means;
+            // the compiler reads the program's own text now.
+            result += '\n' + form + '\n';
             result += locMark(file, lineAt(text, end));
             at = end;
         }
