@@ -253,9 +253,12 @@ nobody re-reads at the next decision.
   prelude's own `append` and the program's would have to coexist at the
   flat top level and the prelude's references be resolved to its own.
   Primitives (`car`, `fl+`, ...) are excluded and redefined correctly;
-  procedures the prelude defines in Scheme are not yet. Held red by
-  `c02-excluded-append-program-and-quasiquote` and
-  `defect-library-redefines-imported-name`.
+  procedures the prelude defines in Scheme are not yet, and a
+  `rename` of a library's export does not yet reach a variable export
+  or separate two libraries' exports of one spelling. Held red by
+  `c02-excluded-append-program-and-quasiquote`,
+  `defect-library-redefines-imported-name` and the rows of
+  `defect-prelude-procedure-excluded`.
 - **The import rule still gets five shapes wrong.** A name imported
   directly and through a library that re-exports it is refused as two
   bindings; `set!` of a parameter or an internal definition spelled
