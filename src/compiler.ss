@@ -4421,8 +4421,29 @@
                (fl-expr-in? (cadddr e) f64names)))))
    (else #f)))
 
-;; collect operator-position calls (name . arglist) in e; a name that
-;; appears anywhere else (a value use) is added to escaped
+;; The binders introduced BELOW the enclosing function's parameters.
+;;
+;; spec-scan is seeded with the parameters themselves as bound0, so the
+;; bound set always contains them -- subtracting all of it from
+;; f64names emptied that set at EVERY call, shadow or no shadow, and
+;; destroyed ordinary parameter forwarding: (zq a (fl+ b 1.0)) with no
+;; shadowing anywhere went from (zq #t #t) to (zq #f #t).  Neither the
+;; suite nor the c02 product battery caught it, because every call in
+;; them passes a flonum EXPRESSION, and fl-expr-in? judges those by
+;; head without consulting the name set at all.
+;;
+;; bound0 is a shared tail of every bound list built from it, so the
+;; inner binders are exactly the prefix in front of that tail.  It is
+;; eq? on the tail rather than a set difference against the parameter
+;; names, because a local that genuinely shadows a parameter HAS that
+;; parameter's spelling and has to survive.
+(define (inner-binders bound base)
+  (cond ((eq? bound base) '())
+        ((not (pair? bound)) '())
+        (else (cons (car bound) (inner-binders (cdr bound) base)))))
+
+;; collect operator-position calls (name inner-binders . arglist) in e;
+;; a name that appears anywhere else (a value use) is added to escaped
 (define (spec-scan e cand escaped calls bound0)
   ;; cand: names that are specialization candidates; mutating the
   ;; escaped hashtable and returning the call list
@@ -4547,12 +4568,12 @@
                  ((pair? es) (push (cdr es) (cons (cons (car es) bound) st)))
                  ((null? es)
                   (walk st (if called
-                               (cons (cons rop (cdr x)) calls)
+                               (cons (cons rop (cons (inner-binders bound bound0) (cdr x))) calls)
                                calls)))
                  (else
                   (walk (cons (cons es bound) st)
                         (if called
-                            (cons (cons rop (cdr x)) calls)
+                            (cons (cons rop (cons (inner-binders bound bound0) (cdr x))) calls)
                             calls))))))))))))
 
 ;; the arithmetic helpers codegen calls by index (arith2's slow
@@ -4682,13 +4703,30 @@
                 (lambda (call)
                   (let ((tv (hashtable-ref spec (car call) #f)))
                     (when tv
-                      (let arg ((as (cdr call)) (i 0))
-                        (when (and (pair? as) (< i (vector-length tv)))
-                          (when (and (vector-ref tv i)
-                                     (not (fl-expr-in? (car as) f64names)))
-                            (vector-set! tv i #f)
-                            (set! changed #t))
-                          (arg (cdr as) (+ i 1)))))))
+                      ;; The names lexically bound AT THE CALL are
+                      ;; locals, whatever the enclosing function's own
+                      ;; formals are called.  Without this subtraction,
+                      ;; (let ((a 5)) ... (f a ...)) inside a function
+                      ;; whose parameter is an f64 `a' reads that
+                      ;; argument as the parameter, declines to demote,
+                      ;; and puts the let's exact 5 into an f64 slot --
+                      ;; an illegal cast at run time.  spec-scan already
+                      ;; carried the set; only the call record threw it
+                      ;; away.
+                      (let* ((shadowed (cadr call))
+                             (names (if (null? shadowed)
+                                        f64names
+                                        (filter
+                                         (lambda (nm)
+                                           (not (memq nm shadowed)))
+                                         f64names))))
+                        (let arg ((as (cddr call)) (i 0))
+                          (when (and (pair? as) (< i (vector-length tv)))
+                            (when (and (vector-ref tv i)
+                                       (not (fl-expr-in? (car as) names)))
+                              (vector-set! tv i #f)
+                              (set! changed #t))
+                            (arg (cdr as) (+ i 1))))))))
                 (cdr ctx))))
            call-ctxs)
           (when changed (loop))))
