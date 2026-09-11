@@ -23,12 +23,12 @@ async function probe(name, source) {
 
 try {
     assert.equal(await probe('eval-probe',
-        '(import (web js))\n' +
+        '(import (rnrs) (web js))\n' +
         '(display (if (js-truthy? (js-eval ' +
         '"typeof WebAssembly.Suspending === \'function\'")) 1 0))\n'),
         '0', 'eval probe must not see JSPI');
     assert.equal(await probe('get-probe',
-        '(import (web js))\n' +
+        '(import (rnrs) (web js))\n' +
         '(display (if (js-truthy? (js-get (js-get (js-global) ' +
         '"WebAssembly") "Suspending")) 1 0))\n'),
         '0', 'js-get probe must not see JSPI');
