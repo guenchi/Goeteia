@@ -114,6 +114,15 @@ than re-verified item by item for this document.
   escape helper) stays listed out of specialisation by name, and dead
   code elimination still keeps such a function alive, which is its own
   open entry below.
+- Compiler, import discipline, the reference half: a reference to a
+  name the import clause does not bring in is an unbound-variable
+  error at compile time, judged per scope -- the program against its
+  clause, each library body against its own -- with the message naming
+  the scope. `except` and `only` now constrain what may be referenced,
+  not only what may be defined. Five cells in this tree used names they
+  had never imported and were seeing through the flat splice; they
+  import them now. Turning the check on took five passes over the whole
+  suite, and the compiler's comment at the check records the count.
 - Compiler, import discipline: a program that imports `(rnrs)` may
   no longer define a name the import brings in -- either `define`
   spelling, `define-syntax`, or the names a record definition
@@ -234,15 +243,12 @@ nobody re-reads at the next decision.
   procedures the prelude defines in Scheme are not yet. Held red by
   `c02-excluded-append-program-and-quasiquote` and
   `defect-library-redefines-imported-name`.
-- **A reference to a name the import clause does not bring in is not
-  an error.** `(import (except (rnrs) car))` followed by `(car (list
-  1))` compiles and calls the primitive; R6RS says the reference is
-  unbound. The definition half of the rule is in (see Fixed); the
-  reference half was implemented once, turned 179 cells red for five
-  distinct reasons -- among them that a library written inside a
-  `begin` never gets its import clause into the importing scope -- and
-  was withdrawn to be designed first. Held red by
-  `defect-unbound-reference-not-checked`.
+- **A library written at top level of a program cannot be imported by
+  that program.** `(import (t one))` at top level is resolved against
+  library files and reports the library not found, and moving the
+  library and the import into a `begin` loses the private namespacing
+  of its record names. The flat splice never needed the import; the
+  reference rule now requires it. Held red by `library-implicit-record`.
 - **`prefix` imports were never implemented and are now refused by
   name.** The compiler driver emitted aliases for `rename` only, so
   `(import (prefix (rnrs) r:))` silently meant `(import (rnrs))` with
