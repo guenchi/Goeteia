@@ -830,6 +830,23 @@
 
 ;; The names a library body defines, so scope-binds? can tell a library
 ;; that means the primitive from one that binds the name itself.
+;; The macros a library body defines, a define-syntax inside a
+;; (begin ...) included.  begin splices, so such a macro is a
+;; definition of the library exactly as one written directly in the
+;; body is; reading only the body's top level left it out of the
+;; library's definition list, and the rule that refuses redefining an
+;; imported name never saw it.
+(define (body-macro-names body)
+  (let loop ((fs body) (acc '()))
+    (cond
+     ((not (pair? fs)) acc)
+     ((macro-def? (car fs))
+      (loop (cdr fs) (cons (unmark (cadr (car fs))) acc)))
+     ((and (pair? (car fs)) (symbol? (car (car fs)))
+           (eq? (unmark (car (car fs))) 'begin))
+      (loop (cdr fs) (loop (cdr (car fs)) acc)))
+     (else (loop (cdr fs) acc)))))
+
 (define (library-defined-names body)
   (let loop ((fs body) (acc '()))
     (cond
@@ -1031,17 +1048,12 @@
                  (cons (cons (lib-name-string name)
                              (library-export-names f))
                        *lib-exports*)))
+         (record-lib-origin! name f body)
          (set! *scope-defines*
                (cons (cons name (library-defined-names body)) *scope-defines*))
          (set! *collecting-scope* name)
          (set! *scope-macro-names*
-               (cons (cons name
-                           (let loop ((fs body) (acc '()))
-                             (cond ((not (pair? fs)) acc)
-                                   ((macro-def? (car fs))
-                                    (loop (cdr fs)
-                                          (cons (unmark (cadr (car fs))) acc)))
-                                   (else (loop (cdr fs) acc)))))
+               (cons (cons name (body-macro-names body))
                      *scope-macro-names*))
          (for-each collect-macros! body)
          (set! *collecting-scope* saved)))
@@ -1967,6 +1979,54 @@
     (set! *program-defines*
           (cons (list (unmark name) kind loc) *program-defines*))))
 
+;; What a library exports is not always what it defines.  A name it
+;; re-exports is the SAME binding as the one it imported, and identity
+;; is exactly what the two-bindings-under-one-name rule compares -- so
+;; giving a re-export the re-exporting library's own name made
+;; importing both the origin and the re-exporter look like a collision
+;; between two different bindings.  Tracing an export the library does
+;; not define back through the library's own clause is what makes the
+;; two agree.
+(define *lib-origins* '())
+(define *origin-seen* '())
+
+(define (record-lib-origin! name f body)
+  (let ((k (lib-name-string name)))
+    (unless (assoc k *lib-origins*)
+      (set! *lib-origins*
+            (cons (list k
+                        (append (library-defined-names body)
+                                (body-macro-names body))
+                        (if (and (pair? (cdddr f)) (pair? (cadddr f))
+                                 (symbol? (car (cadddr f)))
+                                 (eq? (unmark (car (cadddr f))) 'import))
+                            (cdr (cadddr f))
+                            '()))
+                  *lib-origins*)))))
+
+;; A library that names itself somewhere up its own import chain would
+;; otherwise be followed forever, so a library already on the chain
+;; answers for the name itself.
+(define (binding-origin lib name)
+  (let ((e (assoc lib *lib-origins*)))
+    (cond
+     ((not e) (cons lib name))
+     ((memq name (cadr e)) (cons lib name))
+     ((member lib *origin-seen*) (cons lib name))
+     (else
+      (let ((saved *origin-seen*))
+        (set! *origin-seen* (cons lib *origin-seen*))
+        (let scan ((specs (caddr e)))
+          (cond
+           ((not (pair? specs))
+            (set! *origin-seen* saved)
+            (cons lib name))
+           (else
+            (let ((b (assq name (import-spec-bindings (car specs)))))
+              (cond
+               (b (set! *origin-seen* saved) (cdr b))
+               (else (scan (cdr specs))))))))))))) 
+
 (define (import-binding-set target)
   (let ((n (map unmark target)))
     (cond
@@ -1981,7 +2041,8 @@
      (else
       (let ((e (assoc (lib-name-string target) *lib-exports*)))
         (if e
-            (map (lambda (x) (cons (unmark x) (cons (car e) (unmark x))))
+            (map (lambda (x)
+                   (cons (unmark x) (binding-origin (car e) (unmark x))))
                  (cdr e))
             '()))))))
 
@@ -2151,25 +2212,46 @@
     quasiquote quote set! syntax-rules unless unquote
     unquote-splicing when =>))
 
+;; A token a macro's template introduced is judged where the template
+;; was WRITTEN, not where it was used: a library whose clause excludes
+;; car may not write car in a template and have it resolve in the
+;; caller's scope.  Exempting every introduced token, as this did, let
+;; a library reach past its own clause through a macro.
+;;
+;; A scope with no recorded unit stays exempt -- the prelude's
+;; introductions and the compiler's own have no clause to be judged
+;; against, and inventing one for them would refuse the expander's own
+;; output.
+(define *scope-maps* '())
+
+(define (intro-token-answer ic)
+  (let ((e (assoc (cdr ic) *scope-maps*)))
+    (or (not e)
+        (bound-in-scope? (car ic) (cadr e) (caddr e)))))
+
+;; The scope's own answer, with no appeal to the scope the form is
+;; being read in.  Kept apart from reference-bound? because an
+;; introduced token's verdict has to be FINAL: folding it in as one
+;; disjunct meant a token its own scope refused fell through to the
+;; caller's map and was accepted there, which is the whole of what
+;; this rule is meant to stop.
+(define (bound-in-scope? n map defined)
+  (or (memq n $core-syntax)
+      (assq n map)
+      (memq n defined)
+      (and (memq n primitives) (not (memq n $rnrs-exports)))
+      (and (scope-binds? *prelude-scope* n)
+           (not (memq n $rnrs-exports)))))
+
 (define (reference-bound? r map defined bound)
   (or (not (symbol? r))
       (memq r bound)
-      (intro-context r)
-      (let ((n (unmark r)))
-        (or (memq n $core-syntax)
-            (assq n map)
-            (memq n defined)
-            (and (memq n primitives) (not (memq n $rnrs-exports)))
-            ;; The prelude's implementation scope.  Its dollar- and
-            ;; percent-prefixed internals are exported by nothing and
-            ;; brought in by no clause, yet a library that uses one --
-            ;; $trig-pi, say -- is using the implementation, not a name
-            ;; the program could have meant.  The same allowance as the
-            ;; implementation's primitives, and the same refusal to
-            ;; define one.  This DOES make the convention load-bearing,
-            ;; for the prelude's own internals and nothing else.
-            (and (scope-binds? *prelude-scope* n)
-                 (not (memq n $rnrs-exports)))))))
+      ;; One answer, not a chain of chances: an introduced token is
+      ;; judged in the scope that wrote it and that verdict stands.
+      (let ((ic (intro-context r)))
+        (if ic
+            (intro-token-answer ic)
+            (bound-in-scope? (unmark r) map defined)))))
 
 (define (check-references! form bound map defined where)
   (cond
@@ -2195,6 +2277,22 @@
    ((eq? (resolve-tag (car form)) 'quote) #f)
    ;; (export name ...) declares, it does not reference
    ((eq? (resolve-tag (car form)) 'export) #f)
+   ;; Assigning an imported variable is refused here rather than in a
+   ;; walker of its own.  The old one kept its own lexical accounting
+   ;; and knew only lambda and let, so a parameter, an internal
+   ;; definition or a case-lambda formal spelled like an imported name
+   ;; was read as the import itself and the program was refused for
+   ;; assigning its own binding.  There is one walker now, and the
+   ;; accounting it already does is the accounting this rule needs.
+   ((and (eq? (resolve-tag (car form)) 'set!)
+         (pair? (cdr form)) (symbol? (cadr form)))
+    (unless (memq (cadr form) bound)
+      (let ((b (assq (unmark (cadr form)) *assignment-map*)))
+        (when b
+          (errorf 'goeteia
+                  "imported name may not be assigned; exclude it with except:"
+                  (unmark (cadr form)) (car (cdr b))))))
+    (walk-refs (cdr form) bound map defined where))
    ((and (eq? (resolve-tag (car form)) 'lambda) (pair? (cdr form)))
     (walk-refs (cddr form)
                (body-bound (cddr form)
@@ -2260,10 +2358,14 @@
 (define (judge-one-form! f map defined who)
   ($with-loc (judge-loc f)
              (lambda ()
-               (refuse-imported-assignment! f '())
                (check-references! f '() map defined who))))
 
 (define (judge-scopes!)
+  ;; every scope's map, so a token introduced by one scope's macro can
+  ;; be judged in that scope while another scope's forms are being read
+  (set! *scope-maps*
+        (map (lambda (u) (list (cadddr u) (car u) (map car (cadr u))))
+             *judgement-units*))
   (for-each (lambda (u)
               (refuse-imported-definitions! (car u) (cadr u))
               (set! *assignment-map* (car u))
@@ -5332,6 +5434,7 @@
         ;; turns the library into a begin and the clause is gone.
         (set! *lib-exports*
               (cons (cons (lib-name-string (cadr f)) exports) *lib-exports*))
+        (record-lib-origin! (cadr f) f body)
         (if (null? table)
             f
             (cons (car f)
@@ -5480,6 +5583,8 @@
   (set! *collecting-scope* #f)
   (set! *form-locs* '())
   (set! *lib-exports* '())
+  (set! *lib-origins* '())
+  (set! *origin-seen* '())
   (set! *import-specs* '())
   (set! *import-map* '())
   (set! *program-form?* #f)
