@@ -1532,7 +1532,50 @@
     (cond
      ((= c 124) (%next-byte) (%skip-block-comment 1) #t)
      ((= c 59) (%next-byte) (%skip-datum) #t)
+     ;; A lexical directive is atmosphere, like the two comment forms
+     ;; above: it names the dialect and denotes no value.  It belongs
+     ;; here rather than in %read-hash because all three callers of
+     ;; this procedure simply carry on afterwards, which is what makes
+     ;; "(1 #!r6rs)" and a directive at end of input work.  A version
+     ;; that read the FOLLOWING datum instead would have to find one,
+     ;; and at the end of a list or of a file there is none.
+     ((= c 33) (%next-byte) (%skip-directive) #t)
      (else #f))))
+
+;; The directives this implementation knows.  R6RS defines #!r6rs.
+;; #!chezscheme is accepted because stage0 reads sources with CHEZ's
+;; reader, which accepts it; a directive the two readers disagreed
+;; about would compile on stage0 and fail on stage1, and that stage
+;; divergence is the defect this branch exists to remove.  No source
+;; in this tree carries it today.  Adding a directive is adding a name
+;; to this list: what is accepted and what the diagnostic offers are
+;; both read from it, so the two cannot come to disagree.
+(define %lexical-directives '("r6rs" "chezscheme"))
+
+(define (%known-directive? name ds)
+  (cond ((null? ds) #f)
+        ((string=? name (car ds)) #t)
+        (else (%known-directive? name (cdr ds)))))
+
+(define (%directive-names ds)
+  (cond ((null? ds) "")
+        ((null? (cdr ds)) (string-append "#!" (car ds)))
+        (else (string-append "#!" (car ds) " " (%directive-names (cdr ds))))))
+
+;; An unknown directive RAISES rather than being skipped.  A branch that
+;; consumed whatever followed #! would take #!r6r5 for #!r6rs, and a
+;; misspelling that reads as "no directive at all" is the failure this
+;; branch exists to prevent -- the file would compile and the thing the
+;; author asked for would simply not be in effect.  "#!" with nothing
+;; after it arrives here with an empty name and is refused the same way.
+(define (%skip-directive)
+  (let ((name (%bytes->string (%read-token '()))))
+    (unless (%known-directive? name %lexical-directives)
+      (errorf 'read
+              (string-append "unrecognised lexical directive: #!" name
+                             " at " (%at-line $reader-line $reader-column)
+                             " (this implementation knows "
+                             (%directive-names %lexical-directives) ")")))))
 
 (define (%skip-block-comment depth)
   (let ((b (%next-byte)))
