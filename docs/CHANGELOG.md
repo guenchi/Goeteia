@@ -123,8 +123,10 @@ than re-verified item by item for this document.
   had never imported and were seeing through the flat splice; they
   import them now. An embed body (`conjure`, `define-wasm-js` and the
   rest) with an import clause is governed by that clause alone; one
-  without a clause inherits the enclosing program's imports, where it
-  used to be judged by nothing. Turning the check on took five passes
+  without a clause inherits the enclosing program's clause, where it
+  used to be judged by nothing -- and only as far as the embed unit
+  carries the libraries, which is `(rnrs)` today: a body that needs
+  `(web js)` names it in its own clause. Turning the check on took five passes
   over the whole suite, and the compiler's comment at the check records
   the count.
 - Compiler, import discipline: a program that imports `(rnrs)` may
