@@ -4400,7 +4400,20 @@
 ;; fl-expr? with an explicit f64-name set (analysis time -- no slots
 ;; exist yet); a call result is never a flonum expression here, since
 ;; specialization keeps results boxed
-(define (fl-expr-in? e f64names)
+;; `bound' is the lexical scope at the point of use, and it is a
+;; SEPARATE question from f64names: that one says which names hold
+;; flonums, this one says which spellings are not what they look like.
+;; A locally rebound fl+ is not the primitive, so (fl+ 1.0 2.0) under
+;; (let ((fl+ (lambda (x y) 5))) ...) is the exact 5 -- and reading it
+;; as a flonum expression specialised a parameter to f64 and put that 5
+;; in the slot.  The parameter fix's monotonicity argument does not
+;; reach this: it shows the subtraction introduces no unsound typing,
+;; not that a SURVIVING classification is sound, and this was a
+;; surviving one.
+;;
+;; The scope rides through the `if' recursion because an if binds
+;; nothing -- its branches are in the same scope the call is.
+(define (fl-expr-in? e f64names bound)
   (cond
    ((and (number? e) (flonum? e)) #t)
    ((symbol? e) (and (memq e f64names) #t))
@@ -4408,6 +4421,9 @@
     (let* ((h (car e))
            (rop (head-op h)))
       (or (and rop (memq rop fl-direct-ops)
+               ;; a head the program bound is the program's, whatever it
+               ;; is spelled
+               (not (memq h bound))
                ;; changed for consistency with the other six guards.
                ;; HYPOTHESIS, not a reading: no cell can observe this one,
                ;; because a wrong "yes" here costs an f64 slot rather than a
@@ -4417,8 +4433,8 @@
                (let ((a (assq rop prim-arity)))
                  (and a (= (length (cdr e)) (cdr a)))))
           (and (eq? (resolve-tag h) 'if) (= (length e) 4)
-               (fl-expr-in? (caddr e) f64names)
-               (fl-expr-in? (cadddr e) f64names)))))
+               (fl-expr-in? (caddr e) f64names bound)
+               (fl-expr-in? (cadddr e) f64names bound)))))
    (else #f)))
 
 ;; The binders introduced BELOW the enclosing function's parameters.
@@ -4649,7 +4665,17 @@
                      ;; top-level function of the same name
                      (calls (spec-scan (cons 'begin (cddr d))
                                        cand escaped '() params)))
-                (cons (cons (and (memq name cand) name) calls) acc)))
+                ;; The enclosing function's NAME, whether or not it is a
+                ;; specialisation candidate.  It used to be recorded only
+                ;; for candidates, which left hparams empty for every
+                ;; other function -- and hparams is half the lexical
+                ;; scope the operator-position check needs, so a
+                ;; primitive shadowed by a parameter of a NON-candidate
+                ;; (a variadic one, say) was still read as the
+                ;; primitive.  The hv lookup below already answers #f
+                ;; for a non-candidate, so f64names stays empty for
+                ;; them exactly as before; only the scope is recovered.
+                (cons (cons name calls) acc)))
             (list (cons #f (spec-scan (cons 'begin main-steps)
                                       cand escaped '() '())))
             fn-defs)))
@@ -4713,7 +4739,12 @@
                       ;; an illegal cast at run time.  spec-scan already
                       ;; carried the set; only the call record threw it
                       ;; away.
+                      ;; the FULL lexical scope at the call: the inner
+                      ;; binders the record carries, plus the enclosing
+                      ;; function's own parameters, which can shadow a
+                      ;; primitive's spelling as readily as a let can
                       (let* ((shadowed (cadr call))
+                             (call-bound (append shadowed hparams))
                              (names (if (null? shadowed)
                                         f64names
                                         (filter
@@ -4723,7 +4754,8 @@
                         (let arg ((as (cddr call)) (i 0))
                           (when (and (pair? as) (< i (vector-length tv)))
                             (when (and (vector-ref tv i)
-                                       (not (fl-expr-in? (car as) names)))
+                                       (not (fl-expr-in? (car as) names
+                                                       call-bound)))
                               (vector-set! tv i #f)
                               (set! changed #t))
                             (arg (cdr as) (+ i 1))))))))

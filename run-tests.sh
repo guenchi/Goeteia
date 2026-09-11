@@ -414,6 +414,8 @@ for m in test/macro-toplevel-hygiene.mjs \
          test/c02-product-trampoline.mjs \
          test/c02-product-float-emission.mjs \
          test/c02-product-int-emission.mjs \
+         test/spec-product-unshadowed-forwarding.mjs \
+         test/spec-product-unshadowed-operator-position.mjs \
          test/defect-spec-candidate-by-name.mjs \
          test/defect-dce-binder-counts-as-reference.mjs \
          test/defect-spec-prelude-binder-collides-with-user-name.mjs \
