@@ -2243,8 +2243,22 @@
 ;; expansion, outside the dynamic extent that used to supply it, so
 ;; without this the position is simply absent -- which six subtests of
 ;; test/reader-diagnostics.mjs read as "this host prints no at-line".
+;; The old path reported from compile-toplevel-fn, whose loc carries
+;; the enclosing DEFINITION'S name -- library forms splice, so their
+;; defines all share the library's line and only the name narrows it.
+;; A bare line is therefore a different diagnostic, not a shorter one,
+;; and the cell compares the shape across hosts.
+(define (judge-loc f)
+  (let ((l (form-loc f)))
+    (and l
+         (if (and (pair? f) (pair? (cdr f))
+                  (eq? (unmark (car f)) 'define))
+             (string-append l " (" (symbol->string
+                                    (unmark (def-name f))) ")")
+             l))))
+
 (define (judge-one-form! f map defined who)
-  ($with-loc (form-loc f)
+  ($with-loc (judge-loc f)
              (lambda ()
                (refuse-imported-assignment! f '())
                (check-references! f '() map defined who))))
@@ -5813,6 +5827,42 @@
                            (part (substring s i end)))
                       (chunk end (cons part acc)))))))))
 
+;; A body's import map is decided HERE, from the body's own text: a
+;; body that writes a clause is governed by that clause alone, and a
+;; body that writes none inherits the map of the program it is
+;; written inside -- it is written in that program's text, and the
+;; manual's examples are written that way.  Deciding it in the
+;; compiler is what keeps the hosts in step: a body's meaning must
+;; not depend on where a driver's marker fell.  The drivers still
+;; REPORT whether a clause was written, as (%imports spec ...) in
+;; place of the text they resolved; they no longer decide what its
+;; absence means.
+;;
+;; An enclosing map that is itself empty is inherited as empty, which
+;; is the same "unjudged" a clause-less top level gets -- inheriting
+;; nothing must not be stricter than having nothing.
+(define *enclosing-import-specs* '())
+
+(define (body-import-specs body)
+  (cond ((not (pair? body)) #f)
+        ((and (pair? (car body))
+              (memq (unmark (car (car body))) '(import %imports)))
+         (cdr (car body)))
+        (else (body-import-specs (cdr body)))))
+
+;; Inner embeds materialize during this expansion, so the enclosing
+;; map they see has to be THIS body's for the duration, not the
+;; program's -- an embed inside an embed is written inside the embed.
+(define (embed-body raw)
+  (let ((own (body-import-specs raw))
+        (saved *enclosing-import-specs*))
+    (set! *enclosing-import-specs* (if own own saved))
+    (let ((out (map-in-order embed-expand raw)))
+      (set! *enclosing-import-specs* saved)
+      (if (or own (null? saved))
+          out
+          (cons (cons '%imports saved) out)))))
+
 (define (embed-compile form)
   ;; the text-level driver's import resolution leaves (%loc ...)
   ;; markers anywhere in the block -- including ahead of the mode
@@ -5824,7 +5874,7 @@
          (wurl (embed-opt opts 'wasm-url #f))
          ;; inner embeds materialize first, then the body compiles
          ;; as its own program over the shared prelude
-         (body (map-in-order embed-expand (embed-strip-locs (cdr rest)))))
+         (body (embed-body (embed-strip-locs (cdr rest)))))
     (embed-string-form
      (case mode
        ((js) (embed-section-js (conjure-sub-compile body 'js)))
@@ -5878,7 +5928,7 @@
          (path (and (pair? head) (cadr head)))
          (file? (and path #t))
          (jspath (and (pair? head) (pair? (cddr head)) (car (cddr head))))
-         (body (map-in-order embed-expand (embed-strip-locs (cdr rest)))))
+         (body (embed-body (embed-strip-locs (cdr rest)))))
     (when (and jspath (not (eq? mode 'auto)))
       (errorf 'goeteia "a fallback file needs define-wasm-js:" head))
     (case mode
@@ -5992,7 +6042,12 @@
       ;; where the prefix ends in the list the backends are about to
       ;; receive -- the only point at which that is known exactly
       (set! *prelude-prefix-n* (length pf))
-      (let* ((user (map-in-order embed-expand (cdr fs)))
+      (let* ((user (begin
+                     ;; the program's own clause, for any clause-less
+                     ;; body written inside it
+                     (set! *enclosing-import-specs*
+                           (or (body-import-specs (cdr fs)) '()))
+                     (map-in-order embed-expand (cdr fs))))
              (all-forms (append (reverse pf) user))
              (all-locs (append (reverse pl) (cdr ls))))
         (if (eq? *target* 'js)

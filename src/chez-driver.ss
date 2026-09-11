@@ -356,10 +356,22 @@
                      (cond
                       ((null? bs) (reverse acc))
                       ((and (pair? (car bs)) (eq? (car (car bs)) 'import))
+                       ;; The clause survives here too, as (%imports
+                       ;; spec ...).  An embed body is compiled as its
+                       ;; own program against its own clause, so it has
+                       ;; to carry one -- and rt/compile.mjs's embed
+                       ;; path already did, because it reuses the
+                       ;; top-level resolveImports.  This path is
+                       ;; separate and did not, which made the two
+                       ;; hosts judge the same body against different
+                       ;; maps: stage0 saw the host program's, stage1
+                       ;; the body's own.
                        (loop (cdr bs)
-                             (append (reverse (map cdr (load-specs
-                                                        (cdr (car bs)) dirs)))
-                                     acc)))
+                             (cons (cons '%imports (cdr (car bs)))
+                                   (append (reverse
+                                            (map cdr (load-specs
+                                                      (cdr (car bs)) dirs)))
+                                           acc))))
                       (else
                        (loop (cdr bs)
                              (cons (embed-splice-imports* (car bs) dirs 0)
