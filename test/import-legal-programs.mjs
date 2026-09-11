@@ -38,6 +38,7 @@ const legal = [
     ['a record type with cons excluded', '(import (except (rnrs) cons))\n(define-record-type pebble (fields))\n(display (if (pebble? (make-pebble)) 1 0))', '1'],
     ['a name the only list brings in',  '(import (only (rnrs) display))\n(display 1)',                                       '1'],
     ['an implementation primitive',     '(import (rnrs))\n(display (if (> (%mem-size) 0) 1 0))',                             '1'],
+    ['a prefix import',                 '(import (prefix (rnrs) r:))\n(r:display 7)',                                       '7'],
     ['a renamed import',                '(import (rename (rnrs) (display show)))\n(show 7)',                                 '7'],
 ];
 
