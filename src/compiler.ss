@@ -5200,7 +5200,6 @@
 
 ;; loc string -> the library name that form came from, so a duplicate
 ;; can say WHICH library, not just which file
-(define *lib-origins* '())
 
 ;; (library-name-string . exported-names) for every library in the
 ;; stream, collected before expansion because expansion splices a
