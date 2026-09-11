@@ -342,6 +342,52 @@ const isSymbolChar = c =>
     (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || isDigit(c)
     || SYMBOL_PUNCT.has(c);
 
+// The escapes a conforming R6RS writer emits.  The reader took n t r "
+// and backslash and nothing else, so a form feed inside a stored value
+// could be written and then never read back, with nothing reporting a
+// problem.  \x<hex>; is deliberately absent from this table: it is the
+// one escape of VARIABLE length and is read by hexEscapeAt.
+const STRING_ESCAPES = new Map([
+    ['a', '\x07'], ['b', '\b'], ['t', '\t'], ['n', '\n'],
+    ['v', '\v'], ['f', '\f'], ['r', '\r'],
+    ['"', '"'], ['\\', '\\']
+]);
+
+const hexVal = c => {
+    if (c >= '0' && c <= '9') return c.charCodeAt(0) - 48;
+    if (c >= 'a' && c <= 'f') return c.charCodeAt(0) - 87;
+    if (c >= 'A' && c <= 'F') return c.charCodeAt(0) - 55;
+    return -1;
+};
+
+// \x<hex>; is the one escape whose length is not fixed.  Every other
+// escape advances exactly two characters and both readers had that
+// constant written into the loop, so this one carries its own end out
+// rather than inheriting it.  ARR is an array of code points and K
+// indexes the backslash.  Answers [codepoint, indexAfterSemicolon].
+function hexEscapeAt(arr, k, fail, base) {
+    let m = k + 2;
+    let v = 0;
+    let digits = 0;
+    for (;;) {
+        if (m >= arr.length) fail('unterminated hex escape', base + k);
+        const d = arr[m];
+        if (d === ';') break;
+        const x = hexVal(d);
+        if (x < 0) fail('bad hex escape', base + k);
+        v = v * 16 + x;
+        // bounded while the digits are consumed, not after: a long run
+        // of them would otherwise build an unbounded integer before
+        // anything looked at its value
+        if (v > 0x10FFFF) fail('hex escape out of range', base + k);
+        digits++;
+        m++;
+    }
+    if (digits === 0) fail('hex escape with no digits', base + k);
+    if (v >= 0xD800 && v <= 0xDFFF) fail('hex escape names a surrogate', base + k);
+    return [v, m + 1];
+}
+
 // [-]digits, or [-]digits/digits -- the whole numeric grammar.  No
 // decimal point, no exponent: a flonum crosses only as #f8"...".
 function tokenToNumber(tok) {
@@ -433,11 +479,18 @@ export function read(text, opts = {}) {
             if (c === '\\') {
                 if (i + 1 >= n) fail('dangling escape');
                 const e = cp[i + 1];
-                if (e === 'n') out += '\n';
-                else if (e === 't') out += '\t';
-                else if (e === 'r') out += '\r';
-                else if (e === '"' || e === '\\') out += e;
-                else fail('bad string escape');
+                // lowercase only: R6RS spells the inline hex escape
+                // \x and lets only its DIGITS vary in case.  Chez
+                // refuses "\X41;" outright.
+                if (e === 'x') {
+                    const [v, next] = hexEscapeAt(cp, i, fail, 0);
+                    out += String.fromCodePoint(v);
+                    i = next;
+                    continue;
+                }
+                const lit = STRING_ESCAPES.get(e);
+                if (lit === undefined) fail('bad string escape');
+                out += lit;
                 i += 2;
                 continue;
             }
@@ -511,11 +564,41 @@ export function read(text, opts = {}) {
         return b64ToFlonum(bytes);
     }
 
+    // A symbol may carry \x<hex>; and nothing else: the string escapes
+    // are not identifier syntax.  The decoded name is held to the
+    // SYMBOL GRAMMAR -- the characters a bare name may be spelled with
+    // -- and that is NOT the same as wire-safe.  \x31; decodes to the
+    // name 1, which the grammar admits and wireSymbol refuses, so the
+    // reader can make a symbol the writer will not serialise.  R6RS
+    // makes the escape identifier syntax, so reading it as the symbol
+    // 1 is correct and the asymmetry lives in the writer's wire rule;
+    // the vector table pins both sides of that boundary.
+    function decodeName(arr, start) {
+        let out = '';
+        for (let k = 0; k < arr.length;) {
+            const c = arr[k];
+            if (c !== '\\') { out += c; k++; continue; }
+            if (arr[k + 1] !== 'x') fail('bad symbol escape', start + k);
+            const [v, next] = hexEscapeAt(arr, k, fail, start);
+            out += String.fromCodePoint(v);
+            k = next;
+        }
+        if (out.length === 0 || ![...out].every(isSymbolChar))
+            fail('bad token', start);
+        return out;
+    }
+
     function parseAtom() {
         const start = i;
         while (i < n && !isDelim(cp[i])) i++;
         if (i - start > MAX_TOKEN) fail('token too long', start);
         const tok = slice(start, i);
+        // An escaped name is a NAME.  \x31; is the symbol 1, not the
+        // number, so a token carrying an escape skips the numeric
+        // tests rather than being read as whatever it spells.
+        if (tok.indexOf('\\') >= 0) {
+            return new Sym(decodeName(cp.slice(start, i), start));
+        }
         const num = tokenToNumber(tok);
         if (num !== null) return num;
         if (numericShape(tok)) fail('bad number', start);

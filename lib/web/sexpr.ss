@@ -330,6 +330,81 @@
         (memv c '(#\- #\+ #\* #\/ #\< #\> #\= #\? #\! #\. #\_
                   #\% #\& #\^ #\~ #\: #\@))))
 
+  (define (hex-digit-value c)
+    (cond
+      ((and (char<=? #\0 c) (char<=? c #\9)) (- (char->integer c) 48))
+      ((and (char<=? #\a c) (char<=? c #\f)) (- (char->integer c) 87))
+      ((and (char<=? #\A c) (char<=? c #\F)) (- (char->integer c) 55))
+      (else -1)))
+
+  ;; A Goeteia string holds one character per UTF-8 BYTE, so a hex
+  ;; escape naming a code point above 127 contributes SEVERAL
+  ;; characters and not one -- \x1F600; is four.  A branch answering
+  ;; (integer->char v) would be right on every ASCII row of the vector
+  ;; table and wrong on the astral one, which is why that row is there
+  ;; and why the table's comparison column is bytes.
+  (define (codepoint->utf8 v)
+    (cond
+      ((< v #x80) (list v))
+      ((< v #x800)
+       (list (+ #xC0 (div v 64))
+             (+ #x80 (mod v 64))))
+      ((< v #x10000)
+       (list (+ #xE0 (div v 4096))
+             (+ #x80 (mod (div v 64) 64))
+             (+ #x80 (mod v 64))))
+      (else
+       (list (+ #xF0 (div v 262144))
+             (+ #x80 (mod (div v 4096) 64))
+             (+ #x80 (mod (div v 64) 64))
+             (+ #x80 (mod v 64))))))
+
+  ;; \x<hex>; is the one escape whose length is not fixed.  Every other
+  ;; escape advances exactly two characters and that constant was
+  ;; written into the reading loop, so this one carries its own end out
+  ;; rather than inheriting it.  K indexes the backslash.  Answers the
+  ;; code point and the index just past the semicolon.
+  (define (hex-escape-at str k limit base)
+    (let loop ((m (+ k 2)) (v 0) (digits 0))
+      (when (>= m limit) (sfail "unterminated hex escape" (+ base k)))
+      (let ((d (string-ref str m)))
+        (if (char=? d #\;)
+            (begin
+              (when (= digits 0) (sfail "hex escape with no digits" (+ base k)))
+              (when (and (>= v #xD800) (<= v #xDFFF))
+                (sfail "hex escape names a surrogate" (+ base k)))
+              (values v (+ m 1)))
+            (let ((x (hex-digit-value d)))
+              (when (< x 0) (sfail "bad hex escape" (+ base k)))
+              (let ((v2 (+ (* v 16) x)))
+                ;; bounded while the digits are consumed rather than
+                ;; after: a long run would otherwise build an unbounded
+                ;; integer before anything looked at its value
+                (when (> v2 #x10FFFF) (sfail "hex escape out of range" (+ base k)))
+                (loop (+ m 1) v2 (+ digits 1))))))))
+
+  ;; The escapes a conforming R6RS writer emits.  The reader took n t r
+  ;; and the two literals and nothing else, so a form feed inside a
+  ;; stored value could be written and then never read back, with
+  ;; nothing reporting a problem.
+  (define (string-escape-char e pos)
+    (cond
+      ((char=? e #\a) (integer->char 7))
+      ((char=? e #\b) (integer->char 8))
+      ((char=? e #\t) #\tab)
+      ((char=? e #\n) #\newline)
+      ((char=? e #\v) (integer->char 11))
+      ((char=? e #\f) (integer->char 12))
+      ((char=? e #\r) #\return)
+      ((or (char=? e #\") (char=? e #\\)) e)
+      (else (sfail "bad string escape" pos))))
+
+  (define (token-escaped? tok)
+    (let loop ((k 0))
+      (cond ((>= k (string-length tok)) #f)
+            ((char=? (string-ref tok k) #\\) #t)
+            (else (loop (+ k 1))))))
+
   (define (emit x depth)
     (when (> depth max-depth) (sfail "nesting too deep (cyclic data?)" 0))
     (cond
@@ -459,14 +534,15 @@
               ((char=? c #\\)
                (when (>= (+ i 1) n) (sfail "dangling escape" i))
                (let ((e (string-ref s (+ i 1))))
-                 (loop (+ i 2)
-                       (cons (cond
-                               ((char=? e #\n) #\newline)
-                               ((char=? e #\t) #\tab)
-                               ((char=? e #\r) #\return)
-                               ((or (char=? e #\") (char=? e #\\)) e)
-                               (else (sfail "bad string escape" i)))
-                             acc))))
+                 ;; lowercase only: R6RS spells the inline hex escape
+                 ;; \x and lets only its DIGITS vary in case.  Chez
+                 ;; refuses "\X41;" outright.
+                 (if (char=? e #\x)
+                     (let-values (((v j) (hex-escape-at s i n 0)))
+                       (loop j (append (reverse (map integer->char
+                                                     (codepoint->utf8 v)))
+                                       acc)))
+                     (loop (+ i 2) (cons (string-escape-char e i) acc)))))
               (else (loop (+ i 1) (cons c acc)))))))
       (define (parse-hash i depth)
         (when (>= i n) (sfail "dangling #" i))
@@ -577,17 +653,54 @@
                      (and (char=? c #\-) (> m 1)
                           (char<=? #\0 (string-ref tok 1))
                           (char<=? (string-ref tok 1) #\9)))))))
+      ;; A symbol may carry \x<hex>; and nothing else: the string
+      ;; escapes are not identifier syntax.  The decoded name is held
+      ;; to the SYMBOL GRAMMAR -- the characters a bare name may be
+      ;; spelled with -- and that is NOT the same as wire-safe.
+      ;; \x31; decodes to the name 1, which the grammar admits and
+      ;; wire-symbol? refuses, so the reader can make a symbol the
+      ;; writer will not serialise.  R6RS makes the escape identifier
+      ;; syntax, so reading it as the symbol 1 is correct and the
+      ;; asymmetry lives in the writer's wire rule; the vector table
+      ;; pins both sides of that boundary.
+      (define (decode-name tok at)
+        (let ((tn (string-length tok)))
+          (let loop ((k 0) (acc '()))
+            (if (>= k tn)
+                (let ((name (list->string (reverse acc))))
+                  (unless (valid-symbol? name) (sfail "bad token" at))
+                  name)
+                (let ((c (string-ref tok k)))
+                  (if (char=? c #\\)
+                      (begin
+                        (when (>= (+ k 1) tn)
+                          (sfail "bad symbol escape" (+ at k)))
+                        (let ((e (string-ref tok (+ k 1))))
+                          (unless (char=? e #\x)
+                            (sfail "bad symbol escape" (+ at k)))
+                          (let-values (((v m) (hex-escape-at tok k tn at)))
+                            (loop m (append (reverse
+                                             (map integer->char
+                                                  (codepoint->utf8 v)))
+                                            acc)))))
+                      (loop (+ k 1) (cons c acc))))))))
+
       (define (parse-atom i)
         (let ((j (let lp ((j i))
                    (if (or (>= j n) (delim? (string-ref s j))) j (lp (+ j 1))))))
           (when (> (- j i) max-token) (sfail "token too long" i))
-          (let* ((tok (substring s i j))
-                 (num (token->number tok)))
-            (cond
-              (num (values num j))
-              ((numeric-shape? tok) (sfail "bad number" i))
-              ((valid-symbol? tok) (values (string->symbol tok) j))
-              (else (sfail "bad token" i))))))
+          (let ((tok (substring s i j)))
+            ;; An escaped name is a NAME.  \x31; is the symbol 1, not
+            ;; the number, so a token carrying an escape skips the
+            ;; numeric tests rather than being read as what it spells.
+            (if (token-escaped? tok)
+                (values (string->symbol (decode-name tok i)) j)
+                (let ((num (token->number tok)))
+                  (cond
+                    (num (values num j))
+                    ((numeric-shape? tok) (sfail "bad number" i))
+                    ((valid-symbol? tok) (values (string->symbol tok) j))
+                    (else (sfail "bad token" i))))))))
       (let-values (((v i) (parse-value 0 0)))
         (unless (= (skip i) n) (sfail "trailing data after datum" i))
         v)))

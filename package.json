@@ -14,7 +14,8 @@
   "exports": {
     ".": "./rt/run.mjs",
     "./compile": "./rt/compile.mjs",
-    "./run": "./rt/run.mjs"
+    "./run": "./rt/run.mjs",
+    "./sexpr": "./rt/sexpr.mjs"
   },
   "files": [
     "goeteia.wasm",
