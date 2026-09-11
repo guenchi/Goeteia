@@ -426,10 +426,52 @@
 ;;;; expansion: quote if let begin lambda set! define, plus
 ;;;; applications.
 
+;; ---- what the expander knows is lexically bound ------------------
+;;
+;; The expander had no notion of this at all: the lambda arm copied its
+;; formals through and tracked nothing, so a let or lambda that bound a
+;; MACRO's name still expanded the macro.  (let ((d2 ...)) (d2 4)) ran
+;; the macro and answered 8 where Chez answers 99, for every macro,
+;; with no import and no rename anywhere near it.
+;;
+;; A head that is lexically bound is a variable, whatever the macro
+;; table says about its spelling -- and, once the import table lands,
+;; whatever that says either.  So this is consulted BEFORE both.
+;;
+;; Saved and restored around each body rather than threaded through
+;; xpand/xpand-core/xpand*, matching how *program-form?* already marks
+;; a region of the expansion rather than a call.
+(define *expand-bound* '())
+
+(define (lexically-bound? x)
+  (and (symbol? x) (memq (unmark x) *expand-bound*) #t))
+
+;; A body's own internal definitions bind over the whole body, its
+;; definitions' right-hand sides included, so they join the formals.
+(define (body-define-names body)
+  (let loop ((b body) (acc '()))
+    (cond
+     ((not (pair? b)) acc)
+     ((and (pair? (car b)) (symbol? (car (car b)))
+           (eq? (unmark (car (car b))) 'define)
+           (pair? (cdr (car b))))
+      (let ((t (cadr (car b))))
+        (loop (cdr b) (cons (unmark (if (pair? t) (car t) t)) acc))))
+     (else (loop (cdr b) acc)))))
+
+(define (xpand-body* body names)
+  (let ((saved *expand-bound*))
+    (set! *expand-bound*
+          (append (map unmark names) (body-define-names body) saved))
+    (let ((out (xpand* body)))
+      (set! *expand-bound* saved)
+      out)))
+
 (define (xpand e)
   (if (pair? e)
       (let ((macro (let ((tag (resolve-tag (car e))))
                      (and (symbol? tag)
+                          (not (lexically-bound? (car e)))
                           (not (eq? tag 'quote))
                           (not (eq? tag 'define-syntax))
                           (assq tag *macros*)))))
@@ -439,9 +481,18 @@
       e))
 
 (define (xpand-core e)
+  (if (lexically-bound? (car e))
+      ;; a bound name in head position is a call to that binding, not
+      ;; the special form its spelling happens to name
+      (xpand* e)
+      (xpand-core-form e)))
+
+(define (xpand-core-form e)
   (case (resolve-tag (car e))
         ((quote define-syntax) e)
-        ((lambda) `(lambda ,(cadr e) . ,(xpand* (cddr e))))
+        ((lambda)
+         `(lambda ,(cadr e)
+            . ,(xpand-body* (cddr e) (binder-names (cadr e)))))
         ((and)
          (cond
           ((null? (cdr e)) #t)
@@ -485,7 +536,7 @@
                     (params (map car bs))
                     (xinits (map-in-order (lambda (b) (xpand (cadr b)))
                                           bs))
-                    (xbody (xpand* (cdddr e))))
+                    (xbody (xpand-body* (cdddr e) (cons name params))))
                (if (and (> *opt-level* 0)
                         (loop-ok? name (length params) params xbody))
                    `(%loop ,name ,params ,xinits . ,xbody)
@@ -495,7 +546,7 @@
                      . ,xinits)))
              `(let ,(map (lambda (b) (list (car b) (xpand (cadr b))))
                          (cadr e))
-                . ,(xpand* (cddr e)))))
+                . ,(xpand-body* (cddr e) (map car (cadr e))))))
         ((letrec letrec*)
          (let ((bs (cadr e)))
            (xpand `(let ,(map (lambda (b) `(,(car b) (begin))) bs)
@@ -1343,7 +1394,16 @@
     (cond
      ((eq? (unmark pat) '_) acc)
      ((sc-literal? pat lits)
-      (and (symbol? v) (eq? (unmark v) (unmark pat)) acc))
+      ;; A literal matches a use that DENOTES the same binding.  The
+      ;; spelling test is the cheap half; the other half available
+      ;; without the import table is that a lexically bound use cannot
+      ;; denote the free identifier the pattern's literal is -- (let
+      ;; ((else 5)) (pick else)) must reach the second clause.  Matching
+      ;; a renamed alias to its origin needs the import table and is
+      ;; not here yet.
+      (and (symbol? v) (eq? (unmark v) (unmark pat))
+           (not (lexically-bound? v))
+           acc))
      (else (cons (cons pat (cons 0 v)) acc))))
    ((pair? pat)
     (cond
@@ -5630,6 +5690,7 @@
   (set! *import-map* '())
   (set! *program-form?* #f)
   (set! *program-clause?* #f)
+  (set! *expand-bound* '())
   (set! *program-defines* '())
   (set! *program-forms* '())
   (set! *judgement-units* '())
