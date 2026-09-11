@@ -57,6 +57,9 @@ const rows = [
     //    design (section 27.7): the drivers' marker decides what is
     //    recorded, and a program with no clause gets no marker.
     ['a program with no import clause imports nothing', '(define (dead) missing)\n(display 1)', { refused: /import/ }],
+    // a second clause-less witness that USES a name (rnrs) would give,
+    // so the empty-map rule has more than one row in the whole tree
+    ['a clause-less program may not use a name (rnrs) would give', '(display 1)', { refused: /import|unbound variable: display/ }],
 ];
 
 for (const [title, src, want] of rows) {
