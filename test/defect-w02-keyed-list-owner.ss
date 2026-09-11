@@ -1,6 +1,7 @@
 ;; expect: #t
-;; RED ON PURPOSE: a keyed sx-list's per-item effects are never
-;; released when the LIST is disposed.
+;; REGRESSION GUARD (written as a red witness at 921cd4b; green since).
+;; The defect as it then was: a keyed sx-list's per-item effects are
+;; never released when the LIST is disposed.
 ;;
 ;; $sx-list-keyed puts each item's effects under their own `root`, and
 ;; the comment beside it says why: "they survive list reruns and die

@@ -1,7 +1,8 @@
 ;; expect: #t
-;; RED ON PURPOSE: writing a retargeted clip back out moves the mesh to
-;; node 0 and rebuilds each primitive from a handful of fields, so
-;; everything not in that handful is gone from the file.
+;; REGRESSION GUARD (written as a red witness at cda1211; green since).
+;; The defect as it then was: writing a retargeted clip back out moves
+;; the mesh to node 0 and rebuilds each primitive from a handful of
+;; fields, so everything not in that handful is gone from the file.
 ;;
 ;; The write path takes 'mesh-node from its options and defaults it to
 ;; 0 -- not to where the primitive actually was.  -> A mesh parented to

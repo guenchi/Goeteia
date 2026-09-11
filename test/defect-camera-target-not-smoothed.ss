@@ -1,8 +1,9 @@
 ;; expect: #t
-;; RED ON PURPOSE: the eye is damped toward its goal and the look
-;; target is written straight through, so the direction between them --
-;; which is what the view matrix is built from -- moves in the steps of
-;; whichever clock writes the target.
+;; REGRESSION GUARD (written as a red witness at 47078f6; green since).
+;; The defect as it then was: the eye is damped toward its goal and the
+;; look target is written straight through, so the direction between
+;; them -- which is what the view matrix is built from -- moves in the
+;; steps of whichever clock writes the target.
 ;;
 ;; camera-follow! damps the eye's three components.  camera-target!
 ;; assigns.  A simulation running at a fixed tick writes the target in

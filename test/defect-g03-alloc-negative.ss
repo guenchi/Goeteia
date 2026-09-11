@@ -1,7 +1,8 @@
 ;; expect: #t
-;; RED ON PURPOSE: fx-alloc! does not check its size, so a negative one
-;; moves the bump pointer BACKWARDS and the next allocation hands out
-;; bytes that are still in use.
+;; REGRESSION GUARD (written as a red witness at afd503c; green since).
+;; The defect as it then was: fx-alloc! does not check its size, so a
+;; negative one moves the bump pointer BACKWARDS and the next allocation
+;; hands out bytes that are still in use.
 ;;
 ;; THE SHAPE, and it is what makes this more than a missing check:
 ;; the hazard is already understood on the OTHER path.  fx-release! --

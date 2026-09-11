@@ -1,6 +1,7 @@
 ;; expect: #t
-;; RED ON PURPOSE: styled emits a second class attribute when the
-;; caller's attribute list already has one.
+;; REGRESSION GUARD (written as a red witness at b6e9fcb; green since).
+;; The defect as it then was: styled emits a second class attribute when
+;; the caller's attribute list already has one.
 ;;
 ;;   <div class="card-0" class="mine" id="x">hi</div>
 ;;

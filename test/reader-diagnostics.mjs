@@ -423,3 +423,52 @@ for (const [what, tail] of [
         assert.notStrictEqual(b.status, 0, `self-hosted refuses: ${JSON.stringify(b.stderr)}`);
     });
 }
+
+// ---- R6RS lexical directives ----
+// The negative half of the directive support.  A directive the
+// implementation does not know must RAISE, not be skipped: a branch
+// that swallows anything after #! would accept #!r6rs and every
+// misspelling of it alike, so the accepting cell alone cannot tell a
+// real implementation from a permissive one.
+//
+// What is pinned here is deliberately NOT the whole message.  The
+// diagnostic ends with a parenthetical listing the directives the
+// implementation knows, and that list is GENERATED from the directive
+// table rather than written beside it -- so it changes the day a
+// directive is added, which is correct behaviour and must not turn
+// this cell red.  The stable claims are: it is refused, it is named as
+// a lexical directive, and the offending text appears.
+//
+// The two hosts are not held to identical wording here, unlike the
+// compiler rows above: the Chez-hosted driver reads with CHEZ's reader,
+// so a bad directive is refused before any goeteia code sees it and the
+// two readers word it differently by construction.  Chez refusing the
+// same inputs is the external oracle that this is not merely pinning
+// one implementation's taste.
+for (const bad of ['#!bogus', '#!r6r5', '#!']) {
+    test(`the self-hosted reader refuses ${bad}`, () => {
+        const r = compile(`bad-directive-${bad.replace(/[^a-z0-9]/gi, '') || 'empty'}.ss`,
+                          `;; expect: 0\n${bad}\n(import (rnrs))\n(display 0)\n`);
+        assert.notEqual(r.status, 0, `the self-hosted compiler accepted ${bad}`);
+        assert.match(r.stderr, /unrecognised lexical directive/,
+                     `refused, but not as a lexical directive: ${r.stderr}`);
+        assert.doesNotMatch(r.stderr, /~[sad]/);
+    });
+}
+
+// The positive half, in the same file so the pair cannot drift apart:
+// the directives the implementation DOES know are accepted, at the
+// start of a file and in the middle of a list, and they carry no value
+// of their own -- which is why they belong to the atmosphere grammar
+// beside #| and #; rather than to the datum reader.
+for (const [what, source] of [
+        ['at the start of a file', '#!r6rs\n(import (rnrs))\n(display 7)\n'],
+        ['for the chezscheme directive', '#!chezscheme\n(import (rnrs))\n(display 7)\n'],
+        ['in the middle of a list', '(import (rnrs))\n(display (car (list #!r6rs 7)))\n'],
+        ['with no datum after it', '(import (rnrs))\n(display (length (list 7 #!r6rs)))\n']]) {
+    test(`the self-hosted reader accepts a known directive ${what}`, () => {
+        const r = compile(`good-directive-${what.replace(/ /g, '-')}.ss`,
+                          `;; expect: 7\n${source}`);
+        assert.equal(r.status, 0, `refused a known directive: ${r.stderr}`);
+    });
+}

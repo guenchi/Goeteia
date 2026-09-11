@@ -1,6 +1,7 @@
 ;; expect: #t
-;; RED ON PURPOSE: a top-level value definition introduced by a macro
-;; cannot be read by the macro's OWN expansion.
+;; REGRESSION GUARD (written as a red witness at 25b2204; green since).
+;; The defect as it then was: a top-level value definition introduced by
+;; a macro cannot be read by the macro's OWN expansion.
 ;;
 ;; The definition and the reference below both come out of the same
 ;; template, so they carry the same marks and must denote the same

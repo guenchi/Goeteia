@@ -1,5 +1,7 @@
-// RED ON PURPOSE: build.sh decides whether a page needs recompiling by
-// comparing the page's own source with its .wasm, and nothing else.
+// REGRESSION GUARD (written as a red witness at 23f6696; green since).
+// The defect as it then was: build.sh decides whether a page needs
+// recompiling by comparing the page's own source with its .wasm, and
+// nothing else.
 //
 //     [ "$src" -nt "$wasm" ] || continue
 //

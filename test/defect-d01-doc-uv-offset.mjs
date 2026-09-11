@@ -1,5 +1,6 @@
-// RED ON PURPOSE: the texturing example in docs/graphics.md reads the
-// vertex NORMAL and calls it a UV.
+// REGRESSION GUARD (written as a red witness at 14d246d; green since).
+// The defect as it then was: the texturing example in docs/graphics.md
+// reads the vertex NORMAL and calls it a UV.
 //
 //     (rattr-f32 (gprim-vbase p) (gprim-stride p) 12 n 2)
 //

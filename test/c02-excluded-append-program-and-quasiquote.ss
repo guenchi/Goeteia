@@ -1,12 +1,13 @@
 ;; expect: user(1 user)
-;; RED ON PURPOSE: the program excludes append from (rnrs) and defines
-;; its own, which R6RS allows.  Its own calls must reach its append;
-;; the append that quasiquote's expansion introduces must still be the
-;; prelude's, since that reference was written by the compiler.  Today
-;; the definition is refused as "defined twice" because except is
-;; advisory and a prelude procedure's name is a duplicate at the flat
-;; top level.  Chez answers user then (1 user).  A reviewer's fixture
-;; for the import-discipline slice (design section 27).
+;; REGRESSION GUARD. Written as a red witness at 0f70663, when except
+;; was advisory and the program's definition was refused as a duplicate
+;; at the flat top level. Pins both halves at once: the program's own
+;; calls reach its append, and the append quasiquote's expansion
+;; introduces still reaches the prelude's, since the compiler wrote that
+;; reference. Chez answers user then (1 user). Its sibling c02-excluded-
+;; list-to-vector-and-quasiquote guards the same property for the
+;; list->vector the vector walker introduces. A reviewer's fixture for
+;; the import-discipline slice (design section 27).
 (import (except (rnrs) append))
 (define (append . xs) (quote user))
 (display (append (quote (1)) (quote (2))))

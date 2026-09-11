@@ -1,8 +1,9 @@
 ;; expect: #t
-;; G11 (2026-09-06 review, still live 2026-09-09): the meshopt decoders
-;; read past the length their caller gave them.
+;; G11 (2026-09-06 review; written as a red witness at 7e333ab, green
+;; since): the meshopt decoders read past the length their caller gave
+;; them.
 ;;
-;; RED ON PURPOSE.  Every entry point takes `slen`, the number of bytes
+;; REGRESSION GUARD.  Every entry point takes `slen`, the number of bytes
 ;; the caller has, and none of them treats it as a bound: a one-byte
 ;; source is accepted and decoded, which means the bytes that were
 ;; decoded came from whatever happened to be after it.

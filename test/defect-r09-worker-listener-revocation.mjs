@@ -1,6 +1,7 @@
-// RED ON PURPOSE: the worker shim intercepts addEventListener and
-// leaves removeEventListener alone, so nothing can ever be
-// unregistered.
+// REGRESSION GUARD (written as a red witness at fc33550; green since).
+// The defect as it then was: the worker shim intercepts
+// addEventListener and leaves removeEventListener alone, so nothing can
+// ever be unregistered.
 //
 // rt/worker.mjs replaces globalThis.addEventListener with one that
 // pushes the handler into its own table, because forwarded events are

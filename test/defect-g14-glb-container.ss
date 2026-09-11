@@ -1,8 +1,8 @@
 ;; expect: #t
-;; G14 (2026-09-06 review, still live 2026-09-09): the GLB reader does
-;; not check the container it is reading.
+;; G14 (2026-09-06 review; written as a red witness at 7740506, green
+;; since): the GLB reader does not check the container it is reading.
 ;;
-;; RED ON PURPOSE.  gltf-parse checks the four magic bytes and then
+;; REGRESSION GUARD.  gltf-parse checks the four magic bytes and then
 ;; walks chunks, and between those two things it never asks:
 ;;
 ;;   * what version the container claims -- a file marked 99 parses

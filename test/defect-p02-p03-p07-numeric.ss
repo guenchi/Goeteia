@@ -1,9 +1,10 @@
 ;; expect: #t
-;; RED ON PURPOSE: three numeric predicates and procedures that answer
-;; differently from the language they implement.  Each expectation was
-;; taken from Chez on this machine, not from the review's wording --
-;; a report describes the broken half; the correct half has to come
-;; from somewhere outside this tree.
+;; REGRESSION GUARD (written as a red witness at 32d751d; green since).
+;; The defect as it then was: three numeric predicates and procedures
+;; that answer differently from the language they implement. Each
+;; expectation was taken from Chez on this machine, not from the
+;; review's wording -- a report describes the broken half; the correct
+;; half has to come from somewhere outside this tree.
 ;;
 ;;   P02  memv / assv compare with eq?, so equal numbers that are not
 ;;        the same object are not found.  eqv? on two flonums is a

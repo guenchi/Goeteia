@@ -2,12 +2,13 @@
 ;; A top-level definition reaches inside a library the program only
 ;; imported.
 ;;
-;; RED ON PURPOSE, and this is the third spelling of one defect.  The
-;; prelude, every imported library, and the compiler's own synthesised
-;; operations are all spliced into one flat top level and all call
-;; primitives by the same bare symbols the user can define.
-;; namespace-library renames a library's PRIVATE definitions; its
-;; references to imported primitives are shared with everyone else.
+;; REGRESSION GUARD (written as a red witness at e7fae5a; green since),
+;; and this is the third spelling of one defect. The prelude, every
+;; imported library, and the compiler's own synthesised operations are
+;; all spliced into one flat top level and all call primitives by the
+;; same bare symbols the user can define. namespace-library renames a
+;; library's PRIVATE definitions; its references to imported primitives
+;; are shared with everyone else.
 ;;
 ;; So a program that defines `car` changes what (gam inventory) does
 ;; six lines inside a procedure the program never reads.  Today:

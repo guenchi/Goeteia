@@ -1,8 +1,9 @@
 ;; expect: 3
-;; C07 (2026-09-06 review, still live 2026-09-09): on the JS target,
-;; closures made inside a loop share the loop's final parameter.
+;; C07 (2026-09-06 review; written as a red witness at a52af3b, green
+;; since): on the JS target, closures made inside a loop share the
+;; loop's final parameter.
 ;;
-;; RED ON PURPOSE, and red on ONE target only -- which is the sharpest
+;; REGRESSION GUARD, and red on ONE target only -- which is the sharpest
 ;; thing about it.  Saving `(lambda () i)` for i = 0, 1, 2 and summing
 ;; the results after the loop gives 3 on wasm and 9 on JS: on JS the
 ;; loop parameter is declared once outside the `for` and assigned each

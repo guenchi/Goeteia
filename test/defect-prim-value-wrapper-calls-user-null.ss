@@ -1,7 +1,8 @@
 ;; expect: 3
-;; RED ON PURPOSE: a primitive taken as a value gets a synthesized
-;; wrapper whose body is written with bare names, and a program's
-;; definition of one of those names captures it.
+;; REGRESSION GUARD (written as a red witness at d8c8bb6; green since).
+;; The defect as it then was: a primitive taken as a value gets a
+;; synthesized wrapper whose body is written with bare names, and a
+;; program's definition of one of those names captures it.
 ;;
 ;; (f 1 2) with f bound to the value + runs a lifted body that walks
 ;; its argument list with car, cdr and null?, spelled as bare symbols

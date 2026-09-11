@@ -1,11 +1,12 @@
 ;; expect: 3
-;; RED ON PURPOSE: a user's `null?` makes the prelude's `length` loop.
-;; The prelude and the user's program are spliced into one flat top
-;; level, and the prelude calls primitives by the same bare symbols the
-;; user can define.  How many places that is, as a command rather than
-;; a number, because a count written into a comment has no author and
-;; goes quietly wrong -- two readers measured this file today and got
-;; three different answers, all of them honest:
+;; REGRESSION GUARD (written as a red witness at 5471f1b; green since).
+;; The defect as it then was: a user's `null?` makes the prelude's
+;; `length` loop. The prelude and the user's program are spliced into
+;; one flat top level, and the prelude calls primitives by the same bare
+;; symbols the user can define. How many places that is, as a command
+;; rather than a number, because a count written into a comment has no
+;; author and goes quietly wrong -- two readers measured this file today
+;; and got three different answers, all of them honest:
 ;;
 ;;     grep -c  '(car ' src/prelude.ss           LINES containing one
 ;;     grep -o  '(car ' src/prelude.ss | wc -l    OCCURRENCES

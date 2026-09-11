@@ -1,9 +1,9 @@
 ;; expect: #t
-;; G12 and G13 (2026-09-06 review, still live): the deflate and zstd
-;; decoders read past the length they were given, and zstd believes a
-;; frame header it never checks.
+;; G12 and G13 (2026-09-06 review; written as a red witness at d16b7f3,
+;; green since): the deflate and zstd decoders read past the length they
+;; were given, and zstd believes a frame header it never checks.
 ;;
-;; RED ON PURPOSE.  Same family as G11 (meshopt, fixed) and G10 (UASTC,
+;; REGRESSION GUARD.  Same family as G11 (meshopt, fixed) and G10 (UASTC,
 ;; fixed): a length is carried and not enforced.  In linear memory
 ;; that is not a crash -- the bytes past the end are the next buffer's,
 ;; so what comes out is real data mixed with somebody else's, from a

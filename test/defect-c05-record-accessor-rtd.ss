@@ -1,8 +1,9 @@
 ;; expect: refused
-;; C05 (2026-09-06 review, still live 2026-09-09): a record accessor
-;; checks the field layout and not the record type.
+;; C05 (2026-09-06 review; written as a red witness at a52af3b, green
+;; since): a record accessor checks the field layout and not the record
+;; type.
 ;;
-;; RED ON PURPOSE.  Today every target answers 7: `a-x` applied to a `b`
+;; REGRESSION GUARD.  Today every target answers 7: `a-x` applied to a `b`
 ;; reads field 0 of a one-field record and hands it back, because the
 ;; generated accessor carries a field count and an index but not the
 ;; rtd it belongs to.  The predicate does check identity; the accessor

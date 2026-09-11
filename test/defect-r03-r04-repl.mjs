@@ -1,5 +1,6 @@
-// RED ON PURPOSE: two defects in the REPL, both about text the REPL
-// itself handles rather than about the language.
+// REGRESSION GUARD (written as a red witness at 13ad47c; green since).
+// The defect as it then was: two defects in the REPL, both about text
+// the REPL itself handles rather than about the language.
 //
 //   R04  `(+ 1 2) ; note` does not print 3.  It answers
 //        "read: list opened at repl line 1 column 14 never closed" --

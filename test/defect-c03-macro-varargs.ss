@@ -1,8 +1,8 @@
 ;; expect: 6
-;; C03 (2026-09-06 review, still live 2026-09-09): the macro evaluator
-;; silently drops arguments past the second.
+;; C03 (2026-09-06 review; written as a red witness at a52af3b, green
+;; since): the macro evaluator silently drops arguments past the second.
 ;;
-;; RED ON PURPOSE.  Today every target answers 3: inside a transformer,
+;; REGRESSION GUARD.  Today every target answers 3: inside a transformer,
 ;; `(+ 1 2 3)` is folded by a meta-primitive that takes two arguments
 ;; and discards the rest.  `(append '(1) '(2) '(3))` loses the third
 ;; list the same way.

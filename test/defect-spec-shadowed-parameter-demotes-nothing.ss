@@ -1,7 +1,8 @@
 ;; expect: 5
-;; RED ON PURPOSE: a local that shadows an f64 parameter is taken for
-;; the parameter it shadows, so a call that passes the local is not
-;; demoted and an exact integer lands in an f64 slot.
+;; REGRESSION GUARD (written as a red witness at 8fc8937; green since).
+;; The defect as it then was: a local that shadows an f64 parameter is
+;; taken for the parameter it shadows, so a call that passes the local
+;; is not demoted and an exact integer lands in an f64 slot.
 ;;
 ;; zq's parameter a is seeded f64 and nothing visible demotes it: the
 ;; only call from outside passes 5.0, and the recursive call passes

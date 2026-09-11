@@ -212,11 +212,12 @@ assert.equal(compilerIdFor('wasm'), stage0Before,
 
 // ---- the key must see everything the compiler reads ----
 //
-// RED ON PURPOSE, 2026-09-09.  These three assertions fail today.  They
-// are here before the fix rather than after it, because the claim they
-// pin ("the key is complete") is exactly the claim that was believed
-// for two design rounds on the strength of this file's comments and
-// never checked against what the drivers actually open.
+// REGRESSION GUARD (written as a red witness at 370aea5; green since),
+// 2026-09-09. These three assertions fail today. They are here before
+// the fix rather than after it, because the claim they pin ("the key is
+// complete") is exactly the claim that was believed for two design
+// rounds on the strength of this file's comments and never checked
+// against what the drivers actually open.
 //
 // Each file below is read by the compiler on every compile, and moving
 // a byte in it moves the emitted artifact.  None of them is hashed:

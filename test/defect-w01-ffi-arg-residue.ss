@@ -1,7 +1,8 @@
 ;; expect: #t
-;; RED ON PURPOSE: an argument that fails to convert leaves the
-;; arguments before it on the shared staging stack, and the NEXT call
-;; through the FFI receives them.
+;; REGRESSION GUARD (written as a red witness at b98e969; green since).
+;; The defect as it then was: an argument that fails to convert leaves
+;; the arguments before it on the shared staging stack, and the NEXT
+;; call through the FFI receives them.
 ;;
 ;;   (js-call f this 11 <unconvertible>)  raises, 11 stays pushed
 ;;   (js-call f this 22)                  the callee sees TWO arguments

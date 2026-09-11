@@ -1,7 +1,8 @@
 ;; expect: #t
-;; RED ON PURPOSE: two translucent surfaces of the same colour are
-;; welded into one draw even when a differently coloured translucent
-;; surface lies between them in depth.
+;; REGRESSION GUARD (written as a red witness at a7b137c; green since).
+;; The defect as it then was: two translucent surfaces of the same
+;; colour are welded into one draw even when a differently coloured
+;; translucent surface lies between them in depth.
 ;;
 ;; The premise is written down beside the weld, and it is a correct
 ;; argument with a missing quantifier:

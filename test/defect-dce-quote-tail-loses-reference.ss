@@ -1,7 +1,8 @@
 ;; expect: 42
-;; RED ON PURPOSE: a list tail that starts with a variable named quote
-;; is skipped by dead-code elimination as if it were a quotation, and
-;; the reference after it is lost.
+;; REGRESSION GUARD (written as a red witness at 1fdf227; green since).
+;; The defect as it then was: a list tail that starts with a variable
+;; named quote is skipped by dead-code elimination as if it were a
+;; quotation, and the reference after it is lost.
 ;;
 ;; form-refs takes lists apart car and cdr, so its worklist holds tails
 ;; as well as expressions; the tail of (vector quote foo) is

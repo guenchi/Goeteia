@@ -1,7 +1,8 @@
 ;; expect: #t
-;; RED ON PURPOSE: the same defect as
-;; test/defect-macro-toplevel-var-mark.ss, on a definition whose
-;; initialiser is a constant.
+;; REGRESSION GUARD (written as a red witness at 25b2204; green since).
+;; The defect as it then was: the same defect as test/defect-macro-
+;; toplevel-var-mark.ss, on a definition whose initialiser is a
+;; constant.
 ;;
 ;; Two files because each fails at compile time, and a compile error
 ;; takes the whole file's verdict with it -- one file would report one

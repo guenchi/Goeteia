@@ -1,5 +1,6 @@
 ;; expect: #t
-;; RED ON PURPOSE, and ALONE IN ITS FILE.
+;; REGRESSION GUARD (written as a red witness at 32d751d; green since),
+;; and ALONE IN ITS FILE.
 ;;
 ;; (inexact z) on a complex number is an `illegal cast` -- a wasm trap.
 ;; A trap is not a Scheme condition: `guard` does not catch it, the

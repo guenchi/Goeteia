@@ -1,8 +1,9 @@
 ;; expect: 4 ok; 20 ok; 34 ok; 35 ok; end
-;; RED ON PURPOSE: the HZB pyramid and the depth-sorting cull pipeline
-;; live at hard-coded slots 250 and 251, and geometry groups are handed
-;; consecutive slots from 9 upward with no ceiling.  -> Enough groups
-;; and the group allocator walks over both.
+;; REGRESSION GUARD (written as a red witness at 4a439b6; green since).
+;; The defect as it then was: the HZB pyramid and the depth-sorting cull
+;; pipeline live at hard-coded slots 250 and 251, and geometry groups
+;; are handed consecutive slots from 9 upward with no ceiling. -> Enough
+;; groups and the group allocator walks over both.
 ;;
 ;; MEASURED BOUNDARY: 34 groups work, 35 does not.  It is not
 ;; derived.  Reading "eight slots each from 9" out of the source

@@ -44,10 +44,11 @@
 (define kraw (ktx-parse RAW (llen ktx-raw)))
 (define kzst (ktx-parse ZST (llen ktx-zstd)))
 (define (run k) (ktx-uastc-level! k 0 DST) (cmp rgba-gold))
-;; ---- G10 (2026-09-06 review, still live 2026-09-09): a level whose
-;; payload has been truncated is decoded anyway ----
+;; ---- G10 (2026-09-06 review; written as a red witness at cb2fc81,
+;; green since): a level whose payload has been truncated is decoded
+;; anyway ----
 ;;
-;; RED ON PURPOSE.  The same real fixture, with the level's byteLength
+;; REGRESSION GUARD. The same real fixture, with the level's byteLength
 ;; rewritten to 1 and the file cut to match, still comes out as a full
 ;; 16x16 image: the decoder computes how many blocks the DIMENSIONS
 ;; imply and reads that many, without asking whether the level it was

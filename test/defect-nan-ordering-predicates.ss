@@ -1,6 +1,7 @@
 ;; expect: #t
-;; RED ON PURPOSE: <= and >= answer #t for a NaN, so a NaN compares as
-;; ordered against everything including itself.
+;; REGRESSION GUARD (written as a red witness at 972267d; green since).
+;; The defect as it then was: <= and >= answer #t for a NaN, so a NaN
+;; compares as ordered against everything including itself.
 ;;
 ;;              n<0   n>0   n<=0   n>=0   n=0   n=n   n<n   n>=n
 ;;   here       #f    #f     #t     #t    #f    #f    #f     #t

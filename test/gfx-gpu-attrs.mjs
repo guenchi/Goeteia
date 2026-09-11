@@ -1,11 +1,11 @@
-// G05 (2026-09-06 review, still live 2026-09-09): the WebGPU vertex
-// attribute parser computes a NaN offset for every attribute after a
-// scalar one.
+// G05 (2026-09-06 review; written as a red witness at 3ce26ff, green
+// since): the WebGPU vertex attribute parser computes a NaN offset for
+// every attribute after a scalar one.
 //
-// RED ON PURPOSE.  `off += Number(f.replace(/.*x/, '')) * 4` takes the
+// REGRESSION GUARD. `off += Number(f.replace(/.*x/, '')) * 4` takes the
 // digits after an `x` -- `float32x2` gives 2 -- but a scalar format has
 // no `x`, so the replace returns the whole word and Number('float32')
-// is NaN.  From then on every offset is NaN, and a NaN offset in a
+// is NaN. From then on every offset is NaN, and a NaN offset in a
 // vertex buffer layout is not a diagnostic anywhere: the pipeline is
 // built, the draw is issued, and the attributes read from nowhere.
 //

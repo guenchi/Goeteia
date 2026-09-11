@@ -1,8 +1,9 @@
-// RED ON PURPOSE, row by row: what a review of the import rule found
-// it still gets wrong, each row a whole program with the answer R6RS
-// gives.  Two rows are green twins that record what the rule already
-// gets right in the same family, so a fix for a red row is shown not
-// to break them.  Readings on ceb47bf are in each row's comment.
+// REGRESSION GUARD (written as a red witness at de7604c; green since),
+// row by row: what a review of the import rule found it still gets
+// wrong, each row a whole program with the answer R6RS gives. Two rows
+// are green twins that record what the rule already gets right in the
+// same family, so a fix for a red row is shown not to break them.
+// Readings on ceb47bf are in each row's comment.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';

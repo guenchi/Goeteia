@@ -1,7 +1,8 @@
 ;; expect: #t
-;; RED ON PURPOSE: fx-mesh! forgets whether a mesh's indices are 16-bit
-;; or 32-bit, so a mesh past 65536 vertices is uploaded and drawn as if
-;; its indices were u16.
+;; REGRESSION GUARD (written as a red witness at c08e8cc; green since).
+;; The defect as it then was: fx-mesh! forgets whether a mesh's indices
+;; are 16-bit or 32-bit, so a mesh past 65536 vertices is uploaded and
+;; drawn as if its indices were u16.
 ;;
 ;; The mechanism to do this right is already here and already
 ;; documented.  (gfx mesh) exports mesh-index-u32?, and the comment

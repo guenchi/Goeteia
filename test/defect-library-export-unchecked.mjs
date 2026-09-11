@@ -1,5 +1,7 @@
-// RED ON PURPOSE: a library can export a name nothing defines, and if
-// no importer calls it, the whole build succeeds in silence.
+// REGRESSION GUARD (written as a red witness at d88f501; green since).
+// The defect as it then was: a library can export a name nothing
+// defines, and if no importer calls it, the whole build succeeds in
+// silence.
 //
 // test/lib/probe/exported-macro.ss lists `made-in-template` in its
 // export clause, and the only definition of that name comes out of a

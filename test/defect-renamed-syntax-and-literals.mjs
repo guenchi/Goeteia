@@ -1,11 +1,12 @@
-// RED ON PURPOSE, row by row: a renamed syntactic keyword and a renamed
-// library macro must resolve during expansion, and a syntax-rules
-// literal must match by binding identity, not spelling.  Each row is a
-// legal R6RS program with Chez's answer; the twins record what already
-// holds.  Readings on 998327d are in the comments.  These are the
-// expansion-time half of design section 28 (28.2 and 28.3): the import
-// map is built after expansion today, so a rename of syntax reaches
-// nothing, and literal matching compares spellings.
+// REGRESSION GUARD (written as a red witness at 64906b5; green since),
+// row by row: a renamed syntactic keyword and a renamed library macro
+// must resolve during expansion, and a syntax-rules literal must match
+// by binding identity, not spelling. Each row is a legal R6RS program
+// with Chez's answer; the twins record what already holds. Readings on
+// 998327d are in the comments. These are the expansion-time half of
+// design section 28 (28.2 and 28.3): the import map is built after
+// expansion today, so a rename of syntax reaches nothing, and literal
+// matching compares spellings.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';

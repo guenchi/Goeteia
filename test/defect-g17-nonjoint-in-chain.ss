@@ -1,7 +1,8 @@
 ;; expect: #t
-;; RED ON PURPOSE: a non-joint node in the middle of a joint chain
-;; breaks the chain, and the skeleton's bind extent is computed as if
-;; the joints below it were not there.
+;; REGRESSION GUARD (written as a red witness at a783030; green since).
+;; The defect as it then was: a non-joint node in the middle of a joint
+;; chain breaks the chain, and the skeleton's bind extent is computed as
+;; if the joints below it were not there.
 ;;
 ;;   Root    joint,     y = 0
 ;;   Helper  NOT a joint, y = +10   (a rig's alignment/IK helper)

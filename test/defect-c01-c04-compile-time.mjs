@@ -2,8 +2,9 @@
 // COMPILE-TIME fact rather than a wrong value, so a `;; expect:` line
 // cannot hold them.  Both were re-measured on 2026-09-09 and are live.
 //
-// RED ON PURPOSE.  These go in before any repair, because "the suite is
-// green" is not evidence that a patch landed.
+// REGRESSION GUARD (written as a red witness at f0deca2; green since).
+// These go in before any repair, because "the suite is green" is not
+// evidence that a patch landed.
 //
 //   C01  a numeric loop parameter captured by an inner lambda produces
 //        wasm that will not instantiate.  `(let loop ((i 1)) ((lambda ()

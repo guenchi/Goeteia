@@ -1,7 +1,8 @@
 ;; expect: #t
-;; RED ON PURPOSE: the GLB writer accepts animation times and material
-;; indices that make the file it produces invalid glTF, and says
-;; nothing.
+;; REGRESSION GUARD (written as a red witness at 14b8083; green since).
+;; The defect as it then was: the GLB writer accepts animation times and
+;; material indices that make the file it produces invalid glTF, and
+;; says nothing.
 ;;
 ;;   negative keyframe times    -- the spec requires non-negative
 ;;   equal adjacent times       -- the spec requires strictly increasing

@@ -1,6 +1,7 @@
 ;; expect: #t
-;; RED ON PURPOSE: the prelude's reader accepts a dotted tail with more
-;; than one item after the dot, and SILENTLY DROPS the rest.
+;; REGRESSION GUARD (written as a red witness at faa808c; green since).
+;; The defect as it then was: the prelude's reader accepts a dotted tail
+;; with more than one item after the dot, and SILENTLY DROPS the rest.
 ;;
 ;;   (1 . 2 3)    reads as (1 . 2)   -- the 3 is gone
 ;;   (1 . 2 . 3)  reads as (1 . 2)   -- ". 3" is gone

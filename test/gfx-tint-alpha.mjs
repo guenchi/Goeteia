@@ -1,7 +1,8 @@
-// G08 (2026-09-06 review, still live 2026-09-09): a sprite tinted to
-// zero alpha still puts its colour on the screen.
+// G08 (2026-09-06 review; written as a red witness at cb76126, green
+// since): a sprite tinted to zero alpha still puts its colour on the
+// screen.
 //
-// RED ON PURPOSE, and rendered rather than reasoned about.  The sheet
+// REGRESSION GUARD, and rendered rather than reasoned about. The sheet
 // fragment shader is
 //
 //     gl_FragColor = texture2D(u_tex, v_uv) * v_tint

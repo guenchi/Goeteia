@@ -1,7 +1,8 @@
 ;; expect: #t
-;; RED ON PURPOSE: decimating a clip past the sample limit never picks
-;; the last key, and the wrong duration then leaks into a resample the
-;; caller asked for explicitly.
+;; REGRESSION GUARD (written as a red witness at 75be718; green since).
+;; The defect as it then was: decimating a clip past the sample limit
+;; never picks the last key, and the wrong duration then leaks into a
+;; resample the caller asked for explicitly.
 ;;
 ;; The grid is picked as k = (i * n) / limit for i in [0, limit).  With
 ;; n = 4097 and limit = 4096 the largest k is (4095 * 4097) / 4096 =

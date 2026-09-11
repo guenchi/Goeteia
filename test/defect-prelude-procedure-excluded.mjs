@@ -1,12 +1,13 @@
-// RED ON PURPOSE, row by row: a procedure the prelude defines in
-// Scheme (append, length, ...) cannot yet be excluded from (rnrs) and
-// redefined -- the prelude's definition and the program's would be one
-// name at the flat top level, and the compiler refuses "defined
-// twice".  Primitives can (car, fl+: the intrinsic lowering keeps the
-// prelude's references on the primitive); prelude procedures need the
-// coexistence of design section 28.  Each row is a legal R6RS program
-// with the host's answer; the two twins hold what must not move.
-// Readings on de7604c are in the comments.
+// REGRESSION GUARD (written as a red witness at b7a06c9; green since),
+// row by row: a procedure the prelude defines in Scheme (append,
+// length, ...) cannot yet be excluded from (rnrs) and redefined -- the
+// prelude's definition and the program's would be one name at the flat
+// top level, and the compiler refuses "defined twice". Primitives can
+// (car, fl+: the intrinsic lowering keeps the prelude's references on
+// the primitive); prelude procedures need the coexistence of design
+// section 28. Each row is a legal R6RS program with the host's answer;
+// the two twins hold what must not move. Readings on de7604c are in the
+// comments.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';

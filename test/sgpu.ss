@@ -216,10 +216,11 @@ globalThis.__gpulog = [];
   ;; the blend pipeline
   (= (- (count-log "drawIndexedIndirect") dii0) 2))
 
-;; ---- G06 (2026-09-06 review, still live): a colour signal changes the
-;; data and never reaches the screen ----
+;; ---- G06 (2026-09-06 review; written as a red witness at 831d5ae,
+;; green since): a colour signal changes the data and never reaches the
+;; screen ----
 ;;
-;; RED ON PURPOSE.  `rotation-y` above proves the machinery works: when
+;; REGRESSION GUARD. `rotation-y` above proves the machinery works: when
 ;; that signal moves, the group's generation counter moves with it and
 ;; the frame carries one extra writeBuffer -- the instance upload.
 ;;

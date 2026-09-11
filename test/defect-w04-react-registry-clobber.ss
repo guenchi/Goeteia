@@ -1,7 +1,8 @@
 ;; expect: #t
-;; RED ON PURPOSE: installing a component replaces the whole global
-;; registry, so a module loaded later destroys the entries of every
-;; module loaded before it.
+;; REGRESSION GUARD (written as a red witness at e8b3f10; green since).
+;; The defect as it then was: installing a component replaces the whole
+;; global registry, so a module loaded later destroys the entries of
+;; every module loaded before it.
 ;;
 ;; $ensure-registry makes a fresh {} and assigns globalThis.__goeteia
 ;; without ever looking at what is already there.  $registry is

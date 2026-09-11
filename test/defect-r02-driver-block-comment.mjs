@@ -1,5 +1,6 @@
-// RED ON PURPOSE: the host-side driver reads a source file to the end
-// without noticing that a block comment was never closed.
+// REGRESSION GUARD (written as a red witness at faa808c; green since).
+// The defect as it then was: the host-side driver reads a source file
+// to the end without noticing that a block comment was never closed.
 //
 //   (display 1) #| never closed
 //

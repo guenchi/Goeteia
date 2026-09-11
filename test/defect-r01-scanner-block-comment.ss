@@ -1,7 +1,8 @@
 ;; expect: #t
-;; RED ON PURPOSE: the dependency scanner does not know what a block
-;; comment is, so an (import ...) written inside one is taken for the
-;; library's real import list.
+;; REGRESSION GUARD (written as a red witness at 88edf1d; green since).
+;; The defect as it then was: the dependency scanner does not know what
+;; a block comment is, so an (import ...) written inside one is taken
+;; for the library's real import list.
 ;;
 ;; test/lib/probe/commented-import.ss mentions `(import (nonexistent
 ;; lib))` inside #| |#.  The reader discards it.  The scanner in
