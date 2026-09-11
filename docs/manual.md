@@ -2,7 +2,7 @@
 
 ## Introduction
 
-Goeteia is a self-hosting Scheme-to-WebAssembly-GC compiler that compiles itself and runs on any engine with Wasm GC support (Node 22+, current browsers, wasmtime). Where Wasm GC is missing, the same source compiles to a functionally equivalent plain-JavaScript module instead—see [Compiling to JavaScript](#compiling-to-javascript). This manual documents what you need to know to build applications *on top of* Goeteia, assuming you already understand R6RS Scheme. We cover only Goeteia-specific toolchain, libraries, and behavior; standard R6RS primitives are not documented here.
+Goeteia is a self-hosting Scheme-to-WebAssembly-GC compiler that compiles itself and runs on any engine with Wasm GC support (Node 22+, current browsers, wasmtime). Where Wasm GC is missing, the same source compiles to a functionally equivalent plain-JavaScript module instead—see [Compiling to JavaScript](#compiling-to-javascript). This manual documents what you need to know to build applications *on top of* Goeteia, assuming you already understand R6RS Scheme. We cover only Goeteia-specific toolchain, libraries, and behavior; standard R6RS primitives are not documented here. For the complete index of exported procedures, with their signatures, see the [API reference](api.html).
 
 ### Reading the Signatures
 
