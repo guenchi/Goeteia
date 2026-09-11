@@ -121,6 +121,12 @@ than re-verified item by item for this document.
   private namespacing of its record names. An embed body does not see
   the host's inline libraries and is refused the same way on both
   hosts.
+- Reader and `string->number`: a numeral whose exponent's value is
+  enormous is refused rather than built as an unbounded exact integer.
+  Reading `#e1e999999` or calling `string->number` on `"1e999999"` --
+  a dozen characters -- used to construct 10^999999 and never return,
+  a denial of service reachable from any text a program reads or a user
+  types. The magnitude is refused once its scale passes a bound.
 - Compiler, import discipline, the reference half: a reference to a
   name the import clause does not bring in is an unbound-variable
   error at compile time, judged per scope -- the program against its
