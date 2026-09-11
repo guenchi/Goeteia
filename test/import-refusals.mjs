@@ -39,6 +39,7 @@ const rows = [
     // a library body is judged against its own clause
     ['a library defining a name it imports',  '(import (rnrs))\n(begin (library (o l) (export f) (import (rnrs)) (define (car x) 9) (define (f) 1)) (import (o l)))\n(display (f))', /car is imported by \(rnrs\)/],
     ['a library assigning a name it imports', '(import (rnrs))\n(begin (library (o l) (export f) (import (rnrs)) (define (f) (set! car 5) 1)) (import (o l)))\n(display (f))',    /car is imported by \(rnrs\)/],
+    ['a prefix import',                      '(import (prefix (rnrs) r:))\n(r:display 1)',                          /prefix/],
 ];
 
 for (const [title, src, want] of rows) {
@@ -54,4 +55,5 @@ test('control: the same shapes compile once the name is excluded or fresh', () =
     if (!chez) { console.log('NOT EXERCISED HERE (no chez on PATH; bin/goeteiac is Chez-hosted and this reading was NOT taken)'); return; }
     assert.equal(compileError('(import (except (rnrs) car))\n(define (car x) 99)\n(display (car (list 1)))'), null);
     assert.equal(compileError('(import (rnrs))\n(define (fresh x) 99)\n(display (fresh 1))'), null);
+    assert.equal(compileError('(import (rename (rnrs) (display show)))\n(show 7)'), null);
 });
