@@ -127,6 +127,13 @@ than re-verified item by item for this document.
   a dozen characters -- used to construct 10^999999 and never return,
   a denial of service reachable from any text a program reads or a user
   types. The magnitude is refused once its scale passes a bound.
+- Compiler, the import rule is complete: re-export identity, `set!` of a
+  parameter or internal definition spelled like an import, a
+  `syntax-rules` template judged against its own library's clause, a
+  `define-syntax` inside a `begin`, and a program with no import clause
+  at all -- the last told "no import clause -- a program begins with an
+  import form" -- are all handled, and the REPL and the compiler's own
+  self-build import `(rnrs)` explicitly.
 - Compiler, the import rule reaches procedures and macros: a program
   that excludes a prelude procedure (`append`, `length`) and defines
   its own gets its own at its own calls while the prelude keeps its;
@@ -265,20 +272,10 @@ than re-verified item by item for this document.
 
 ### KNOWN OPEN
 
-Six defects are known, reproduced, and NOT fixed in this release. They
+Five defects are known, reproduced, and NOT fixed in this release. They
 are listed here because an unfixed defect that scrolls off a list is one
 nobody re-reads at the next decision.
 
-- **The import rule still gets five shapes wrong.** A name imported
-  directly and through a library that re-exports it is refused as two
-  bindings; `set!` of a parameter or an internal definition spelled
-  like an imported name is refused as assigning the import; a
-  `syntax-rules` template is not judged against its own library's
-  clause, so a library that excludes `car` may still write it in a
-  template; a `define-syntax` inside a `begin` in a library body
-  escapes the rule; and a program with no import clause at all is not
-  judged. Each has a row in `defect-import-rule-holes`, red, beside two
-  green twins for what the rule already refuses in the same family.
 - **Component libraries such as `(rnrs base)` are not implemented.**
   Until now both compilers accepted `(import (rnrs base))` and quietly
   handed back the whole of `(rnrs)`; an rnrs spec with anything after
