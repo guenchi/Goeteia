@@ -1178,6 +1178,7 @@ The page: markup, styling, reactivity, transport.
 ## `(web frac)`
 
 - `frac-digits` — the fractional digits of an exact fraction to a given width, keeping leading zeros so 1/200 at width 3 is "005" and not "5" -- the order of rounding and padding is the whole of the rule
+- `fl->fixed` — a flonum spelled with exactly that many decimals and no exponent, rounding half to even: the d-decimal spelling of the double nearest `x*10^d`, which is not always the exact-decimal rounding of `x` — `2.675` at two decimals is `2.68`, because the nearest double to `2.675*100` rounds up. Flonum and fixnum arithmetic only, so a per-frame caller can afford it; a non-finite value, or one that scales past the fixnum range, answers `number->string` instead of crashing.
 
 ## `(web fs)`
 

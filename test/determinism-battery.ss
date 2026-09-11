@@ -1,4 +1,4 @@
-;; expect: trig 357c/c6b3 m4scalar 7c8c/267a m4simd baef/73e9 slerp 7d6d/512d gltf 1481/d453 intbits 4631/adbf fltext 32ed/9b30 numlit bccc/537b edge 0478/553a bigfl 3e32/924a
+;; expect: trig 357c/c6b3 m4scalar 7c8c/267a m4simd baef/73e9 slerp 7d6d/512d gltf 1481/d453 intbits 4631/adbf fltext ce93/dbbc numlit bccc/537b edge 0478/553a bigfl 3e32/924a
 ;; Copyright 2026 guenchi
 ;;
 ;; Licensed under the Apache License, Version 2.0 (the "License");

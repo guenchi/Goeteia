@@ -31,7 +31,7 @@
 ;;
 (library (gfx stats)
   (export make-stats stats-draw!)
-  (import (rnrs) (gfx gl) (gfx fx) (web typeset) (gfx sprite))
+  (import (rnrs) (gfx gl) (gfx fx) (web typeset) (gfx sprite) (web frac))
 
   (define-record-type ($stats $make-stats stats?)
     (fields (immutable atlas $st-atlas)
@@ -51,12 +51,13 @@
                    ;; TIME_ELAPSED query, results arrive frames later
                    (gl-gpu-timer!))))
 
-  (define ($st-num v)                   ; one decimal, no printer noise
-    (let* ((tenths (%fl->fx (fl+ (fl* v 10.0) 0.5)))
-           (whole (quotient tenths 10))
-           (frac (remainder tenths 10)))
-      (string-append (number->string whole) "."
-                     (number->string frac))))
+  ;; One decimal, and the rule for getting there lives in (web frac)
+  ;; now rather than being spelled again here.  This used to round half
+  ;; UP (+0.5 then truncate); fl->fixed rounds half to EVEN, so a value
+  ;; landing exactly on a half-tenth can differ by one in the last
+  ;; digit -- 0.25 was "0.3" and is "0.2".  That is the printer
+  ;; contract applying to a site that had quietly invented its own.
+  (define ($st-num v) (fl->fixed v 1))
 
   (define (stats-draw! st dt)
     ;; read the frame's numbers BEFORE adding our own commands

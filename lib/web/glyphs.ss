@@ -52,7 +52,7 @@
 (library (web glyphs)
   (export glyphs! glyphs-mixed! glyphs-group?
           glyphs-track! glyphs-step! glyphs-dodge! glyphs-rebuild!)
-  (import (rnrs) (web js) (web dom) (web typeset) (web canvas))
+  (import (rnrs) (web js) (web dom) (web typeset) (web canvas) (web frac))
 
   (define ($fl v) (if (flonum? v) v (exact->inexact v)))
 
@@ -179,8 +179,8 @@
                     (set-attribute! span "style"
                       (string-append
                        "position:absolute;left:"
-                       (number->string (fl+ x0 pen)) "px;top:"
-                       (number->string y) "px;"
+                       (fl->fixed (fl+ x0 pen) 2) "px;top:"
+                       (fl->fixed y 2) "px;"
                        (if grad
                            (grad (fl+ x0 (fl+ pen (fl/ cw 2.0))))
                            "")))
@@ -231,8 +231,8 @@
                          (span (create-element "span")))
                     (set-attribute! span "style"
                       (string-append "position:absolute;left:"
-                                     (number->string x) "px;top:"
-                                     (number->string y) "px"))
+                                     (fl->fixed x 2) "px;top:"
+                                     (fl->fixed y 2) "px"))
                     (set-text! span (substring s start (+ start len)))
                     (append-child! parent span)
                     (set! acc (cons (vector (js-get span "style")
@@ -402,8 +402,8 @@
                                    (fl+ (fl* nvx nvx) (fl* nvy nvy))))
               (js-set! (vector-ref c 0) "transform"
                        (string-append "translate("
-                                      (number->string ndx) "px,"
-                                      (number->string ndy) "px)"))))
+                                      (fl->fixed ndx 2) "px,"
+                                      (fl->fixed ndy 2) "px)"))))
           (each (+ i 1))))))
 
   ;; the standalone driver: listeners plus an own rAF loop

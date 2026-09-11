@@ -850,14 +850,14 @@
  ;;      nothing else in this file would say the defect had existed,
  ;;      and "why is there a gap in the numbering" is a worse question
  ;;      than one sentence of history.
- ;;   2. the fraction is truncated at twelve digits rather than being
+ ;;   2. the fraction USED TO BE truncated at twelve digits rather than being
  ;;      rounded to the shortest form that reads back, so an ordinary
  ;;      decimal changes value on the way out
- (string=? "3.141589999999" (json->string 3.14159))
- ;;   3. and the same truncation flattens anything smaller than the
+ (string=? "3.14159" (json->string 3.14159))
+ ;;   3. and the same truncation flattened anything smaller than the
  ;;      twelfth digit to zero, which is why the underflow row above
  ;;      asks only that the value be positive
- (string=? "0.000000000000" (json->string (string->json "1e-320")))
+ (string=? "1e-320" (json->string (string->json "1e-320")))
  ;; A value with a fraction still round-trips, which is what says the
  ;; rows above are about the FRACTION's twelve digits and not about
  ;; every non-integral value.

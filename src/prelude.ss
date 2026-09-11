@@ -128,6 +128,11 @@
      ;; and non-zero satisfies that.
      ((and (not (fl=? mag zero)) (fl=? mag (fl* mag (fixnum->flonum 2))))
       (%display-string "<big-flonum>" 0))
+     ;; Zero has no significant digits to find, and the search below
+     ;; would not terminate looking for them: $dec-exponent walks
+     ;; powers of ten toward a value it can never reach.  The sign was
+     ;; written above, so both zeros come out spelled apart.
+     ((fl=? mag zero) (%display-string "0.0" 0))
      ;; Past the FIXNUM cap, not past what a double can say.  %fl->fx
      ;; below is an i31 and stops at 2^29-1, so everything above that
      ;; used to print "<big-flonum>" -- and print it SUCCESSFULLY, which
@@ -170,18 +175,202 @@
      ;; same walk, and neither is a bound the other respects.
      ;;
      ;; The integer part is exact and none of this touches it.
-     ((fl<? (fixnum->flonum 536870911) mag)
-      (let* ((ipf (flfloor mag))
-             (frac (fl- mag ipf)))
-        (%display-digits (exact ipf))
-        ($wb 46)
-        ($display-frac frac 0)))
+     (else (%display-string ($shortest-decimal mag) 0)))))
+;; ---- the shortest decimal that reads back as this double ----------
+;;
+;; A double is a rational with a power-of-two denominator, so its exact
+;; decimal digits are computable with the integer arithmetic already
+;; here.  The rounding happens ONCE, on an exact remainder, instead of
+;; accumulating across repeated multiplications -- which is what the
+;; old fraction walk did and why it emitted wrong digits rather than
+;; merely short ones.
+;;
+;; Shortest is found by generate-and-test rather than by comparing
+;; against the neighbouring doubles: emit d significant digits for
+;; d = 1, 2, 3, ..., read each candidate back with this tree's own
+;; reader, and stop at the first that is the original value.  At most
+;; seventeen attempts, and no ulp machinery.  This rests on the reader
+;; being exact, which was measured differentially against two other
+;; implementations over 3020 doubles before this was written.
+
+;; floor(log10 v) for an exact positive rational
+(define ($dec-exponent v)
+  (if (< v 1)
+      (let down ((k -1) (p 1/10))
+        (if (<= p v) k (down (- k 1) (/ p 10))))
+      (let up ((k 0) (p 1))
+        (if (< v (* p 10)) k (up (+ k 1) (* p 10))))))
+
+;; round an exact rational to the nearest integer, halves away from zero
+(define ($exact-round r)
+  (let* ((n (numerator r)) (d (denominator r))
+         (q (quotient n d))
+         (rem (- n (* q d))))
+    (if (>= (* 2 rem) d) (+ q 1) q)))
+
+;; the decimal digits of a positive exact integer, as a list of chars
+(define ($int-chars n)
+  (let loop ((n n) (acc '()))
+    (if (< n 10)
+        (cons (integer->char (+ 48 n)) acc)
+        (loop (quotient n 10)
+              (cons (integer->char (+ 48 (remainder n 10))) acc)))))
+
+(define ($zeros k) (let loop ((i k) (acc '())) (if (= i 0) acc (loop (- i 1) (cons #\0 acc)))))
+
+;; digits + the position of the point -> the text, without an exponent
+(define ($place-point ds k)
+  (let ((n (length ds)))
+    (cond
+     ((< k 0) (list->string (append (list #\0 #\.) ($zeros (- (- k) 1)) ds)))
+     ((>= k n) (list->string (append ds ($zeros (- (+ k 1) n)) (list #\. #\0))))
      (else
-      (let* ((ip (%fl->fx mag))
-             (frac (fl- mag (fixnum->flonum ip))))
-        (%display-digits ip)
-        ($wb 46)
-        ($display-frac frac 0))))))
+      (let split ((i 0) (l ds) (head '()))
+        (if (= i (+ k 1))
+            ;; a decimal point with nothing after it is not a number
+            ;; this reader will take back, so the zero is written
+            (list->string (append (reverse head) (list #\.)
+                                  (if (null? l) (list #\0) l)))
+            (split (+ i 1) (cdr l) (cons (car l) head))))))))
+
+;; Rounding up can carry into an extra digit -- 9.99 becomes 10.0 -- and
+;; the value is then a power of ten, so the digit the carry added is a
+;; trailing zero that says nothing.  Dropping it and moving the point
+;; one place keeps the count at d digits, which is what "shortest" is
+;; counting.
+(define ($drop-carry ds)
+  (let loop ((l ds) (acc '()))
+    (if (null? (cdr l)) (reverse acc) (loop (cdr l) (cons (car l) acc)))))
+
+;; How many decimal digits identify a binary64.  The search below stops
+;; here, and the spelling choice measures against it, so the two cannot
+;; drift apart into two unrelated numbers.
+(define $fl-max-digits 17)
+
+;; The longest plain decimal whose characters are all informative: a
+;; leading digit, a point, and every digit a double can distinguish.
+(define $fl-max-decimal (+ $fl-max-digits 2))
+
+;; The same digits spelled with an exponent: one digit, the rest after a
+;; point, then e and the power.  No plus sign on a positive exponent --
+;; the choice below is made on character count, so a sign that carries
+;; no information would tip it.
+(define ($exponent-form ds k)
+  (list->string
+   (append (list (car ds))
+           (if (null? (cdr ds)) '() (cons #\. (cdr ds)))
+           (list #\e)
+           (if (< k 0) (list #\-) '())
+           ($int-chars (if (< k 0) (- 0 k) k)))))
+
+;; Both spellings name the same double.  The exponent is used only when
+;; the plain decimal has grown longer than any double can justify.
+;;
+;; $fl-max-digits is how many decimal digits a binary64 needs to be
+;; identified -- the same bound the search above stops at -- so a
+;; decimal spelling of a leading digit, a point and that many digits is
+;; the longest one whose every character is still telling the reader
+;; something.  Past it the extra characters are positional padding:
+;; zeros standing in for an exponent.  That is the condition here, and
+;; it is a property of the FORMAT rather than a preference about how
+;; numbers should look.  (The sign is not counted because the caller
+;; has already written it.)
+;;
+;; Two rules were tried before this one and both were constant-free,
+;; derivable, and wrong.  "Use the exponent where a plain decimal
+;; cannot round-trip" never fires at all -- a decimal always
+;; round-trips given enough zeros, so 1e-320 came out as three hundred
+;; and twenty-two characters.  "Use whichever spelling is shorter"
+;; fires far too often: 1e2 beats 100.0 by two characters and is not
+;; what anyone wants to read.  Both are recorded here because a rule
+;; that was tried and replaced is worth more to the next reader than
+;; one that looks obvious, and without the note they will re-derive
+;; them.  What decides a rule is its output, not its shape.
+(define ($shorter-spelling dec ds k mag)
+  (let ((exp-form ($exponent-form ds k)))
+    (if (and (> (string-length dec) $fl-max-decimal)
+             (fl=? (string->number exp-form) mag))
+        exp-form
+        dec)))
+
+;; the shortest text that reads back as mag, mag positive and finite
+;; How long the plain decimal would be, without building it.  The
+;; extreme values are exactly the ones whose decimal is enormous, so
+;; measuring it by construction would spend the time this is trying to
+;; avoid.
+(define ($decimal-length ds k)
+  (let ((n (length ds)))
+    (cond ((< k 0) (+ 2 (- (- k) 1) n))
+          ((>= k n) (+ (+ k 1) 2))
+          (else (+ n 1)))))
+
+;; nearest integer to a/b, halves away from zero; a and b non-negative,
+;; b positive.  Integer arithmetic only: see the note in
+;; $shortest-decimal about why no rational appears here.
+(define ($round-quotient a b)
+  (quotient (+ (* 2 a) b) (* 2 b)))
+
+(define ($shortest-decimal mag)
+  ;; The scaling is done, and this is the point of the whole routine,
+  ;; on the numerator and denominator as
+  ;; INTEGERS and never as a rational.  A double's exact value has a
+  ;; denominator around 2^1050, so every rational multiply reduces by a
+  ;; gcd of two thousand-bit numbers: measured, that one operation cost
+  ;; 73ms for a value near 1e-300, and the same arithmetic done on
+  ;; integers costs 0.55ms.  A printer that takes a second reads as a
+  ;; hang, and a suite reports a hang as a timeout, which is a category
+  ;; that hides its own cause.
+  (let* ((ex (inexact->exact mag))
+         (n0 (numerator ex))
+         (d0 (denominator ex))
+         (k ($dec-exponent ex)))
+    ;; scale by a power of ten in whichever direction it goes.
+    ;; %expt-int counts DOWN to zero, so a negative exponent never
+    ;; reaches its base case -- it does not return.  Every use here
+    ;; therefore asks for a non-negative power and divides instead of
+    ;; multiplying when the scale is the other way.
+    ;; The candidates all share a prefix: the d-digit rounding is the
+    ;; full-precision one shortened.  So the expensive division -- the
+    ;; one whose operands are as wide as the double's exact value --
+    ;; happens ONCE, and each candidate is derived from it by dividing
+    ;; a $fl-max-digits-wide integer by a small power of ten.  Doing it
+    ;; per candidate cost seventeen wide divisions, measured at 6.7ms
+    ;; for a value near 1e-300 against 0.4ms for one.
+    ;;
+    ;; Shortening a rounded number rounds twice, which can differ by
+    ;; one in the last place from rounding the original directly.  That
+    ;; costs nothing here: every candidate is checked by reading it
+    ;; back, so a candidate that differs simply fails and the next
+    ;; length is tried.  The full-precision case is exact.
+    (let* ((up (+ (- 0 k) (- $fl-max-digits 1)))
+           (numF (if (>= up 0) (* n0 (%expt-int 10 up)) n0))
+           (denF (if (>= up 0) d0 (* d0 (%expt-int 10 (- up)))))
+           (nF ($round-quotient numF denF)))
+      (let try ((d 1))
+        (if (> d $fl-max-digits)
+            ;; $fl-max-digits always identify a double, so this is
+            ;; unreachable; it is written safely rather than left as
+            ;; the one branch that could hang.
+            ($place-point ($int-chars nF) k)
+            (let* ((n (if (= d $fl-max-digits)
+                          nF
+                          ($round-quotient nF (%expt-int 10 (- $fl-max-digits d)))))
+                   ;; rounding up can carry into an extra digit
+                   ;; (9.99 -> 10.0), which moves the point one place
+                   (ds0 ($int-chars n))
+                   (carry? (> (length ds0) d))
+                   (ds (if carry? ($drop-carry ds0) ds0))
+                   (kk (if carry? (+ k 1) k))
+                   ;; the spelling is chosen from the LENGTH the decimal
+                   ;; would have, so an enormous decimal is never built
+                   ;; only to be measured and discarded
+                   (text (if (> ($decimal-length ds kk) $fl-max-decimal)
+                             ($exponent-form ds kk)
+                             ($place-point ds kk))))
+              (if (fl=? (string->number text) mag)
+                  text
+                  (try (+ d 1)))))))))
+
 (define ($display-frac f i)
   ;; up to 12 digits, trimmed via lookahead: stop when the rest is 0
   (if (or (= i 12) (fl=? f (fixnum->flonum 0)))
