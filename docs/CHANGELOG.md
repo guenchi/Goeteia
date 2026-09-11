@@ -114,6 +114,13 @@ than re-verified item by item for this document.
   escape helper) stays listed out of specialisation by name, and dead
   code elimination still keeps such a function alive, which is its own
   open entry below.
+- Drivers: a library defined at top level of the program being
+  compiled can be imported by that program. The import used to be
+  resolved against library files and reported not found, so an inline
+  library could only be imported from inside a `begin`, which lost the
+  private namespacing of its record names. An embed body does not see
+  the host's inline libraries and is refused the same way on both
+  hosts.
 - Compiler, import discipline, the reference half: a reference to a
   name the import clause does not bring in is an unbound-variable
   error at compile time, judged per scope -- the program against its
@@ -236,7 +243,7 @@ than re-verified item by item for this document.
 
 ### KNOWN OPEN
 
-Eight defects are known, reproduced, and NOT fixed in this release. They
+Seven defects are known, reproduced, and NOT fixed in this release. They
 are listed here because an unfixed defect that scrolls off a list is one
 nobody re-reads at the next decision.
 
@@ -249,12 +256,6 @@ nobody re-reads at the next decision.
   procedures the prelude defines in Scheme are not yet. Held red by
   `c02-excluded-append-program-and-quasiquote` and
   `defect-library-redefines-imported-name`.
-- **A library written at top level of a program cannot be imported by
-  that program.** `(import (t one))` at top level is resolved against
-  library files and reports the library not found, and moving the
-  library and the import into a `begin` loses the private namespacing
-  of its record names. The flat splice never needed the import; the
-  reference rule now requires it. Held red by `library-implicit-record`.
 - **`prefix` imports were never implemented and are now refused by
   name.** The compiler driver emitted aliases for `rename` only, so
   `(import (prefix (rnrs) r:))` silently meant `(import (rnrs))` with
