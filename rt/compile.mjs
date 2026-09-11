@@ -314,6 +314,7 @@ function resolveImports(text, dirs, visited = new Set(), file = 'input') {
     // replace top-level (import ...) spans with the inlined
     // libraries; every other byte passes through untouched
     let result = locMark(file, 1);
+    const inline = inlineLibraries(text);
     let at = 0;
     for (const [start, end] of topLevelSpans(text)) {
         const form = text.slice(start, end);
@@ -321,7 +322,8 @@ function resolveImports(text, dirs, visited = new Set(), file = 'input') {
             result += text.slice(at, start);
             const specs = parseSpecs(form);
             result += specs
-                .map(spec => loadLibrary(specTarget(spec), dirs, visited)
+                .map(spec => loadLibrary(specTarget(spec), dirs, visited,
+                                         inline)
                              + '\n' + specAliases(spec))
                 .join('\n');
             // the clause itself, after the libraries it pulled in: the
@@ -335,10 +337,26 @@ function resolveImports(text, dirs, visited = new Set(), file = 'input') {
     return result + text.slice(at);
 }
 
-function loadLibrary(spec, dirs, visited) {
+// A library written in the program being compiled is already here:
+// the flat splice puts its definitions at top level, so there is no
+// file to find and nothing to load.  Without this a program cannot
+// name its own inline library in an import clause -- the driver goes
+// looking for a file and fails -- and under the import rule a name it
+// cannot import is a name it may not use.
+function inlineLibraries(text) {
+    const names = new Set();
+    for (const [start, end] of topLevelSpans(text)) {
+        const m = /^\(\s*library\s*\(([^)]*)\)/.exec(text.slice(start, end));
+        if (m) names.add(m[1].trim().split(/\s+/).join('/'));
+    }
+    return names;
+}
+
+function loadLibrary(spec, dirs, visited, inline) {
     // (rnrs ...) and (goeteia ...) come from the prelude
     if (spec[0] === 'rnrs' || spec[0] === 'goeteia') return '';
     const key = spec.join('/');
+    if (inline && inline.has(key)) return '';
     if (visited.has(key)) return '';
     visited.add(key);
     for (const d of dirs) {

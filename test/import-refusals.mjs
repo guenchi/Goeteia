@@ -38,6 +38,11 @@ const rows = [
     ['a component library',          '(import (rnrs base))\n(display 1)',                        /component libraries of \(rnrs\) are not supported/],
     // a library body is judged against its own clause
     ['a library defining a name it imports',  '(import (rnrs))\n(begin (library (o l) (export f) (import (rnrs)) (define (car x) 9) (define (f) 1)) (import (o l)))\n(display (f))', /imported name may not be defined; exclude it with except: car/],
+    // a library the program does not define is still looked for on disk
+    ['an import of a library that exists nowhere', '(import (rnrs) (no such lib))\n(display 1)',                                  /library not found: \(no such lib\)/],
+    // an embed unit does not contain the host's inline libraries, so a
+    // body importing one is refused the same way on both hosts
+    ['an embed body importing the host\'s inline library', '(import (rnrs))\n(begin (library (t one) (export mk1) (import (rnrs)) (define (mk1) 1)) (import (t one)))\n(define s (conjure js (import (rnrs) (t one)) (display (mk1))))\n(display 1)', /library not found: \(t one\)/],
     ['a library assigning a name it imports', '(import (rnrs))\n(begin (library (o l) (export f) (import (rnrs)) (define (f) (set! car 5) 1)) (import (o l)))\n(display (f))',    /imported name may not be assigned; exclude it with except: car/],
     ['a prefix import',                      '(import (prefix (rnrs) r:))\n(r:display 1)',                          /prefix/],
 ];

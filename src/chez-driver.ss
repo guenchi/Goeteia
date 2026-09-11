@@ -264,11 +264,30 @@
      ((null? cs) '())
      ((and (pair? (car cs)) (eq? (car (car cs)) 'import)) (cdr (car cs)))
      (else (scan (cdr cs))))))
+;; A library written in the program being compiled is already here:
+;; the flat splice puts its definitions at top level, so there is no
+;; file to find and nothing to load.  Without this a program cannot
+;; name its own inline library in an import clause -- the driver goes
+;; looking for a file and fails -- and under the import rule a name it
+;; cannot import is a name it may not use.
+(define inline-libraries '())
+(define (inline-library? spec) (member spec inline-libraries))
+(define (inline-library-names forms)
+  (fold-left (lambda (acc form)
+               (if (and (pair? form) (eq? (car form) 'library)
+                        (pair? (cdr form)) (pair? (cadr form)))
+                   (cons (cadr form) acc)
+                   acc))
+             '()
+             forms))
+(define (collect-inline-libraries! fs)
+  (set! inline-libraries (inline-library-names (map cdr fs))))
 (define (builtin-library? spec)
   ;; provided by the prelude, compiled into every module
   (and (pair? spec) (memq (car spec) '(rnrs goeteia))))
 (define (load-library spec dirs)
-  (if (or (builtin-library? spec) (member spec visited))
+  (if (or (builtin-library? spec) (inline-library? spec)
+          (member spec visited))
       '()
       (begin
         (set! visited (cons spec visited))
@@ -301,6 +320,7 @@
         (append lib aliases rest))))
 (define (resolve-imports pairs file dirs)
   ;; pairs: (line . form); result: ("file:line" . form)
+  (collect-inline-libraries! pairs)
   (let loop ((fs pairs) (acc '()))
     (cond
      ((null? fs) (reverse acc))
@@ -350,8 +370,15 @@
    ((and (= qq 0)
          (memq (car form) '(conjure define-js define-wasm define-wasm-js)))
     (let* ((saved visited)
+           ;; the embed unit holds its OWN libraries, not the host's:
+           ;; an inline library of the host is not in the body's unit,
+           ;; so the body may not skip loading it on the strength of
+           ;; the host having defined it
+           (saved-inline inline-libraries)
            (body (begin
                    (set! visited '())
+                   (set! inline-libraries
+                         (inline-library-names (cddr form)))
                    (let loop ((bs (cddr form)) (acc '()))
                      (cond
                       ((null? bs) (reverse acc))
@@ -377,6 +404,7 @@
                              (cons (embed-splice-imports* (car bs) dirs 0)
                                    acc))))))))
       (set! visited saved)
+      (set! inline-libraries saved-inline)
       (cons (car form) (cons (cadr form) body))))
    (else (cons (embed-splice-imports* (car form) dirs qq)
                (embed-splice-imports* (cdr form) dirs qq)))))
