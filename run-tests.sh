@@ -187,6 +187,16 @@ run_js() { # jsfile testfile
 # like a test that failed.  Measured: a session put an invented filename
 # in this variable and spent time reading the resulting red as a defect.
 # The two are different facts and now say different things.
+# The glob below is expanded ONCE, here, and that is correct -- a run
+# should measure one consistent snapshot of the tree rather than a
+# moving one.  What was NOT correct was reporting as though the run
+# covered the tree: on 2026-09-12 two cells were committed while a run
+# was in flight and neither appeared in its log at all, not late and not
+# skipped, just absent, so a newly committed red witness was invisible
+# rather than merely delayed.  Remembering the list lets the end of the
+# run say so.
+ss_at_start=$(ls test/*.ss 2>/dev/null | tr '\n' ' ')
+
 for t in ${GOETEIA_TESTS-test/*.ss}; do
     if [ ! -f "$t" ]; then
         echo "FAIL $t (no such file -- named in GOETEIA_TESTS but not on disk)"
@@ -445,9 +455,24 @@ for m in test/macro-toplevel-hygiene.mjs \
     fi
 done
 
+# The .ss set is checked for having MOVED under the run.  A cell that
+# lands after the glob expanded does not run and prints nothing, so
+# without this the log of a run that missed it is indistinguishable from
+# the log of a run where it passed.
+if [ -z "${GOETEIA_TESTS+x}" ]; then
+    ss_at_end=$(ls test/*.ss 2>/dev/null | tr '\n' ' ')
+    if [ "$ss_at_start" != "$ss_at_end" ]; then
+        echo "FAIL test/*.ss changed while the run was in flight -- this run did NOT cover the current tree, re-run it"
+        echo "  at start: $ss_at_start"
+        echo "  at end:   $ss_at_end"
+        fail=1
+    fi
+fi
+
 # EVERY test/*.mjs MUST BE NAMED IN THIS FILE.
 #
-# The .ss cells are a glob and a new one runs the moment it lands.  The
+# The .ss cells are a glob, and the check just above is what makes a
+# late arrival visible -- the glob alone does NOT pick one up.  The
 # .mjs cells are named one at a time, and a list by name cannot shout
 # for what is missing from it: on 2026-09-09 three .mjs cells were
 # written, committed, reported as delivered, and never run.  One of
