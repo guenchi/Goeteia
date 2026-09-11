@@ -25,12 +25,14 @@ async function refused(name, source, ...mustMention) {
             // keeps what it printed in e.output and the trap in e.message
             const text = [e && e.message, e && e.output].filter(Boolean).join('\n') || String(e);
             // A name the program defines that a library it imports exports
-            // is refused by the import rule first -- "NAME is imported by
-            // (lib); write (import (except ...)) to define it" -- which names
+            // is refused by the import rule first -- "imported name may not
+            // be defined; exclude it with except: NAME lib" -- which names
             // something the author wrote; the duplicate check still catches
-            // a genuine double definition.  Either message is a refusal by
-            // name, which is what this file asserts.
-            assert.match(text, /defined twice|is imported by/, `${name} (${target}): not refused by name: ${text}`);
+            // a genuine double definition, and the same-file case below is
+            // its witness: a fresh name defined twice reaches no import rule.
+            // Either message is a refusal by name, which is what this file
+            // asserts.
+            assert.match(text, /defined twice|imported name may not be/, `${name} (${target}): not refused by name: ${text}`);
             for (const m of mustMention) {
                 assert.ok(text.includes(m), `${name} (${target}): message does not mention ${m}: ${text}`);
             }
