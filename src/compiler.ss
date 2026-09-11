@@ -309,8 +309,23 @@
 ;; table, and the rest.  Without this each of them would have to learn
 ;; the record separately, and the ones that did not would fail far from
 ;; the cause: a pruned generic helper, a missing record type.
+;; A head resolves to what it DENOTES here, not to how it is spelled.
+;; Only a keyword is rewritten: the expander's output turns on whether
+;; a head is syntax, and rewriting a variable's spelling in this
+;; function would change a name the later passes key on.
+;;
+;; The origin name comes back, because that is what both dispatches
+;; want -- xpand-core-form's case wants `if' for a renamed `if', and
+;; (assq tag *macros*) wants the name the transformer is registered
+;; under.  A lexically shadowed head never reaches here: xpand and
+;; xpand-core check the bound-set first, which is why that piece had
+;; to land before this one.
 (define (resolve-tag x)
-  (cond ((symbol? x) (unmark x))
+  (cond ((symbol? x)
+         (let ((e (expand-entry (unmark x))))
+           (if (and e (eq? (entry-kind e) 'keyword))
+               (entry-origin e)
+               (unmark x))))
         ((intrinsic? x) (intrinsic-op x))
         (else x)))
 
@@ -446,6 +461,21 @@
 (define (lexically-bound? x)
   (and (symbol? x) (memq (unmark x) *expand-bound*) #t))
 
+;; A renamed VARIABLE keeps its written spelling and gets a binding.
+;;
+;; Resolving it to the origin here instead -- which is what "rename is
+;; name resolution" would mean if taken to variables as well -- was
+;; tried and is wrong, for a reason worth writing down: a rename FREES
+;; the original spelling, so (rename (rnrs) (car hd)) leaves `car'
+;; unbound and a program that writes `car' must be refused.  Rewrite
+;; `hd' to `car' during expansion and the two programs are the same
+;; text by the time the import rule reads them.  Resolution ERASES the
+;; distinction the rule exists to draw.
+;;
+;; Keywords have no such option -- (define when-else if) cannot take a
+;; special form's value -- which is why they resolve and variables
+;; bind.  The asymmetry is the point, not an inconsistency.
+
 ;; A body's own internal definitions bind over the whole body, its
 ;; definitions' right-hand sides included, so they join the formals.
 (define (body-define-names body)
@@ -485,7 +515,24 @@
       ;; a bound name in head position is a call to that binding, not
       ;; the special form its spelling happens to name
       (xpand* e)
-      (xpand-core-form e)))
+      (xpand-core-form (rename-head e))))
+
+;; A renamed keyword has to reach the LATER passes under the name they
+;; know, not merely be dispatched on here.  Most core forms are not
+;; arms of the case below -- `if' is not -- so they fall to the
+;; application branch, which copies the head through verbatim; a form
+;; left spelled `when-else' then arrives at code generation as a call
+;; to something nothing defines.  Dispatching correctly and emitting
+;; the original spelling are two different jobs and this is the second.
+(define (rename-head e)
+  (if (symbol? (car e))
+      (let ((en (expand-entry (unmark (car e)))))
+        (if (and en
+                 (eq? (entry-kind en) 'keyword)
+                 (not (eq? (entry-origin en) (unmark (car e)))))
+            (cons (entry-origin en) (cdr e))
+            e))
+      e))
 
 (define (xpand-core-form e)
   (case (resolve-tag (car e))
@@ -578,16 +625,7 @@
          (when *program-form?*
            (set! *program-clause?* #t)
            (set! *import-specs* (append *import-specs* (cdr e))))
-         ;; A rename needs the alias to exist, not merely to be in the
-         ;; map, and the aliases belong to the clause -- so the clause
-         ;; emits them, under the tag that says "spliced, and none of
-         ;; this is the program's own definition".  Both drivers used
-         ;; to emit them instead, which worked only because the old
-         ;; marker was placed AFTER them: they fell outside the
-         ;; program's forms by accident of position.  Once the boundary
-         ;; moved to where it belongs, the program was refused for
-         ;; defining the very name its own clause had just aliased.
-         (let ((aliases (rename-alias-defines (cdr e))))
+         (let ((aliases (clause-alias-defines (cdr e))))
            (if (null? aliases)
                '(begin)
                (cons '%library-body aliases))))
@@ -603,14 +641,20 @@
          ;; The scope closes here, on the expanded body, because this
          ;; is the last point at which the library's own names are
          ;; separable from the top level it splices into
-         (let ((saved *program-form?*))
+         (let ((saved *program-form?*)
+               (saved-table *expand-table*))
            ;; a library's definitions answer to the library's own
-           ;; clause, not to the program's
+           ;; clause, not to the program's -- and so does its EXPANSION,
+           ;; so the table moves with the flag
            (set! *program-form?* #f)
+           (set! *expand-table*
+                 (build-expand-table
+                  (if (pair? (cadddr e)) (cdr (cadddr e)) '())))
            (let ((out (close-library-scope (strip-marks (cadr e))
                                            (cadddr e)
                                            (xpand* (cdr (cdddr e))))))
              (set! *program-form?* saved)
+             (set! *expand-table* saved-table)
              out)))
         ((case)
          ;; (case E ((d ...) body ...) ... (else body ...))
@@ -1014,20 +1058,22 @@
 ;; Without the tag a library's definitions are recorded as the
 ;; program's own, because at splice time they look exactly like them.
 (define (close-library-scope name import-clause body)
-  ;; A library's clause is not expanded through the (import) arm -- it
-  ;; is read here, from the header -- so its renames emit their aliases
-  ;; here, ahead of the body that uses them.
+  ;; A library's clause is read from its header, not through the
+  ;; (import) arm, so the bindings its renames and prefixes need are
+  ;; emitted here.  Keywords are already resolved -- the body expanded
+  ;; against the library's own table -- and what is left is the
+  ;; variables, exactly as for a program's clause.
   (let* ((aliases (if (pair? import-clause)
-                      (rename-alias-defines (cdr import-clause))
+                      (clause-alias-defines (cdr import-clause))
                       '()))
          (out (close-scope name (append aliases body)
                            (imported-names import-clause))))
     ;; The library's own clause, its own definitions, its own forms --
-    ;; and the clause's aliases are none of those three.  An alias IS
-    ;; the import, so it is not a definition the library made; and its
+    ;; and the clause's bindings are none of those three.  An alias IS
+    ;; the import, not a definition the library made, and its
     ;; right-hand side names the original, which a rename FREES from
-    ;; the map, so judging it would refuse the clause for mentioning
-    ;; the very name it renamed.  They lead `out' because they were
+    ;; the map: judging it would refuse the clause for mentioning the
+    ;; very name it renamed.  They lead `out' because they were
     ;; prepended, so the body is what follows them.
     (record-judgement-unit!
      (merge-import-bindings (if (pair? import-clause) (cdr import-clause) '()))
@@ -2128,21 +2174,115 @@
                  (cdr e))
             '()))))))
 
-(define (rename-alias-defines specs)
-  (fold-left
-   (lambda (acc spec)
-     (if (and (pair? spec) (symbol? (car spec))
-              (eq? (unmark (car spec)) 'rename))
-         (fold-left
-          (lambda (a pr)
-            (if (and (pair? pr) (pair? (cdr pr)))
-                (cons (list 'define (cadr pr) (car pr)) a)
-                a))
-          acc
-          (cddr spec))
-         acc))
-   '()
-   specs))
+;; ---- what the EXPANDER needs to know before it expands ----------
+;;
+;; Per identifier it is about to expand: is this spelling a keyword or
+;; a variable here, which transformer if it is a keyword, and which
+;; binding a syntax-rules literal denotes.  That is strictly less than
+;; the full map -- a value reference's meaning does not change what the
+;; expander PRODUCES, only what its output later resolves to -- so this
+;; much is built before expansion and the rest stays after.
+;;
+;; An entry is (spelling kind origin-name identity), with kind one of
+;; `keyword' or `variable'.  origin-name is the spelling the binding
+;; has where it was DEFINED, which is what a renamed keyword has to
+;; dispatch on: (rename (rnrs) (if when-else)) must send `when-else'
+;; to the `if' arm, and (rename (m) (dbl double)) must find (m)'s
+;; transformer, which is registered under `dbl'.
+(define *expand-table* '())
+
+(define (expand-entry spelling)
+  (assq spelling *expand-table*))
+(define (entry-kind e) (cadr e))
+(define (entry-origin e) (caddr e))
+(define (entry-identity e) (cadddr e))
+
+;; A binding is a keyword if the scope it came from defines it with
+;; define-syntax, or if it is one of (rnrs)'s syntactic exports.  Both
+;; questions are answerable before expansion: collect-macros! has
+;; already walked every library, and core syntax is a constant.
+;; A macro's scope is the library NAME as a list and an identity's
+;; library is its printed string, so the comparison goes in the
+;; printing direction: there is no inverse of lib-name-string and
+;; inventing one would be a second spelling of the same fact.
+;; (rnrs)'s syntactic exports, which is a WIDER set than $core-syntax:
+;; that list exists to exempt what the expander's own output contains,
+;; and guard, assert, let-values and let*-values are none of its
+;; business but are still syntax.  Measured rather than recalled -- a
+;; name with no value binding is one an alias cannot express, and
+;; taking (define x <name>) for every export named exactly these plus
+;; `apply'.
+(define $rnrs-syntax
+  '(=> and assert begin case cond define define-record-type
+    define-syntax do else guard if lambda let let* let*-values
+    let-values letrec letrec* or parameterize quasiquote quote set!
+    syntax-rules unless unquote unquote-splicing when))
+
+(define (identity-keyword? id)
+  (let ((lib (car id)) (name (cdr id)))
+    (if (string=? lib "rnrs")
+        (and (memq name $rnrs-syntax) #t)
+        (let scan ((ms *macros*))
+          (and (pair? ms)
+               (or (and (eq? (car (car ms)) name)
+                        (let ((sc (macro-scope (cdr (car ms)))))
+                          (and sc (pair? sc)
+                               (string=? (lib-name-string sc) lib))))
+                   (scan (cdr ms))))))))
+
+;; Every clause the program writes, read from the form list before a
+;; thing is expanded.  A clause inside a top-level (begin ...) counts:
+;; that is how a program imports a library it defines itself, and the
+;; expander has to know about those bindings as much as any other.
+;; The bindings a clause's renames and prefixes need: one per spelling
+;; the clause introduces whose origin is a variable.  The compiler can
+;; enumerate a prefix's whole export set -- the manifest is here --
+;; which the drivers never could, and they go out under %library-body,
+;; so they are not the program's own definitions and the rule that
+;; refuses redefining an import does not see them.
+;; A name with no value binding cannot be aliased, because the alias
+;; would take its value.  $rnrs-syntax covers the syntactic exports;
+;; this is what is left after them -- measured by taking (define x
+;; <name>) for all 245 of (rnrs)'s exports, which fails for the 36
+;; syntactic ones and for `apply' and nothing else.  `apply' is a
+;; procedure the backend only ever emits at a call site, so it has no
+;; value to bind, and (define x apply) is refused on HEAD too: a gap
+;; older than this slice, not one it opens.  A prefixed or renamed
+;; `apply' therefore has no binding and reports the same "unbound
+;; variable: apply" the direct spelling already does.
+(define $no-value-binding '(apply))
+
+(define (clause-alias-defines specs)
+  (let loop ((bs (build-expand-table specs)) (acc '()))
+    (cond
+     ((not (pair? bs)) acc)
+     ((and (eq? (entry-kind (car bs)) 'variable)
+           (not (memq (entry-origin (car bs)) $no-value-binding))
+           (not (eq? (entry-origin (car bs)) (car (car bs)))))
+      (loop (cdr bs)
+            (cons (list 'define (car (car bs)) (entry-origin (car bs)))
+                  acc)))
+     (else (loop (cdr bs) acc)))))
+
+(define (program-clause-specs forms)
+  (let loop ((fs forms) (acc '()))
+    (cond
+     ((not (pair? fs)) acc)
+     ((and (pair? (car fs)) (symbol? (car (car fs)))
+           (eq? (unmark (car (car fs))) 'import))
+      (loop (cdr fs) (append acc (cdr (car fs)))))
+     ((and (pair? (car fs)) (symbol? (car (car fs)))
+           (eq? (unmark (car (car fs))) 'begin))
+      (loop (cdr fs) (loop (cdr (car fs)) acc)))
+     (else (loop (cdr fs) acc)))))
+
+(define (build-expand-table specs)
+  (map (lambda (b)
+         (let* ((spelling (car b))
+                (id (cdr b))
+                (kw (identity-keyword? id)))
+           (list spelling (if kw 'keyword 'variable) (cdr id) id)))
+       (merge-import-bindings specs)))
 
 (define (import-spec-bindings spec)
   (let ((tag (and (pair? spec) (symbol? (car spec)) (unmark (car spec)))))
@@ -2168,19 +2308,21 @@
                     (filter (lambda (b) (not (memq (car b) olds))) base)
                     pairs)))
       ((prefix)
-       ;; REFUSED, not implemented, and the map is why.  A prefixed
-       ;; name needs an alias binding to exist -- rename gets one from
-       ;; the driver's spec-aliases -- and the aliases for a prefix are
-       ;; the whole export set, which the driver cannot enumerate
-       ;; because the manifest lives here.  Generating them here
-       ;; instead collides with the refusal this same slice adds: every
-       ;; generated (define r:car car) defines a name the map brings
-       ;; in.  Measured: NO file in the tree imports with a prefix, so
-       ;; what a map without bindings buys is a claim that a name is
-       ;; bound when nothing binds it.  KNOWN OPEN.
-       (errorf 'goeteia
-               "prefix import specs are not supported; use rename or a plain import:"
-               spec))
+       ;; Supported now, and what made it impossible is gone.  A
+       ;; prefixed name used to need an alias binding to exist, the
+       ;; aliases for a prefix are the whole export set, the driver
+       ;; could not enumerate it, and generating them here would have
+       ;; defined a name the map brings in -- refused by this same
+       ;; slice.  With rename as RESOLUTION there is no alias to
+       ;; generate: a prefixed spelling denotes the origin, and the
+       ;; expander rewrites references to it like any other rename.
+       (let ((base (import-spec-bindings (cadr spec)))
+             (pre (symbol->string (unmark (caddr spec)))))
+         (map (lambda (b)
+                (cons (string->symbol
+                       (string-append pre (symbol->string (car b))))
+                      (cdr b)))
+              base)))
       (else (import-binding-set spec)))))
 
 ;; A program may not define a name its own clause brings in.  The
@@ -5691,6 +5833,7 @@
   (set! *program-form?* #f)
   (set! *program-clause?* #f)
   (set! *expand-bound* '())
+  (set! *expand-table* '())
   (set! *program-defines* '())
   (set! *program-forms* '())
   (set! *judgement-units* '())
@@ -5724,6 +5867,10 @@
          ;; which meant a program with no clause got no announcement
          ;; and was never judged at all.
          (%program-form-off (set! *program-form?* #f))
+         ;; the prelude has no clause, so it expands against no table --
+         ;; a written head in it must not resolve against the USER's
+         ;; renames, the same hazard the prefix split exists for
+         (%table-off (set! *expand-table* '()))
          (expanded-prefix (if (> pre-n 0)
                               (close-scope *prelude-scope*
                                            (expand-forms (first-n forms pre-n)
@@ -5731,11 +5878,29 @@
                                            '())
                               '()))
          (%program-form-on (set! *program-form?* #t))
+         ;; the program's own scope for the expander, built from the
+         ;; clause the program wrote, after collect-macros! has
+         ;; registered every inline library's exports and macros
+         (%table-on
+          (set! *expand-table*
+                (build-expand-table
+                 (program-clause-specs
+                  (if (> pre-n 0) (list-tail forms pre-n) forms)))))
          (expanded (if (> pre-n 0)
                        (append expanded-prefix
                                (expand-forms (list-tail forms pre-n)
                                              (list-tail locs pre-n)))
                        (expand-forms forms locs)))
+         ;; The table is an EXPANSION-time fact and dies with the
+         ;; expansion.  resolve-tag is called by later passes too, and
+         ;; a table still standing there rewrote a renamed keyword's
+         ;; spelling long after the expander had correctly decided it
+         ;; was a lexically bound variable -- the expander's output was
+         ;; right and a downstream pass re-resolved it.  Nothing after
+         ;; this point needs it: a renamed variable's references were
+         ;; rewritten to their origin during expansion, and a renamed
+         ;; keyword was dispatched then too.
+         (%table-done (set! *expand-table* '()))
          ;; The clause is read here: expansion has run, so every inline
          ;; library has registered what it exports.  Refusal runs
          ;; before check-duplicate-defines! below, because a program
