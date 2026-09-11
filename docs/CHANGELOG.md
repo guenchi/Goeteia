@@ -127,6 +127,13 @@ than re-verified item by item for this document.
   a dozen characters -- used to construct 10^999999 and never return,
   a denial of service reachable from any text a program reads or a user
   types. The magnitude is refused once its scale passes a bound.
+- Compiler, syntax under the import rule: a `let` or `lambda` shadows a
+  macro's name, so `(let ((d2 ...)) (d2 4))` calls the binding rather
+  than expanding the macro; a renamed syntactic keyword and a renamed
+  library macro resolve (`(rename (rnrs) (if when-else))`), and `prefix`
+  imports work for the first time. `syntax-rules` literals match by
+  binding identity -- a lexically bound use no longer matches a free
+  literal.
 - Compiler, import discipline, the reference half: a reference to a
   name the import clause does not bring in is an unbound-variable
   error at compile time, judged per scope -- the program against its
@@ -249,7 +256,7 @@ than re-verified item by item for this document.
 
 ### KNOWN OPEN
 
-Nine defects are known, reproduced, and NOT fixed in this release. They
+Seven defects are known, reproduced, and NOT fixed in this release. They
 are listed here because an unfixed defect that scrolls off a list is one
 nobody re-reads at the next decision.
 
@@ -275,20 +282,6 @@ nobody re-reads at the next decision.
   escapes the rule; and a program with no import clause at all is not
   judged. Each has a row in `defect-import-rule-holes`, red, beside two
   green twins for what the rule already refuses in the same family.
-- **A renamed syntactic keyword or library macro does not resolve, and
-  `syntax-rules` literals match by spelling.** `(import (rename (rnrs)
-  (if when-else)))` leaves `if` unbound and `when-else` unknown, and a
-  renamed library macro is "cannot call"; the import map is built after
-  expansion, where syntax has already been recognised. A literal such
-  as `else` matches a lexically shadowed `else` that R6RS says is a
-  different binding. Held red by `defect-renamed-syntax-and-literals`
-  beside three twins for what already holds. **Workaround**: do not
-  rename syntax; do not shadow a literal.
-- **`prefix` imports were never implemented and are now refused by
-  name.** The compiler driver emitted aliases for `rename` only, so
-  `(import (prefix (rnrs) r:))` silently meant `(import (rnrs))` with
-  every prefixed name unbound. Nothing in the tree uses a prefix import
-  (`except` 39 files, `only` 1, `rename` 1). **Workaround**: `rename`.
 - **Component libraries such as `(rnrs base)` are not implemented.**
   Until now both compilers accepted `(import (rnrs base))` and quietly
   handed back the whole of `(rnrs)`; an rnrs spec with anything after
