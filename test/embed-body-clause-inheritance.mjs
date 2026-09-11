@@ -7,7 +7,11 @@
 // and only the second row discriminates: it must go red-to-green when
 // the inheritance rule lands and the hole closes.  A body WITH a
 // clause is governed by its clause alone (the third and fourth rows,
-// green today and required to stay so).
+// green today and required to stay so).  The fifth row is the one
+// that tells "governed by its clause alone" from "inherits as well",
+// which the third and fourth cannot because their enclosing program
+// lacks the name too; the sixth records that inheritance carries only
+// what the embed unit itself contains.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
@@ -36,6 +40,14 @@ const rows = [
     ['a clause-less body may not use what the program does not',   PRE + '(define s (conjure js (display (js-eval "1"))))\n(display 1)',        /unbound variable: js-eval/],
     ['a body with its own clause is governed by it: excluded',     PRE + '(define s (conjure js (import (rnrs)) (display (js-eval "1"))))\n(display 1)', /unbound variable: js-eval/],
     ['a body with its own clause is governed by it: included',     PRE + '(define s (conjure js (import (rnrs) (web js)) (display (js-eval "1"))))\n(display 1)', null],
+    // the row that separates "governed by its clause alone" from
+    // "inherits as well": the clause EXCLUDES a name the enclosing
+    // program imports, and the body must not get it back by inheritance
+    ['a body clause that excludes a name the program imports wins', '(import (rnrs))\n(define s (conjure js (import (except (rnrs) display)) (display 1)))\n(display 1)', /unbound variable: display/],
+    // inheritance carries only what the embed unit contains: the
+    // enclosing program's (web js) is spliced into the host, not into
+    // the body, so a clause-less body that needs js-eval must say so
+    ['a clause-less body does not inherit a host-only library',    '(import (rnrs) (web js))\n(define s (conjure js (display (js-eval "1"))))\n(display 1)', /unbound variable: js-eval/],
 ];
 
 for (const [title, src, want] of rows) {
