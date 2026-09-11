@@ -8,12 +8,20 @@ import { compileToBytes } from '../rt/compile.mjs';
 import { runModule } from '../rt/run.mjs';
 import { runJsModule } from '../rt/runjs.mjs';
 
+// A program begins with an import form.  These fixtures are the
+// backend's own test programs and predate that rule, so the clause is
+// added here rather than to each literal: one place, and a fixture
+// that already carries one is left alone.
+const withClause = (s) =>
+    /^\s*\(import\b/m.test(s) ? s : '(import (rnrs))\n' + s;
+
+
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'goeteia-js-arity-'));
 
 async function bothReject(name, source) {
     const sourceFile = path.join(dir, `${name}.ss`);
     const jsFile = path.join(dir, `${name}.mjs`);
-    fs.writeFileSync(sourceFile, source, 'utf8');
+    fs.writeFileSync(sourceFile, withClause(source), 'utf8');
     const wasm = await compileToBytes(sourceFile, { script: true });
     fs.writeFileSync(
         jsFile,
@@ -25,7 +33,7 @@ async function bothReject(name, source) {
 async function bothRejectOptimized(name, source) {
     const sourceFile = path.join(dir, `${name}.ss`);
     const jsFile = path.join(dir, `${name}.mjs`);
-    fs.writeFileSync(sourceFile, source, 'utf8');
+    fs.writeFileSync(sourceFile, withClause(source), 'utf8');
     const wasm = await compileToBytes(sourceFile);
     fs.writeFileSync(jsFile, await compileToBytes(sourceFile, { target: 'js' }));
     await assert.rejects(() => runModule(wasm), undefined, `${name}: wasm`);
@@ -48,7 +56,7 @@ try {
         '(define unused (string #f))\n(display 42)\n');
     {
         const sourceFile = path.join(dir, 'unused-unbound.ss');
-        fs.writeFileSync(sourceFile, '(define unused missing)\n42\n', 'utf8');
+        fs.writeFileSync(sourceFile, withClause('(define unused missing)\n42\n'), 'utf8');
         await assert.rejects(
             () => compileToBytes(sourceFile, { script: true }),
             undefined, 'unused unbound initializer: wasm compile');

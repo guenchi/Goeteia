@@ -174,7 +174,15 @@ export async function startRepl() {
 
     async function evaluate(input) {
         try {
-            const session = defs.concat([printLast(input)]).join('\n');
+            // A REPL session imports (rnrs): a program begins with an
+            // import form, and nobody types one at a prompt.  The
+            // session is compiled as a program like any other, so
+            // without this the empty map refuses the first name
+            // entered -- which is every name.
+            const session = ['(import (rnrs))']
+                .concat(defs)
+                .concat([printLast(input)])
+                .join('\n');
             const bytes = await compileSource(session);
             const { text } = await runModule(bytes, []);
             // runModule has already decoded the program's bytes as

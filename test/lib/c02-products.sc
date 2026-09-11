@@ -24,9 +24,26 @@
 (define (read-all path)
   (call-with-input-file path (lambda (p) (let loop ((acc '())) (let ((f (read p))) (if (eof-object? f) (reverse acc) (loop (cons f acc))))))))
 (define prelude (read-all (string-append here "/prelude.ss")))
-(define user (cdr (read-all (cadr (command-line-arguments)))))
+;; The whole fixture, its import clause included.  This used to drop
+;; the first form -- which IS the clause -- and that was invisible for
+;; as long as a program without one went unjudged: the prelude is
+;; prepended here by hand and no library resolution happens, so the
+;; clause looked like a form the driver would have consumed.  With the
+;; empty-map rule it is the difference between a program that imports
+;; (rnrs) and one that imports nothing.
+(define user (read-all (cadr (command-line-arguments))))
 (define forms (append prelude (list '(%prelude-end)) user))
 (define locs (map (lambda (f) "?:0") forms))
+;; prepare-program is also called DIRECTLY below, and it does not split
+;; the prelude off itself -- compile-program does that, consuming the
+;; (%prelude-end) marker on the way.  Handed `forms' unsplit, the
+;; marker arrives as an ordinary top-level form and is judged as a
+;; reference to an unbound `%prelude-end'.  So the direct calls get the
+;; split already made: no marker, and the prefix length set the way
+;; compile-program would have set it.
+(define prep-forms (append prelude user))
+(define prep-locs (map (lambda (f) "?:0") prep-forms))
+(define (prepare-split!) (set! *prelude-prefix-n* (length prelude)))
 (define args (cddr (command-line-arguments)))
 (if (and (pair? args) (string=? (car args) "--heads"))
     ;; --heads: the set of resolved operator tags that reach
@@ -45,7 +62,8 @@
                   (walk (cdr x))))
               (orig fn-defs main-steps)))
       (compile-program forms locs)
-      (prepare-program forms locs)
+      (prepare-split!)
+      (prepare-program prep-forms prep-locs)
       (display (list 'heads (list-sort (lambda (a b) (string<? (symbol->string a) (symbol->string b)))
                                        (filter symbol? seen))))
       (newline))
@@ -53,7 +71,8 @@
     ;; --specs name...: the fn-specs entries for exactly the names given
     (begin
       (compile-program forms locs)
-      (prepare-program forms locs)
+      (prepare-split!)
+      (prepare-program prep-forms prep-locs)
       (display (list 'fn-specs
                      (filter (lambda (e) (memq (car e) (map string->symbol (cdr args)))) *fn-specs*)))
       (newline))
@@ -71,7 +90,8 @@
       ;; forms and read the products BEFORE compile-program-wasm's final
       ;; reset clears them.
       (compile-program forms locs)
-      (prepare-program forms locs)
+      (prepare-split!)
+      (prepare-program prep-forms prep-locs)
       (display (list 'fn-specs-after-prepare
                      (filter (lambda (e) (memq (car e) '(norm twice run))) *fn-specs*)))
       (newline)))))

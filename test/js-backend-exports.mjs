@@ -14,6 +14,8 @@ try {
     const jsFile = path.join(dir, 'unicode-export.mjs');
     fs.writeFileSync(
         sourceFile,
+        // a program begins with an import form
+        `(import (rnrs))\n` +
         `(export ${exportName})\n` +
         `(define targets (vector (lambda (x) x)))\n` +
         `(define (${exportName} x) ((vector-ref targets 0) x))\n` +

@@ -7,12 +7,20 @@ import { compileToBytes } from '../rt/compile.mjs';
 import { runModule } from '../rt/run.mjs';
 import { runJsModule } from '../rt/runjs.mjs';
 
+// A program begins with an import form.  These fixtures are the
+// backend's own test programs and predate that rule, so the clause is
+// added here rather than to each literal: one place, and a fixture
+// that already carries one is left alone.
+const withClause = (s) =>
+    /^\s*\(import\b/m.test(s) ? s : '(import (rnrs))\n' + s;
+
+
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'goeteia-js-i31-types-'));
 
 async function bothReject(name, source) {
     const sourceFile = path.join(dir, `${name}.ss`);
     const jsFile = path.join(dir, `${name}.mjs`);
-    fs.writeFileSync(sourceFile, source, 'utf8');
+    fs.writeFileSync(sourceFile, withClause(source), 'utf8');
     const wasm = await compileToBytes(sourceFile, { script: true });
     fs.writeFileSync(
         jsFile,

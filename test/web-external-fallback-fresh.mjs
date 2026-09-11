@@ -3,7 +3,7 @@ import { compileSource } from '../rt/compile.mjs';
 import { loadGoeteia, loadGoeteiaAuto } from '../rt/web.mjs';
 
 const moduleText = String(await compileSource(
-    '(display (%mem-u8-ref 0))\n(%mem-u8-set! 0 99)\n',
+    '(import (rnrs))\n(display (%mem-u8-ref 0))\n(%mem-u8-set! 0 99)\n',
     { script: true, target: 'js' }));
 const oldLocation = Object.getOwnPropertyDescriptor(globalThis, 'location');
 const oldFetch = Object.getOwnPropertyDescriptor(globalThis, 'fetch');

@@ -58,7 +58,14 @@ function compileHosted(name, source) {
 // comparison is of the message BODY, which is the part the compiler
 // wrote and the part that has to agree.
 function messageBody(stderr) {
-    const line = String(stderr).split('\n').find(l => /goeteia/.test(l)) || '';
+    // Skip the at-line.  It names the source FILE, the temp directory is
+    // called goeteia-readerdiag-XXXX, and so the /goeteia/ test matched
+    // the position line instead of the message the moment a diagnostic
+    // started carrying one -- which made two hosts compiling two
+    // deliberately differently-named fixtures look like they worded the
+    // same error differently.
+    const line = String(stderr).split('\n')
+        .find(l => /goeteia/.test(l) && !/^\s*at /.test(l)) || '';
     return line.replace(/^.*?goeteia:?\s*/, '').trim();
 }
 
@@ -82,10 +89,14 @@ for (const [what, source] of [
         ['a set! on a number', '(set! 5 1)'],
         ['a bad argument count', '(car)']]) {
     test(`both hosts word ${what} identically`, () => {
+        // A program begins with an import form, so without a clause the
+        // empty map refuses every reference before the path these rows
+        // are about is reached -- the clause is what keeps them ABOUT
+        // the unbound and arity diagnostics.
         const a = compileHosted(`two-${what.replace(/ /g, '-')}.ss`,
-                                `;; expect: 0\n${source}\n`);
+                                `;; expect: 0\n(import (rnrs))\n${source}\n`);
         const b = compile(`two-b-${what.replace(/ /g, '-')}.ss`,
-                          `;; expect: 0\n${source}\n`);
+                          `;; expect: 0\n(import (rnrs))\n${source}\n`);
         assert.notEqual(a.status, 0, 'the Chez-hosted driver accepted it');
         assert.notEqual(b.status, 0, 'the self-hosted compiler accepted it');
         assert.equal(messageBody(a.stderr), messageBody(b.stderr));
@@ -109,7 +120,7 @@ for (const [what, source] of [
 // procedure that no longer existed, and the bootstrap said so at once.
 test('an exponent literal compiles as a number', () => {
     const { status, stderr } = compile('exponent.ss',
-        ';; expect: 0\n(define eps 1e-3)\n(display eps)\n');
+        ';; expect: 0\n(import (rnrs))\n(define eps 1e-3)\n(display eps)\n');
     assert.equal(status, 0, `expected a clean compile, got: ${stderr}`);
 });
 
@@ -161,7 +172,7 @@ for (const [what, source, irritant] of [
         ['a set! on a number', '(set! 5 1)', '5']]) {
     test(`the message for ${what} has no format directive and keeps its irritant`, () => {
         const { status, stderr } = compile(
-            `fmt-${what.replace(/ /g, '-')}.ss`, `;; expect: 0\n${source}\n`);
+            `fmt-${what.replace(/ /g, '-')}.ss`, `;; expect: 0\n(import (rnrs))\n${source}\n`);
         assert.notEqual(status, 0);
         assert.doesNotMatch(stderr, /~[sad]/);
         assert.ok(stderr.includes(irritant),
@@ -171,7 +182,7 @@ for (const [what, source, irritant] of [
 
 test('the JS backend messages carry no directive either', () => {
     const { status, stderr } = compile('fmt-js.ss',
-        ';; expect: 0\n(display elf-3)\n', { js: true });
+        ';; expect: 0\n(import (rnrs))\n(display elf-3)\n', { js: true });
     assert.notEqual(status, 0);
     assert.doesNotMatch(stderr, /~[sad]/);
     assert.ok(stderr.includes('elf-3'));
@@ -283,7 +294,7 @@ test('set! of a name that IS a variable but unbound still says unbound', () => {
 
 test('an unbound ordinary name is still named', () => {
     const { status, stderr } = compile('ordinary.ss',
-        ';; expect: 0\n(display elf-3)\n');
+        ';; expect: 0\n(import (rnrs))\n(display elf-3)\n');
     assert.notEqual(status, 0);
     assert.match(stderr, /unbound variable/);
     assert.match(stderr, /elf-3/);
@@ -293,13 +304,13 @@ test('the JS target reads exponents too', () => {
     // --js reaches a second backend with its own copy of this code
     // path; a fix only the wasm backend has is half a fix
     const { status, stderr } = compile('exponent-js.ss',
-        ';; expect: 0\n(define eps 1e-3)\n(display eps)\n', { js: true });
+        ';; expect: 0\n(import (rnrs))\n(define eps 1e-3)\n(display eps)\n', { js: true });
     assert.equal(status, 0, `expected a clean compile, got: ${stderr}`);
 });
 
 test('the JS target still names an unbound ordinary name', () => {
     const { status, stderr } = compile('ordinary-js.ss',
-        ';; expect: 0\n(display elf-3)\n', { js: true });
+        ';; expect: 0\n(import (rnrs))\n(display elf-3)\n', { js: true });
     assert.notEqual(status, 0);
     assert.match(stderr, /unbound variable/);
     assert.match(stderr, /elf-3/);

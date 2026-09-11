@@ -13,9 +13,17 @@ test('compileGoeteia preserves compiler diagnostics', async t => {
     t.after(() => { globalThis.fetch = previousFetch; });
 
     await assert.rejects(
-        compileGoeteia('(this-is-unbound)'),
+        // the clause keeps this row about compileGoeteia PRESERVING a
+        // diagnostic rather than about which diagnostic a clause-less
+        // program gets
+        compileGoeteia('(import (rnrs))\n(this-is-unbound)'),
         error => {
-            assert.match(error.message, /cannot call.*this-is-unbound/);
+            // The reference check reaches it before code generation
+            // does now, so the wording is "unbound variable" rather
+            // than "cannot call" -- an earlier and better diagnostic.
+            // What this row holds is that compileGoeteia PRESERVES
+            // whichever one the compiler gave, not which one it is.
+            assert.match(error.message, /unbound variable.*this-is-unbound/);
             assert.equal(error.output, error.message);
             assert.equal(error.cause?.message, 'unreachable');
             return true;

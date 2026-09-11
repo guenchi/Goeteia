@@ -1144,9 +1144,20 @@
 ;;
 ;; What makes this enough for these two heads: emission matches a
 ;; lexical binding by exact token before it walks marks, so a fresh
-;; token is not captured; and assq-marked's origin walk then reaches
-;; the prelude's definition, which is the only one a program can have,
-;; because a top-level redefinition is refused as a duplicate.
+;; token is not captured; and the token carries the prelude's scope in
+;; *intro-scope*, which is what canonicalisation resolves it by.
+;;
+;; That second half used to read "the prelude's definition is the only
+;; one a program can have, because a top-level redefinition is refused
+;; as a duplicate".  That stopped being true: a program may exclude a
+;; prelude name and define its own, and then there are two, the
+;; prelude's under a key and the program's under the spelling.  What
+;; protects these heads now is not scarcity but IDENTITY -- the scope
+;; the token was minted under says which of the two it means, and
+;; introduced-means-prelude? reads it.  A reader who still believes the
+;; old sentence would conclude these heads are unprotected in exactly
+;; the case where they are, so the mechanism is named here rather than
+;; the coincidence that used to stand in for it.
 ;;
 ;; It is NOT a general implementation of contextual procedure
 ;; resolution.  It rests on those two properties, and a head lacking
@@ -2493,7 +2504,18 @@
       ;; wording test/reader-diagnostics.mjs compares across hosts; the
       ;; scope follows as an irritant so the reader knows whose clause
       ;; failed to bring the name in.
-      (errorf 'goeteia "unbound variable:" (unmark form) where)))
+      (if (and (eq? where 'the-program) (not *program-clause?*))
+          ;; A program that wrote no clause imports NOTHING, so the
+          ;; first name it uses is unbound and so is every other one.
+          ;; Saying only "unbound variable: display" sends the reader
+          ;; hunting for a typo; the cause is that the program never
+          ;; began with an import form, and that is what to say.
+          (errorf 'goeteia
+                  (string-append
+                   "unbound variable: no import clause -- a program "
+                   "begins with an import form:")
+                  (unmark form) where)
+          (errorf 'goeteia "unbound variable:" (unmark form) where))))
    ((not (pair? form)) #f)
    ;; A macro definition is not code: its patterns and templates are
    ;; data until something applies it, and the wildcard `_' inside a
@@ -6155,23 +6177,22 @@
          (import-map (begin (set! *import-map*
                                   (merge-import-bindings *import-specs*))
                             ;; A program that wrote no clause imports
-                            ;; nothing, and R6RS says a top-level
-                            ;; program begins with an import form -- so
-                            ;; the empty map is the right answer and
-                            ;; every reference in such a program should
-                            ;; be refused.  Turning that on is its own
-                            ;; commit: 49 of the tree's own cells are
-                            ;; written without a clause, and refusing
-                            ;; them in the same change that moved the
-                            ;; boundary would make a regression here
+                            ;; nothing: R6RS says a top-level program
+                            ;; begins with an import form, so the empty
+                            ;; map is the right answer and every
+                            ;; reference in such a program is refused.
+                            ;; This was guarded while the tree's own
+                            ;; cells were written without a clause --
+                            ;; refusing them in the same change that
+                            ;; moved the prelude/program boundary would
+                            ;; have made a regression here
                             ;; indistinguishable from a cell that
-                            ;; genuinely needed one.  Delete the guard
-                            ;; to turn the rule on.
-                            (when *program-clause?*
-                              (record-judgement-unit! *import-map*
-                                                      *program-defines*
-                                                      *program-forms*
-                                                      'the-program))
+                            ;; genuinely needed one.  They have clauses
+                            ;; now, so the guard is gone.
+                            (record-judgement-unit! *import-map*
+                                                    *program-defines*
+                                                    *program-forms*
+                                                    'the-program)
                             (judge-scopes!)
                             *import-map*))
          ;; Canonicalisation runs HERE: after the judgement, which has

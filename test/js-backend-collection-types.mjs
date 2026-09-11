@@ -7,12 +7,20 @@ import { compileToBytes } from '../rt/compile.mjs';
 import { runModule } from '../rt/run.mjs';
 import { runJsModule } from '../rt/runjs.mjs';
 
+// A program begins with an import form.  These fixtures are the
+// backend's own test programs and predate that rule, so the clause is
+// added here rather than to each literal: one place, and a fixture
+// that already carries one is left alone.
+const withClause = (s) =>
+    /^\s*\(import\b/m.test(s) ? s : '(import (rnrs))\n' + s;
+
+
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'goeteia-js-collection-types-'));
 
 async function bothReject(name, source) {
     const sourceFile = path.join(dir, `${name}.ss`);
     const jsFile = path.join(dir, `${name}.mjs`);
-    fs.writeFileSync(sourceFile, source, 'utf8');
+    fs.writeFileSync(sourceFile, withClause(source), 'utf8');
     const wasm = await compileToBytes(sourceFile, { script: true });
     fs.writeFileSync(
         jsFile,
@@ -37,7 +45,7 @@ try {
     // and rejects the limb constructor at compile time
     {
         const sourceFile = path.join(dir, 'bignum-limbs.ss');
-        fs.writeFileSync(sourceFile, '(%make-bignum 0 #f)\n', 'utf8');
+        fs.writeFileSync(sourceFile, withClause('(%make-bignum 0 #f)\n'), 'utf8');
         const wasm = await compileToBytes(sourceFile, { script: true });
         await assert.rejects(() => runModule(wasm), undefined, 'bignum-limbs: wasm');
         await assert.rejects(

@@ -20,7 +20,11 @@ cd "$(dirname "$0")"
 T=$(mktemp -d "${TMPDIR:-/tmp}/goeteia-rebuild.XXXXXX") || exit 1
 trap 'rm -rf "$T"' EXIT INT TERM
 
-cat src/compiler.ss src/js-backend.ss src/wasm-driver.ss > "$T/self-src.ss"
+# The self-source is compiled AS A PROGRAM, and a program begins with
+# an import form -- the three files are library sources and carry no
+# clause of their own, so without this the compiler refuses to compile
+# itself the moment the empty-map rule is on.
+{ echo '(import (rnrs))'; cat src/compiler.ss src/js-backend.ss src/wasm-driver.ss; } > "$T/self-src.ss"
 
 echo "candidate: current snapshot compiling the source..."
 ${NODE-node} rt/compile.mjs goeteia.wasm "$T/self-src.ss" "$T/candidate.wasm"
