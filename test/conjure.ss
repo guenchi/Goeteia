@@ -112,7 +112,7 @@
   '(conjure js (import (mountlib)) (display lib-section)))
 (define quoted-long
   (quote (define-wasm-js quoted-section
-           (import (web js))
+           (import (rnrs) (web js))
            (display 1))))
 (define quoted-ok
   (and (equal? (caddr quoted-short) '(import (mountlib)))
@@ -128,7 +128,7 @@
 (define qq-atom `atom)
 (define qq-after-atom
   (conjure js
-    (import (web js))
+    (import (rnrs) (web js))
     (display (if (js-truthy? (js-eval "1")) 1 0))))
 (define qq-value 1)
 (define qq-unquote-atom
@@ -155,7 +155,7 @@
 ;; drivers must resolve it, not just the one that knows `conjure`)
 (define-js mj (display 1))
 (define-wasm mwi (display 2))
-(define-wasm-js mai (import (web js)) (display (if (js-truthy? (js-eval "1")) 3 0)))
+(define-wasm-js mai (import (rnrs) (web js)) (display (if (js-truthy? (js-eval "1")) 3 0)))
 (define-wasm (mw "/tmp/goeteia-conjure-test.wasm") (display 4))
 (define-js (mjf "/tmp/goeteia-conjure-test.js") (display 5))
 ;; both artifacts external: the fallback module is imported by the
