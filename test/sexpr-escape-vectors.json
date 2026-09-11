@@ -350,55 +350,39 @@
     {
       "src": "(x \\xZZ; y)",
       "why": "symbol escape whose digits are not hex"
+    },
+    {
+      "src": "(ok \"a\\X41;b\")",
+      "why": "R6RS spells the escape with a lowercase x; only its DIGITS vary in case"
+    },
+    {
+      "src": "(x \\X41; y)",
+      "why": "the same, in a symbol"
     }
   ],
-  "wire_unsafe": [
+  "name_outside_grammar": [
     {
-      "name": [
-        40
-      ],
       "src": "(x \\x28; y)",
-      "why": "a decoded paren would open a list when written back"
+      "why": "a paren is not a symbol character"
     },
     {
-      "name": [
-        97,
-        32,
-        98
-      ],
       "src": "(x a\\x20;b y)",
-      "why": "a decoded space would split the name when written back"
+      "why": "a space is not a symbol character"
     },
     {
-      "name": [
-        65,
-        59
-      ],
       "src": "(x \\x41;; y)",
-      "why": "the second semicolon is part of the token; this grammar has no comments"
+      "why": "a semicolon is not a symbol character; this grammar has no comments, so \\x41;; is one token decoding to A;"
     },
     {
-      "name": [
-        92,
-        120,
-        52,
-        49,
-        59
-      ],
       "src": "(x \\x5C;x41; y)",
-      "why": "a decoded backslash would read back as an escape"
+      "why": "a backslash is not a symbol character"
     },
     {
-      "name": [
-        99,
-        97,
-        102,
-        195,
-        169
-      ],
       "src": "(x caf\\xE9; y)",
-      "why": "the wire symbol grammar is ASCII; a non-ASCII name travels as a string"
+      "why": "the symbol grammar is ASCII; a non-ASCII name travels as a string"
     }
   ],
-  "wire_unsafe_note": "Reader and writer must refuse the SAME names. The reader may not mint a symbol the writer cannot serialise, or a value would exist that this implementation can hold and not write."
+  "name_outside_grammar_note": "THE RULE IS: an escape DISAMBIGUATES a name, it does not EXTEND the character set a name may be spelled from. These rows decode to a character outside the symbol grammar and are refused. Their discriminating partner is symbols row 5: \\x31; decodes to \"1\", whose character IS in the grammar and which is escaped only so it is not read as the number -- that one is ACCEPTED. The pair is what discriminates, and neither row alone does: a reader that refused both is too narrow, one that accepted both is full R6RS and lets a peer intern arbitrary character sequences, and one that accepted ( while refusing 1 is incoherent.",
+  "rejected_framing_note": "An earlier version of this section asserted that the reader refuses exactly the names the WRITER refuses. That was wrong and the writer half has been removed rather than kept as a second opinion. It was induced from five measured names without being checked against the rest of this table, where symbols row 5 already contradicted it -- the writer refuses the name 1 and the reader must accept \\x31;. It is also self-defeating: this wire writer emits NO escape for any symbol, it refuses instead, so 'accept only what the writer emits' argues for accepting no escapes at all. The five rows passed under that framing by coincidence, being refused for the character-set reason and not the writer one.",
+  "not_covered": "Error POSITIONS are not asserted by any row here. A boolean refusal cannot catch a right refusal reported at the wrong offset, and both readers had that defect for symbol escapes. Stated so the gap is a known one rather than an invisible one."
 }

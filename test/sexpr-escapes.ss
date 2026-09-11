@@ -69,22 +69,25 @@
                  (json-array->list (json-ref row "bytes")))))))))
  (json-array->list (json-ref doc "symbols")))
 
-;; The invariant decode-name's own comment states -- "the decoded name
-;; still has to be a name this implementation could write back" -- read
-;; from BOTH sides.  Neither half is evidence alone: a reader that
-;; refused every escape satisfies the read half, and a writer that
-;; wrote every name satisfies the write half.  Together they pin one
-;; boundary, and they are independent implementations of it.
+;; An escape DISAMBIGUATES a name; it does not EXTEND the character set
+;; a name may be spelled from.  These decode to a character outside the
+;; symbol grammar and are refused.  Their discriminating partner is the
+;; symbols row for \x31;, which decodes to "1" -- a character that IS in
+;; the grammar, escaped only so it is not read as the number -- and is
+;; ACCEPTED.  The PAIR discriminates and neither row alone does.
+;;
+;; This replaces an assertion that the reader refuses exactly the names
+;; the WRITER refuses.  That was induced from five measured names
+;; without being checked against the rest of the table, where the \x31;
+;; row already contradicted it, and it is self-defeating besides: this
+;; writer emits NO escape for any symbol, so "accept only what the
+;; writer emits" argues for accepting no escapes at all.
 (for-each
  (lambda (row)
-   (let* ((name (list->string (map integer->char
-                                   (json-array->list (json-ref row "name")))))
-          (tag (string->symbol (json-ref row "why"))))
-     (want tag
-           (list 'writer (raises? (lambda () (sexpr->string (list (string->symbol name)))))
-                 'reader (raises? (lambda () (string->sexpr (json-ref row "src")))))
-           (list 'writer #t 'reader #t))))
- (json-array->list (json-ref doc "wire_unsafe")))
+   (want (string->symbol (json-ref row "why"))
+         (raises? (lambda () (string->sexpr (json-ref row "src"))))
+         #t))
+ (json-array->list (json-ref doc "name_outside_grammar")))
 
 ;; THE CONTROL, and it is the half that keeps the widening honest: a
 ;; malformed or unknown escape must still be refused.  A reader that

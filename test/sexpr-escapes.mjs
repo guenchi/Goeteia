@@ -17,7 +17,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
 import url from 'node:url';
-import { read, write, Sym } from '../rt/sexpr.mjs';
+import { read } from '../rt/sexpr.mjs';
 
 const here = path.dirname(url.fileURLToPath(import.meta.url));
 const table = JSON.parse(fs.readFileSync(path.join(here, 'sexpr-escape-vectors.json'), 'utf8'));
@@ -51,18 +51,26 @@ test('a hex escape inside a symbol reads back', () => {
     }
 });
 
-// The invariant decodeName's own comment states -- "the decoded name
-// still has to be a name this implementation could write back" -- read
-// from BOTH sides.  Neither half is evidence alone: a reader that
-// refused every escape satisfies the read half, and a writer that wrote
-// every name satisfies the write half.  Together they pin one boundary.
-test('the reader refuses exactly the names the writer refuses', () => {
-    for (const row of table.wire_unsafe) {
-        const name = Buffer.from(row.name).toString('utf8');
-        assert.throws(() => write([new Sym(name)]), undefined,
-            `writer accepted ${JSON.stringify(name)}  (${row.why})`);
-        assert.throws(() => read(row.src), undefined,
-            `reader accepted ${row.src}  (${row.why})`);
+// An escape DISAMBIGUATES a name; it does not EXTEND the character set
+// a name may be spelled from.  These decode to a character outside the
+// symbol grammar and are refused.  Their discriminating partner is the
+// symbols row for \x31;, which decodes to "1" -- a character that IS in
+// the grammar, escaped only so it is not read as the number -- and is
+// ACCEPTED.  The PAIR discriminates and neither row alone does: refusing
+// both is too narrow, accepting both is full R6RS and lets a peer intern
+// arbitrary character sequences, accepting ( while refusing 1 is
+// incoherent.
+//
+// This replaces an assertion that the reader refuses exactly the names
+// the WRITER refuses.  That was induced from five measured names without
+// being checked against the rest of the table, where the \x31; row
+// already contradicted it.  It is also self-defeating: this writer emits
+// NO escape for any symbol, so "accept only what the writer emits" argues
+// for accepting no escapes at all.  These five passed under it by
+// coincidence, refused for the character reason and not the writer one.
+test('a decoded name outside the symbol grammar is refused', () => {
+    for (const row of table.name_outside_grammar) {
+        assert.throws(() => read(row.src), undefined, `${row.src}  (${row.why})`);
     }
 });
 
