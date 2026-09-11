@@ -854,30 +854,92 @@
                     (cons 'begin (cdr c))
                     (build-case t (cdr clauses))))))))
 ;; quasiquote, with unquote-splicing via append
+;; The quasiquote rule, written once.  Both the expander that emits code
+;; (xpand-qq) and the interpreter that builds values inside a transformer
+;; (meta-qq) are this one walker instantiated with different construction
+;; operations, so an addition to the rule cannot reach one half and miss
+;; the other.  They had already drifted that way: meta-qq never gained a
+;; splicing branch, and neither side handled vectors at all.
+;;
+;; OPS is (active pair append vector literal).  The emitting instantiation
+;; builds forms with compiler-introduced heads; the interpreting one calls
+;; the real procedures, where ACTIVE really evaluates.  Every active datum
+;; is therefore handed to ACTIVE exactly once, and operands are made
+;; active before the rest of the sequence is walked.
+(define (qq-active ops) (list-ref ops 0))
+(define (qq-pair ops) (list-ref ops 1))
+(define (qq-append ops) (list-ref ops 2))
+(define (qq-vector ops) (list-ref ops 3))
+(define (qq-literal ops) (list-ref ops 4))
+
+;; DATUM-OK? says whether the datum forms may be recognised at T itself.
+;; A list's spine can end in a dotted (unquote e), so they are recognised
+;; all along it; a vector's elements are a pure sequence, so #(unquote x)
+;; is a two-element vector and not an unquote at all, and #(a unquote b)
+;; keeps its symbol instead of becoming a dotted tail.  Conflating those
+;; two positions is what made an earlier attempt at vectors unsound: it
+;; reached the vector's elements through the datum walker, which reads a
+;; leading unquote as the whole template.
+(define (qq-walk t level datum-ok? ops)
+  (if (not (pair? t))
+      (if (vector? t)
+          ((qq-vector ops) (qq-walk (vector->list t) level #f ops))
+          ((qq-literal ops) t))
+      (let ((tag (resolve-tag (car t)))
+            (head-tag (and (pair? (car t)) (resolve-tag (caar t)))))
+        (cond
+         ((and datum-ok? (eq? tag 'unquote) (= level 0)
+               (pair? (cdr t)) (null? (cddr t)))
+          ((qq-active ops) (cadr t)))
+         ((and datum-ok? (eq? tag 'unquote) (> level 0))
+          ((qq-pair ops) ((qq-literal ops) 'unquote)
+                         (qq-walk (cdr t) (- level 1) #t ops)))
+         ((and datum-ok? (eq? tag 'unquote-splicing) (> level 0))
+          ((qq-pair ops) ((qq-literal ops) 'unquote-splicing)
+                         (qq-walk (cdr t) (- level 1) #t ops)))
+         ((and datum-ok? (eq? tag 'quasiquote)
+               (pair? (cdr t)) (null? (cddr t)))
+          ((qq-pair ops) ((qq-literal ops) 'quasiquote)
+                         (qq-walk (cdr t) (+ level 1) #t ops)))
+         ((and (= level 0) (eq? head-tag 'unquote-splicing))
+          (qq-splice (cdar t) (qq-append ops) ops
+                     (lambda () (qq-walk (cdr t) level datum-ok? ops))))
+         ((and (= level 0) (eq? head-tag 'unquote))
+          (qq-splice (cdar t) (qq-pair ops) ops
+                     (lambda () (qq-walk (cdr t) level datum-ok? ops))))
+         (else
+          (let ((head (qq-walk (car t) level #t ops)))
+            ((qq-pair ops) head
+                           (qq-walk (cdr t) level datum-ok? ops))))))))
+
+;; Put an element-position (unquote e ...) or (unquote-splicing e ...) in
+;; front of the rest of the sequence.  Zero operands contribute nothing
+;; and many contribute one each, for both lists and vectors.
+(define (qq-splice operands combine ops rest-thunk)
+  (qq-fold-onto (qq-actives operands ops) combine rest-thunk))
+
+;; Left to right, and each operand exactly once.  This is spelled out
+;; rather than left to MAP because in the interpreting instantiation
+;; these calls are the evaluation itself, and MAP's order is unspecified.
+(define (qq-actives operands ops)
+  (if (null? operands)
+      '()
+      (let ((v ((qq-active ops) (car operands))))
+        (cons v (qq-actives (cdr operands) ops)))))
+
+(define (qq-fold-onto vals combine rest-thunk)
+  (if (null? vals)
+      (rest-thunk)
+      (let ((rest (qq-fold-onto (cdr vals) combine rest-thunk)))
+        (combine (car vals) rest))))
+
 (define (xpand-qq t level)
-  (cond
-   ((pair? t)
-    (let ((tag (resolve-tag (car t))))
-      (cond
-       ((and (eq? tag 'unquote) (pair? (cdr t)) (null? (cddr t)))
-        (if (= level 0)
-            (xpand (cadr t))
-            (list (compiler-introduced 'cons) ''unquote
-                  (xpand-qq (cdr t) (- level 1)))))
-       ((and (eq? tag 'quasiquote) (pair? (cdr t)) (null? (cddr t)))
-        (list (compiler-introduced 'cons) ''quasiquote
-              (xpand-qq (cdr t) (+ level 1))))
-       ((and (= level 0)
-             (pair? (car t))
-             (eq? (resolve-tag (caar t)) 'unquote-splicing)
-             (pair? (cdar t)))
-        (list (compiler-introduced 'append)
-              (xpand (cadr (car t)))
-              (xpand-qq (cdr t) level)))
-       (else
-        (list (compiler-introduced 'cons) (xpand-qq (car t) level)
-              (xpand-qq (cdr t) level))))))
-   (else (list 'quote t))))
+  (qq-walk t level #t
+           (list (lambda (e) (xpand e))
+                 (lambda (a b) (list (compiler-introduced 'cons) a b))
+                 (lambda (a b) (list (compiler-introduced 'append) a b))
+                 (lambda (ls) (list (compiler-introduced 'list->vector) ls))
+                 (lambda (d) (list 'quote d)))))
 (define (xpand* es)
   (if (pair? es)
       (cons (xpand (car es)) (xpand* (cdr es)))
@@ -1323,18 +1385,12 @@
       (meta-let* (cdr bs) body
                  (cons (cons (caar bs) (meta-eval (cadar bs) env)) env))))
 (define (meta-qq t env level)
-  (if (pair? t)
-      (let ((tag (resolve-tag (car t))))
-        (cond
-         ((and (eq? tag 'unquote) (pair? (cdr t)) (null? (cddr t)))
-          (if (zero? level)
-              (meta-eval (cadr t) env)
-              (list 'unquote (meta-qq (cadr t) env (- level 1)))))
-         ((and (eq? tag 'quasiquote) (pair? (cdr t)) (null? (cddr t)))
-          (list 'quasiquote (meta-qq (cadr t) env (+ level 1))))
-         (else (cons (meta-qq (car t) env level)
-                     (meta-qq (cdr t) env level)))))
-      t))
+  (qq-walk t level #t
+           (list (lambda (e) (meta-eval e env))
+                 (lambda (a b) (cons a b))
+                 (lambda (a b) (append a b))
+                 (lambda (ls) (list->vector ls))
+                 (lambda (d) d))))
 
 (define (meta-apply f args)
   (cond
