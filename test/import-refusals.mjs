@@ -49,12 +49,6 @@ const rows = [
     // body importing one is refused the same way on both hosts
     ['an embed body importing the host\'s inline library', '(import (rnrs))\n(begin (library (t one) (export mk1) (import (rnrs)) (define (mk1) 1)) (import (t one)))\n(define s (conjure js (import (rnrs) (t one)) (display (mk1))))\n(display 1)', /library not found: \(t one\)/],
     ['a library assigning a name it imports', '(import (rnrs))\n(begin (library (o l) (export f) (import (rnrs)) (define (f) (set! car 5) 1)) (import (o l)))\n(display (f))',    /imported name may not be assigned; exclude it with except: car/],
-    // apply is a procedure with no value binding, so (define x apply) is
-    // refused on HEAD too -- older than this slice; a prefixed or
-    // renamed apply has an entry in the map with nothing behind it and
-    // reports the same unbound as the direct spelling.  A known hole,
-    // pinned so it does not widen; apply itself wants fixing sometime.
-    ['a prefixed apply has no binding behind it', '(import (prefix (rnrs) r:))\n(r:display (r:apply r:+ (r:list 1 2)))', /cannot call: r:apply|unbound variable: apply/],
 ];
 
 for (const [title, src, want] of rows) {

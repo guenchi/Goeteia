@@ -657,10 +657,15 @@
          (when *program-form?*
            (set! *program-clause?* #t)
            (set! *import-specs* (append *import-specs* (cdr e))))
-         (let ((aliases (clause-alias-defines (cdr e))))
-           (if (null? aliases)
-               '(begin)
-               (cons '%library-body aliases))))
+         ;; No binding is emitted for a rename or a prefix any more.
+         ;; An alias is a definition in a FLAT namespace, so "the
+         ;; importer's binding" had no scope to live in: two scopes
+         ;; importing one library emitted it twice, and a prefix
+         ;; emitted one per export whether used or not -- which is why
+         ;; `apply', having no value to bind, had to be excluded by
+         ;; name.  A reference is resolved to its origin's key instead,
+         ;; in the one pass that knows what a reference means.
+         '(begin))
         ((export) e)                   ; top-level export declaration
         ((library)
          ;; (library (name ...) (export ...) (import ...) body ...)
@@ -1090,32 +1095,17 @@
 ;; Without the tag a library's definitions are recorded as the
 ;; program's own, because at splice time they look exactly like them.
 (define (close-library-scope name import-clause body)
-  ;; A library's clause is read from its header, not through the
-  ;; (import) arm, so the bindings its renames and prefixes need are
-  ;; emitted here.  Keywords are already resolved -- the body expanded
-  ;; against the library's own table -- and what is left is the
-  ;; variables, exactly as for a program's clause.
-  (let* ((aliases (if (pair? import-clause)
-                      (clause-alias-defines (cdr import-clause))
-                      '()))
-         (out (close-scope name (append aliases body)
-                           (imported-names import-clause))))
-    ;; The library's own clause, its own definitions, its own forms --
-    ;; and the clause's bindings are none of those three.  An alias IS
-    ;; the import, not a definition the library made, and its
-    ;; right-hand side names the original, which a rename FREES from
-    ;; the map: judging it would refuse the clause for mentioning the
-    ;; very name it renamed.  They lead `out' because they were
-    ;; prepended, so the body is what follows them.
+  (let ((out (close-scope name body (imported-names import-clause))))
+    ;; the library's own clause, its own definitions, its own forms
     (record-judgement-unit!
      (merge-import-bindings (if (pair? import-clause) (cdr import-clause) '()))
      (map (lambda (n) (list n 'define name))
-          (append (expanded-defined-names
-                   (list-tail out (length aliases)))
-                  (scope-macro-names name)))
-     (list-tail out (length aliases))
+          (append (expanded-defined-names out) (scope-macro-names name)))
+     out
      name)
-    (cons '%library-body out)))
+    ;; the tag carries the name so the splice can record which scope
+    ;; wrote each form
+    (cons (list '%library-body name) out)))
 
 ;; The prelude is not a library: no header, no exports, no imports, and
 ;; its marker is consumed before preparation.  What it does have is a
@@ -2266,36 +2256,6 @@
 ;; thing is expanded.  A clause inside a top-level (begin ...) counts:
 ;; that is how a program imports a library it defines itself, and the
 ;; expander has to know about those bindings as much as any other.
-;; The bindings a clause's renames and prefixes need: one per spelling
-;; the clause introduces whose origin is a variable.  The compiler can
-;; enumerate a prefix's whole export set -- the manifest is here --
-;; which the drivers never could, and they go out under %library-body,
-;; so they are not the program's own definitions and the rule that
-;; refuses redefining an import does not see them.
-;; A name with no value binding cannot be aliased, because the alias
-;; would take its value.  $rnrs-syntax covers the syntactic exports;
-;; this is what is left after them -- measured by taking (define x
-;; <name>) for all 245 of (rnrs)'s exports, which fails for the 36
-;; syntactic ones and for `apply' and nothing else.  `apply' is a
-;; procedure the backend only ever emits at a call site, so it has no
-;; value to bind, and (define x apply) is refused on HEAD too: a gap
-;; older than this slice, not one it opens.  A prefixed or renamed
-;; `apply' therefore has no binding and reports the same "unbound
-;; variable: apply" the direct spelling already does.
-(define $no-value-binding '(apply))
-
-(define (clause-alias-defines specs)
-  (let loop ((bs (build-expand-table specs)) (acc '()))
-    (cond
-     ((not (pair? bs)) acc)
-     ((and (eq? (entry-kind (car bs)) 'variable)
-           (not (memq (entry-origin (car bs)) $no-value-binding))
-           (not (eq? (entry-origin (car bs)) (car (car bs)))))
-      (loop (cdr bs)
-            (cons (list 'define (car (car bs)) (entry-origin (car bs)))
-                  acc)))
-     (else (loop (cdr bs) acc)))))
-
 (define (program-clause-specs forms)
   (let loop ((fs forms) (acc '()))
     (cond
@@ -4886,20 +4846,35 @@
                     (expand-spliced
                      ($with-loc loc (lambda () (xpand (car fs))))
                      loc acc)))))))
+(define *splice-scope* #f)
+(define *form-scope* '())
+
+(define (form-scope f)
+  (let ((e (assq f *form-scope*)))
+    (and e (cdr e))))
+
 (define (expand-spliced x loc acc)
   (cond
-   ((and (pair? x) (symbol? (car x))
-         (eq? (unmark (car x)) '%library-body))
+   ((and (pair? x) (pair? (car x))
+         (symbol? (car (car x)))
+         (eq? (unmark (car (car x))) '%library-body))
     ;; splices exactly like a begin, but nothing inside is the
-    ;; program's own definition
-    (let ((saved *program-form?*))
+    ;; program's own definition.  The tag carries the library's NAME,
+    ;; because this is the single point every final top-level form
+    ;; passes through and the only place that can say which scope
+    ;; wrote one -- an inline library's forms all carry the enclosing
+    ;; begin's loc, so nothing downstream can tell two of them apart.
+    (let ((saved *program-form?*)
+          (saved-scope *splice-scope*))
       (set! *program-form?* #f)
+      (set! *splice-scope* (cadr (car x)))
       (let ((out (let splice ((subs (cdr x)) (acc acc))
                    (if (null? subs)
                        acc
                        (splice (cdr subs)
                                (expand-spliced (car subs) loc acc))))))
         (set! *program-form?* saved)
+        (set! *splice-scope* saved-scope)
         out)))
    ((and (pair? x) (symbol? (car x)) (eq? (unmark (car x)) 'begin))
     ;; top-level begin splices recursively (its subforms are already
@@ -4925,6 +4900,10 @@
       ;; imported variable can sit anywhere inside it
       (when *program-form?*
         (set! *program-forms* (cons nf *program-forms*)))
+      ;; which scope wrote this form, recorded where the answer is known
+      (set! *form-scope*
+            (cons (cons nf (if *program-form?* 'the-program *splice-scope*))
+                  *form-scope*))
       (cons nf acc)))))
 (define (normalize-define f)
   ;; top-level forms built by macros have marked heads
@@ -5012,6 +4991,17 @@
 ;; "the prelude binds it AND it is not an (rnrs) export", so a program
 ;; cannot write one, and $spec-denylist, $escape and the emitter
 ;; helpers keep their spellings and their lookups.
+;; $- and %-prefixed names are the implementation's own: the emitter
+;; helpers and the generic tables look them up BY SPELLING, and a
+;; program cannot write one, so they can never collide and must never
+;; be keyed.  This is the line the import rule's prelude allowance
+;; already draws.
+(define (internal-name? n)
+  (let ((str (symbol->string n)))
+    (and (< 0 (string-length str))
+         (let ((c (string-ref str 0)))
+           (or (char=? c #\$) (char=? c #\%))))))
+
 (define (scope-key scope n)
   (sym-cat (list scope ":" n)))
 
@@ -5040,18 +5030,131 @@
 ;; the same spelling.  Keying every prelude name would move every
 ;; reference in every program for no gain, and would break the four
 ;; lookups that name prelude internals by spelling.
+;; Which scope wrote a top-level form.  The prelude is the prefix, by
+;; position; everything else says so itself, recorded at the splice.
+(define (scope-of-form f i prefix-len)
+  (if (< i prefix-len) *prelude-scope* (or (form-scope f) 'the-program)))
+
+(define (scope-prefix scope)
+  (cond ((eq? scope 'the-program) "%program")
+        ((eq? scope *prelude-scope*) "%prelude")
+        ((pair? scope) (lib-prefix scope))
+        (else "%anon")))
+
+;; (form . scope) for every top-level form, in order.
+(define (attribute-forms forms prefix-len)
+  (let loop ((fs forms) (i 0) (acc '()))
+    (if (not (pair? fs))
+        (reverse acc)
+        (loop (cdr fs) (+ i 1)
+              (cons (cons (car fs) (scope-of-form (car fs) i prefix-len))
+                    acc)))))
+
+;; Every spelling defined in more than one scope.  Those are the only
+;; ones that need keys: a name only one scope defines means one thing
+;; already, and moving it would churn every reference for nothing.
+(define (colliding-names attributed)
+  (let* ((defs (fold-left
+                (lambda (acc p)
+                  (fold-left (lambda (a nm) (cons (cons nm (cdr p)) a))
+                             acc
+                             (expanded-defined-names (list (car p)))))
+                '()
+                attributed))
+         (dup (let loop ((ds defs) (acc '()))
+                (cond
+                 ((not (pair? ds)) acc)
+                 ((or (memq (car (car ds)) acc)
+                      (internal-name? (car (car ds))))
+                  (loop (cdr ds) acc))
+                 ((let scan ((r defs))
+                    (and (pair? r)
+                         (or (and (eq? (car (car r)) (car (car ds)))
+                                  (not (equal? (cdr (car r)) (cdr (car ds)))))
+                             (scan (cdr r)))))
+                  (loop (cdr ds) (cons (car (car ds)) acc)))
+                 (else (loop (cdr ds) acc))))))
+    dup))
+
+;; What a name means in a scope: the scope's own key if it defines it,
+;; else the key of whatever its clause says it is.  This is the ONE
+;; place that answers that question -- the alias route answered it in
+;; five and needed all five to agree.
+;; The collision is a property of the ORIGIN, not of the spelling that
+;; reaches it: (rename (b) (f g)) writes `g', which collides with
+;; nothing, while the binding it names is the `f' that does.  Gating on
+;; the written name left every renamed reference unresolved.
+(define (resolved-key scope name dup own-defs)
+  (cond
+   ((memq name own-defs)
+    (and (memq name dup) (scope-key (scope-prefix scope) name)))
+   (else
+    (let ((b (assq name (scope-map-of scope))))
+      (and b (pair? (cdr b))
+           (let ((lib (car (cdr b))) (there (cdr (cdr b))))
+             (cond
+              ;; the origin was keyed: reach the key
+              ((memq there dup)
+               (scope-key (if (string=? lib "rnrs") "%prelude" lib) there))
+              ;; A rename or a prefix reaches a binding that did NOT
+              ;; collide, so nothing was keyed -- but the written
+              ;; spelling still is not the binding's name, and with no
+              ;; alias to stand in for it the reference has to reach
+              ;; the origin itself.  "Only collidable names are keyed"
+              ;; governs DEFINITIONS; a reference resolves whenever its
+              ;; spelling is not what the binding is called.
+              ((not (eq? there name)) there)
+              (else #f))))))))
+
+;; Definitions move only where two scopes collide; references move to
+;; whatever their own scope's clause says they mean.  One pass, one
+;; place, and it runs after the judgement -- so the import rule has
+;; already read the spellings the program wrote and cannot be fooled by
+;; a resolution that erases the difference between an alias and the
+;; original a rename freed.
 (define (canonicalise-prelude forms prefix-len)
-  (let* ((prefix (first-n forms prefix-len))
-         (rest (list-tail forms prefix-len))
-         (mine (expanded-defined-names prefix))
-         (theirs (expanded-defined-names rest))
-         (dup (filter (lambda (n) (memq n theirs)) mine)))
-    (if (null? dup)
-        forms
-        (let ((table (map (lambda (n) (cons n (scope-key "%prelude" n))) dup)))
-          (append (map (lambda (f) (rename-scope-form f table)) prefix)
-                  (map (lambda (f) (rename-introduced-form f table))
-                       rest))))))
+  (let* ((attributed (attribute-forms forms prefix-len))
+         (dup (colliding-names attributed)))
+    ;; Always run: a collision is what makes a DEFINITION move, but a
+    ;; rename or a prefix makes a REFERENCE move with no collision
+    ;; anywhere, and short-circuiting on an empty dup left every such
+    ;; reference pointing at a spelling nothing defines.
+    (let ()
+        (map (lambda (p)
+               (let* ((scope (cdr p))
+                      (own (expanded-defined-names (list (car p))))
+                      (defs (fold-left
+                             (lambda (a q)
+                               (if (equal? (cdr q) scope)
+                                   (append (expanded-defined-names
+                                            (list (car q)))
+                                           a)
+                                   a))
+                             '()
+                             attributed))
+                      (out (walk-refs-too
+                            (car p) '()
+                            (lambda (n bnd)
+                              (and (not (memq n bnd))
+                                   (let ((ic (intro-context n)))
+                                     (if ic
+                                         (and (introduced-means-prelude? ic)
+                                              (memq (car ic) dup)
+                                              (scope-key "%prelude" (car ic)))
+                                         (resolved-key scope (unmark n)
+                                                       dup defs))))))))
+                 ;; the walker does not visit a define's target: it is a
+                 ;; binder, not a reference
+                 (if (and (pair? out) (symbol? (car out))
+                          (eq? (unmark (car out)) 'define) (pair? (cdr out))
+                          (pair? own) (memq (car own) dup))
+                     (let* ((t (cadr out))
+                            (key (scope-key (scope-prefix scope) (car own))))
+                       (cons (car out)
+                             (cons (if (pair? t) (cons key (cdr t)) key)
+                                   (cddr out))))
+                     out)))
+             attributed))))
 
 ;; A token the COMPILER introduced under the prelude's scope means the
 ;; prelude's binding wherever it appears -- quasiquote's append is the
@@ -5975,6 +6078,8 @@
   (set! *expand-table* '())
   (set! *program-defines* '())
   (set! *program-forms* '())
+  (set! *form-scope* '())
+  (set! *splice-scope* #f)
   (set! *judgement-units* '())
   (set! *scope-macro-names* '())
   ;; library privates get their namespace before anything reads the
@@ -6075,6 +6180,11 @@
          ;; distinction the import rule draws -- a rename frees the
          ;; original, and once the alias has been rewritten to it the
          ;; legal program and the illegal one are the same text.
+         ;; asked BEFORE the keys move: an export clause names the
+         ;; spelling the library wrote, and canonicalisation only
+         ;; renames what is already there, so the question is the same
+         ;; one either side and only answerable on this side
+         (%exports-checked (check-library-exports! expanded))
          (expanded (canonicalise-prelude expanded pre-n))
          ;; top-level (export name ...): keep through DCE, expose as
          ;; wasm exports so the host can call them
@@ -6089,7 +6199,7 @@
          ;; one definition per name, checked before inlining and DCE
          ;; read the forms -- both of them have their own idea of what
          ;; a name means, and neither should see a name twice
-         (checked (check-library-exports!
+         (checked ((lambda (x) x)
                    (check-duplicate-defines!
                     (filter (lambda (f)
                               (not (and (pair? f) (symbol? (car f))
