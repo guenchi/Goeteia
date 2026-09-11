@@ -2,7 +2,7 @@
 ;; The linear staging memory: %mem-* primitives read and write a plain
 ;; wasm memory (exported as "memory"), and the host sees the same bytes
 ;; zero-copy through a typed-array view.
-(import (web js))
+(import (rnrs) (web js))
 
 (define (near? v x) (and (< (- x 0.0001) v) (< v (+ x 0.0001))))
 

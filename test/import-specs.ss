@@ -1,5 +1,5 @@
 ;; expect: #t
-(import (only (math ; comments are whitespace inside import specs
+(import (rnrs) (only (math ; comments are whitespace inside import specs
                     utils)
               double)
         (rename ; comments may also precede the nested library name

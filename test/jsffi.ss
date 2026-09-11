@@ -1,5 +1,5 @@
 ;; expect: #t
-(import (web js))
+(import (rnrs) (web js))
 (define G (js-global))
 ;; the conditions a deliberately failing hook was handed.  Lives out
 ;; here because two clauses share it: the one that installs the hook

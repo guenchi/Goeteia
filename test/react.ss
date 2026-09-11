@@ -2,7 +2,7 @@
 ;; (web react) registration, playing the JS host from Scheme: call
 ;; the registered factory through the bridge, read the mounted DOM,
 ;; then call the returned dispose function.
-(import (web reactive) (web sx) (web js) (web react))
+(import (rnrs) (web reactive) (web sx) (web js) (web react))
 
 (js-eval "globalThis.document = { createElement: t => ({ tag: t, children: [], attrs: {}, listeners: {}, appendChild(c){ this.children.push(c); return c }, replaceChild(n,o){ const i = this.children.indexOf(o); if (i >= 0) this.children[i] = n; return o }, setAttribute(k,v){ this.attrs[k] = v }, removeAttribute(k){ delete this.attrs[k] }, addEventListener(t,f){ this.listeners[t] = f }, set textContent(s){ this.children.length = 0 }, fire(t,ev){ this.listeners[t](ev === undefined ? {} : ev) } }), createTextNode: s => ({ text: s }) }")
 

@@ -1,5 +1,5 @@
 ;; expect: #t
-(import (web reactive))
+(import (rnrs) (web reactive))
 (define s (signal 1))
 (define t (signal 10))
 (define log '())

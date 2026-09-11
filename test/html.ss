@@ -1,6 +1,6 @@
 ;; expect: #t
 ;; (web html): SXML -> HTML string. Pure, so fully verifiable here.
-(import (web html))
+(import (rnrs) (web html))
 
 (define (t got want) (string=? got want))
 

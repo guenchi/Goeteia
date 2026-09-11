@@ -25,7 +25,7 @@
 ;; The cells below are of two kinds and are marked:
 ;;   DETECTOR  fails under the old rule -- these are what the change is
 ;;   PIN       passes under both rules -- these hold what must not move
-(import (web css))
+(import (rnrs) (web css))
 
 (define (t got want) (string=? got want))
 ;; a form that must be refused rather than rendered.  Extra operands

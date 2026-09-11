@@ -3,7 +3,7 @@
 ;; must not corrupt the shared argStack.  ->js on #t/#f used to nest a
 ;; js-eval (itself a js-call) mid-marshalling, shifting the earlier
 ;; args -- classList.toggle(c, #f) degenerated into eval("active").
-(import (web js))
+(import (rnrs) (web js))
 (define obj
   (js-eval "({ probe: function (a, b) { return a + ':' + arguments.length + ':' + b; } })"))
 (and

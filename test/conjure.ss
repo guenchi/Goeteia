@@ -5,7 +5,7 @@
 ;; carry the runtime glue inline -- the page depends on nothing
 ;; beside itself -- and every auto section's fallback tag gets a
 ;; unique id so several coexist on one page.
-(import (mountlib))
+(import (rnrs) (mountlib))
 
 (define (section-id s)                   ; the id in the fallback tag
   (let* ((n (string-length s))

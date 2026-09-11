@@ -3,7 +3,7 @@
 ;; (manual.md, kept on the website branch). If the manual claims an
 ;; output, it is verified here; keep this in sync with the manual so
 ;; its examples cannot rot. Runs through both compiler stages.
-(import (web reactive) (web sx) (web js) (web dom) (web react))
+(import (rnrs) (web reactive) (web sx) (web js) (web dom) (web react))
 
 (define (kid el i) (js-index (js-get el "children") i))
 (js-eval "globalThis.document = { createElement: t => ({ tag:t, children:[], attrs:{}, listeners:{}, appendChild(c){const j=this.children.indexOf(c);if(j>=0)this.children.splice(j,1);this.children.push(c);return c}, replaceChild(n,o){const i=this.children.indexOf(o);if(i>=0)this.children[i]=n;return o}, insertBefore(n,r){const j=this.children.indexOf(n);if(j>=0)this.children.splice(j,1);const i=this.children.indexOf(r);this.children.splice(i<0?this.children.length:i,0,n);return n}, removeChild(c){const i=this.children.indexOf(c);if(i>=0)this.children.splice(i,1);return c}, setAttribute(k,v){this.attrs[k]=v}, removeAttribute(k){delete this.attrs[k]}, addEventListener(t,f){this.listeners[t]=f}, fire(t){this.listeners[t]({})} }), createTextNode: s => ({text:s}) }")

@@ -1,7 +1,7 @@
 ;; expect: #t
 ;; UTF-8 survives: string literals compile to UTF-8 bytes, and the JS
 ;; bridge encodes/decodes UTF-8 at the boundary (not Latin-1).
-(import (web js))
+(import (rnrs) (web js))
 
 (define g "Γοητεία")            ; Greek, 2 bytes/char
 (define mix "em— ·→ dash")       ; assorted multi-byte typography
