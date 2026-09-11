@@ -193,9 +193,25 @@ run_js() { # jsfile testfile
 # covered the tree: on 2026-09-12 two cells were committed while a run
 # was in flight and neither appeared in its log at all, not late and not
 # skipped, just absent, so a newly committed red witness was invisible
-# rather than merely delayed.  Remembering the list lets the end of the
-# run say so.
+# rather than merely delayed.
+#
+# Three ways the ground can move under a run, and they are not equally
+# bad.  A cell ARRIVING or LEAVING changes the list.  A cell being
+# MODIFIED leaves the list identical and changes what was measured.
+# This script BEING REWRITTEN is the one that corrupts rather than
+# mis-measures: the shell re-reads a script by byte offset as it runs,
+# so an edit under it can send control somewhere that was never a line.
+# All three happened here on 2026-09-12, the third caused by a commit
+# that was itself fixing the first.
+#
+# So the digest covers this file AND the contents of every cell, not
+# just the list of names.
+digest_now() {
+    cat run-tests.sh test/*.ss 2>/dev/null |
+        { md5 -q 2>/dev/null || md5sum 2>/dev/null | cut -d' ' -f1; }
+}
 ss_at_start=$(ls test/*.ss 2>/dev/null | tr '\n' ' ')
+digest_at_start=$(digest_now)
 
 for t in ${GOETEIA_TESTS-test/*.ss}; do
     if [ ! -f "$t" ]; then
@@ -459,13 +475,25 @@ done
 # lands after the glob expanded does not run and prints nothing, so
 # without this the log of a run that missed it is indistinguishable from
 # the log of a run where it passed.
+# Reported in BOTH directions on purpose.  A check that only speaks when
+# it is unhappy leaves the ordinary log with no positive evidence, and
+# then "the reading is probably fine" never becomes a statement anyone
+# can point at afterwards.
 if [ -z "${GOETEIA_TESTS+x}" ]; then
     ss_at_end=$(ls test/*.ss 2>/dev/null | tr '\n' ' ')
+    digest_at_end=$(digest_now)
     if [ "$ss_at_start" != "$ss_at_end" ]; then
-        echo "FAIL test/*.ss changed while the run was in flight -- this run did NOT cover the current tree, re-run it"
+        echo "FAIL the set of cells changed while the run was in flight -- this run did NOT cover the current tree, re-run it"
         echo "  at start: $ss_at_start"
         echo "  at end:   $ss_at_end"
         fail=1
+    elif [ "$digest_at_start" != "$digest_at_end" ]; then
+        echo "FAIL a cell or this script was MODIFIED while the run was in flight -- same file names, different content, so the reading is void; re-run it"
+        echo "  digest at start: $digest_at_start"
+        echo "  digest at end:   $digest_at_end"
+        fail=1
+    else
+        echo "harness and cells unchanged across the run (digest $digest_at_start)"
     fi
 fi
 
