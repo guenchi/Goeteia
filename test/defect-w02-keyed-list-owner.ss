@@ -24,7 +24,7 @@
 ;; rerun must keep its effect, and an item whose key vanishes must lose
 ;; it.  A fix that disposed item roots on every rerun would satisfy the
 ;; red and destroy the point of keying.
-(import (rnrs) (web reactive) (web sx) (web js))
+(import (rnrs) (web reactive) (web sx) (web js) (web dom))
 
 (js-eval "globalThis.document = { createElement: t => ({ tag: t, children: [], attrs: {}, listeners: {}, appendChild(c){ const j = this.children.indexOf(c); if (j >= 0) this.children.splice(j, 1); this.children.push(c); return c }, replaceChild(n,o){ const i = this.children.indexOf(o); if (i >= 0) this.children[i] = n; return o }, insertBefore(n,r){ const j = this.children.indexOf(n); if (j >= 0) this.children.splice(j, 1); const i = this.children.indexOf(r); this.children.splice(i < 0 ? this.children.length : i, 0, n); return n }, removeChild(c){ const i = this.children.indexOf(c); if (i >= 0) this.children.splice(i, 1); return c }, setAttribute(k,v){ this.attrs[k] = v }, removeAttribute(k){ delete this.attrs[k] }, addEventListener(t,f){ this.listeners[t] = f }, set textContent(s){ this.children.length = 0 }, fire(t,ev){ this.listeners[t](ev === undefined ? {} : ev) } }), createTextNode: s => ({ text: s }) }")
 

@@ -7,7 +7,7 @@
 ;; machine looks complete -- it names its actions -- and loading it
 ;; with the wrong bindings, or none, is refused rather than silently
 ;; producing a machine whose transitions do nothing.
-(import (rnrs) (gam state))
+(import (rnrs) (gam state) (lng machine))
 
 (define fails '())
 (define (want name got expect)
