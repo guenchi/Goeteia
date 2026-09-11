@@ -121,8 +121,12 @@ than re-verified item by item for this document.
   the scope. `except` and `only` now constrain what may be referenced,
   not only what may be defined. Five cells in this tree used names they
   had never imported and were seeing through the flat splice; they
-  import them now. Turning the check on took five passes over the whole
-  suite, and the compiler's comment at the check records the count.
+  import them now. An embed body (`conjure`, `define-wasm-js` and the
+  rest) with an import clause is governed by that clause alone; one
+  without a clause inherits the enclosing program's imports, where it
+  used to be judged by nothing. Turning the check on took five passes
+  over the whole suite, and the compiler's comment at the check records
+  the count.
 - Compiler, import discipline: a program that imports `(rnrs)` may
   no longer define a name the import brings in -- either `define`
   spelling, `define-syntax`, or the names a record definition
