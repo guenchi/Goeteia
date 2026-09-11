@@ -592,7 +592,11 @@
          (fnames (map car fields)))
     (cons 'begin
           (map xpand
-               (cons `(define ,rtd (cons ',(unmark name) '()))
+               ;; the descriptor's pair is the compiler's own, not a call the
+               ;; program wrote -- a program that excludes cons still gets a
+               ;; record type, exactly as quasiquote's append works
+               (cons `(define ,rtd (,(compiler-introduced 'cons)
+                                    ',(unmark name) '()))
                      (cons `(define (,ctor . ,fnames)
                               (%record ,rtd . ,fnames))
                            (cons `(define (,pred x) (%record? x ,rtd))
@@ -2057,13 +2061,13 @@
    (lambda (d)
      (let ((b (assq (car d) map)))
        (when b
-         (let ((lib (car (cdr b)))
-               (nm (symbol->string (car d))))
-           (errorf 'goeteia
-                   (string-append
-                    nm " is imported by (" lib "); write (import (except ("
-                    lib ") " nm ")) to define it:")
-                   (caddr d))))))
+         ;; Literal message, irritants after it -- the convention every
+         ;; other errorf in this file follows, so the two hosts word a
+         ;; diagnostic the same way and test/reader-diagnostics.mjs can
+         ;; compare the bodies.
+         (errorf 'goeteia
+                 "imported name may not be defined; exclude it with except:"
+                 (car d) (car (cdr b)) (caddr d)))))
    (reverse defines)))
 
 ;; Assigning to an imported variable is refused for the same reason
@@ -2085,12 +2089,9 @@
       (unless (memq (cadr form) bound)
         (let ((b (assq n *assignment-map*)))
           (when b
-            (let ((lib (car (cdr b))) (nm (symbol->string n)))
-              (errorf 'goeteia
-                      (string-append
-                       nm " is imported by (" lib "); write (import (except ("
-                       lib ") " nm ")) to assign it:")
-                      n)))))
+            (errorf 'goeteia
+                    "imported name may not be assigned; exclude it with except:"
+                    n (car (cdr b))))))
       (when (pair? (cddr form))
         (refuse-imported-assignment! (caddr form) bound))))
    ((and (eq? (resolve-tag (car form)) 'lambda) (pair? (cdr form)))
@@ -2131,12 +2132,32 @@
 ;; The last is the allowance: the manifest decides which names a clause
 ;; governs, so a primitive outside it is reachable and a primitive
 ;; inside it (car, cdr) is governed like any other name.
+;; R6RS core syntax, which the reference check MUST NOT judge.
+;;
+;; The check runs after expansion, and by then `if' and `begin' and
+;; `set!' are mostly the EXPANDER'S output, not the program's text:
+;; `and' expands to `if', `letrec' to `begin' and `set!', a record type
+;; to several of them.  A post-expansion walk cannot tell the program's
+;; `if' from the one `and' just produced, so judging these names here
+;; refuses legal programs -- (import (only (rnrs) and)) (and #t #t) was
+;; refused for an `if' the program never wrote.
+;;
+;; They are still governed where the question IS decidable: a program
+;; that DEFINES `case' or `if' is refused, because a definition is the
+;; program's own text and is judged before any of this.
+(define $core-syntax
+  '(and begin case cond define define-record-type define-syntax do
+    else if lambda let let* letrec letrec* or parameterize
+    quasiquote quote set! syntax-rules unless unquote
+    unquote-splicing when =>))
+
 (define (reference-bound? r map defined bound)
   (or (not (symbol? r))
       (memq r bound)
       (intro-context r)
       (let ((n (unmark r)))
-        (or (assq n map)
+        (or (memq n $core-syntax)
+            (assq n map)
             (memq n defined)
             (and (memq n primitives) (not (memq n $rnrs-exports)))
             ;; The prelude's implementation scope.  Its dollar- and
@@ -2147,17 +2168,18 @@
             ;; implementation's primitives, and the same refusal to
             ;; define one.  This DOES make the convention load-bearing,
             ;; for the prelude's own internals and nothing else.
-            (scope-binds? *prelude-scope* n)))))
+            (and (scope-binds? *prelude-scope* n)
+                 (not (memq n $rnrs-exports)))))))
 
 (define (check-references! form bound map defined where)
   (cond
    ((symbol? form)
     (unless (reference-bound? form map defined bound)
-      (errorf 'goeteia
-              (string-append (symbol->string (unmark form))
-                             " is not bound: the import clause does not"
-                             " bring it in")
-              where)))
+      ;; "unbound variable:" is the wording the old path used and the
+      ;; wording test/reader-diagnostics.mjs compares across hosts; the
+      ;; scope follows as an irritant so the reader knows whose clause
+      ;; failed to bring the name in.
+      (errorf 'goeteia "unbound variable:" (unmark form) where)))
    ((not (pair? form)) #f)
    ;; A macro definition is not code: its patterns and templates are
    ;; data until something applies it, and the wildcard `_' inside a
@@ -2216,10 +2238,21 @@
         ((symbol? fs) (check-references! fs bound map defined where))
         (else #f)))
 
+;; Each form is judged inside $with-loc, so a diagnostic carries the
+;; at-line the old unbound path carried.  The check runs after
+;; expansion, outside the dynamic extent that used to supply it, so
+;; without this the position is simply absent -- which six subtests of
+;; test/reader-diagnostics.mjs read as "this host prints no at-line".
+(define (judge-one-form! f map defined who)
+  ($with-loc (form-loc f)
+             (lambda ()
+               (refuse-imported-assignment! f '())
+               (check-references! f '() map defined who))))
+
 (define (judge-scopes!)
   (for-each (lambda (u)
               (refuse-imported-definitions! (car u) (cadr u))
-              (refuse-imported-assignments! (car u) (caddr u))
+              (set! *assignment-map* (car u))
               ;; A reference the scope's clause does not bring in is
               ;; unbound here, before dead-code elimination, in call
               ;; and value position alike.  Turning this on cost five
@@ -2229,10 +2262,11 @@
               ;; that touches every reference in the tree; seven
               ;; hand-written programs said it was fine when 179 cells
               ;; said otherwise.
-              (walk-refs (reverse (caddr u)) '() (car u)
-                         (map car (cadr u)) (cadddr u)))
+              (for-each (lambda (f)
+                          (judge-one-form! f (car u) (map car (cadr u))
+                                           (cadddr u)))
+                        (reverse (caddr u))))
             (reverse *judgement-units*)))
-
 (define (merge-import-bindings specs)
   (fold-left
    (lambda (acc spec)
