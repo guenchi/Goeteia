@@ -221,7 +221,7 @@ than re-verified item by item for this document.
 
 ### KNOWN OPEN
 
-Six defects are known, reproduced, and NOT fixed in this release. They
+Eight defects are known, reproduced, and NOT fixed in this release. They
 are listed here because an unfixed defect that scrolls off a list is one
 nobody re-reads at the next decision.
 
@@ -234,6 +234,20 @@ nobody re-reads at the next decision.
   procedures the prelude defines in Scheme are not yet. Held red by
   `c02-excluded-append-program-and-quasiquote` and
   `defect-library-redefines-imported-name`.
+- **A reference to a name the import clause does not bring in is not
+  an error.** `(import (except (rnrs) car))` followed by `(car (list
+  1))` compiles and calls the primitive; R6RS says the reference is
+  unbound. The definition half of the rule is in (see Fixed); the
+  reference half was implemented once, turned 179 cells red for five
+  distinct reasons -- among them that a library written inside a
+  `begin` never gets its import clause into the importing scope -- and
+  was withdrawn to be designed first. Held red by
+  `defect-unbound-reference-not-checked`.
+- **`prefix` imports were never implemented and are now refused by
+  name.** The compiler driver emitted aliases for `rename` only, so
+  `(import (prefix (rnrs) r:))` silently meant `(import (rnrs))` with
+  every prefixed name unbound. Nothing in the tree uses a prefix import
+  (`except` 39 files, `only` 1, `rename` 1). **Workaround**: `rename`.
 - **Component libraries such as `(rnrs base)` are not implemented.**
   Until now both compilers accepted `(import (rnrs base))` and quietly
   handed back the whole of `(rnrs)`; an rnrs spec with anything after
