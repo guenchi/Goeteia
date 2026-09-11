@@ -48,3 +48,33 @@ test('control: a small exact exponent still reads to the exact integer', () => {
     assert.ok(r.built && !r.timedOut, 'the small case must read quickly');
     assert.equal(r.out, '1000000000', 'a bounded exact exponent must still build its integer');
 });
+
+function numberInTime(literal) {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'goeteia-numcost-'));
+    const ss = path.join(dir, 'p.ss');
+    const wasm = path.join(dir, 'p.wasm');
+    fs.writeFileSync(ss, `(import (rnrs))\n(display (string->number ${JSON.stringify(literal)}))\n`);
+    const c = spawnSync(path.join(root, 'bin/goeteiac'), [ss, wasm], { encoding: 'utf8', timeout: 60000 });
+    if (c.error || !fs.existsSync(wasm)) { fs.rmSync(dir, { recursive: true, force: true }); return { built: false }; }
+    const r = spawnSync('node', [path.join(root, 'rt/run.mjs'), wasm], { encoding: 'utf8', timeout: 8000 });
+    fs.rmSync(dir, { recursive: true, force: true });
+    return { built: true, timedOut: !!r.error, out: ((r.stdout || '') + '').trim() };
+}
+
+// string->number shares %body->number with the reader and needs no #
+// prefix: the plain inexact spelling builds the exact magnitude before
+// converting, so "1e999999" constructs 10^999999 on its way to a
+// flonum.  This is the caller that reaches user-typed text.
+for (const lit of ['1e999999', '1e-999999']) {
+    test(`string->number ${lit} returns rather than hangs`, () => {
+        if (!chez) { console.log('NOT EXERCISED HERE (no chez on PATH)'); return; }
+        const r = numberInTime(lit);
+        assert.ok(r.built && !r.timedOut, `string->number ${lit} did not return within 8s -- the parser is building the magnitude`);
+    });
+}
+
+test('control: string->number 1.5 still works', () => {
+    if (!chez) { console.log('NOT EXERCISED HERE (no chez on PATH)'); return; }
+    const r = numberInTime('1.5');
+    assert.ok(r.built && !r.timedOut && r.out === '1.5', `1.5 must parse: ${JSON.stringify(r)}`);
+});
