@@ -418,6 +418,7 @@ for m in test/macro-toplevel-hygiene.mjs \
          test/c02-product-int-emission.mjs \
          test/spec-product-unshadowed-forwarding.mjs \
          test/expected-fail-markers-are-honest.mjs \
+         test/sexpr-escapes.mjs \
          test/spec-product-unshadowed-operator-position.mjs \
          test/defect-spec-candidate-by-name.mjs \
          test/defect-dce-binder-counts-as-reference.mjs \

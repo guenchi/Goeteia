@@ -1,0 +1,111 @@
+{
+  "purpose": "Reader-only widening: the escapes a conforming R6RS writer emits must read back. Writer and test/sexpr-vectors.json are deliberately untouched -- this is the accept side only.",
+  "read_by": [
+    "test/sexpr-escapes.mjs",
+    "test/sexpr-escapes.ss"
+  ],
+  "why_one_table": "Two implementations held to one table cannot drift; two tables would.",
+  "bytes_note": "The comparison column is UTF-8 BYTES, not code points: a Goeteia string holds one character per UTF-8 byte, so bytes are the one representation both implementations can be held to.",
+  "accept": [
+    {
+      "src": "(ok \"a\\tb\")",
+      "want": "tab -- already accepted, control",
+      "bytes": [
+        97,
+        9,
+        98
+      ]
+    },
+    {
+      "src": "(ok \"a\\nb\")",
+      "want": "newline -- already accepted, control",
+      "bytes": [
+        97,
+        10,
+        98
+      ]
+    },
+    {
+      "src": "(ok \"a\\fb\")",
+      "want": "form feed -- the real-world case",
+      "bytes": [
+        97,
+        12,
+        98
+      ]
+    },
+    {
+      "src": "(ok \"a\\ab\")",
+      "want": "bell",
+      "bytes": [
+        97,
+        7,
+        98
+      ]
+    },
+    {
+      "src": "(ok \"a\\vb\")",
+      "want": "vertical tab",
+      "bytes": [
+        97,
+        11,
+        98
+      ]
+    },
+    {
+      "src": "(ok \"a\\bb\")",
+      "want": "backspace",
+      "bytes": [
+        97,
+        8,
+        98
+      ]
+    },
+    {
+      "src": "(ok \"a\\x41;b\")",
+      "want": "hex escape",
+      "bytes": [
+        97,
+        65,
+        98
+      ]
+    },
+    {
+      "src": "(ok \"a\\x1F600;b\")",
+      "want": "hex escape, astral (four UTF-8 bytes)",
+      "bytes": [
+        97,
+        240,
+        159,
+        152,
+        128,
+        98
+      ]
+    }
+  ],
+  "symbols": [
+    {
+      "src": "(error unknown-verb \\x2D;-store (verbs init))",
+      "sym_index": 2,
+      "want_symbol": "--store"
+    }
+  ],
+  "reject": [
+    {
+      "src": "(ok \"a\\x41b\")",
+      "why": "hex escape with no terminating semicolon"
+    },
+    {
+      "src": "(ok \"a\\xZZ;b\")",
+      "why": "hex escape whose digits are not hex"
+    },
+    {
+      "src": "(ok \"a\\x;b\")",
+      "why": "hex escape with no digits"
+    },
+    {
+      "src": "(ok \"a\\qb\")",
+      "why": "escape the grammar does not define"
+    }
+  ]
+}
