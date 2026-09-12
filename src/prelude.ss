@@ -1663,6 +1663,48 @@
                 (bytevector-u8-set! bv i e)
                 (loop (+ i 1) (cdr es)))))))))
 
+
+;; R6RS's #\x<hex>.  This is NOT the string escape and the two are
+;; deliberately not unified: a string escape is \x<hex>; WITH a
+;; terminating semicolon, a character literal is #\x<hex> with none.
+;;
+;; A name reaches here only when a byte followed the x, so #\x alone is
+;; still the character x through the single-character branch, and #\X41
+;; and #\xyz still fall through to the unknown-name error -- only a
+;; lowercase x opens the escape, and every later byte must be a hex
+;; digit.
+(define (%char-hex-name? name)
+  (and (> (string-length name) 1)
+       (char=? (string-ref name 0) #\x)
+       (let loop ((i 1))
+         (or (= i (string-length name))
+             (and (%digit-val (char->integer (string-ref name i)) 16)
+                  (loop (+ i 1)))))))
+
+;; The range is THIS RUNTIME'S, not R6RS's.  A character here is a byte
+;; (docs/limits.md, "Character literals stop at U+007F"), so a scalar
+;; value above 127 is refused in the same words the Chez-hosted driver
+;; refuses a non-ASCII character datum, rather than minting a character
+;; no string in this runtime could hold.  Chez answers a character for
+;; #\x1F600; copying it here would make the two hosts disagree about
+;; which programs exist, which is the reason limits.md gives.
+;;
+;; The bound is tested as the digits are consumed rather than after: a
+;; long run would otherwise build an unbounded integer before anything
+;; looked at its value, and the value can only grow.
+(define (%char-hex-char name)
+  (let loop ((i 1) (v 0))
+    (cond
+     ((> v 127)
+      (errorf 'read
+              (string-append "a character literal above U+007F has no"
+                             " self-hosted spelling: #\\" name " at "
+                             (%at-line $reader-line $reader-column))))
+     ((= i (string-length name)) (integer->char v))
+     (else (loop (+ i 1)
+                 (+ (* v 16)
+                    (%digit-val (char->integer (string-ref name i)) 16)))))))
+
 (define (%named-char name)
   ;; the full R6RS set; an unknown name is an error, not a silent
   ;; first-character guess (#\return once read as #\r that way)
@@ -1679,6 +1721,7 @@
    ((string=? name "page") (integer->char 12))
    ((string=? name "esc") (integer->char 27))
    ((string=? name "delete") (integer->char 127))
+   ((%char-hex-name? name) (%char-hex-char name))
    ((= (string-length name) 1) (string-ref name 0))
    (else (error 'read (string-append "unknown character name ending at "
                                      (%at-line $reader-line $reader-column))
