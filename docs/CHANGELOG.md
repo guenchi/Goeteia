@@ -20,10 +20,15 @@ three in the glTF writer where a bound did not describe its own data.
 - `integer->char` takes a Unicode scalar value: `0`..`#x10FFFF`
   excluding the surrogates. It previously accepted any integer,
   including values past the top of Unicode.
-- On the wire, a bare token with a leading `+` is no longer read as a
-  symbol. `+nan.0`, `+inf.0` and `-inf.0` read as the flonums a
-  conforming writer means by them; every other leading-`+` token is
-  refused, because it names something this format's writer cannot write.
+- On the wire, a bare token is read as a symbol only when the name is
+  one this format's writer can write. `+nan.0`, `+inf.0` and `-inf.0`
+  read as the flonums a conforming writer means by them, where they
+  used to come back as symbols -- silently, which is the part worth
+  fixing. `+15`, `+i`, `-nan.0`, `.5`, `-.5` and `+1/2` are now refused,
+  because the writer refuses those names and the reader must not mint a
+  value that cannot be written back. `+x` and `+a` are unaffected: the
+  writer writes them, so the reader keeps reading them. The rule is the
+  writer's own predicate, not the shape of the token.
 
 ### Reader
 
