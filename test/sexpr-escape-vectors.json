@@ -287,15 +287,6 @@
         114,
         101
       ]
-    },
-    {
-      "src": "(x \\x31; y)",
-      "sym_index": 1,
-      "len": 3,
-      "want": "R6RS makes an inline hex escape identifier syntax, so this is the SYMBOL 1",
-      "bytes": [
-        49
-      ]
     }
   ],
   "reject": [
@@ -360,29 +351,51 @@
       "why": "the same, in a symbol"
     }
   ],
-  "name_outside_grammar": [
+  "rejected_framing_note": "An earlier version of this section asserted that the reader refuses exactly the names the WRITER refuses. That was wrong and the writer half has been removed rather than kept as a second opinion. It was induced from five measured names without being checked against the rest of this table, where symbols row 5 already contradicted it -- the writer refuses the name 1 and the reader must accept \\x31;. It is also self-defeating: this wire writer emits NO escape for any symbol, it refuses instead, so 'accept only what the writer emits' argues for accepting no escapes at all. The five rows passed under that framing by coincidence, being refused for the character-set reason and not the writer one.",
+  "not_covered": "Error POSITIONS are not asserted by any row here. A boolean refusal cannot catch a right refusal reported at the wrong offset, and both readers had that defect for symbol escapes. Stated so the gap is a known one rather than an invisible one.",
+  "name_not_carried": [
     {
       "src": "(x \\x28; y)",
-      "why": "a paren is not a symbol character"
+      "why": "a paren decodes to a character no bare name may hold"
     },
     {
       "src": "(x a\\x20;b y)",
-      "why": "a space is not a symbol character"
+      "why": "a space decodes to a character no bare name may hold"
     },
     {
       "src": "(x \\x41;; y)",
-      "why": "a semicolon is not a symbol character; this grammar has no comments, so \\x41;; is one token decoding to A;"
+      "why": "a semicolon decodes to a character no bare name may hold; this grammar has no comments, so \\x41;; is one token decoding to A;"
     },
     {
       "src": "(x \\x5C;x41; y)",
-      "why": "a backslash is not a symbol character"
+      "why": "a backslash decodes to a character no bare name may hold"
     },
     {
       "src": "(x caf\\xE9; y)",
       "why": "the symbol grammar is ASCII; a non-ASCII name travels as a string"
+    },
+    {
+      "src": "(x \\x31; y)",
+      "why": "the name 1 is numeric-shaped; the writer will not write it"
+    },
+    {
+      "src": "(x 1\\x61; y)",
+      "why": "the name 1a, likewise"
+    },
+    {
+      "src": "(x \\x2e; y)",
+      "why": "the name ., likewise"
+    },
+    {
+      "src": "(x \\x2D;1 y)",
+      "why": "the name -1, likewise"
+    },
+    {
+      "src": "(x 1\\x2E;5 y)",
+      "why": "the name 1.5, likewise"
     }
   ],
-  "name_outside_grammar_note": "THE RULE IS: an escape DISAMBIGUATES a name, it does not EXTEND the character set a name may be spelled from. These rows decode to a character outside the symbol grammar and are refused. Their discriminating partner is symbols row 5: \\x31; decodes to \"1\", whose character IS in the grammar and which is escaped only so it is not read as the number -- that one is ACCEPTED. The pair is what discriminates, and neither row alone does: a reader that refused both is too narrow, one that accepted both is full R6RS and lets a peer intern arbitrary character sequences, and one that accepted ( while refusing 1 is incoherent.",
-  "rejected_framing_note": "An earlier version of this section asserted that the reader refuses exactly the names the WRITER refuses. That was wrong and the writer half has been removed rather than kept as a second opinion. It was induced from five measured names without being checked against the rest of this table, where symbols row 5 already contradicted it -- the writer refuses the name 1 and the reader must accept \\x31;. It is also self-defeating: this wire writer emits NO escape for any symbol, it refuses instead, so 'accept only what the writer emits' argues for accepting no escapes at all. The five rows passed under that framing by coincidence, being refused for the character-set reason and not the writer one.",
-  "not_covered": "Error POSITIONS are not asserted by any row here. A boolean refusal cannot catch a right refusal reported at the wrong offset, and both readers had that defect for symbol escapes. Stated so the gap is a known one rather than an invisible one."
+  "name_not_carried_note": "THE RULE IS: an escape lets a name be SPELLED, it does not let a name be CARRIED that this format could not carry anyway. A decoded name is held to the WRITER'S OWN predicate -- the reader calls wire-symbol? rather than restating it -- so the accepted set IS the writable set and read-then-write is closed by construction rather than by agreement. Its discriminating partner is the symbols row for \\x2D;-store: --store IS a name this format carries, it is merely escaped, and it is ACCEPTED and writes back. A reader refusing both is too narrow; one accepting both mints values this implementation can hold and cannot serialise.",
+  "not_an_r6rs_reader_note": "An earlier version of this table asserted \\x31; reads as the SYMBOL 1, on the grounds that R6RS makes an inline hex escape identifier syntax. That premise never applied here. Measured: a$b, a#b and |a b| are all legal R6RS identifiers and all three are REFUSED by this reader. Its symbol set has always been narrower than R6RS, so holding one escape to R6RS while the surrounding grammar does not implement it was the error -- not a trade lost to interop.",
+  "coordination_note": "Refusing is the COORDINATED choice, not the only one. Widening both writers to EMIT \\x31; for a numeric-shaped name would close the gap the other way and keep more of R6RS; it needs both implementations of this format to move together, because whichever side widened alone would emit what the other rejects."
 }

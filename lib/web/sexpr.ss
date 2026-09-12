@@ -655,20 +655,30 @@
                           (char<=? (string-ref tok 1) #\9)))))))
       ;; A symbol may carry \x<hex>; and nothing else: the string
       ;; escapes are not identifier syntax.  The decoded name is held
-      ;; to the SYMBOL GRAMMAR -- the characters a bare name may be
-      ;; spelled with -- and that is NOT the same as wire-safe.
-      ;; \x31; decodes to the name 1, which the grammar admits and
-      ;; wire-symbol? refuses, so the reader can make a symbol the
-      ;; writer will not serialise.  R6RS makes the escape identifier
-      ;; syntax, so reading it as the symbol 1 is correct and the
-      ;; asymmetry lives in the writer's wire rule; the vector table
-      ;; pins both sides of that boundary.
+      ;; to wire-symbol? -- THE WRITER'S OWN PREDICATE, called rather
+      ;; than restated, so the two cannot drift apart.
+      ;;
+      ;; The rule is which NAMES THIS FORMAT CAN CARRY, not which
+      ;; characters a name may be spelled from.  --store is writable
+      ;; bare, so \x2D;-store is accepted; 1 is not writable at all,
+      ;; so \x31; is refused rather than minting a symbol that cannot
+      ;; be serialised.  R6RS would make \x31; the identifier 1, but
+      ;; this reader is not an R6RS reader: it already refuses a$b,
+      ;; a#b and |a b|, which R6RS admits.  Its symbol set is the
+      ;; wire's.
+      ;;
+      ;; Refusing is the COORDINATED choice, not the only one:
+      ;; widening the writer to emit \x31; for a numeric-shaped name
+      ;; would close read-then-write the other way, but the other
+      ;; implementation of this format refuses such names too, and
+      ;; moving one side alone would make each reject the other's
+      ;; output.
       (define (decode-name tok at)
         (let ((tn (string-length tok)))
           (let loop ((k 0) (acc '()))
             (if (>= k tn)
                 (let ((name (list->string (reverse acc))))
-                  (unless (valid-symbol? name) (sfail "bad token" at))
+                  (unless (wire-symbol? name) (sfail "bad token" at))
                   name)
                 (let ((c (string-ref tok k)))
                   (if (char=? c #\\)

@@ -51,25 +51,25 @@ test('a hex escape inside a symbol reads back', () => {
     }
 });
 
-// An escape DISAMBIGUATES a name; it does not EXTEND the character set
-// a name may be spelled from.  These decode to a character outside the
-// symbol grammar and are refused.  Their discriminating partner is the
-// symbols row for \x31;, which decodes to "1" -- a character that IS in
-// the grammar, escaped only so it is not read as the number -- and is
-// ACCEPTED.  The PAIR discriminates and neither row alone does: refusing
-// both is too narrow, accepting both is full R6RS and lets a peer intern
-// arbitrary character sequences, accepting ( while refusing 1 is
-// incoherent.
+// An escape lets a name be SPELLED; it does not let a name be CARRIED
+// that this format could not carry anyway.  The decoded name is held to
+// the WRITER'S OWN predicate -- the reader calls wireSymbol rather than
+// restating it -- so the accepted set IS the writable set, and
+// read-then-write is closed by construction rather than by agreement.
 //
-// This replaces an assertion that the reader refuses exactly the names
-// the WRITER refuses.  That was induced from five measured names without
-// being checked against the rest of the table, where the \x31; row
-// already contradicted it.  It is also self-defeating: this writer emits
-// NO escape for any symbol, so "accept only what the writer emits" argues
-// for accepting no escapes at all.  These five passed under it by
-// coincidence, refused for the character reason and not the writer one.
-test('a decoded name outside the symbol grammar is refused', () => {
-    for (const row of table.name_outside_grammar) {
+// Its discriminating partner is the symbols row for \x2D;-store, which
+// IS a name this format carries and is merely escaped: accepted, and it
+// writes back.  Refusing both is too narrow; accepting both mints values
+// this implementation can hold and cannot serialise.
+//
+// AN EARLIER VERSION OF THIS TABLE asserted \x31; reads as the SYMBOL 1,
+// on the grounds that R6RS makes an inline hex escape identifier syntax.
+// That premise never applied.  Measured: a$b, a#b and |a b| are all legal
+// R6RS identifiers and all three are REFUSED here.  This reader's symbol
+// set has always been narrower than R6RS, so holding one escape to a
+// standard the surrounding grammar does not implement was the error.
+test('a name this format cannot carry is refused', () => {
+    for (const row of table.name_not_carried) {
         assert.throws(() => read(row.src), undefined, `${row.src}  (${row.why})`);
     }
 });
