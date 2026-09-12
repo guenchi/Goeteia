@@ -1,6 +1,6 @@
 ;; expect: (1 . 2)
-;; EXPECTED FAIL, and pre-existing: RED on stage1, and that red is the
-;; defect.
+;; REGRESSION GUARD.  Written as a red witness against the reader where
+;; the scan after the dot called only %skip-blanks.
 ;;
 ;; After the dot, the reader calls only %skip-blanks, so it reaches
 ;; neither the atmosphere layer that consumes #| and #; nor the hash

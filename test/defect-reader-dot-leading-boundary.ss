@@ -1,5 +1,6 @@
 ;; expect: (a . b)
-;; EXPECTED FAIL, and the LEADING-boundary sibling of
+;; REGRESSION GUARD.  Written as a red witness, the LEADING-boundary
+;; sibling of
 ;; test/defect-reader-dotted-tail-skips-only-blanks.ss.  Same cause,
 ;; opposite side of the dot: the branch that decides whether a "." is a
 ;; tail marker tests %delimiter? alone, so it never reaches the

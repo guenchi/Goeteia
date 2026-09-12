@@ -1276,7 +1276,19 @@
           (cons (%read-hash) (%read-list-from line col #t))))
      ((= b 46)                                     ; . -- dotted tail
       (%next-byte)                                 ;      or dot-initial
-      (if (%delimiter? (%peek-byte))               ;      symbol
+      ;; `#` ends the dot as a delimiter does.  Since %read-name-token
+      ;; and %read-atom stop at `#`, a dot followed by one can no
+      ;; longer be the start of a name -- `.` alone is not a datum --
+      ;; so the only reading left is the tail marker.
+      ;;
+      ;; This ENDS the dot rather than skipping atmosphere after it,
+      ;; and the difference is the whole point: what follows may be a
+      ;; DATUM that merely begins with `#`.  `(1 .#(2))` has a vector
+      ;; as its tail, and a repair that consumed `#` atmosphere here
+      ;; would eat it.  Ending the dot hands `#` back to $read, which
+      ;; already knows both readings.
+      (if (let ((n (%peek-byte)))
+            (or (%delimiter? n) (= n 35)))
           (begin
             ;; "(. 2)" -- the dot has nothing to be the tail of
             (unless any?
@@ -1284,20 +1296,38 @@
                       (string-append "a dot needs an item before it at "
                                      (%at-line $reader-line $reader-column))))
             (let ((d ($read)))
-              (%skip-blanks)
               ;; This used to consume whatever byte was here without
               ;; looking, so "(1 . 2 3)" read as (1 . 2) and the 3 was
               ;; gone -- a shorter answer than the text, and nothing
               ;; said.  Only ")" may follow the tail datum.
-              (let ((n (%peek-byte)))
-                (cond
-                 ((< n 0) (%unclosed-list line col))
-                 ((= n 41) (%next-byte) d)
-                 (else
-                  (errorf 'read
-                          (string-append
-                           "more than one item found after dot at "
-                           (%at-line $reader-line $reader-column))))))))
+              ;;
+              ;; But ATMOSPHERE may, and `#|...|#`, `#;<datum>` and a
+              ;; lexical directive are all atmosphere.  %skip-blanks
+              ;; reaches none of them, which is why `(1 . 2 #|c|#)`
+              ;; reported a second item.  So the close is a loop, and a
+              ;; `#` opening NEITHER a comment NOR a directive is a
+              ;; second item and refused as one -- which is what
+              ;; `(1 . 2 #(3))` is, while `(1 . 2 #!r6rs)` is accepted.
+              ;; Chez agrees on all three.
+              (let close ()
+                (%skip-blanks)
+                (let ((n (%peek-byte)))
+                  (cond
+                   ((< n 0) (%unclosed-list line col))
+                   ((= n 41) (%next-byte) d)
+                   ((= n 35)
+                    (%next-byte)
+                    (if (%skip-hash-comment)
+                        (close)
+                        (errorf 'read
+                                (string-append
+                                 "more than one item found after dot at "
+                                 (%at-line $reader-line $reader-column)))))
+                   (else
+                    (errorf 'read
+                            (string-append
+                             "more than one item found after dot at "
+                             (%at-line $reader-line $reader-column)))))))))
           (cons (let ((r (%read-atom (list 46) #f)))
                   (%finish-atom (cdr r) (car r)))
                 (%read-list-from line col #t))))

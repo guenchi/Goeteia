@@ -1,5 +1,6 @@
 ;; expect: (1 . #(2))
-;; EXPECTED FAIL against src/prelude.ss at 6a46f34, and the SHARP half
+;; REGRESSION GUARD.  Written as a red witness against src/prelude.ss
+;; at 6a46f34, the SHARP half
 ;; of the leading dot boundary: what follows the dot here is a DATUM,
 ;; not a comment.
 ;;
