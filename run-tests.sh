@@ -206,6 +206,31 @@ run_js() { # jsfile testfile
 #
 # So the digest covers this file AND the contents of every cell, not
 # just the list of names.
+# A RUN STATES WHICH VERSION IT MEASURED, as a fact and not a verdict.
+#
+# The digest below answers "did this change under me".  It cannot answer
+# "was this already old when I began", and that is a different failure:
+# a checkout pinned to an older commit never moves, so the digest is
+# silent all the way through while every line of the log describes a
+# tree nobody meant to measure.  It happened twice today -- a worktree
+# pinned behind master measured a new reader against a stale oracle, and
+# eight reds were reported of which three were about the change.
+#
+# Pinning to an old commit is legitimate and often the point; believing
+# you are current when you are not is the defect.  So this states the
+# position rather than refusing to run, which is the same discipline as
+# printing the digest when nothing moved: it turns "I thought I was
+# measuring current" into a line someone can check afterwards.
+if git rev-parse --git-dir >/dev/null 2>&1; then
+    head_id=$(git rev-parse --short HEAD 2>/dev/null)
+    behind=$(git rev-list --count "HEAD..master" 2>/dev/null || echo '?')
+    if [ "$behind" = "0" ]; then
+        echo "measuring $head_id (level with master)"
+    else
+        echo "measuring $head_id -- BEHIND master by $behind commit(s); this run does not describe master"
+    fi
+fi
+
 # The digest covers THE SUBJECT as well as the instrument, and that
 # distinction cost a run to learn.  The first version hashed this script
 # and test/*.ss -- the harness and the cells -- and said nothing when an
