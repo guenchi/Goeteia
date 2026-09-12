@@ -23,9 +23,29 @@
 ;; digit or "-" followed by a digit, and nothing catches a leading "+".
 ;; Both trees inherited it.
 ;;
-;; THE ASSERTIONS ARE ON THE VALUE, not on "is not a symbol": a repair
-;; that merely REFUSED these would stop the silent wrong answer and
-;; still not read what the peer sent.
+;; THE THREE SPECIALS AND THE INTEGER ARE DIFFERENT QUESTIONS and this
+;; cell keeps them apart, because the first version of it did not and
+;; over-asserted in exactly the way this tree spent the day catching.
+;;
+;; +15 is SETTLED.  This reader DOES read integers and rationals -- 15,
+;; -15, 1/2 all come back as numbers -- so a leading "+" on an integer
+;; is a plain hole with no design question in it, and the row asserts
+;; the VALUE 15.
+;;
+;; +nan.0 is NOT settled, and asserting a flonum for it would repeat
+;; today's mistake of appealing to a standard the surrounding grammar
+;; does not implement.  Measured: this reader refuses 1.5, 1e3 and #xFF.
+;; It has NO flonum literal syntax at all, so reading +nan.0 as a flonum
+;; while 1.5 stays refused would be incoherent -- the coherent readings
+;; are either both or neither.  So those rows assert only what IS
+;; settled: they must not come back as SYMBOLS.  A refusal, like the one
+;; 1.5 already gets, satisfies them; a silent wrong value does not.
+;;
+;; The peer implementation of this format has TWO profiles and the same
+;; hole in both, and its strict profile cannot carry a flonum at all, so
+;; refusal is the only coherent answer there.  Ours carries flonums --
+;; the writer emits #f8"..." and reads it back -- so both answers remain
+;; open here.  What is NOT open is answering with a symbol.
 (import (rnrs) (web sexpr))
 (define fails '())
 (define (want name got expect)
@@ -37,9 +57,17 @@
 (define (neginf? x) (and (flonum? x) (fl<? x -1e308)))
 
 ;; the standard spellings a conforming writer emits
-(want 'nan-must-be-a-flonum (nan? (nth "(ok +nan.0)" 1)) #t)
-(want 'positive-infinity (posinf? (nth "(ok +inf.0)" 1)) #t)
-(want 'negative-infinity (neginf? (nth "(ok -inf.0)" 1)) #t)
+;; EITHER answer is acceptable and only one is not.  A refusal, like the
+;; one 1.5 already gets, is fine; reading the value is fine; coming back
+;; as a SYMBOL is the defect.  Written this way on purpose -- demanding
+;; a refusal specifically would go red on a repair that reads them,
+;; which is the other legitimate end state.
+(define (symbol-or-not src)
+  (guard (e (#t 'not-a-symbol))
+    (let ((v (nth src 1))) (if (symbol? v) (list 'SYMBOL v) 'not-a-symbol))))
+(want 'nan-must-not-be-a-symbol (symbol-or-not "(ok +nan.0)") 'not-a-symbol)
+(want 'positive-infinity-must-not-be-a-symbol (symbol-or-not "(ok +inf.0)") 'not-a-symbol)
+(want 'negative-infinity-must-not-be-a-symbol (symbol-or-not "(ok -inf.0)") 'not-a-symbol)
 ;; a leading + on an ordinary number is R6RS too
 (want 'plus-prefixed-integer (nth "(ok +15)" 1) 15)
 
@@ -53,5 +81,14 @@
 (want 'CONTROL-plus-a-is-a-symbol (symbol->string (nth "(ok +a)" 1)) "+a")
 (want 'CONTROL-the-wire-flonum-form-still-reads
       (nan? (nth "(ok #f8\"AAAAAAAA+H8=\")" 1)) #t)
+
+;; OBSERVED, not required: this reader has no flonum literal syntax, and
+;; that is why the three rows above stop at "not a symbol".  Recorded as
+;; a reading so the larger decision -- read these spellings as values,
+;; and then 1.5 too, or refuse them as 1.5 already is -- is visible
+;; rather than rediscovered.
+(want 'OBSERVED-no-flonum-literal-syntax
+      (list (symbol-or-not "(ok 1.5)") (symbol-or-not "(ok 1e3)"))
+      (list 'not-a-symbol 'not-a-symbol))
 
 (display (if (null? fails) #t fails))
