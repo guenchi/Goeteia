@@ -27,10 +27,19 @@
 ;; cell keeps them apart, because the first version of it did not and
 ;; over-asserted in exactly the way this tree spent the day catching.
 ;;
-;; +15 is SETTLED.  This reader DOES read integers and rationals -- 15,
-;; -15, 1/2 all come back as numbers -- so a leading "+" on an integer
-;; is a plain hole with no design question in it, and the row asserts
-;; the VALUE 15.
+;; +15 IS NOT SETTLED EITHER, and I asserted the value 15 for it before
+;; noticing that.  This reader does read integers and rationals, so
+;; reading +15 as 15 is consistent -- but the WRITER never emits a
+;; leading "+", so refusing it is equally consistent, narrow rather than
+;; wide.  Two defensible answers again, and the row now asserts only
+;; that it is not a SYMBOL.
+;;
+;; Recording how the row got there, because it happened twice in this
+;; one cell: on finding a defect I wrote the repair I would have chosen
+;; into the expectation.  That is the same failure as deriving an
+;; expectation from an implementation, with my own preference standing
+;; in for the implementation, and it is harder to see because the
+;; expectation looks like a requirement rather than a guess.
 ;;
 ;; +nan.0 is NOT settled, and asserting a flonum for it would repeat
 ;; today's mistake of appealing to a standard the surrounding grammar
@@ -56,7 +65,6 @@
 (define (posinf? x) (and (flonum? x) (fl<? 1e308 x)))
 (define (neginf? x) (and (flonum? x) (fl<? x -1e308)))
 
-;; the standard spellings a conforming writer emits
 ;; EITHER answer is acceptable and only one is not.  A refusal, like the
 ;; one 1.5 already gets, is fine; reading the value is fine; coming back
 ;; as a SYMBOL is the defect.  Written this way on purpose -- demanding
@@ -65,11 +73,13 @@
 (define (symbol-or-not src)
   (guard (e (#t 'not-a-symbol))
     (let ((v (nth src 1))) (if (symbol? v) (list 'SYMBOL v) 'not-a-symbol))))
+;; the standard spellings a conforming writer emits
 (want 'nan-must-not-be-a-symbol (symbol-or-not "(ok +nan.0)") 'not-a-symbol)
 (want 'positive-infinity-must-not-be-a-symbol (symbol-or-not "(ok +inf.0)") 'not-a-symbol)
 (want 'negative-infinity-must-not-be-a-symbol (symbol-or-not "(ok -inf.0)") 'not-a-symbol)
 ;; a leading + on an ordinary number is R6RS too
-(want 'plus-prefixed-integer (nth "(ok +15)" 1) 15)
+(want 'plus-prefixed-integer-must-not-be-a-symbol
+      (symbol-or-not "(ok +15)") 'not-a-symbol)
 
 ;; THE CONTROL, and it must stay green: the readings that are already
 ;; right must not move.  A repair that widened the number parser too far
