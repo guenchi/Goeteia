@@ -2049,7 +2049,7 @@
     (fixnum->flonum . 1) (%fl->fx . 1)
     (%bignum? . 1) (%make-bignum . 2) (%bignum-sign . 1) (%bignum-limbs . 1)
     (boolean? . 1) (procedure? . 1)
-    (char->integer . 1) (integer->char . 1)
+    (char->integer . 1) (%integer->char . 1)
     (string-length . 1) (string-ref . 2) (string-set! . 3)
     (symbol->string . 1) (eof-object? . 1)
     (bitwise-and . 2) (bitwise-ior . 2) (bitwise-xor . 2)
@@ -2726,7 +2726,8 @@
     %js-call %js-new %js-string %js-str-len %js-str-byte
     %js-number %js-to-number %js-eq %js-bool %js-undefined
     %js-fn %js-cb-argc %js-cb-arg %js-cb-ret %js-await
-    char->integer integer->char string-length string-ref symbol->string
+    char->integer %integer->char
+    string-length string-ref symbol->string
     string-set! eof-object eof-object?
     bitwise-and bitwise-ior bitwise-xor
     bitwise-arithmetic-shift-left bitwise-arithmetic-shift-right
@@ -4292,8 +4293,12 @@
     ((char->integer)
      ;; (c<<1)|1 -> c<<1: clear the tag bit
      (list (arg 0) (untag) (i32const -2) #x71 (gc-op #x1C)))
-    ((integer->char)
-     ;; n<<1 -> (n<<1)|1: set the tag bit
+    ((%integer->char)
+     ;; n<<1 -> (n<<1)|1: set the tag bit.  The RAW primitive: it
+     ;; enforces nothing, which is why the exported integer->char is a
+     ;; prelude procedure that checks the Unicode scalar range first.
+     ;; Callers use this name only where the bound is visible at the
+     ;; call site.
      (list (arg 0) (untag) (i32const 1) #x72 (gc-op #x1C)))
     ((string-length)
      (list (arg 0) (ref-cast TY-STRING) (gc-op #x0F) (wrap-int)))

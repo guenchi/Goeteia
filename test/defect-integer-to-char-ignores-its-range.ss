@@ -1,5 +1,6 @@
 ;; expect: #t
-;; EXPECTED FAIL against src/prelude.ss at 175cfee.  integer->char
+;; REGRESSION GUARD.  Written as a red witness against src/prelude.ss at
+;; 175cfee, where integer->char
 ;; accepts any integer at all and hands back a character outside every
 ;; range this implementation claims to have.
 ;;
@@ -61,9 +62,25 @@
 ;; has a documentation half -- docs/limits.md explains the character
 ;; LITERAL limit and stops -- that no check answers.
 ;;
-;; Nothing enforces the model at run time at all: the primitive sets a
-;; tag bit and char->integer clears it, so the only thing holding
-;; "a character is a byte" anywhere is the reader.
+;; Nothing enforced the model at run time at all: the primitive set a
+;; tag bit and char->integer cleared it, so the only thing holding
+;; "a character is a byte" anywhere was the reader.
+;;
+;; FIXED by splitting the primitive -- %integer->char raw, a checked
+;; integer->char over it in the prelude -- with the domain R6RS gives:
+;; 0..#x10FFFF less the surrogate block.  Verified against Chez on
+;; every boundary (0 65 127 128 255 256 #xD7FF accepted, #xD800 and
+;; #xDFFF refused, #xE000 and #x10FFFF accepted, #x110000 and -1
+;; refused) and green on all three targets.
+;;
+;; The OBSERVED row below is deliberately still observing, and the
+;; documentation it wanted now exists: docs/limits.md states that a
+;; character and its \x...; spelling are not interchangeable above
+;; U+007F.  The reason is sharper than "a character is a byte" -- a
+;; character HOLDS its value, (char->integer (integer->char 256)) is
+;; 256, and the truncation happens when it is STORED IN A STRING,
+;; where that same character reads back as 0.  So narrowing the domain
+;; to 0..255 would not have closed this row either.
 (import (rnrs))
 (define fails '())
 (define (want name got expect)

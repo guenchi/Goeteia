@@ -1730,7 +1730,8 @@
               (string-append "a character literal above U+007F has no"
                              " self-hosted spelling: #\\" name " at "
                              (%at-line $reader-line $reader-column))))
-     ((= i (string-length name)) (integer->char v))
+     ;; the arm above rejected v > 127, so v is 0..127 here
+     ((= i (string-length name)) (%integer->char v))
      (else (loop (+ i 1)
                  (+ (* v 16)
                     (%digit-val (char->integer (string-ref name i)) 16)))))))
@@ -1741,16 +1742,16 @@
   (cond
    ((string=? name "space") #\space)
    ((string=? name "newline") #\newline)
-   ((string=? name "tab") (integer->char 9))
-   ((string=? name "return") (integer->char 13))
-   ((string=? name "linefeed") (integer->char 10))
-   ((string=? name "nul") (integer->char 0))
-   ((string=? name "alarm") (integer->char 7))
-   ((string=? name "backspace") (integer->char 8))
-   ((string=? name "vtab") (integer->char 11))
-   ((string=? name "page") (integer->char 12))
-   ((string=? name "esc") (integer->char 27))
-   ((string=? name "delete") (integer->char 127))
+   ((string=? name "tab") (%integer->char 9))
+   ((string=? name "return") (%integer->char 13))
+   ((string=? name "linefeed") (%integer->char 10))
+   ((string=? name "nul") (%integer->char 0))
+   ((string=? name "alarm") (%integer->char 7))
+   ((string=? name "backspace") (%integer->char 8))
+   ((string=? name "vtab") (%integer->char 11))
+   ((string=? name "page") (%integer->char 12))
+   ((string=? name "esc") (%integer->char 27))
+   ((string=? name "delete") (%integer->char 127))
    ((%char-hex-name? name) (%char-hex-char name))
    ((= (string-length name) 1) (string-ref name 0))
    (else (error 'read (string-append "unknown character name ending at "
@@ -2158,7 +2159,8 @@
     s))
 (define ($bv->s bv s i)
   (when (< i (bytevector-length bv))
-    (string-set! s i (integer->char (bytevector-u8-ref bv i)))
+    ;; from bytevector-u8-ref, so 0..255
+    (string-set! s i (%integer->char (bytevector-u8-ref bv i)))
     ($bv->s bv s (+ i 1))))
 (define (string->utf8 str)
   (let ((bv (%make-bytevector (string-length str) 0)))
@@ -2949,12 +2951,38 @@
 (define (char>? a b) (< (char->integer b) (char->integer a)))
 (define (char<=? a b) (not (char>? a b)))
 (define (char>=? a b) (not (char<? a b)))
+;; R6RS gives integer->char a UNICODE SCALAR VALUE: an exact integer in
+;; 0..#x10FFFF, excluding the surrogate block #xD800..#xDFFF.  The
+;; primitive underneath only sets the tag bit -- a character here is a
+;; tagged fixnum -- so without this nothing anywhere enforced the range,
+;; and (integer->char 1114112) answered a "character" past the top of
+;; Unicode.
+;;
+;; The range is R6RS's and NOT this runtime's byte model, deliberately.
+;; Narrowing to 0..255 would not buy the identity it looks like it buys.
+;; A character here HOLDS its value -- (char->integer (integer->char 256))
+;; is 256 -- and the truncation to a byte happens when the character is
+;; STORED IN A STRING: that same character read back out of a string is
+;; 0.  So (string (integer->char 233)) is one byte holding #xE9 while
+;; "\xE9;" is two, because a string literal names a CODE POINT and
+;; stores its UTF-8 encoding.  That difference is about storage, not
+;; about this procedure's range, and it survives any range.  Narrowing
+;; would also start refusing calls that work today.  See docs/limits.md.
+(define (integer->char n)
+  (if (and (integer? n) (exact? n)
+           (>= n 0) (<= n #x10FFFF)
+           (not (and (>= n #xD800) (<= n #xDFFF))))
+      (%integer->char n)
+      (error 'integer->char "not a Unicode scalar value" n)))
+
 (define (char-upcase c)
   (let ((n (char->integer c)))
-    (if (and (< 96 n) (< n 123)) (integer->char (- n 32)) c)))
+    ;; the guard on the next line gives n 97..122, so n-32 is 65..90
+    (if (and (< 96 n) (< n 123)) (%integer->char (- n 32)) c)))
 (define (char-downcase c)
   (let ((n (char->integer c)))
-    (if (and (< 64 n) (< n 91)) (integer->char (+ n 32)) c)))
+    ;; the guard on the next line gives n 65..90, so n+32 is 97..122
+    (if (and (< 64 n) (< n 91)) (%integer->char (+ n 32)) c)))
 (define (char-alphabetic? c)
   (let ((n (char->integer c)))
     (or (and (< 64 n) (< n 91)) (and (< 96 n) (< n 123)))))

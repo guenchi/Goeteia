@@ -978,7 +978,7 @@
     ((%cx-im) (list "(" (a 0) ".im)"))
     ;; chars and strings
     ((char->integer) (list "(I31(" (a 0) ")&-2)"))
-    ((integer->char) (list "(I31(" (a 0) ")|1)"))
+    ((%integer->char) (list "(I31(" (a 0) ")|1)"))
     ((string-length) (list "(STR(" (a 0) ").length<<1)"))
     ((string-ref) (list "((AR(STR(" (a 0) ")," (a 1) ")<<1)|1)"))
     ((string-set!) (list "AW(STR(" (a 0) ")," (a 1) ",IU(" (a 2) "))"))

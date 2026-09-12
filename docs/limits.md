@@ -119,6 +119,27 @@ became a newline — which meant the same source read as two different
 strings under this reader and under Chez's. See `docs/determinism.md`
 D3.
 
+## The `(rnrs)` component libraries are refused
+
+`(import (rnrs base))`, `(rnrs lists)` and any other `(rnrs ...)`
+component answer, by name:
+
+```
+component libraries of (rnrs) are not supported; write (rnrs)
+```
+
+`(rnrs)` itself is accepted. The refusal replaced something worse: both
+drivers used to accept **any** spec beginning with `rnrs` and behave as
+if `(rnrs)` had been written, so a program that looked portable was not,
+and nothing said so.
+
+Implementing the components is deferred rather than difficult. Doing it
+means assigning every prelude binding to its R6RS component, and an
+assignment made without the report's table in hand is a guess baked into
+an exported contract: a wrong one makes a program compile here and fail
+on another R6RS implementation, silently. A refusal that names the
+remedy is the safe side of that trade.
+
 ## Trigonometric accuracy
 
 `sin` and `cos` reduce the argument with one rounded subtraction of
@@ -201,6 +222,40 @@ driver decodes source as UTF-8, so it *could* read `#\λ` as one
 character; the self-hosted reader takes source as bytes and cannot.
 Accepting it on one host would mean the two compilers disagreed about
 which programs exist, which is worse than the limitation.
+
+## `integer->char` takes a Unicode scalar value, and a character is not its `\x...;` spelling
+
+`integer->char` accepts an exact integer in `0`..`#x10FFFF`, excluding
+the surrogate block `#xD800`..`#xDFFF`, and refuses everything else by
+name. That is R6RS's domain, and it is **wider than the character
+literal limit above** on purpose: the literal limit exists because the
+two hosts' readers must agree about which programs exist, and that
+argument does not reach a value computed at run time.
+
+It is also wider than the byte model, and the gap is worth stating
+because it is a real deviation from R6RS rather than an oversight:
+
+```
+(char->integer (integer->char 256))                  => 256
+(char->integer (string-ref (string (integer->char 256)) 0))  => 0
+
+(string-length (string (integer->char 233)))         => 1
+(string-length "\xE9;")                              => 2
+(string=? (string (integer->char 233)) "\xE9;")       => #f
+```
+
+A character **holds** its value; the truncation to a byte happens when
+the character is **stored in a string**. A string here is a sequence of
+bytes, so a string literal's `\xE9;` names a code point and stores its
+two UTF-8 bytes, while `(integer->char 233)` stored in a string is the
+one byte `#xE9`. R6RS says a character and its hex spelling denote the
+same thing; in this implementation they do not, above U+007F.
+
+Narrowing `integer->char` to `0`..`255` would **not** close that gap --
+the two spellings still differ, because the difference is about storage
+and not about this procedure's range -- and it would start refusing
+calls that work today. So the range is R6RS's and the storage question
+is recorded here rather than answered by a side effect.
 
 ## Comments
 
