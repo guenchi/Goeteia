@@ -1,5 +1,62 @@
 # Changelog
 
+## 1.7.2 — 2026-09-12
+
+*31 commits.* Reader and wire-format defects, all of the same shape: a
+value this implementation could carry, spelled the way a conforming
+writer spells it, that the reader refused or silently misread. Plus
+three in the glTF writer where a bound did not describe its own data.
+
+### Breaking
+
+- A `#` now ends a name token, so `abc#|c|#` reads as the symbol `abc`
+  followed by a comment rather than as the symbol `abc#c#`. `2#3` is
+  refused where it used to read as a symbol; R6RS defines neither
+  reading, and a symbol whose name holds a `#` keeps both its spellings,
+  `|a#b|` and `a\x23;b`.
+- An uppercase `\X` is refused in the S-expression reader. R6RS spells
+  the hex escape with a lowercase `x` and lets only its digits vary in
+  case.
+- `integer->char` takes a Unicode scalar value: `0`..`#x10FFFF`
+  excluding the surrogates. It previously accepted any integer,
+  including values past the top of Unicode.
+- On the wire, a bare token with a leading `+` is no longer read as a
+  symbol. `+nan.0`, `+inf.0` and `-inf.0` read as the flonums a
+  conforming writer means by them; every other leading-`+` token is
+  refused, because it names something this format's writer cannot write.
+
+### Reader
+
+- The S-expression reader accepts the escapes a conforming R6RS writer
+  emits: `\a \b \t \n \v \f \r \" \\` in strings, and
+  `\x<hex>;` in both strings and symbols. A form feed inside a stored
+  value could previously be written by one implementation and never read
+  back by another, with nothing reporting a problem.
+- `#\x<hex>` is read. The range is this runtime's rather than R6RS's --
+  a character here is a byte, so `#\x80` and above stay refused, as
+  `#\λ` already was.
+- Both dot boundaries reach the comment layer: `(a .#|c|# b)` and
+  `(1 . 2 #|c|#)` read as Chez reads them.
+
+### glTF
+
+- An accessor's `min`/`max` is computed over the value the file will
+  carry. The bounds were computed in f64 for an f32 accessor, so a
+  written bound could sit inside its own data at either end -- and a
+  viewer culls and frames with them.
+- A bound that is not finite is refused rather than written as `null`,
+  which would make the file invalid rather than inaccurate.
+- The f32 scratch word shares the export's lifetime. It was cached
+  across `fx-release!`, so a later caller's allocation could be
+  overwritten, silently.
+
+### Known open
+
+- `integer->char` accepts code points a string cannot hold faithfully:
+  a character holds its value, and the truncation to a byte happens when
+  it is stored. `docs/limits.md` states the deviation.
+- The `(rnrs)` component libraries are refused rather than implemented.
+
 ## 1.7.1 — 2026-09-12
 
 *285 commits.* Two new families of libraries -- `(gam …)` for the
