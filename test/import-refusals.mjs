@@ -35,7 +35,8 @@ const rows = [
     ['record whose name collides',   '(import (rnrs))\n(define-record-type vector (fields ref))', /imported name may not be defined; exclude it with except:/],
     ['set! of an imported variable', '(import (rnrs))\n(set! car 5)',                            /imported name may not be assigned; exclude it with except: car/],
     ['two bindings under one name',  '(import (rnrs) (rename (rnrs) (cdr car)))\n(display 1)',   /two different bindings imported under one name/],
-    ['a component library',          '(import (rnrs base))\n(display 1)',                        /component libraries of \(rnrs\) are not supported/],
+    ['a component library',          '(import (rnrs base))\n(display 1)',                        /component libraries of \(rnrs\) are not supported/,
+     'the (rnrs) component libraries were implemented; retire this row and update docs/limits.md, which records the refusal as deferred'],
     // a library body is judged against its own clause
     // renaming a procedure ONTO a keyword's spelling brings two bindings
     // under one name (rnrs's if, and list renamed to if), which R6RS 7.2
@@ -51,14 +52,50 @@ const rows = [
     ['a library assigning a name it imports', '(import (rnrs))\n(begin (library (o l) (export f) (import (rnrs)) (define (f) (set! car 5) 1)) (import (o l)))\n(display (f))',    /imported name may not be assigned; exclude it with except: car/],
 ];
 
-for (const [title, src, want] of rows) {
+// WHAT A RED HERE MEANS IS NOT ALWAYS THE SAME, and the default
+// message assumes it is.  Most rows guard a check that must keep
+// working, so "it compiled" means the check broke.  One row guards a
+// DEFERRAL -- the (rnrs) component libraries are refused rather than
+// implemented -- and if that one ever compiles, nothing broke: someone
+// implemented the components, and this row is what has to go.
+//
+// A failing assertion does not distinguish "something broke" from "the
+// thing you deferred is now done", and those demand opposite actions.
+// So a row may carry its own note, and the note is what gets printed.
+function acceptedMessage(title, note) {
+    return note
+        ? `NOT A REGRESSION -- ${note} (row: ${title})`
+        : `the program compiled; it must be refused (row: ${title})`;
+}
+
+for (const [title, src, want, note] of rows) {
     test(`refused: ${title}`, () => {
         if (!chez) { console.log('NOT EXERCISED HERE (no chez on PATH; bin/goeteiac is Chez-hosted and this reading was NOT taken)'); return; }
         const err = compileError(src);
-        assert.ok(err !== null, 'the program compiled; it must be refused');
+        assert.ok(err !== null, acceptedMessage(title, note));
         assert.match(err, want);
     });
 }
+
+// THE DIAGNOSTIC IS AN OUTPUT AND GETS ITS OWN TEST.  Verifying a
+// message by rereading the code that builds it is the mode that fails:
+// the author sees the intended meaning because they know which one they
+// meant.  Forcing the branch and reading the string is a procedure; and
+// doing it HERE rather than by hand means it is checked on every run
+// instead of once, at the moment it was written.
+test('a deferral row says its red is not a regression', () => {
+    const deferral = rows.find(r => /component librar/.test(r[0]));
+    assert.ok(deferral && deferral[3], 'the component-library row carries no note');
+    const said = acceptedMessage(deferral[0], deferral[3]);
+    assert.match(said, /^NOT A REGRESSION --/);
+    assert.match(said, /retire this row/);
+    assert.match(said, /docs\/limits\.md/);
+    assert.doesNotMatch(said, /must be refused/,
+        'a deferral red must not read as "the check broke"');
+    // and an ordinary row keeps the message that IS about a break
+    const plain = rows.find(r => r[3] === undefined);
+    assert.match(acceptedMessage(plain[0], plain[3]), /must be refused/);
+});
 
 test('control: the same shapes compile once the name is excluded or fresh', () => {
     if (!chez) { console.log('NOT EXERCISED HERE (no chez on PATH; bin/goeteiac is Chez-hosted and this reading was NOT taken)'); return; }
