@@ -89,7 +89,12 @@
        (want (string->symbol (string-append "invariant/" tok))
              (list 'reads-as-symbol read-sym? 'writer-takes-it writable?)
              'the-two-must-agree))))
- '("+15" "+i" "-nan.0" ".5" "-.5" "+1/2" "+" "+a" "..." "abc" "a-b" "--store"))
+ ;; +x is the DISCRIMINATING token and it is here because a consumer
+ ;; needed it: it separates "a leading + is refused" -- which is how the
+ ;; changelog first described this release, wrongly -- from "ask the
+ ;; writer", which is what the code does.  The writer writes +x, so the
+ ;; reader reads it; a rule stated as a token shape would refuse it.
+ '("+15" "+i" "-nan.0" ".5" "-.5" "+1/2" "+" "+a" "+x" "..." "abc" "a-b" "--store"))
 
 ;; THE FLONUM HALF IS EXACTLY THREE SPELLINGS, and three is the ruling
 ;; rather than a sample: the spellings a conforming writer emits for
