@@ -1,60 +1,38 @@
 ;; expect: #t
-;; EXPECTED FAIL against lib/web/sexpr.ss at e8b0ae0.  A bare token with
-;; a leading "+" is read as a SYMBOL where R6RS reads a NUMBER, and the
-;; three that matter are the standard spellings of NaN and the
-;; infinities -- exactly what a conforming writer emits for them.
+;; EXPECTED FAIL against lib/web/sexpr.ss at fdbd7c9.  Two holes on the
+;; bare-token path, ruled together with the peer implementation of this
+;; wire format because a number parser widened on one side alone would
+;; read a peer's token as a different TYPE than the peer meant.
 ;;
-;;   Chez:  (write (list (/ 0. 0.) (/ 1. 0.) (- (/ 1. 0.))))
-;;          => (+nan.0 +inf.0 -inf.0)
-;;   here:  all three come back as SYMBOLS named "+nan.0" etc.
+;; ONE: the standard spellings of NaN and the infinities read as
+;; SYMBOLS.  A conforming writer emits exactly these for those values --
+;; Chez's (write (list (/ 0. 0.) (/ 1. 0.) (- (/ 1. 0.)))) is
+;; (+nan.0 +inf.0 -inf.0) -- so a peer sends a NaN and this reader
+;; answers a symbol.  A WRONG VALUE, not a refusal, with nothing said.
 ;;
-;; THIS IS A WRONG VALUE, NOT A REFUSAL, which is what makes it worse
-;; than the escape defect fixed in the same area.  A peer sends a NaN,
-;; the reader answers a symbol, and nothing anywhere says a word.
+;; TWO: a leading "+" on any other token also makes a symbol, and the
+;; writer refuses every one of those names, so the reader mints values
+;; this implementation can hold and cannot serialise.  Cause: the
+;; numeric test catches a leading digit, or "-" followed by a DIGIT, so
+;; "+" slips and so does "-" before a non-digit.
 ;;
-;; THE VALUE IS CARRYABLE, so this is the escape argument again rather
-;; than a request to widen the format.  Measured: the writer emits a NaN
-;; as #f8"AAAAAAAA+H8=" and reads it straight back.  So read-then-write
-;; closes for these values -- the reader simply does not recognise the
-;; OTHER spelling a conforming writer uses.
+;; THE RULE, and it is narrower than "read R6RS numbers":
+;;   - the bare token goes to the WRITER'S predicate, as the escaped
+;;     path already does since e8b0ae0, so a name the writer cannot
+;;     produce is not read.  That also ends a disagreement this tree
+;;     introduced: bare +15 was a symbol while \x2B;15 was refused --
+;;     same name, two spellings, two answers.
+;;   - EXACTLY three spellings become flonums: +nan.0, +inf.0, -inf.0.
+;;     Not -nan.0, which no conforming writer emits.  Not 1.5 or 1e3 or
+;;     #xFF: this format's flonum spelling is the bit-exact #f8 form,
+;;     and a decimal literal parser would bring back the class of
+;;     hazard that external numeric text carries.
+;;   - the number path is tried before the symbol path.
+;;   - the writer does not change.
 ;;
-;; Found by following a question from the peer implementation of this
-;; format, which has the same hole: numeric-shape? catches a leading
-;; digit or "-" followed by a digit, and nothing catches a leading "+".
-;; Both trees inherited it.
-;;
-;; THE THREE SPECIALS AND THE INTEGER ARE DIFFERENT QUESTIONS and this
-;; cell keeps them apart, because the first version of it did not and
-;; over-asserted in exactly the way this tree spent the day catching.
-;;
-;; +15 IS NOT SETTLED EITHER, and I asserted the value 15 for it before
-;; noticing that.  This reader does read integers and rationals, so
-;; reading +15 as 15 is consistent -- but the WRITER never emits a
-;; leading "+", so refusing it is equally consistent, narrow rather than
-;; wide.  Two defensible answers again, and the row now asserts only
-;; that it is not a SYMBOL.
-;;
-;; Recording how the row got there, because it happened twice in this
-;; one cell: on finding a defect I wrote the repair I would have chosen
-;; into the expectation.  That is the same failure as deriving an
-;; expectation from an implementation, with my own preference standing
-;; in for the implementation, and it is harder to see because the
-;; expectation looks like a requirement rather than a guess.
-;;
-;; +nan.0 is NOT settled, and asserting a flonum for it would repeat
-;; today's mistake of appealing to a standard the surrounding grammar
-;; does not implement.  Measured: this reader refuses 1.5, 1e3 and #xFF.
-;; It has NO flonum literal syntax at all, so reading +nan.0 as a flonum
-;; while 1.5 stays refused would be incoherent -- the coherent readings
-;; are either both or neither.  So those rows assert only what IS
-;; settled: they must not come back as SYMBOLS.  A refusal, like the one
-;; 1.5 already gets, satisfies them; a silent wrong value does not.
-;;
-;; The peer implementation of this format has TWO profiles and the same
-;; hole in both, and its strict profile cannot carry a flonum at all, so
-;; refusal is the only coherent answer there.  Ours carries flonums --
-;; the writer emits #f8"..." and reads it back -- so both answers remain
-;; open here.  What is NOT open is answering with a symbol.
+;; So the widening is only ever "spellings of values this format already
+;; carries", which is the same shape as the escape work: measured, the
+;; writer emits a NaN as #f8"AAAAAAAA+H8=" and reads it straight back.
 (import (rnrs) (web sexpr))
 (define fails '())
 (define (want name got expect)
@@ -70,35 +48,58 @@
 ;; as a SYMBOL is the defect.  Written this way on purpose -- demanding
 ;; a refusal specifically would go red on a repair that reads them,
 ;; which is the other legitimate end state.
-(define (symbol-or-not src)
-  (guard (e (#t 'not-a-symbol))
-    (let ((v (nth src 1))) (if (symbol? v) (list 'SYMBOL v) 'not-a-symbol))))
-;; the standard spellings a conforming writer emits
-(want 'nan-must-not-be-a-symbol (symbol-or-not "(ok +nan.0)") 'not-a-symbol)
-(want 'positive-infinity-must-not-be-a-symbol (symbol-or-not "(ok +inf.0)") 'not-a-symbol)
-(want 'negative-infinity-must-not-be-a-symbol (symbol-or-not "(ok -inf.0)") 'not-a-symbol)
-;; a leading + on an ordinary number is R6RS too
-(want 'plus-prefixed-integer-must-not-be-a-symbol
-      (symbol-or-not "(ok +15)") 'not-a-symbol)
 
-;; THE CONTROL, and it must stay green: the readings that are already
-;; right must not move.  A repair that widened the number parser too far
-;; would take "+" or "+a" away from the symbols, and those ARE symbols
-;; -- the writer writes both of them bare.
+;; THE SYMBOL HALF IS AN INVARIANT, NOT A LIST.  For any token: this
+;; reader reads it as a SYMBOL if and only if the writer can write a
+;; symbol of that name.  The writer is asked at RUN TIME rather than
+;; copied into a table here, so the two cannot disagree and the rule
+;; cannot contradict itself.
+;;
+;; Written this way because the peer implementation wrote the same
+;; ruling as a list of spellings and a third of the list was wrong --
+;; one token appeared in both the "must refuse" and the "stays a symbol"
+;; table, two rows asserting opposite things about one input, red under
+;; every possible implementation.  A list can contradict itself; an
+;; invariant cannot.
+;;
+;; The marker for a refusal is deliberately NOT of a type the subject
+;; can return: 'refused is compared with equal?, never with symbol?, so
+;; a refusal is never mistaken for "it read a symbol".  Same peer lost
+;; twelve rows to exactly that -- their refusal marker was a symbol and
+;; their acceptance test was symbol?.
+(define (reads-as-symbol? src)
+  (guard (e (#t 'refused))
+    (let ((v (nth src 1))) (if (symbol? v) 'symbol 'some-other-value))))
+(define (writer-takes-name? name)
+  (guard (e (#t #f)) (sexpr->string (list (string->symbol name))) #t))
+(for-each
+ (lambda (tok)
+   (let ((read-sym? (eq? (reads-as-symbol? (string-append "(ok " tok ")")) 'symbol))
+         (writable? (writer-takes-name? tok)))
+     (unless (eq? read-sym? writable?)
+       (want (string->symbol (string-append "invariant/" tok))
+             (list 'reads-as-symbol read-sym? 'writer-takes-it writable?)
+             'the-two-must-agree))))
+ '("+15" "+i" "-nan.0" ".5" "-.5" "+1/2" "+" "+a" "..." "abc" "a-b" "--store"))
+
+;; THE FLONUM HALF IS EXACTLY THREE SPELLINGS, and three is the ruling
+;; rather than a sample: the spellings a conforming writer emits for
+;; these values.  -nan.0 is not among them because no conforming writer
+;; emits it, which is why it sits in the invariant list above instead.
+(want 'nan-reads-as-a-flonum (nan? (nth "(ok +nan.0)" 1)) #t)
+(want 'positive-infinity-reads-as-a-flonum (posinf? (nth "(ok +inf.0)" 1)) #t)
+(want 'negative-infinity-reads-as-a-flonum (neginf? (nth "(ok -inf.0)" 1)) #t)
+
+;; CONTROLS.  The readings that are already right must not move, and the
+;; decimal spellings must stay REFUSED -- that is the boundary of the
+;; widening, so a repair that reached them goes red here.
 (want 'CONTROL-plain-integer (nth "(ok 15)" 1) 15)
 (want 'CONTROL-negative-integer (nth "(ok -15)" 1) -15)
-(want 'CONTROL-plus-is-a-symbol (symbol->string (nth "(ok +)" 1)) "+")
-(want 'CONTROL-plus-a-is-a-symbol (symbol->string (nth "(ok +a)" 1)) "+a")
 (want 'CONTROL-the-wire-flonum-form-still-reads
       (nan? (nth "(ok #f8\"AAAAAAAA+H8=\")" 1)) #t)
-
-;; OBSERVED, not required: this reader has no flonum literal syntax, and
-;; that is why the three rows above stop at "not a symbol".  Recorded as
-;; a reading so the larger decision -- read these spellings as values,
-;; and then 1.5 too, or refuse them as 1.5 already is -- is visible
-;; rather than rediscovered.
-(want 'OBSERVED-no-flonum-literal-syntax
-      (list (symbol-or-not "(ok 1.5)") (symbol-or-not "(ok 1e3)"))
-      (list 'not-a-symbol 'not-a-symbol))
+(want 'CONTROL-decimal-still-refused
+      (list (reads-as-symbol? "(ok 1.5)") (reads-as-symbol? "(ok 1e3)")
+            (reads-as-symbol? "(ok #xFF)"))
+      (list 'refused 'refused 'refused))
 
 (display (if (null? fails) #t fails))
