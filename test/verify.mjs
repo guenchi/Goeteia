@@ -51,6 +51,32 @@ const PAGES = path.resolve(
     path.dirname(fileURLToPath(import.meta.url)), 'pages');
 const page = name => path.join(PAGES, name);
 
+// runVerify is the CLI main and it PRINTS its report.  Several tests
+// below run it on fixtures that are MEANT to fail, so its perfectly
+// correct output -- "FAIL <path> (stage draw)" -- lands on this suite's
+// stdout, where run-tests.sh greps for lines beginning with FAIL.
+//
+// That has cost real time: the nodraw fixture was counted as a suite
+// failure in every report all day, by two people, and test/mutate.sh
+// carries a `grep -v nodraw` to work around it -- an exception listed
+// by NAME, which cannot shout for the next fixture that does this.
+//
+// So the output is captured rather than inherited.  It is kept and
+// attached to the assertion message rather than discarded, because a
+// test that swallows the diagnostic it might need is the other way to
+// get this wrong.
+const quietVerify = async (args) => {
+    const said = [];
+    const real = console.log;
+    console.log = (...a) => said.push(a.join(' '));
+    try { return { code: await runVerify(args), said: said.join('\n') }; }
+    finally { console.log = real; }
+};
+const verifyCode = async (args, want) => {
+    const { code, said } = await quietVerify(args);
+    assert.equal(code, want, `${args.join(' ')}\n${said}`);
+};
+
 const checkOf = (r, kind) => (r.checks || []).find(c => c.kind === kind);
 const why = r => (r.errors || [])
     .map(e => `${e.stage}: ${e.message}`).join('\n');
@@ -181,9 +207,9 @@ test('--needs and --checks refuse what they cannot mean', () => {
 test('the CLI refuses a dangling flag instead of running with nothing required', async () => {
     // `verify page.ss --needs` used to mean "no stages at all", which
     // is the one answer a typo must not silently produce
-    assert.equal(await runVerify([page('gradient.ss'), '--needs']), 2);
-    assert.equal(await runVerify([]), 2);
-    assert.equal(await runVerify([page('gradient.ss'), '--needs', 'draws']), 2);
+    await verifyCode([page('gradient.ss'), '--needs'], 2);
+    await verifyCode([], 2);
+    await verifyCode([page('gradient.ss'), '--needs', 'draws'], 2);
 });
 
 test('an unknown top-level spec key is refused by name', async () => {
@@ -218,10 +244,9 @@ test('an unknown top-level spec key is refused by name', async () => {
 test('normalized and explicitly-empty spellings stay legal', async () => {
     // --needs draw produces whitelisted keys; an explicit custom: []
     // is a declaration of zero checks, not a typo; and the two merge
-    assert.equal(await runVerify([page('gradient.ss'), '--needs', 'draw']), 0);
-    assert.equal(await runVerify(
-        [page('gradient.ss'), '--checks', '{"custom":[]}', '--needs', 'draw']),
-        0);
+    await verifyCode([page('gradient.ss'), '--needs', 'draw'], 0);
+    await verifyCode(
+        [page('gradient.ss'), '--checks', '{"custom":[]}', '--needs', 'draw'], 0);
 });
 
 test('a glyph-atlas page draws through both mock contexts', async () => {
@@ -303,7 +328,7 @@ test('the CLI refuses an unknown option name', async () => {
     assert.ok(text.includes('--needs'), `stderr does not list the legal ones: ${text}`);
     // and the correctly-spelled flag still reaches the draw stage,
     // where this fixture belongs (exit 1, not 0 and not 2)
-    assert.equal(await runVerify([page('nodraw.ss'), '--needs', 'draw']), 1);
+    await verifyCode([page('nodraw.ss'), '--needs', 'draw'], 1);
 });
 
 test('a misspelt field inside a custom entry is refused by name', async () => {

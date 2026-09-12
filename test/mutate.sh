@@ -292,7 +292,7 @@ if [ "$TARGET" = gate ]; then
     # wearing the mutation's name.  Without a green baseline there is
     # no denominator and no attribution, so there is no reading.
     if [ "$clean_ec" -ne 0 ]; then
-        cleanfail=$(grep -E '^FAIL|^TIMEOUT' "$W/clean.log" | grep -v nodraw \
+        cleanfail=$(grep -E '^FAIL|^TIMEOUT' "$W/clean.log" \
                     | sort -u | head -3 | tr '\n' '|' | cut -c1-200)
         verdict BLOCKED "" "" "the tree FAILS BEFORE THE MUTATION (clean exit $clean_ec, ok=$M): ${cleanfail:-unnamed} — no baseline, so nothing here could be attributed to the mutation"
         exit 0
@@ -309,7 +309,7 @@ if [ "$TARGET" = gate ]; then
     #
     # It stayed broken for a whole round after the reason for fixing it
     # was written down, twelve lines away, on the other path.
-    named=$(grep -E '^FAIL|^TIMEOUT' "$W/mut.log" | grep -v nodraw \
+    named=$(grep -E '^FAIL|^TIMEOUT' "$W/mut.log" \
             | sed 's/ ([0-9.]*ms)$//' | sort -u | head -4 \
             | tr '\n' '|' | cut -c1-240)
     if [ "$ec" -eq 0 ]; then
