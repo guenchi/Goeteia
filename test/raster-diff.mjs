@@ -386,15 +386,46 @@ async function sectionA() {
 
 // ================================================== B. the Python oracle
 
-// An explicitly set GOETEIA_RASTERLIB is the only candidate: pointing it
-// somewhere wrong must say so, not quietly fall back to a copy found
-// elsewhere and report on that one instead.
+// The reference is NOT vendored here and cannot be: it is not part of
+// this repository and not ours to redistribute.  So it is found beside
+// the tree, or named -- and when it is absent this section says so
+// loudly rather than passing.
+//
+// A GIT WORKTREE MOVES REPO and the sibling search then looks beside a
+// scratch directory instead of beside the real checkout.  That is not
+// hypothetical: running the suite from a worktree -- which is the right
+// way to keep a run from being disturbed -- silently turned this section
+// off, and the skip was read as a legitimate opt-in gate by two people
+// on the same day.  A worktree's .git is a FILE naming the real
+// repository, so the real tree can be recovered and searched too.
+function mainWorktree() {
+    try {
+        const dotgit = path.join(REPO, '.git');
+        if (!fs.statSync(dotgit).isFile()) return null;
+        const m = /gitdir:\s*(.+)/.exec(fs.readFileSync(dotgit, 'utf8'));
+        if (!m) return null;
+        const i = m[1].indexOf('/.git/worktrees/');
+        return i > 0 ? m[1].slice(0, i) : null;
+    } catch { return null; }
+}
+
+// An explicitly set GOETEIA_RASTERLIB is then the ONLY candidate:
+// pointing it somewhere wrong must say so, not quietly fall back to a
+// copy found elsewhere and report on that one instead.
+function referenceCandidates() {
+    if (process.env.GOETEIA_RASTERLIB) return [process.env.GOETEIA_RASTERLIB];
+    const roots = [REPO];
+    const main = mainWorktree();
+    if (main) roots.push(main);
+    const out = [];
+    for (const r of roots)
+        for (const up of ['..', path.join('..', '..')])
+            out.push(path.resolve(r, up, '10', 'rasterlib.py'));
+    return out;
+}
+
 function findReference() {
-    const candidates = process.env.GOETEIA_RASTERLIB
-        ? [process.env.GOETEIA_RASTERLIB]
-        : [path.resolve(REPO, '..', '10', 'rasterlib.py'),
-           path.resolve(REPO, '..', '..', '10', 'rasterlib.py')];
-    for (const c of candidates)
+    for (const c of referenceCandidates())
         if (fs.existsSync(c)) return path.dirname(path.resolve(c));
     return null;
 }
@@ -1145,15 +1176,39 @@ async function sectionC(ref) {
 
 const ref = findReference();
 await sectionA();
+// PIL is needed by D ONLY, and measuring that rather than assuming it is
+// why B and C no longer wait for it: rasterlib imports PIL lazily, inside
+// the two functions that open an image, so the mask comparison never
+// reaches it.  Measured by shadowing PIL with a module that raises --
+// B passed, D did not.  The old message named PIL as a condition of all
+// three and so parked the cross-implementation comparison behind a
+// dependency it does not have.
+function havePIL() {
+    return spawnSync('python3', ['-c', 'import PIL'], { stdio: 'pipe' }).status === 0;
+}
+
+// A SKIP MUST SAY WHERE IT LOOKED.  The previous message said only that
+// the reference "was not found", which reads identically whether it is
+// absent from the machine or present and searched for in the wrong
+// place.  It was the second, for a whole day, and nothing in the line
+// could have told anyone.
 if (ref) {
     await sectionB(ref);
-    await sectionD(ref);
+    if (havePIL()) {
+        await sectionD(ref);
+    } else {
+        console.log('SKIP D (the textured render): python3 has no PIL, which '
+            + 'rasterlib imports to open an image.  B and C do not need it and '
+            + 'ran.  Install PIL (pip install pillow) to compare shading too.');
+    }
     await sectionC(ref);
 } else {
     console.log('SKIP B/C/D: the Python reference implementation was not found. '
-        + 'rasterlib.py is not part of this repository; point '
-        + 'GOETEIA_RASTERLIB at it (it also needs elf.glb and '
-        + 'fitcheck-fixtures/pose-truth.json beside it, plus PIL) to run the '
+        + 'It is not part of this repository and not ours to redistribute, so '
+        + 'it cannot be vendored. '
+        + 'Searched, in order: ' + referenceCandidates().join(', ')
+        + ' -- point GOETEIA_RASTERLIB at rasterlib.py (it also needs elf.glb '
+        + 'and fitcheck-fixtures/pose-truth.json beside it) to run the '
         + 'cross-implementation comparison and the timing.');
 }
 
