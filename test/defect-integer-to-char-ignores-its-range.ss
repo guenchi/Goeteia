@@ -30,6 +30,40 @@
 ;; and its hex spelling denote the same thing.  A character that cannot
 ;; be put into a string faithfully is a value the rest of the language
 ;; cannot hold.
+;;
+;; WHERE THE CHECK CAN AND CANNOT GO, measured, so this is not
+;; re-derived.  integer->char is not a prelude procedure: it is a
+;; COMPILER PRIMITIVE emitted at compiler.ss:4295 as three instructions
+;; that set the tag bit, with nowhere in them to put a test.  And it
+;; cannot be emitted inline either, because the only refusal available
+;; in generated code is a wasm TRAP, and a trap ABORTS rather than
+;; raising -- the guard in this very cell would not catch one.  So the
+;; check has to be in Scheme, which means splitting the primitive:
+;; rename it %integer->char and let the prelude define a checked public
+;; integer->char over it.  That touches the compiler's primitive
+;; vocabulary, 28 uses in the prelude and 8 in the compiler, and is
+;; self-affecting in both.
+;;
+;; Two of those uses are PER BYTE -- %fill-bytes at prelude:1248, once
+;; per byte of every string built from bytes, and port output at
+;; prelude:616 -- so a checked public name reached from the inside
+;; would put two comparisons and a call on every byte of every string.
+;; The shape that answers it is internals pointing at the raw name,
+;; chosen site by site rather than swept.
+;;
+;; AND A RANGE CHECK DOES NOT SETTLE THE OBSERVED ROW, which is why
+;; this is parked rather than queued.  Even restricted to 0..255:
+;;   (string (integer->char 233))  is a ONE-byte string holding #xE9
+;;   "\xE9;"                       is TWO bytes, U+00E9 in UTF-8
+;; A string literal's \x...; names a CODE POINT and encodes it;
+;; integer->char names a BYTE.  R6RS says they denote the same thing
+;; and in this design they cannot, at any range.  So the disagreement
+;; has a documentation half -- docs/limits.md explains the character
+;; LITERAL limit and stops -- that no check answers.
+;;
+;; Nothing enforces the model at run time at all: the primitive sets a
+;; tag bit and char->integer clears it, so the only thing holding
+;; "a character is a byte" anywhere is the reader.
 (import (rnrs))
 (define fails '())
 (define (want name got expect)
