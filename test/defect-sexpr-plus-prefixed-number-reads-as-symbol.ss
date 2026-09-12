@@ -1,5 +1,6 @@
 ;; expect: #t
-;; EXPECTED FAIL against lib/web/sexpr.ss at fdbd7c9.  Two holes on the
+;; REGRESSION GUARD.  Written as a red witness against lib/web/sexpr.ss
+;; at fdbd7c9, where there were two holes on the
 ;; bare-token path, ruled together with the peer implementation of this
 ;; wire format because a number parser widened on one side alone would
 ;; read a peer's token as a different TYPE than the peer meant.
@@ -33,6 +34,14 @@
 ;; So the widening is only ever "spellings of values this format already
 ;; carries", which is the same shape as the escape work: measured, the
 ;; writer emits a NaN as #f8"AAAAAAAA+H8=" and reads it straight back.
+;;
+;; FIXED, and the invariant is what made it right rather than merely
+;; green.  The peer implementation wrote the same ruling as a LIST and a
+;; third of the list was wrong; asking the writer at run time also
+;; settled tokens nobody enumerated -- .5, -.5, +1/2 -- and it gets the
+;; near-miss spellings right for free: +nan.00, +inf and inf.0 are NOT
+;; numbers to a conforming reader, so the writer takes them, so the
+;; reader must keep them as symbols.  Measured: all four agree.
 (import (rnrs) (web sexpr))
 (define fails '())
 (define (want name got expect)

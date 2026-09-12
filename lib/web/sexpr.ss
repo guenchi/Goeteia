@@ -228,6 +228,23 @@
            (not (host-number-name? s))
            (not (numeric-shape? s)))))
 
+  ;; The only three non-decimal spellings this format READS as flonums.
+  ;; THIS writer never emits them -- it emits #f8 for every flonum,
+  ;; these included -- so they exist to accept what an EXTERNAL
+  ;; conforming R6RS writer produces.  Such a writer spells these three
+  ;; and nothing else of this kind; -nan.0 is not among them and stays
+  ;; refused.  A decimal literal parser here would bring back the whole hazard
+  ;; class that external numeric text carries, so 1.5, 1e3 and #xFF
+  ;; stay refused.
+  ;;
+  ;; Read only: the writer is unchanged and still emits #f8 for every
+  ;; flonum, these three included.
+  (define (wire-flonum-name s)
+    (cond ((string=? s "+nan.0") (fl/ 0.0 0.0))
+          ((string=? s "+inf.0") (fl/ 1.0 0.0))
+          ((string=? s "-inf.0") (fl/ -1.0 0.0))
+          (else #f)))
+
   (define (digit-char? c) (and (char<=? #\0 c) (char<=? c #\9)))
 
   ;; "starts like a number": the reader refuses any such token that is
@@ -708,8 +725,19 @@
                 (let ((num (token->number tok)))
                   (cond
                     (num (values num j))
+                    ((wire-flonum-name tok) => (lambda (x) (values x j)))
                     ((numeric-shape? tok) (sfail "bad number" i))
-                    ((valid-symbol? tok) (values (string->symbol tok) j))
+                    ;; THE INVARIANT: a bare token reads as a symbol if
+                    ;; and only if the WRITER can write a symbol of that
+                    ;; name.  wire-symbol? is the writer's own predicate,
+                    ;; asked here rather than restated, so the accepted
+                    ;; set and the writable set are one set instead of
+                    ;; two that happen to agree.  The escaped path has
+                    ;; asked the same question since e8b0ae0; asking it
+                    ;; here too ends a disagreement where +15 was a
+                    ;; symbol and \x2B;15 was refused -- one name, two
+                    ;; spellings, two answers.
+                    ((wire-symbol? tok) (values (string->symbol tok) j))
                     (else (sfail "bad token" i))))))))
       (let-values (((v i) (parse-value 0 0)))
         (unless (= (skip i) n) (sfail "trailing data after datum" i))

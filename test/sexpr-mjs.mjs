@@ -244,7 +244,15 @@ test('the oracle\'s accept set is accepted, with the same canonical form', () =>
     // the fixture, which it never did (a deletion lowers both sides).
     // What actually catches a deletion is the generator's own count,
     // asserted in "the fixture is whole, named and self-consistent".
-    assert.ok(unwritable >= 2, 'no probe covers "parses but cannot be written"');
+    // INVERTED by the leading-+ ruling.  This used to require the corpus
+    // to COVER "parses but cannot be written" -- and every entry of that
+    // kind was the invariant violation itself, recorded as the
+    // authority's verdict: (. a), +1, ., +5 all read as symbols whose
+    // names that same writer refuses.  The authority has since closed it
+    // and the regenerated fixture flips all four, so the category is now
+    // provably empty and asserting its ABSENCE is the stronger claim.
+    assert.equal(unwritable, 0,
+        'a probe parses to something the authority cannot write back');
 });
 
 test('the oracle\'s reject set is rejected at the SAME position', () => {
@@ -314,8 +322,12 @@ test('the number grammar keeps the shapes the authority gives it', () => {
     assert.strictEqual(read('4/2'), 2n);
     const r = read('2/4');
     assert.ok(r instanceof Ratio && r.num === 1n && r.den === 2n);
-    assert.ok(read('+5') instanceof Sym);
-    for (const bad of ['1/-2', '1//2', '1/0', '1e3', '1.5', '0x10', '12abc'])
+    // +5 moved from "reads as a symbol" to the refusal list: a leading
+    // "+" is not this format's spelling for an integer -- the writer
+    // emits 5 -- so under the ruling the reader does not take a name the
+    // writer cannot produce.
+    for (const bad of ['1/-2', '1//2', '1/0', '1e3', '1.5', '0x10', '12abc',
+                       '+5', '+1', '.', '+i', '-nan.0'])
         assert.throws(() => read(bad), SexprError, `${bad} should not read`);
 });
 
@@ -1185,10 +1197,14 @@ test('the fixture is whole, named and self-consistent', () => {
                             '+1@-2', '+1@+2', '+1/2@-3/4', '+1@+inf.0'])
         assert.ok(names.has(required),
             `the symbol matrix lost ${JSON.stringify(required)}`);
-    // both read verdicts, and the middle case
+    // both read verdicts.  There used to be a third -- accepted but not
+    // rewritable -- and its presence was required here; the leading-+
+    // ruling removed the category from the authority, so what is
+    // required now is that it stays gone.
     assert.ok(FIXTURE.read.some(e => e.accepted && e.rewritable));
-    assert.ok(FIXTURE.read.some(e => e.accepted && e.rewritable === false));
     assert.ok(FIXTURE.read.some(e => !e.accepted));
+    assert.ok(!FIXTURE.read.some(e => e.accepted && e.rewritable === false),
+        'the fixture carries an accepted entry the authority cannot write');
     // the extended types are all exercised, so a strict-mode dispatch
     // could not pass this file
     const inputs = FIXTURE.read.map(e => readInput(e)).join('\n');

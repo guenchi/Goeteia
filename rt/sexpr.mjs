@@ -337,6 +337,20 @@ const isWs = c => c === ' ' || c === '\t' || c === '\n' || c === '\r';
 const isDelim = c => isWs(c) || c === '(' || c === ')' || c === '"';
 const SYMBOL_PUNCT = new Set(['-', '+', '*', '/', '<', '>', '=', '?', '!',
                               '.', '_', '%', '&', '^', '~', ':', '@']);
+// The only three non-decimal spellings this format READS as flonums.
+// THIS writer never emits them -- it emits #f8 for every flonum, these
+// included -- so they exist to accept what an EXTERNAL conforming R6RS
+// writer produces.  Such a writer spells these three and nothing else
+// of this kind; -nan.0 is not among them and stays refused.  A
+// decimal literal parser here would bring back the whole hazard class
+// external numeric text carries, so 1.5, 1e3 and #xFF stay refused.
+//
+// Read only: the writer is unchanged and still emits #f8 for every
+// flonum, these three included.
+const WIRE_FLONUM_NAMES = new Map([
+    ['+nan.0', NaN], ['+inf.0', Infinity], ['-inf.0', -Infinity]
+]);
+
 const isDigit = c => c >= '0' && c <= '9';
 const isSymbolChar = c =>
     (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || isDigit(c)
@@ -609,8 +623,17 @@ export function read(text, opts = {}) {
         }
         const num = tokenToNumber(tok);
         if (num !== null) return num;
+        if (WIRE_FLONUM_NAMES.has(tok)) return WIRE_FLONUM_NAMES.get(tok);
         if (numericShape(tok)) fail('bad number', start);
-        if (tok.length > 0 && [...tok].every(isSymbolChar)) return new Sym(tok);
+        // THE INVARIANT: a bare token reads as a symbol if and only if
+        // the WRITER can write a symbol of that name.  wireSymbol is
+        // the writer's own predicate, asked here rather than restated,
+        // so the accepted set and the writable set are one set instead
+        // of two that happen to agree.  The escaped path has asked the
+        // same question since e8b0ae0; asking it here too ends a
+        // disagreement where +15 was a symbol and \x2B;15 was refused
+        // -- one name, two spellings, two answers.
+        if (wireSymbol(tok)) return new Sym(tok);
         fail('bad token', start);
     }
 
@@ -663,7 +686,16 @@ export function read(text, opts = {}) {
 // and the imaginary suffix i.  Each of those three was missing once
 // and found by the authority's verdict rather than by reading -- on
 // `+1s3`, on `+NaN.0`, and on `+I`.
-const UREAL = String.raw`(?:\d+\/\d*[1-9]\d*|(?:\d+\.?\d*|\.\d+)(?:[esfdlESFDL][+-]?\d+)?)`;
+// `\d+\.?\d*` was AMBIGUOUS: \d+ and \d* both match digits, so a run
+// of N digits that ultimately fails offers N+1 partitions and the
+// engine tries them all -- quadratic.  `+<32768 digits>x` took 1544ms
+// and a token at the 65536 cap took about six seconds, synchronously.
+// `\d+(?:\.\d*)?` denotes the SAME language with no overlap, because
+// the dot separates the two runs.  The Scheme side scans linearly and
+// was never affected; this kept the two verdicts equal and the two
+// COSTS wildly unequal, which a wire format reading untrusted input
+// cannot afford.
+const UREAL = String.raw`(?:\d+\/\d*[1-9]\d*|(?:\d+(?:\.\d*)?|\.\d+)(?:[esfdlESFDL][+-]?\d+)?)`;
 const INFNAN = String.raw`(?:[iI][nN][fF]|[nN][aA][nN])\.0`;
 const REAL = String.raw`(?:[+-]?${UREAL}|[+-]${INFNAN})`;
 const IMAGINARY = String.raw`[+-](?:${UREAL}|${INFNAN})?[iI]`;

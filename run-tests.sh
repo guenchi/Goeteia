@@ -206,9 +206,25 @@ run_js() { # jsfile testfile
 #
 # So the digest covers this file AND the contents of every cell, not
 # just the list of names.
+# The digest covers THE SUBJECT as well as the instrument, and that
+# distinction cost a run to learn.  The first version hashed this script
+# and test/*.ss -- the harness and the cells -- and said nothing when an
+# implementation file changed under a run in flight.  That is the worse
+# half: when a cell moves you get a wrong answer about a stable thing,
+# but when the SUBJECT moves the log is not a measurement of anything --
+# the early cells and the late cells read different programs and no
+# single verdict describes the run.
+#
+# Verified in both directions in isolation before being trusted: a
+# change under src/, lib/, rt/, the snapshot, or a cell each moves it,
+# and an untouched tree leaves it alone across repeated calls made
+# DURING a run, so the suite's own temporary files do not disturb it.
 digest_now() {
-    cat run-tests.sh test/*.ss 2>/dev/null |
-        { md5 -q 2>/dev/null || md5sum 2>/dev/null | cut -d' ' -f1; }
+    { cat run-tests.sh goeteia.wasm 2>/dev/null
+      find test src lib rt -type f \
+           \( -name '*.ss' -o -name '*.mjs' -o -name '*.sh' -o -name '*.json' \) \
+           2>/dev/null | sort | tr '\n' '\0' | xargs -0 cat 2>/dev/null
+    } | { md5 -q 2>/dev/null || md5sum 2>/dev/null | cut -d' ' -f1; }
 }
 ss_at_start=$(ls test/*.ss 2>/dev/null | tr '\n' ' ')
 digest_at_start=$(digest_now)
