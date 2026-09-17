@@ -1,0 +1,36 @@
+;; expect: #t
+(import (rnrs) (gfx mat) (gfx obstacles))
+(define (check name value) (unless value (error 'obstacle-sweep-test name)))
+(define (near a b) (< (abs (- a b)) 0.00001))
+(define wall (obstacle-box "panel" 'surface-a 0 1 0 0.2 2 2 0))
+(define world (make-obstacle-index (list wall) 4))
+(define hit (obstacle-sweep world '#(-2 1 0) '#(2 1 0) 0.1))
+(check "A finite fast sweep crosses a thin panel" (and hit (near (vector-ref hit 0) 0.45)))
+(check "Contact reports the surface and outward normal"
+  (and (near (vector-ref (vector-ref hit 1) 0) -0.1)
+       (near (vector-ref (vector-ref hit 2) 0) -1.0)
+       (eq? (vector-ref hit 3) wall) (eq? (obstacle-material wall) 'surface-a)))
+(check "A sweep wholly before the panel is clear" (not (obstacle-sweep world '#(-3 1 0) '#(-2 1 0) 0.1)))
+(check "Finite height leaves space above" (not (obstacle-sweep world '#(-2.0 2.3 0.0) '#(2.0 2.3 0.0) 0.1)))
+(check "Finite height leaves space below" (not (obstacle-sweep world '#(-2.0 -0.3 0.0) '#(2.0 -0.3 0.0) 0.1)))
+(check "Exiting initial overlap is not an entering contact" (not (obstacle-sweep world '#(-0.15 1.0 0.0) '#(-1.0 1.0 0.0) 0.1)))
+(check "Moving into overlap reports time zero" (= (vector-ref (obstacle-sweep world '#(-0.15 1.0 0.0) '#(1.0 1.0 0.0) 0.1) 0) 0.0))
+(check "Stationary overlap produces no entering contact" (not (obstacle-sweep world '#(0 1 0) '#(0 1 0) 0.1)))
+(define turned (make-obstacle-index (list (obstacle-box "rotated" 'surface-b -4 1 -4 0.2 2 2 1.5707963267948966)) 4))
+(check "Yaw rotation crosses negative grid cells" (near (vector-ref (obstacle-sweep turned '#(-4 1 -6) '#(-4 1 -2) 0.1) 0) 0.45))
+(define column (obstacle-capsule "column" 'surface-b 0 0 0.3 0.3 3.7))
+(define columns (make-obstacle-index (list column) 4))
+(check "A rounded column intercepts the swept sphere" (near (vector-ref (obstacle-sweep columns '#(-2 1 0) '#(2 1 0) 0.1) 0) 0.4))
+(check "Capsule bounding-box corners remain empty" (not (obstacle-sweep columns '#(-0.39 1.0 0.39) '#(-0.31 1.0 0.39) 0.1)))
+(check "A finite capsule leaves space above its cap" (not (obstacle-sweep columns '#(-2.0 4.2 0.0) '#(2.0 4.2 0.0) 0.1)))
+(check "The broadphase includes the segment middle" (obstacle-sweep world '#(-30 1 0) '#(30 1 0) 0.1))
+(check "The top spherical cap has an analytic entry time"
+  (near (segment-capsule-entry '#(0 5 0) '#(0 1 0) 0.5 0.5 2.5) 0.5))
+(check "Coincident capsule endpoints give a sphere"
+  (near (segment-capsule-entry '#(-3 0 0) '#(3 0 0) 1 0 0) (/ 1.0 3.0)))
+(check "A point initially inside reports zero entry" (= (segment-capsule-entry '#(0 1 0) '#(3 1 0) 1 0 2) 0))
+(check "Segment subdivision preserves contact time"
+  (near (segment-capsule-entry '#(-2 1 0) '#(2 1 0) 0.4 0.3 3.7)
+        (* 0.5 (segment-capsule-entry '#(-2 1 0) '#(0 1 0) 0.4 0.3 3.7))))
+(check "An empty index remains clear" (not (obstacle-sweep (make-obstacle-index '() 4) '#(-2 1 0) '#(2 1 0) 1)))
+#t

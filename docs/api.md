@@ -737,6 +737,16 @@ Both points are damped at one rate, and that is what holds the heading steady: t
 - `meshopt-filter-quat!` — undo the quaternion filter in place, stride 8, reconstructing the dropped largest component
 - `meshopt-filter-exp!` — undo the exponential filter in place: an exponent byte and a signed 24-bit mantissa per 32-bit component
 
+## `(gfx obstacles)`
+
+- `obstacle-box` — a static box obstacle: an identity string, a material symbol, a centre, the FULL sizes along x, y and z, and a yaw about the y axis. The bounds it carries are the axis-aligned box that ENCLOSES the rotated one, so a yawed box looks broader to the broadphase than it really is
+- `obstacle-capsule` — a static upright capsule: an identity, a material, x and z, a radius, and the bottom and top of its AXIS. Those two are the axis endpoints, not the outer surface, so the shape reaches `radius` further at each end; equal endpoints describe a sphere
+- `obstacle-id` — the identity string the obstacle was made with, returned unchanged. `make-obstacle-index` rejects duplicates by it and `obstacle-sweep` breaks ties by it, so it has to be stable for as long as the index lives
+- `obstacle-material` — the material symbol the obstacle was made with. This library stores it and hands it back without ever interpreting it; what a material MEANS belongs to the caller
+- `make-obstacle-index` — hashes the obstacles' bounds into a broadphase grid of the given cell size and answers the index a sweep queries. It refuses two obstacles carrying the same identity rather than letting the later one silently win
+- `obstacle-sweep` — the first contact of a sphere of `radius` moving from p to q, as `#(fraction point normal obstacle)` with the fraction in [0,1], or #f when nothing is hit. Only contacts ENTERING along the normal are reported, so leaving an overlap is not a hit -- with one exception, measured: a query starting exactly on a capsule's AXIS has no direction to take a normal from, the fallback is the reverse of the motion, and that is always accepted, so such a sweep answers fraction 0.0 while moving OUT. Off the axis the rule holds. Equal fractions are broken by the smaller identity, so the answer does not depend on the order the obstacles were given in
+- `segment-capsule-entry` — the fraction along p..q at which a sphere of `radius` first meets an upright capsule whose axis runs from `bottom` to `top`, or #f. The capsule is on the WORLD Y AXIS, at x = 0 and z = 0 -- this is the raw local test the sweep uses after rotating a query into an obstacle's frame, so a caller checking a capsule anywhere else translates its own points first. A segment that starts already inside answers 0.0
+
 ## `(gfx particles)`
 
 A fixed GPU pool of point sprites: a particle's whole future is written once and the vertex shader evaluates where it is at time t, so ten thousand of them cost one draw call and one upload when something changed. The pool is split into a reserve at the front for ambient particles that loop forever and a ring behind it for bursts that expire; the size of that split is a parameter, because a scene of drifting embers and a scene with one campfire want different ones.

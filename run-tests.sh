@@ -503,6 +503,7 @@ for m in test/macro-toplevel-hygiene.mjs \
          test/defect-import-rule-holes.mjs \
          test/defect-prelude-procedure-excluded.mjs \
          test/source-has-no-duplicate-toplevel-define.mjs \
+         test/source-obstacles-keys-identities-with-string-hash.mjs \
          test/reader-exact-exponent-cost.mjs \
          test/defect-renamed-syntax-and-literals.mjs \
          test/defect-b01-build-ignores-library-deps.mjs; do
