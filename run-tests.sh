@@ -531,13 +531,24 @@ if [ -z "${GOETEIA_TESTS+x}" ]; then
         echo "  at end:   $ss_at_end"
         fail=1
     elif [ "$digest_at_start" != "$digest_at_end" ]; then
-        echo "FAIL a cell or this script was MODIFIED while the run was in flight -- same file names, different content, so the reading is void; re-run it"
+        echo "FAIL the tree under test was MODIFIED while the run was in flight -- same file names, different content, so the reading is void; re-run it"
+        echo "  the digest covers run-tests.sh, goeteia.wasm, and every .ss/.mjs/.sh/.json under test src lib rt -- so this names none of them; look at what you edited, not only at test/"
         echo "  digest at start: $digest_at_start"
         echo "  digest at end:   $digest_at_end"
         fail=1
     else
-        echo "harness and cells unchanged across the run (digest $digest_at_start)"
+        echo "tree under test unchanged across the run -- harness, cells, src, lib, rt and the snapshot (digest $digest_at_start)"
     fi
+else
+    # SAID OUT LOUD BECAUSE SILENCE HERE WOULD READ AS PROTECTION.
+    # A narrowed run is the one made WHILE the tree is being edited, which
+    # is exactly when a mid-run edit is likely -- so the absence of the
+    # check matters most in the case where it is absent.  It is skipped
+    # rather than run because the set of cells legitimately differs from
+    # the glob here, and because a narrowed run is a probe rather than a
+    # reading.  A probe that is treated as a reading is the failure this
+    # line exists to prevent.
+    echo "note: GOETEIA_TESTS narrowed this run, so the mid-run modification check did NOT run -- this is a probe, not a reading of the tree"
 fi
 
 # EVERY test/*.mjs MUST BE NAMED IN THIS FILE.
