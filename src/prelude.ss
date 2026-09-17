@@ -2817,7 +2817,14 @@
                  (digit (%fl->fx (fl- m (fl* q two24)))))
             (loop q (+ acc (* digit scale)) (* scale 16777216)))))))
 (define (inexact->exact x)
-  (if (flonum? x)
+  (cond
+   ;; Integral doubles inside the signed 30-bit fixnum range need no
+   ;; rational construction. Fractional and larger values keep the
+   ;; existing exact conversion; the range tests also reject nonfinite x.
+   ((and (flonum? x) (not (fl<? x -536870912.0)) (fl<? x 536870912.0)
+         (fl=? x (flfloor x)))
+    (%fl->fx x))
+   ((flonum? x)
       (let* ((zero (fixnum->flonum 0))
              (neg (fl<? x zero))
              (mag (if neg (fl- zero x) x)))
@@ -2825,8 +2832,8 @@
           (if (fl=? m (flfloor m))
               (let ((v ($make-rat ($fl->exact-integer m) k)))
                 (if neg (- 0 v) v))
-              (loop (fl* m (fixnum->flonum 2)) (* k 2)))))
-      x))
+              (loop (fl* m (fixnum->flonum 2)) (* k 2))))))
+   (else x)))
 (define (exact x) (inexact->exact x))
 ;; A ratio used to be returned unchanged, so (floor 7/2) was 7/2.
 ;; $make-rat keeps the denominator positive and collapses d = 1 to an
@@ -2869,8 +2876,24 @@
   (let ((q (quotient n d)) (r (remainder n d)))
     (if (< r 0) (if (< d 0) (+ q 1) (- q 1)) q)))
 (define ($mod n d)
-  (let ((r (remainder n d)))
-    (if (< r 0) (if (< d 0) (- r d) (+ r d)) r)))
+  ;; The floor below is the true one, for two reasons rather than one.
+  ;; When the quotient is NOT an integer its distance to the nearest
+  ;; integer is at least 1/|d|, while the division error is at most
+  ;; |n/d| * 2^-53; the |d| cancels, so the error is the smaller of the
+  ;; two whenever |n| < 2^53, which a signed 30-bit dividend is by a
+  ;; wide margin. When the quotient IS an integer that argument says
+  ;; nothing -- both quantities are zero -- and the other half applies:
+  ;; the quotient is exactly representable, so a correctly rounded
+  ;; division returns it exactly. The floored quotient product and
+  ;; remainder are exact in binary64, even for the minimum fixnum
+  ;; divisor. Keep generic remainder for larger integers and preserve
+  ;; public checks.
+  (if (and (fixnum? n) (fixnum? d) (not (= d 0)))
+      (let* ((x (fixnum->flonum n)) (m (fixnum->flonum d))
+             (m (if (fl<? m 0.0) (fl- 0.0 m) m)))
+        (%fl->fx (fl- x (fl* (flfloor (fl/ x m)) m))))
+      (let ((r (remainder n d)))
+        (if (< r 0) (if (< d 0) (- r d) (+ r d)) r))))
 (define (div n d) ($div-check 'div n d) ($div n d))
 (define (mod n d) ($div-check 'mod n d) ($mod n d))
 (define (div0 n d)

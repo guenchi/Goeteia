@@ -141,8 +141,14 @@
             (immutable lits $sgl-lits)   ; nodes, split by material
             (immutable texs $sgl-texs)
             (immutable pbrs $sgl-pbrs)
-            ;; lit nodes sharing a geometry, two or more: each group
-            ;; is #(geo nodes inst-buf inst-base cap), one draw each
+            ;; lit nodes sharing a geometry, two or more, one draw each.
+            ;; Each group is nine slots:
+            ;;   0 geometry          3 instance base    6 content generation
+            ;;   1 nodes             4 capacity         7 resident count
+            ;;   2 instance buffer   5 camera key       8 packed node identity
+            ;; Slot 4 is written at construction and read NOWHERE -- that is
+            ;; the state of the code, not an invitation: dropping it would
+            ;; renumber every slot after it, which is its own change.
             (immutable igroups $sgl-igroups)
             ;; lod containers: #(chosen-cell switches probe-node)
             (immutable lgroups $sgl-lgroups)
@@ -1094,10 +1100,13 @@
                        ;; slots 5-7 cache the last frame's camera
                        ;; signature, transform generation and visible
                        ;; count, so a static group under a still camera
-                       ;; redraws without re-culling or re-uploading
+                       ;; redraws without re-culling or re-uploading.
+                       ;; Slot 8 retains packed node identity: a changed
+                       ;; camera can still produce identical resident bytes.
                        (cons (vector g mine (fx-buffer!)
                                      (fx-alloc! (* (length mine) 80))
-                                     (length mine) -1.0 -1 -1)
+                                     (length mine) -1.0 -1 -1
+                                     (make-vector (length mine) #f))
                              groups)
                        singles)))))))))
 
@@ -1282,9 +1291,11 @@
                                              ($sgl-node-cgen nd)
                                              ($sgl-node-lgen nd)))
                            0 (vector-ref ig 1)))
-           ;; issue the draw; upload the packed instances only when the
-           ;; set was recomputed (up? = #t), else the buffer still holds
-           ;; last frame's identical data
+           (reusable (and (= gen (vector-ref ig 6))
+                          (>= (vector-ref ig 7) 0)))
+           ;; Recomputing visibility need not change the uploaded bytes.
+           ;; Node identity plus an unchanged content generation is enough
+           ;; to retain a packed record, including its transform and colour.
            (draw!
             (lambda (n up?)
               (when up? (vector-set! ig 7 n))
@@ -1307,11 +1318,12 @@
           (begin
             (vector-set! ig 5 ($sgl-camera-key cam aspect))
             (vector-set! ig 6 gen)
-            (%sgl-igroup-fill! ig planes scratch soa ctr ones res draw!))))
+            (%sgl-igroup-fill! ig planes scratch soa ctr ones res reusable draw!))))
     #t)
 
-  (define (%sgl-igroup-fill! ig planes scratch soa ctr ones res flush!)
-    (let ((ibase (vector-ref ig 3)))
+  (define (%sgl-igroup-fill! ig planes scratch soa ctr ones res reusable flush!)
+    (let ((ibase (vector-ref ig 3)) (order (vector-ref ig 8))
+          (previous (vector-ref ig 7)) (changed (not reusable)))
       (let fill ((ns (vector-ref ig 1)) (n 0))
         (let gather ((ns ns) (m 0))     ; next four lod-active nodes
           (if (and (pair? ns) (< m 4))
@@ -1320,7 +1332,7 @@
                          (gather (cdr ns) (+ m 1)))
                   (gather (cdr ns) m))
               (if (= m 0)
-                  (flush! n #t)
+                  (flush! n (or changed (not (= n previous))))
                   (begin
                     ;; refresh each node's cache when its generation
                     ;; moved (matrix, then the center as the cached
@@ -1365,21 +1377,25 @@
                       (if (= k m)
                           (if (pair? ns)
                               (fill ns n2)
-                              (flush! n2 #t))
+                              (flush! n2 (or changed (not (= n2 previous)))))
                           (if (vector-ref $sgl-vis k)
                               (let* ((nd (vector-ref $sgl-chunk k))
                                      (f ($sgl-nd-f nd))
                                      (dst (+ ibase (* n2 80))))
-                                ($sgl-m4s-copy!
-                                 dst ($sgl-nd-cbase nd))
-                                (%mem-f32-set! (+ dst 64)
-                                               (vector-ref f 7))
-                                (%mem-f32-set! (+ dst 68)
-                                               (vector-ref f 8))
-                                (%mem-f32-set! (+ dst 72)
-                                               (vector-ref f 9))
-                                (%mem-f32-set! (+ dst 76)
-                                               (vector-ref f 10))
+                                (when (or (not reusable) (>= n2 previous)
+                                          (not (eq? nd (vector-ref order n2))))
+                                  (set! changed #t)
+                                  ($sgl-m4s-copy!
+                                   dst ($sgl-nd-cbase nd))
+                                  (%mem-f32-set! (+ dst 64)
+                                                 (vector-ref f 7))
+                                  (%mem-f32-set! (+ dst 68)
+                                                 (vector-ref f 8))
+                                  (%mem-f32-set! (+ dst 72)
+                                                 (vector-ref f 9))
+                                  (%mem-f32-set! (+ dst 76)
+                                                 (vector-ref f 10)))
+                                (vector-set! order n2 nd)
                                 (pack (+ k 1) (+ n2 1)))
                               (pack (+ k 1) n2)))))))))))
 
