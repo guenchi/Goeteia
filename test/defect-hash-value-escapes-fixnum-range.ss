@@ -1,8 +1,15 @@
 ;; expect: #t
-;; EXPECTED FAIL against src/prelude.ss at dac5b48.  A hash this runtime
-;; computes can be larger than a fixnum, so the hash VALUE itself is a
-;; bignum -- and $ht-index then pays bignum abs and remainder on every
-;; lookup of that key, for as long as the key lives in the table.
+;; HISTORY, NOT STATUS.  This cell was written red and failed against
+;; src/prelude.ss at dac5b48; it passes now, and it stays as the guard
+;; for the rule below rather than as a report on today's colour.  A
+;; marker asserting a cell's CURRENT colour is the thing that decays --
+;; see test/expected-fail-markers-are-honest.mjs, which is what caught
+;; this line the moment the defect was repaired.
+;;
+;; What was wrong: a hash this runtime computed could be larger than a
+;; fixnum, so the hash VALUE itself was a bignum -- and $ht-index then
+;; paid bignum abs and remainder on every lookup of that key, for as
+;; long as the key lived in the table.
 ;;
 ;; Measured: a key whose hash escapes the range costs about 2.1x per
 ;; lookup against one whose hash does not, over 200000 lookups, timed
@@ -30,8 +37,10 @@
 ;; The exception is the first one, which needs no construction at all
 ;; and is the cheapest and most reachable member of the family: abs is
 ;; (if (< n 0) (- 0 n) n), and 0 - -536870912 is 536870912, one past the
-;; maximum.  That branch is the one EVERY integer key in every eq or eqv
-;; table takes.
+;; maximum.  That branch is ((fixnum? k) (abs k)), the one EVERY FIXNUM
+;; key in every eq or eqv table takes.  Not every integer key: an
+;; integer too large to be a fixnum is a bignum and leaves through the
+;; %bignum? branch above it, which is a different member of this family.
 (import (rnrs))
 (define M 536870911)
 (define fails '())

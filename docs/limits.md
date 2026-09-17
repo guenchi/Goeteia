@@ -327,6 +327,50 @@ procedures of forty and loads fine; the same 600 at top level do
 not.  Grouping does not help if one procedure still holds them all —
 it is a per-function limit, not a per-module one.
 
+## Every hash this implementation computes is a fixnum
+
+`string-hash`, `equal-hash` and the hash an `eq`/`eqv` table uses all
+return a value in `0 .. 2^29-1`.  That is NARROWER than the standard
+requires: R6RS asks a hash function only for an exact non-negative
+integer, and a bignum is one.  The narrowing is deliberate, and it is
+part of what this implementation promises rather than an accident of
+how the hashes happen to be written.
+
+The reason is that the arithmetic and the result are one question, not
+two.  The hash step holds `(31*h + c) mod 2^29-1` without ever
+promoting an intermediate product out of the fixnum range -- but
+bounding the arithmetic and then handing back a value one past the
+maximum gives the cost straight back, because `$ht-index` recomputes
+the hash on every lookup and would pay bignum `abs` and `remainder`
+there instead.  A bound the result escapes is not a bound.
+
+**This is a performance contract, not a correctness one.**  A table
+whose keys hash outside the range behaves correctly: lookups hit,
+counts are right, and nothing observable is wrong.  What it costs is
+speed -- about 2.1x per lookup for a key whose hash escapes against
+one whose hash does not, and paid on every lookup for as long as the
+key lives in the table, not once at insertion.
+
+The places where a hash could previously escape were of two shapes.
+Most were a small tag added to a value already near the top of the
+range, or a length multiplied before anything reduced it.  One was
+not: `(abs k)` on the most negative fixnum is one past the maximum,
+which is an overflow in the fold itself rather than in a tag.  It is
+also the most reachable of them, because it is the branch every
+FIXNUM key takes -- an integer too large to be a fixnum is a bignum
+and takes a different branch.  And hashing a vector,
+string or bytevector by length multiplies by 7 first, so the multiply
+leaves the range BEFORE the addition does: `7 * 76695845` is already
+past the modulus, which is why wrapping only the sum would not have
+been enough.
+
+`test/defect-hash-value-escapes-fixnum-range.ss` states the rule as an
+invariant over a corpus rather than as a list of the branches someone
+thought of, so a branch nobody enumerated is covered by the same line.
+Its control rows pin the other half: ordinary keys stay inside the
+range, and two neighbouring keys do not hash alike, so a repair that
+clamped every hash to a constant would fail there.
+
 ## `eq`/`eqv` hashtables are linear for most object keys
 
 `make-eq-hashtable` and `make-eqv-hashtable` hash a key by identity, and

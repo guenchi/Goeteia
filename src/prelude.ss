@@ -2186,12 +2186,47 @@
 
 (define (abs n) (if (< n 0) (- 0 n) n))
 (define (string-hash s) ($sh s 0 7))
+;; Preserve (31*h + c) modulo 2^29-1 without promoting the product
+;; to a bignum. Fold 32*h at bit 29, then subtract h. Every intermediate
+;; stays in the signed 30-bit fixnum range, including Unicode scalars.
+;; Despite the name, this is the shared step for every (31*h + c)
+;; modulo 2^29-1 site in this file, not only for the string hash.
+;; It is total for h and c anywhere in 0..2^29-1.
+(define ($sh-step h c)
+  (let* ((folded (+ (bitwise-arithmetic-shift-left (bitwise-and h 16777215) 5)
+                   (bitwise-arithmetic-shift-right h 24)))
+         (difference (- folded h))
+         (positive (if (< difference 0)
+                       (+ difference 536870911) difference))
+         (room (- 536870911 c)))
+    (if (>= positive room) (- positive room) (+ positive c))))
 (define ($sh s i h)
   (if (< i (string-length s))
       ($sh s (+ i 1)
-           (remainder (+ (* h 31) (char->integer (string-ref s i)))
-                      536870911))
+           ($sh-step h (char->integer (string-ref s i))))
       h))
+;; The same bound the string hash keeps, applied to the hash VALUE
+;; rather than to the arithmetic that produces it.  Adding a tag to a
+;; hash already near the top of the range would leave the fixnum range
+;; in the addition itself, so the tag is added modulo 2^29-1 without
+;; ever forming the oversized sum: subtract the room that is left
+;; instead of adding into it.  Both arguments must already be within
+;; the modulus.
+(define ($m+ h tag)
+  (let ((room (- 536870911 tag)))
+    (if (>= h room) (- h room) (+ h tag))))
+;; A length spreads a vector, string or bytevector by size.  The
+;; multiply overflows BEFORE the addition does -- 7 * 76695845 is
+;; already past the modulus -- so wrapping only the sum would not be
+;; enough and the length is reduced first.
+;;
+;; This is deliberately NOT (7*n + tag) modulo 2^29-1, and the two part
+;; company past a length of 76695840.  Below that -- which is every
+;; length any of these objects can actually reach here -- it returns
+;; exactly the tag + 7*n this used to return, so the change is confined
+;; to the lengths that used to leave the range.
+(define ($len-hash n tag)
+  ($m+ (* 7 (remainder n 76695845)) tag))
 ;; The hash an eq/eqv table uses.  It may depend ONLY on things that
 ;; cannot change while the object sits in a table: a hash that moved
 ;; would leave the entry unreachable in a table that still holds it.
@@ -2223,7 +2258,14 @@
 ;; also records what would change it.
 (define ($eqv-hash k)
   (cond
-   ((fixnum? k) (abs k))
+   ;; NOT (abs k): abs of the most negative fixnum is one past the
+   ;; maximum, so that one key would hash to a bignum.  Folding the
+   ;; negatives onto 0..maximum keeps every fixnum key inside the range
+   ;; and costs the same comparison abs already made.  Every negative
+   ;; fixnum hashes one lower than it did; -1 now collides with 0 where
+   ;; it used to collide with 1.  Mapping 2^30 keys onto 2^29+1 values
+   ;; collides either way, and only equal keys are required to agree.
+   ((fixnum? k) (if (< k 0) (- -1 k) k))
    ((char? k) (char->integer k))
    ((symbol? k) (string-hash (symbol->string k)))
    ((eq? k #t) 1)
@@ -2233,26 +2275,25 @@
    ;; reading its limbs: %bignum-limbs is a wasm-backend primitive and
    ;; the JS backend does not implement it, so the limb version
    ;; compiled on one target and not the other.
-   ((%bignum? k) (+ 11 (abs (remainder k 536870911))))
-   ((%ratio? k) (+ 13 (remainder (+ (* 31 ($eqv-hash (%ratio-num k)))
-                                    ($eqv-hash (%ratio-den k)))
-                                 536870911)))
-   ((%complex? k) (+ 17 (remainder (+ (* 31 ($eqv-hash (%cx-re k)))
-                                      ($eqv-hash (%cx-im k)))
-                                   536870911)))
+   ((%bignum? k) ($m+ (abs (remainder k 536870911)) 11))
+   ((%ratio? k) ($m+ ($sh-step ($eqv-hash (%ratio-num k))
+                               ($eqv-hash (%ratio-den k)))
+                     13))
+   ((%complex? k) ($m+ ($sh-step ($eqv-hash (%cx-re k))
+                                 ($eqv-hash (%cx-im k)))
+                       17))
    ((number? k) 0)                      ; flonums: eqv? is by value,
                                         ; but no cheap stable spread
-   ((vector? k) (+ 19 (* 7 (vector-length k))))
-   ((string? k) (+ 23 (* 7 (string-length k))))
-   ((bytevector? k) (+ 29 (* 7 (bytevector-length k))))
-   ((%recbase? k) (+ 31 (string-hash (symbol->string (car (%record-rtd k))))))
+   ((vector? k) ($len-hash (vector-length k) 19))
+   ((string? k) ($len-hash (string-length k) 23))
+   ((bytevector? k) ($len-hash (bytevector-length k) 29))
+   ((%recbase? k)
+    ($m+ (string-hash (symbol->string (car (%record-rtd k)))) 31))
    (else 0)))                           ; pairs, procedures: see above
 (define (equal-hash k)
   (cond
    ((string? k) (string-hash k))
-   ((pair? k) (remainder (+ (* 31 (equal-hash (car k)))
-                            (equal-hash (cdr k)))
-                         536870911))
+   ((pair? k) ($sh-step (equal-hash (car k)) (equal-hash (cdr k))))
    (else ($eqv-hash k))))
 
 (define ($ht-index ht k)
