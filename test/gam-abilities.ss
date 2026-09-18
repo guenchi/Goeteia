@@ -41,10 +41,10 @@
 (check "MAKE: the predicate checks the tag"
        (not (ability? (vector 'not-an-ability 'x 1 2 0 0))))
 (check "MAKE: and the length"
-       (and (not (ability? (vector 'gam-ability 'x 1 2 0)))
-            (not (ability? (vector 'gam-ability 'x 1 2 0 0 0)))))
+       (and (not (ability? (vector 'gam-ability 'x 1 2 0 0)))
+            (not (ability? (vector 'gam-ability 'x 1 2 0 0 0 0)))))
 (check "MAKE: neither alone -- both together are what it is"
-       (ability? (vector 'gam-ability 'x 1 2 0 0)))
+       (ability? (vector 'gam-ability 'x 1 2 0 0 0)))
 
 ;; ---- USE-REFUSED ----
 ;; The cell this file exists for.  A use that is refused must leave

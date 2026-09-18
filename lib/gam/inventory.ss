@@ -42,7 +42,7 @@
 ;; in JavaScript.
 (library (gam inventory)
   (export make-inventory inventory-count inventory-add! inventory-take!
-          inventory-items)
+          inventory-items inventory-weight)
   (import (rnrs))
 
   ;; #(gam-inventory rows); rows is newest-first, and inventory-items
@@ -97,6 +97,60 @@
       (and r
            (not (< (cdr r) n))
            (begin (set-cdr! r (- (cdr r) n)) #t))))
+
+  ;; What the bag weighs, under the caller's idea of what things weigh.
+  ;;
+  ;; The table is a PROCEDURE rather than a list, and it belongs to the
+  ;; caller.  This library has never known what an item is, and a weight
+  ;; per item is exactly the kind of thing it must not start knowing:
+  ;; passing a procedure also means one bag answers different totals
+  ;; under different rules -- carried against stored, a strength
+  ;; modifier, a bag of holding -- without this library having a word
+  ;; for any of them.
+  ;;
+  ;; A WEIGHT IT CANNOT USE IS AN ERROR, NOT A ZERO.  A key the table
+  ;; does not know means the bag and the table have drifted apart, and
+  ;; answering anyway would report a total that is quietly too small.
+  ;; That failure surfaces as a carrying limit that is never reached,
+  ;; with nothing at the point of the mistake to find.  The error names
+  ;; the key, because that is the one thing the caller needs in order to
+  ;; look.
+  ;;
+  ;; THE EMPTY BAG WEIGHS EXACT ZERO.  This library has no weights of
+  ;; its own and therefore no exactness of its own; the total takes its
+  ;; exactness from the caller's numbers.  Starting the fold at 0.0
+  ;; would put an inexactness into an answer whose every input was
+  ;; exact, and the caller could not tell where it came from.
+  ;;
+  ;; The table is asked about the KEY, never handed the library's row --
+  ;; the same reason inventory-items copies its pairs.
+  (define (inventory-weight b weight-of)
+    ($need-inv 'inventory-weight b)
+    (unless (procedure? weight-of)
+      (error 'inventory-weight "the weight table is a procedure of an item key" weight-of))
+    (let loop ((rs ($rows b)) (total 0))
+      (if (null? rs)
+          total
+          (let* ((row (car rs))
+                 (key (car row))
+                 (n (cdr row)))
+            ;; A row taken down to zero keeps its place in the listing
+            ;; but is no longer held, so it does not reach the table at
+            ;; all.  Asking about it and multiplying by zero would be a
+            ;; different thing: 0 * 100.0 is 0.0 and 0 * +inf.0 is NaN,
+            ;; so a bag emptied by inventory-take! would stop weighing
+            ;; what a bag that was never filled weighs.
+            (if (= n 0)
+                (loop (cdr rs) total)
+                (let ((w (weight-of key)))
+                  ;; (<= 0 w) rather than (not (< w 0)): NaN is a real
+                  ;; and is not less than zero, so the second form
+                  ;; admits it and one unusable weight turns the whole
+                  ;; total into NaN, with nothing naming the item that
+                  ;; did it.
+                  (unless (and (real? w) (<= 0 w))
+                    (error 'inventory-weight "no usable weight for that item" key w))
+                  (loop (cdr rs) (+ total (* n w)))))))))
 
   ;; Fresh pairs, not the rows themselves: the bag's contents are the
   ;; library's, and a caller that was handed the internal pairs could

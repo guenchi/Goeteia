@@ -62,7 +62,7 @@
           character-move! character-jump!
           make-aabb-grid grid-near
           segment-segment-closest capsule-capsule-contact
-          circle-circle? segment-circle? move-circle)
+          circle-circle? segment-circle? move-circle ray-circle)
   (import (rnrs) (gfx mat) (gfx mesh))
 
   (define $col-eps 0.000000001)
@@ -634,6 +634,44 @@
   ;;     pushed along the line of centres, not along an axis;
   ;;   * sphere-sphere? is three-dimensional, so using it here builds
   ;;     two v3s per pair per frame on a hot path.
+
+  ;; The raycast this group was missing.  circle-circle?, segment-circle?
+  ;; and move-circle are predicates and a mover; every ray-* above is
+  ;; three-dimensional, so a plan-view game asking "how far to the thing
+  ;; in this direction" had nothing to call.  `dir' is a unit vector, as
+  ;; it is everywhere in that family, and the answer is a distance along
+  ;; it or #f.  There is no range argument: the caller compares the
+  ;; distance it gets back.  ray-heightfield does take one, but for a
+  ;; different reason -- it MARCHES, so it needs somewhere to stop
+  ;; rather than a way to reject an answer it already has.
+  ;;
+  ;; A RAY THAT STARTS INSIDE ANSWERS THE WAY OUT, and that is a choice
+  ;; between two things this family already does differently.  Measured
+  ;; on this tree: ray-sphere from the centre of a unit sphere answers
+  ;; 1.0, the exit distance, while ray-aabb from inside a box answers
+  ;; 0.0.  A circle is a sphere with a dimension removed, so this
+  ;; follows the sphere, and the arithmetic below is ray-sphere's with
+  ;; two components instead of three.  The disagreement is older than
+  ;; this procedure and is left where it is: changing it would move an
+  ;; answer callers already depend on, which is a separate decision from
+  ;; adding one.
+  (define (ray-circle ox oy dx dy cx cy r)
+    (let* ((ox ($col-fl ox)) (oy ($col-fl oy))
+           (dx ($col-fl dx)) (dy ($col-fl dy))
+           (cx ($col-fl cx)) (cy ($col-fl cy)) (r ($col-fl r))
+           (mx (fl- ox cx)) (my (fl- oy cy))
+           (b (fl+ (fl* mx dx) (fl* my dy)))
+           (disc (fl- (fl* b b)
+                      (fl- (fl+ (fl* mx mx) (fl* my my)) (fl* r r)))))
+      (if (fl<? disc 0.0)
+          #f
+          (let* ((s (flsqrt disc))
+                 (near (fl- (fl- 0.0 b) s))
+                 (far (fl+ (fl- 0.0 b) s)))
+            (cond
+             ((fl<? 0.0 near) near)
+             ((fl<? 0.0 far) far)
+             (else #f))))))
 
   (define (circle-circle? x1 y1 r1 x2 y2 r2)
     (let* ((dx (fl- ($col-fl x2) ($col-fl x1)))

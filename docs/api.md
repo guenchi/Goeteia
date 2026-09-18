@@ -61,13 +61,15 @@ adds up to.
 
 - `make-ability` — an ability from an identifier, a cost and a cooldown length; the cooldown must be positive, and the ability is ready the moment it is made
 - `ability?` — whether a value is an ability
-- `ability-id` — the identifier the ability carries; this library does not interpret it, so a caller's own table of ability data is keyed by it
+- `ability-id` — the identifier the ability carries; this library does not interpret it, so a caller's own table of ability data can be keyed by it, or the data can travel in the payload instead
 - `ability-cost` — the cost the ability carries. Nothing here spends it: it is a number for the caller to subtract wherever its resources live
 - `ability-cooldown` — the LENGTH of the cooldown, fixed when the ability was made; this is configuration, not state
 - `ability-remaining` — how much of the cooldown is left; this is the state, and zero means ready
+- `ability-payload` — the value the ability was made with, handed back unchanged and never read by this library. It is where a caller's damage, range, animation clip or status effect travels with the ability instead of in a second table; an ability made without one carries #f, and a caller that stores #f is indistinguishable from one that stored nothing
 - `ability-ready?` — whether the cooldown has run out
 - `ability-tick!` — counts the cooldown down by an elapsed time and clamps it at zero; a negative time is refused
 - `ability-use!` — if ready, sets the cooldown to its full length and answers #t; otherwise #f and nothing changes, so a refused use never restarts a cooldown that is still running
+- `ability-lock!` — extends the remaining time to AT LEAST this many seconds and answers the new remaining. It never shortens: a lock for less than what is already owed leaves the longer wait alone. It may exceed the ability's own cooldown, which is what a global cooldown, a silence or an interrupt needs, since the cooldown is the length a use restarts and not a ceiling on what can be owed. Zero is a legal lock and does nothing, and a refused lock changes nothing
 
 ## `(gam effects)`
 
@@ -101,6 +103,7 @@ adds up to.
 - `inventory-count` — how many of a key the bag holds, 0 when it holds none
 - `inventory-add!` — adds a positive exact count and answers the count afterwards; zero is refused as well as a negative, since adding nothing means the arithmetic that produced it went wrong
 - `inventory-take!` — all or nothing: enough, and it is removed with #t; not enough, and #f with not one removed
+- `inventory-weight` — what the bag weighs, folding a caller's procedure over the rows: it is asked about each KEY and answers that item's weight, which is multiplied by the count. A weight that is missing, negative or not a real number is an error naming the key, never a zero, because a total that is quietly too small surfaces as a carrying limit that is never reached. An empty bag weighs EXACT zero -- this library has no weights of its own and so no exactness of its own
 - `inventory-items` — the rows as fresh pairs, in the order their keys were FIRST added, on both compiler targets; a key taken down to zero keeps its row and its place, so putting it back does not move it to the end and make the listing a record of what the player did
 
 ## `(gam modifiers)`
@@ -121,6 +124,16 @@ adds up to.
 - `modifier-entry-remaining` — seconds left, or #f for a claim that does not expire. The two are kept distinct rather than using a large number for "forever", because a caller showing the time left has to be able to tell them apart
 - `modifier-entry-group` — the exclusive group, or #f if the claim simply adds
 - `modifier-entry-dispellable?` — whether `modifier-dispel!` will take it
+
+## `(gam once)`
+
+- `make-once` — an empty set of the things one action has already affected
+- `once?` — whether a value is such a set. The tag is a pair made at load time rather than a symbol, so a vector of the right shape written by hand is not one; it is not out of reach, since every set carries the tag in slot 0
+- `once-first!` — #t the first time it is given an object and #f every time after, RECORDING it in the same call. The two-step of asking and then marking is what a caller forgets; there is nothing here to forget
+- `once-seen?` — whether an object has had its turn, without taking it: the one procedure that is asked ABOUT an object and does not record it
+- `once-reset!` — forgets everything, for the next pulse or the next swing, keeping the same set so a caller holding it across frames keeps holding the same one
+- `once-count` — how many objects the set holds
+- Identity is `eq?`, a reference comparison: two actors with identical contents are two actors. A list and `memq` rather than a hashtable, because this runtime exposes no identity to hash by (see `docs/limits.md`), so an eq-hashtable keyed by an object degenerates to a linear scan with a worse constant
 
 ## `(gam party)`
 
@@ -275,6 +288,7 @@ Both points are damped at one rate, and that is what holds the heading steady: t
 - `capsule-capsule-contact` — where two capsules meet, which way and by how much: a point on each surface, the unit normal from the second toward the first, and the separation, which is negative when they overlap and then its size is the penetration depth. It answers for capsules that are apart as well. When the two axes meet there is no line to take a normal from, so the normal is +x -- arbitrary but FIXED, since normalising a zero vector answers NaN and choosing by anything incidental makes a caller's result depend on something it cannot see. `capsule-capsule?` remains the authority on whether they touch: it compares squared quantities while this takes a square root, and the two could in principle differ in the last bit exactly on the boundary
 - `make-aabb-grid` — a broadphase: hashes static boxes into xz cells of a given size, so a query touches a handful instead of all of them
 - `grid-near` — every box whose cells the sphere at pos with radius r touches, each box once
+- `ray-circle` — the distance from the origin to the first hit on a circle in a plane, or #f; the direction must be a unit vector for the distance to be in world units. The raycast the 2D group was missing -- the others here are predicates and a mover, and every other `ray-*` is three-dimensional. A ray that starts INSIDE answers the way out, following `ray-sphere` rather than `ray-aabb`, which answers 0.0 from inside a box; a circle is a sphere with a dimension removed. That disagreement inside the family is older than this procedure and is left alone. There is no range argument: the caller compares the distance it gets back. `ray-heightfield` does take one, because it marches and needs somewhere to stop rather than a way to reject an answer it already has
 - `circle-circle?` — do two circles in a plane overlap? The arguments are a pair of numbers (x, y) per circle; this library does not say which two world axes they are, so a top-down game passes (x, z)
 - `segment-circle?` — does the SEGMENT a-b come within `r` of a circle centred at (cx, cy)? Unlike `ray-sphere` this stops at b: a circle beyond the far end does not hit, which is what a swing's reach means. A degenerate segment (a = b) asks whether that point is inside the circle
 - `move-circle` — move a circle by (dx, dy), pushed out of every solid it would end inside, and answer the new x and y as two values; `solids` is a vector of `#(x y r)`. Sliding falls out of pushing rather than stopping. It steps at `r/2`, so a displacement within an integer number of those hops cannot tunnel -- but this is NOT general continuous collision detection: a large displacement past a SMALL solid can still step over it, because the step comes from the moving circle's radius, not the solid's. Solids are applied in order, so the landing spot between two overlapping solids depends on the vector's order
