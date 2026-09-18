@@ -268,12 +268,34 @@ run_js() { # jsfile testfile
 # editor leftovers and anything anyone drops under test/ -- so the
 # omissions are meant to be found by a check that shouts, not by a
 # pattern that guesses.
+#
+# docs came in the same way and shows why the directory and the
+# extension list have to move together.  Cells read the documentation
+# and assert against it -- api-index.mjs reads docs/api.md and requires
+# every exported name to be listed there, docs.mjs and llm-substrate.mjs
+# read several more -- so docs is part of the subject.  But adding docs
+# to the find alone would have hashed the six files nobody reads
+# (docs/llm/examples/t1..t5.ss and a manifest) and missed all sixteen
+# .md, which is everything the cells actually open.
+#
+# That is the third dress on one mistake, and the three belong side by
+# side because each was found only after the previous one had been
+# fixed.  Naming bin as a directory catches bin/goeteia.mjs and misses
+# bin/goeteiac, which has no extension -- so goeteiac went on the cat
+# line.  Naming test as a directory was never the problem; its
+# extension filter dropped the fixtures.  Naming docs as a directory
+# catches the files no cell opens and drops the ones every cell does.
+# In each case the half that was added looked sufficient on its own.
+#
+# No .md exists under test, src, lib, rt, bin or tools, so the
+# extension costs nothing outside docs.
 digest_now() {
     { cat run-tests.sh goeteia.wasm bin/goeteiac 2>/dev/null
-      find test src lib rt bin tools -type f \
+      find test src lib rt bin tools docs -type f \
            \( -name '*.ss' -o -name '*.mjs' -o -name '*.sh' -o -name '*.json' \
               -o -name '*.sc' -o -name '*.tsv' -o -name '*.glb' \
-              -o -name '*.html' -o -name '*.py' -o -name '*.input' \) \
+              -o -name '*.html' -o -name '*.py' -o -name '*.input' \
+              -o -name '*.md' \) \
            2>/dev/null | sort | tr '\n' '\0' | xargs -0 cat 2>/dev/null
     } | { md5 -q 2>/dev/null || md5sum 2>/dev/null | cut -d' ' -f1; }
 }
