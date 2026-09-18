@@ -387,6 +387,32 @@ if git rev-parse --git-dir >/dev/null 2>&1; then
         echo "  the commit named above does NOT contain those $modified file(s); the digest does"
         git status --porcelain --untracked-files=no 2>/dev/null | sed 's/^/    /'
     fi
+    # HOW FAR BEHIND THE SNAPSHOT IS, because nothing else can say.
+    #
+    # goeteia.wasm is the self-hosted compiler, and the stage1 and js
+    # columns below are compiled BY it.  When src/ moves and the snapshot
+    # is not rebuilt, those columns describe an older compiler than the
+    # one in the tree -- and the drift is invisible in everything the
+    # artifact produces, because the snapshot reads src/prelude.ss at
+    # compile time and so still emits current output.  Measured: 927
+    # bytes behind, with every cell green.
+    #
+    # It is a NOTE and not a failure on purpose.  Source moves between
+    # rebuilds as a matter of course, so a red here would be lit most of
+    # the time, and an alarm that is usually on is one nobody reads.  A
+    # count that is usually small and occasionally large is readable; a
+    # rebuild is ./rebuild.sh.
+    #
+    # This gap has opened twice.  11b31d0 closed it after the script had
+    # not run since 09-11, and it reopened as soon as src changed again.
+    snap_commit=$(git log -1 --format=%H -- goeteia.wasm 2>/dev/null)
+    if [ -n "$snap_commit" ]; then
+        src_since=$(git rev-list --count "$snap_commit..HEAD" -- src/ 2>/dev/null || echo '?')
+        if [ "$src_since" != "0" ] && [ -n "$src_since" ]; then
+            echo "  NOTE: src/ has moved in $src_since commit(s) since goeteia.wasm was built;"
+            echo "        the stage1 and js columns describe that older compiler (./rebuild.sh)"
+        fi
+    fi
 else
     echo "measuring an unversioned tree -- digest $digest_at_start"
 fi
