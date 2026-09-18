@@ -251,6 +251,30 @@ digest_now() {
            2>/dev/null | sort | tr '\n' '\0' | xargs -0 cat 2>/dev/null
     } | { md5 -q 2>/dev/null || md5sum 2>/dev/null | cut -d' ' -f1; }
 }
+# The self-hosted half of every .ss cell runs only "if goeteia.wasm is
+# present", and until now its absence said nothing at all.  That is the
+# silent skip this harness already refuses elsewhere: the missing
+# timeout(1) gets a WARNING two screens up for exactly this reason.
+#
+# It is not a hypothetical.  The snapshot was deleted from a scratch
+# worktree by an `rm -f *.wasm` meant to clear stale build products --
+# goeteia.wasm is tracked, and .gitignore's *.wasm line makes it look
+# like it is not -- and the round that followed compiled all 1154 cells
+# with stage0 only.  What gave it away was twenty .mjs cells failing at
+# once on ENOENT; the .ss half, which is most of the suite, reported
+# nothing missing and finished with the same "ok" lines as a full run.
+#
+# So the absence is announced, and the count is announced with it: a
+# reader comparing two runs can see that one of them measured half as
+# much.
+if [ -f goeteia.wasm ]; then
+    echo "stage1: goeteia.wasm present ($(wc -c < goeteia.wasm | tr -d ' ') bytes) -- self-hosted compile runs for every .ss cell"
+else
+    echo "WARNING: no goeteia.wasm here -- the self-hosted (stage1) compile and"
+    echo "         the cross-host byte comparison DID NOT RUN for any .ss cell."
+    echo "         That is roughly half of what this suite normally checks, and"
+    echo "         the cells still print ok.  Run ./rebuild.sh to restore it."
+fi
 ss_at_start=$(ls test/*.ss 2>/dev/null | tr '\n' ' ')
 digest_at_start=$(digest_now)
 
@@ -478,7 +502,9 @@ for m in test/macro-toplevel-hygiene.mjs \
          test/defect-r09-worker-listener-revocation.mjs \
          test/defect-d01-doc-uv-offset.mjs \
          test/ascii-only.mjs \
+         test/every-mjs-cell-is-listed-in-run-tests.mjs \
          test/defect-exact-of-nan-never-returns.mjs \
+         test/defect-nonfinite-numbers-do-not-survive-text.mjs \
          test/defect-v01-shader-check-can-vanish-unnoticed.mjs \
          test/c02-product-fn-specs.mjs \
          test/c02-product-trampoline.mjs \

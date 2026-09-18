@@ -94,4 +94,4 @@
 (want "reset! too" (refused? 'once-reset! (lambda () (once-reset! 7))) #t)
 (want "count too" (refused? 'once-count (lambda () (once-count "s"))) #t)
 
-(if (null? fails) #t fails)
+(display (if (null? fails) #t fails))

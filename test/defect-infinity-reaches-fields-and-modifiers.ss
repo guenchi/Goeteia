@@ -64,4 +64,4 @@
 
 ;; ---- stats is NOT in this cell, and the measurement says why: the
 ;; ---- clamp already holds an infinite set to the pool's bounds.
-(if (null? fails) #t fails)
+(display (if (null? fails) #t fails))

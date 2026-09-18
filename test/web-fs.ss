@@ -161,5 +161,11 @@
           (= (fs-slurp! BIN DST (+ N 16)) N))
      (chk "and gives the same bytes" (same? SRC DST N)))))
 
-(and roundtrip-ok empty-ok string-ok absent-ok bounds-ok after-refusal-ok
-     (null? fails))
+(display
+ (if (and roundtrip-ok empty-ok string-ok absent-ok bounds-ok after-refusal-ok
+          (null? fails))
+     #t
+     (list 'flags (list 'roundtrip-ok roundtrip-ok 'empty-ok empty-ok
+                        'string-ok string-ok 'absent-ok absent-ok
+                        'bounds-ok bounds-ok 'after-refusal-ok after-refusal-ok)
+           'fails fails)))

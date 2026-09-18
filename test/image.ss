@@ -687,4 +687,4 @@
                        (lambda (n) (tga-info SRC n)))
                "only 24- or 32-bit TGA pixels are supported"))
 
-(null? fails)
+(display (if (null? fails) #t fails))

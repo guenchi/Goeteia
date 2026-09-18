@@ -19,6 +19,7 @@
 // below is scoped to the section it belongs to.
 //
 
+import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
@@ -152,6 +153,36 @@ test('verify.md documents the spec-key whitelist and the 2d context', () => {
 // website checkout is absent the check announces itself and stands
 // down, so a missing sibling reads as "not run", never as "passed".
 const here = path.dirname(fileURLToPath(import.meta.url));
+// WHERE THE SERVED COPY COMES FROM, and why it is not only a path.
+//
+// The website is the `website` branch of THIS repository, so its copy of
+// a document is in the object store of every clone and every worktree.
+// Reading it from a sibling directory made the check depend on how the
+// machine happens to be laid out: scratch worktrees under a temporary
+// directory have no sibling, so the comparison stood down there -- and
+// a scratch worktree is where the verification runs happen.  The gate
+// was never exercised in the place the checking is actually done, and
+// docs/api.md drifted from the served copy twice before anyone noticed.
+//
+// So: ask git first, and fall back to the sibling checkout only when
+// git cannot answer (a shallow or single-branch clone with no
+// origin/website ref).  Either source is the same bytes; what changes
+// is that the first one is almost always available.
+function servedCopy(relPath) {
+    for (const ref of ['origin/website', 'website']) {
+        const r = spawnSync('git', ['show', ref + ':' + relPath],
+                            { cwd: path.join(here, '..'), encoding: 'buffer', timeout: 30000 });
+        if (r.status === 0 && r.stdout && r.stdout.length > 0) {
+            return { bytes: r.stdout, from: 'git ' + ref };
+        }
+    }
+    const sibling = path.join(here, '..', '..', 'goeteia-ws', relPath);
+    if (fs.existsSync(sibling)) {
+        return { bytes: fs.readFileSync(sibling), from: sibling };
+    }
+    return null;
+}
+
 const manualPath = path.join(here, '..', '..', 'goeteia-ws', 'docs', 'manual.md');
 // The website serves its own copy of the API index -- api.js fetches
 // docs/api.md from the website root at run time -- so the copy is what
@@ -162,17 +193,22 @@ const manualPath = path.join(here, '..', '..', 'goeteia-ws', 'docs', 'manual.md'
 // A generated file with a second home needs a check that they are the
 // same file, or the second home is a fork nobody declared.
 const apiHere = path.join(here, '..', 'docs', 'api.md');
-const apiThere = path.join(here, '..', '..', 'goeteia-ws', 'docs', 'api.md');
-if (!fs.existsSync(apiThere)) {
-    console.log('NOT EXERCISED HERE (the website checkout ../goeteia-ws/docs/api.md is not beside this tree; clone the website branch there to check that the served copy of the API index matches this one)');
-} else {
-    // A stand-down prints a line; running prints nothing, so a log with
-    // neither says "the check ran" only by absence -- and absence is what
-    // a silently skipped check looks like too.  Say it positively.
-    console.log('EXERCISED HERE: the website copy of the API index is beside this tree and is compared');
+{
+    // THE STAND-DOWN NOW REACHES THE VERDICT.  It used to print a line
+    // and let the cell answer ok, so the line that gets counted and
+    // compared between runs was identical whether the comparison
+    // happened or not -- honest in the prose, silent in the verdict,
+    // and the verdict is the part read at scale.  Every full-suite log
+    // this week said `ok test/docs.mjs` while printing NOT EXERCISED
+    // above it.  A cell that cannot do its work must not answer ok.
+    const served = servedCopy('docs/api.md');
     test('the website serves the same API index this tree generates', () => {
+        assert.ok(served, 'no served copy of docs/api.md could be read: '
+            + 'git show origin/website:docs/api.md failed and ../goeteia-ws is not beside this tree. '
+            + 'Fetch the website branch, or clone it beside this one; this check cannot stand down silently.');
+        console.log('EXERCISED HERE: the served API index was read from ' + served.from);
         const a = fs.readFileSync(apiHere);
-        const b = fs.readFileSync(apiThere);
+        const b = served.bytes;
         if (!a.equals(b)) {
             const al = a.toString('utf8').split('\n');
             const bl = b.toString('utf8').split('\n');
@@ -185,10 +221,14 @@ if (!fs.existsSync(apiThere)) {
     });
 }
 
-if (!fs.existsSync(manualPath)) {
-    console.log('NOT EXERCISED HERE (the website checkout ../goeteia-ws/docs/manual.md is not beside this tree; clone the website branch there to run the manual checks)');
-} else {
-    const manual = fs.readFileSync(manualPath, 'utf8');
+{
+    const servedManual = servedCopy('docs/manual.md');
+    test('the manual is available to check against', () => {
+        assert.ok(servedManual, 'no served copy of docs/manual.md could be read: '
+            + 'git show origin/website:docs/manual.md failed and ../goeteia-ws is not beside this tree.');
+        console.log('EXERCISED HERE: the manual was read from ' + servedManual.from);
+    });
+    const manual = servedManual ? servedManual.bytes.toString('utf8') : '';
     const libRoot = path.join(here, '..', 'lib');
     test('every library the manual names is a file under lib/', () => {
         const seen = new Map();

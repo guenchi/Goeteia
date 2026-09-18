@@ -114,4 +114,4 @@
   (want "and live? and done? stay exclusive"
         (and (window-live? w) (window-done? w)) #f))
 
-(if (null? fails) #t fails)
+(display (if (null? fails) #t fails))

@@ -243,4 +243,4 @@
                  (#t (display "  RAISED a non-condition") (newline) #f))
          (run))))
 
-(if assets-ok (and ran (null? fails)) #t)
+(display (if assets-ok (if (and ran (null? fails)) #t (list 'ran ran 'fails fails)) #t))

@@ -55,4 +55,4 @@
 (put! 536870912)
 (want 'the-wrapped-value-is-a-fixnum (fixnum? (%mem-i32-ref base)) #t)
 (want 'the-byte-value-is-not (fixnum? (bytes-back)) #f)
-(if (null? fails) #t fails)
+(display (if (null? fails) #t fails))

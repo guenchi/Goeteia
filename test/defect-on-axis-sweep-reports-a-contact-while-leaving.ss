@@ -43,4 +43,4 @@
 (let ((hit (obstacle-sweep world '#(-3.0 1.0 0.0) '#(3.0 1.0 0.0) 0.1)))
   (want "arriving from outside is still a contact" (and hit #t) #t))
 
-(if (null? fails) #t fails)
+(display (if (null? fails) #t fails))

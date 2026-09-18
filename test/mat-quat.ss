@@ -284,5 +284,12 @@
                (let ((e (q-slerp a b 1.0)))
                  (or (qnear? e b eps-9) (qnear? e (q-neg b) eps-9))))))))
 
-(and dot-ok normalize-ok noncommuting-ok mul-ok conj-ok neg-ok
-     slerp-dot-ok (null? fails))
+(display
+ (if (and dot-ok normalize-ok noncommuting-ok mul-ok conj-ok neg-ok
+          slerp-dot-ok (null? fails))
+     #t
+     (list 'flags (list 'dot-ok dot-ok 'normalize-ok normalize-ok
+                        'noncommuting-ok noncommuting-ok 'mul-ok mul-ok
+                        'conj-ok conj-ok 'neg-ok neg-ok
+                        'slerp-dot-ok slerp-dot-ok)
+           'fails fails)))

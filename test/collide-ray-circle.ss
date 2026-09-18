@@ -66,4 +66,4 @@
 (want "and is missed when the ray does not pass through it"
       (ray-circle -4.0 0.5 1.0 0.0 0.0 0.0 0.0) #f)
 
-(if (null? fails) #t fails)
+(display (if (null? fails) #t fails))

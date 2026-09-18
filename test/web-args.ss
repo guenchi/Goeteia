@@ -42,4 +42,7 @@
    (chk "a non-integer index names args-ref"
         (eq? (raised-who (lambda () (args-ref 'first))) 'args-ref))))
 
-(and empty-ok range-ok (null? fails))
+(display
+ (if (and empty-ok range-ok (null? fails))
+     #t
+     (list 'flags (list 'empty-ok empty-ok 'range-ok range-ok) 'fails fails)))

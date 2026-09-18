@@ -73,4 +73,4 @@
 (want "identity is the string the caller supplied"
       (obstacle-id (obstacle-box "some/long-identity" 'surface-a 0 1 0 1 1 1 0)) "some/long-identity")
 
-(if (null? fails) #t fails)
+(display (if (null? fails) #t fails))

@@ -84,4 +84,4 @@
   (inventory-weight b (lambda (k) (set! seen (cons k seen)) 1))
   (want "the weight table sees the key itself" seen '(stone)))
 
-(if (null? fails) #t fails)
+(display (if (null? fails) #t fails))

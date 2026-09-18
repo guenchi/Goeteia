@@ -97,4 +97,4 @@
 (want "one made with a payload is too" (ability? (make-ability 'a 0 1 'p)) #t)
 (want "a bare vector of the same width is not" (ability? (vector 1 2 3 4 5 6 7)) #f)
 
-(if (null? fails) #t fails)
+(display (if (null? fails) #t fails))

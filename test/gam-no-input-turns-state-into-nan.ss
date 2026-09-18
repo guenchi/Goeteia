@@ -191,4 +191,4 @@
   (want "recovery-loss! refuses NaN" (try (lambda () (recovery-loss! r +nan.0))) 'refused)
   (want "recovery-pending is not NaN" (nan? (recovery-pending r)) #f))
 
-(if (null? fails) #t fails)
+(display (if (null? fails) #t fails))
