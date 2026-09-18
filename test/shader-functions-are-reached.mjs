@@ -24,9 +24,27 @@
 // The criterion is transitive reachability, not a direct call, and that
 // distinction is not theoretical: safe_unit is reached only through
 // tangent_frame.  It is also "reached in at least one emitted set"
-// rather than in every set that defines it -- rot_axis is spliced into
-// the surface set, where nothing reaches it, and is reached in the mat
-// set.  Measured, both of them, before this was written.
+// rather than in every set that defines it, and that relaxation is
+// about what a call buys rather than about what the tree happens to
+// contain: once a signature has been disagreed with in one set, calling
+// it again in a second set buys nothing.
+//
+// As history, not as current status: rot_axis was the case that
+// prompted the relaxation -- spliced into the surface set with nothing
+// reaching it there, and reached in the mat set -- and a later change
+// gave it a call in both.  So the relaxation may have no live instance
+// on any given day.  That is not a reason to tighten it; it is a reason
+// to say so here instead of leaving a sentence that quietly stops being
+// true.
+//
+// AND KNOW WHAT THIS DOES NOT BUY.  A call site disagrees with a
+// parameter list's TYPES and its ARITY, and with nothing else.
+// Measured: declaring (float band, float depth) and calling f(0.25,
+// 0.80) compiles exactly as (float depth, float band) does, whatever
+// the argument values, while swapping a vec2 and a float is refused.
+// So transposing two same-typed parameters survives every check in this
+// file and every check in test/shader-compile.mjs.  That row is in the
+// latter too, so the boundary is a reading rather than a belief.
 //
 // TWO: IS IT NAMED LIKE ITS NEIGHBOURS?  Eleven of the eleven functions
 // this tree emits are snake_case.  A convention at 11/11 that nothing
@@ -50,8 +68,17 @@ const TYPE = '(?:float|vec2|vec3|vec4|mat2|mat3|mat4|bool|int|uint|void'
 // Split a shader's text into function name -> body, by brace matching.
 // A regex cannot do this part: a body contains braces, and the nesting
 // is what says where it ends.
+// GLSL allows overloading by parameter type, and a map keyed by name
+// cannot hold two of them: the second silently replaces the first, and
+// then "reached" can be true of a definition nothing calls because a
+// DIFFERENT definition of that name is called.  This walker does not
+// model overloads, so the duplicates are collected and reported rather
+// than quietly resolved -- a verdict it cannot justify is worse than no
+// verdict.  There are none in this tree today; the row exists so that
+// the day there is one, it is a red and not a wrong answer.
 function functionBodies(src) {
     const out = new Map();
+    const dupes = [];
     const head = new RegExp('\\b' + TYPE + '\\s+([A-Za-z_][A-Za-z0-9_]*)\\s*\\([^;{]*\\)\\s*\\{', 'g');
     let m;
     while ((m = head.exec(src)) !== null) {
@@ -61,8 +88,10 @@ function functionBodies(src) {
             if (src[i] === '{') depth++;
             else if (src[i] === '}' && --depth === 0) break;
         }
+        if (out.has(m[1])) dupes.push(m[1]);
         out.set(m[1], src.slice(open, i));
     }
+    out.$dupes = dupes;
     return out;
 }
 
@@ -90,6 +119,7 @@ function reachableFrom(bodies, entry) {
 const entries = emitAll().filter(e => !e.name.startsWith('control/'));
 const defined = new Map();
 const reached = new Set();
+const overloaded = [];
 for (const e of entries) {
     for (const src of [e.vs, e.fs]) {
         if (!src) continue;
@@ -104,6 +134,7 @@ for (const e of entries) {
             defined.get(n).push(e.name);
         }
         for (const n of reachableFrom(bodies, 'main')) reached.add(n);
+        for (const n of bodies.$dupes) overloaded.push(`${n} (in ${e.name})`);
     }
 }
 
@@ -117,6 +148,15 @@ test('the emitter produced functions to look at', () => {
     assert.ok(defined.size >= 10,
         `only ${defined.size} GLSL functions were found across ${entries.length} shaders; `
         + 'the parse is wrong, and every row below is green on an empty set');
+});
+
+test('no emitted shader defines one name twice', () => {
+    assert.deepStrictEqual(overloaded, [],
+        'these names are defined more than once in a single emitted shader.  '
+        + 'GLSL permits that and this walker cannot model it -- it keeps one '
+        + 'body per name, so the reachability answer below would be about '
+        + 'whichever definition came last, not about each of them:\n  '
+        + overloaded.join('\n  '));
 });
 
 test('every function this tree emits is reached from a main', () => {
@@ -168,4 +208,12 @@ test('CONTROL the analysis separates a reached function from a dead one', () => 
 
     assert.ok([...bodies.keys()].some(n => /[A-Z]/.test(n)),
         'the naming test does not notice an uppercase letter');
+
+    // The overload row's own control: two definitions of one name must
+    // be reported, or that row is green because nothing can reach it.
+    const twice = functionBodies(
+        'float pair(float x) { return x; }\nvec3 pair(vec3 x) { return x; }\n'
+        + 'void main() { gl_FragColor = vec4(pair(1.0)); }');
+    assert.deepStrictEqual(twice.$dupes, ['pair'],
+        'a name defined twice was not reported, so the overload row cannot fail');
 });
