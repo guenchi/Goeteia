@@ -16,7 +16,19 @@ cd "$(dirname "$0")"
 T=$(mktemp -d "${TMPDIR:-/tmp}/goeteia-self.XXXXXX") || exit 1
 trap 'rm -rf "$T"' EXIT INT TERM
 
-cat src/compiler.ss src/js-backend.ss src/wasm-driver.ss > "$T/self-src.ss"
+# The self-source is compiled AS A PROGRAM, and a program begins with an
+# import form -- the three files are library sources and carry no clause
+# of their own, so without this the compiler refuses to compile itself
+# the moment the empty-map rule is on.
+#
+# d0aef3e turned that rule on and gave this line to rebuild.sh.  It did
+# not give it here, and nothing noticed, because this script is not part
+# of any suite: it is run by hand.  For the fifty-six commits since, the
+# snapshot was republished eleven times and the cross-host check against
+# Chez -- the stronger of the two, which rebuild.sh's own comment points
+# at -- ran none of them.  A correction applied to one of two files that
+# needed it is the shape this whole batch has been about.
+{ echo '(import (rnrs))'; cat src/compiler.ss src/js-backend.ss src/wasm-driver.ss; } > "$T/self-src.ss"
 
 # stage1 is built into the temporary directory, NOT over the checked-in
 # snapshot.  Writing it in place first meant that a stage2 failure, or a

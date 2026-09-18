@@ -44,19 +44,48 @@
 // pointer that led somewhere not answering it, which this would never
 // have said a word about.  Do not strengthen this into something that
 // tries; add a reading to the round instead.
+import { spawnSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import assert from 'node:assert';
 
 const root = new URL('..', import.meta.url).pathname;
-const manualPath = join(root, '..', 'goeteia-ws', 'docs', 'manual.md');
+// THE SECOND ENTRY POINT.  test/docs.mjs had this exact shape -- look
+// for a sibling checkout, print a line when it is absent, and let the
+// cell answer ok either way -- and it was repaired in 7c3ca9a by asking
+// git instead of the filesystem.  This one was not, and the run that
+// proved the repair worked is what printed the remaining stand-down:
+// one gate said it had read the manual from git origin/website and the
+// other, three lines later, said the manual was not beside this tree.
+//
+// The website is the website branch of THIS repository, so every clone
+// and every worktree has its copy in the object store.  The sibling
+// checkout stays as a fallback; when neither can be read the cell FAILS
+// and names both sources it tried, because a check that cannot do its
+// work must not be able to answer ok.
+function servedManual() {
+    for (const ref of ['origin/website', 'website']) {
+        const r = spawnSync('git', ['show', ref + ':docs/manual.md'],
+                            { cwd: root, encoding: 'utf8', timeout: 30000 });
+        if (r.status === 0 && r.stdout && r.stdout.length > 0) {
+            return { text: r.stdout, from: 'git ' + ref };
+        }
+    }
+    const sibling = join(root, '..', 'goeteia-ws', 'docs', 'manual.md');
+    if (existsSync(sibling)) return { text: readFileSync(sibling, 'utf8'), from: sibling };
+    return null;
+}
 
-if (!existsSync(manualPath)) {
-    console.log('NOT EXERCISED HERE (the website checkout ../goeteia-ws/docs/manual.md is not beside this tree; clone the website branch there to check the manual against the long forms)');
-} else {
-    console.log('EXERCISED HERE: the manual is beside this tree and its long-form pointers are followed');
-    const lines = readFileSync(manualPath, 'utf8').split('\n');
+{
+    const served = servedManual();
+    test('the manual is available to check the long forms against', () => {
+        assert.ok(served, 'no served copy of docs/manual.md could be read: '
+            + 'git show origin/website:docs/manual.md failed and ../goeteia-ws is not beside this tree. '
+            + 'Fetch the website branch, or clone it beside this one; this check cannot stand down silently.');
+        console.log('EXERCISED HERE: the manual was read from ' + served.from);
+    });
+    const lines = (served ? served.text : '').split('\n');
     // chapters are ##, sections are ###, and a library section titles
     // itself with the library name in backticks
     // A pointer belongs to the SECTION that writes it, not to the

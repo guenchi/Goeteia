@@ -221,15 +221,6 @@ run_js() { # jsfile testfile
 # position rather than refusing to run, which is the same discipline as
 # printing the digest when nothing moved: it turns "I thought I was
 # measuring current" into a line someone can check afterwards.
-if git rev-parse --git-dir >/dev/null 2>&1; then
-    head_id=$(git rev-parse --short HEAD 2>/dev/null)
-    behind=$(git rev-list --count "HEAD..master" 2>/dev/null || echo '?')
-    if [ "$behind" = "0" ]; then
-        echo "measuring $head_id (level with master)"
-    else
-        echo "measuring $head_id -- BEHIND master by $behind commit(s); this run does not describe master"
-    fi
-fi
 
 # The digest covers THE SUBJECT as well as the instrument, and that
 # distinction cost a run to learn.  The first version hashed this script
@@ -277,6 +268,48 @@ else
 fi
 ss_at_start=$(ls test/*.ss 2>/dev/null | tr '\n' ' ')
 digest_at_start=$(digest_now)
+
+# WHICH TREE, and not only which commit.  This block used to sit above,
+# before the digest existed, and printed the commit alone.  git rev-list
+# reads COMMITTED HISTORY -- it has no access to a working tree at all --
+# so "measuring <head> (level with master)" answered how far this commit
+# is from master, a fact about history, while claiming to state which
+# version was measured, a fact about what got compiled.  Two different
+# objects, and the instrument was pointed at the one the claim was not
+# about.
+#
+# It was not carelessness: the intent above is checkability, and the line
+# IS checkable -- a reader can confirm the commit is level with master,
+# find it true, and be no closer to knowing what was compiled.  Both
+# sessions hit it the same day, and the worse case was a run that existed
+# to measure one modified file whose header named the commit that does
+# not contain it.
+#
+# The digest is the part that identifies the tree, and it was already
+# computed here and printed only at the end.  It goes in the header too,
+# so the first line and the last line name the same thing.
+#
+# The counts print EVEN WHEN ZERO.  A printed zero is evidence the
+# question was asked; an absent line cannot be told from a run that never
+# looked, which is the failure this whole block is about.
+if git rev-parse --git-dir >/dev/null 2>&1; then
+    head_id=$(git rev-parse --short HEAD 2>/dev/null)
+    behind=$(git rev-list --count "HEAD..master" 2>/dev/null || echo '?')
+    modified=$(git status --porcelain --untracked-files=no 2>/dev/null | wc -l | tr -d ' ')
+    untracked=$(git status --porcelain --untracked-files=all 2>/dev/null | grep -c '^??' || true)
+    if [ "$behind" = "0" ]; then
+        echo "measuring $head_id (level with master) + $modified modified, $untracked untracked -- tree digest $digest_at_start"
+    else
+        echo "measuring $head_id -- BEHIND master by $behind commit(s); this run does not describe master"
+        echo "  + $modified modified, $untracked untracked -- tree digest $digest_at_start"
+    fi
+    if [ "$modified" != "0" ]; then
+        echo "  the commit named above does NOT contain those $modified file(s); the digest does"
+        git status --porcelain --untracked-files=no 2>/dev/null | sed 's/^/    /'
+    fi
+else
+    echo "measuring an unversioned tree -- digest $digest_at_start"
+fi
 
 for t in ${GOETEIA_TESTS-test/*.ss}; do
     if [ ! -f "$t" ]; then
