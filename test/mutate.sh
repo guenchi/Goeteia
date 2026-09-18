@@ -112,7 +112,13 @@ else
 fi
 
 W=$(mktemp -d "${TMPDIR:-/tmp}/goeteia-mutate.XXXXXX")
-trap 'rm -rf "$W"; git -C "$REPO" worktree prune >/dev/null 2>&1 || true' EXIT INT TERM
+# A handler that does not exit RETURNS to where the signal arrived, so
+# listing INT and TERM beside EXIT removed this workspace and then let
+# the script carry on into it.  The signal traps only exit; the EXIT
+# trap they reach does the removing.
+trap 'rm -rf "$W"; git -C "$REPO" worktree prune >/dev/null 2>&1 || true' EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 git -C "$REPO" worktree add --detach "$W/t" HEAD >/dev/null 2>&1
 # the live tree's UNCOMMITTED state too: a mutation judged against HEAD
 # while the work sits uncommitted is judging a tree nobody has.

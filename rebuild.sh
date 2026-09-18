@@ -18,7 +18,13 @@ cd "$(dirname "$0")"
 # anything is written, so an interrupt cannot leave the directory
 # behind.
 T=$(mktemp -d "${TMPDIR:-/tmp}/goeteia-rebuild.XXXXXX") || exit 1
-trap 'rm -rf "$T"' EXIT INT TERM
+# A handler that does not exit RETURNS to where the signal arrived, so
+# listing INT and TERM beside EXIT removed this workspace and then let
+# the script carry on into it.  The signal traps only exit; the EXIT
+# trap they reach does the removing.
+trap 'rm -rf "$T"' EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 # The self-source is compiled AS A PROGRAM, and a program begins with
 # an import form -- the three files are library sources and carry no

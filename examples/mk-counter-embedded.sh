@@ -47,7 +47,14 @@ OUTDIR=$(dirname "$OUT")
 # its own.
 T=$(mktemp -d "${TMPDIR:-/tmp}/goeteia-counter-page.XXXXXX") || exit 1
 STAGED="$OUTDIR/.counter-embedded.html.new.$$"
+# EXIT alone is not a cleanup guarantee.  Measured on this machine: an
+# uncaught TERM runs the EXIT trap under bash but NOT under dash or zsh,
+# and /bin/sh is dash on most Linux systems -- so the leak is invisible
+# here by construction.  Catching the signals and exiting makes the EXIT
+# trap reachable on all three.
 trap 'rm -rf "$T"; rm -f "$STAGED"' EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 ./bin/goeteiac examples/counter-page.ss "$T/counter-page.wasm"
 node rt/run.mjs "$T/counter-page.wasm" > "$T/counter-embedded.html"
