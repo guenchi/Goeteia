@@ -16,7 +16,30 @@ fail=0
 # that the evidence from a colliding run is worthless in BOTH
 # directions.
 T=$(mktemp -d "${TMPDIR:-/tmp}/goeteia-tests.XXXXXX") || exit 1
-trap 'rm -rf "$T"' EXIT INT TERM
+# CLEANUP ON EXIT, AND EXIT ON A SIGNAL -- two traps and not one, because
+# one was measured doing something worse than not cleaning up.
+#
+# `trap 'rm -rf "$T"' EXIT INT TERM` runs the handler on TERM and then
+# LETS THE SCRIPT CONTINUE: a handler that does not exit returns to where
+# the signal arrived.  So the whole artifact directory was removed while
+# the run kept going, and every remaining cell failed trying to write
+# into it.  Measured, in this tree, on two runs stopped on 2026-09-18:
+#
+#   FAIL test/import-specs.ss (stage0 compile error)
+#   Exception in open-file-output-port: ... /goeteia-tests.7KlYFA/test.wasm:
+#     no such file or directory
+#
+# One of those logs reports 12 failures of which 6 are real.  That is the
+# expensive part: an interrupted run does not merely stop, it MANUFACTURES
+# failures that name real test files, and a reader who counts them gets a
+# number that is wrong in the direction of alarm.
+#
+# So the signal traps only exit, and the EXIT trap -- which they reach --
+# does the removing.  128+signo is the conventional status for dying of a
+# signal, and it keeps "stopped" distinguishable from any cell's verdict.
+trap 'rm -rf "$T"' EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 # enable JSPI (js-await suspension) when this node accepts the flag
 JSPI=""
 if ${NODE-node} --experimental-wasm-jspi -e 1 >/dev/null 2>&1; then
@@ -512,6 +535,12 @@ DOCS_OUT="$T/docs-mjs.out"
 # through run_mjs and not beside the browser checks below precisely
 # because it must not stand down with them.
 run_mjs test/shader-functions-are-reached.mjs
+# The harness measuring itself, which is unusual enough to say why: it
+# does NOT run the suite, it lifts run-tests.sh's own trap lines into a
+# small script and signals that.  An interrupted run used to delete its
+# artifact directory and keep going, manufacturing failures that named
+# real test files.
+run_mjs test/suite-stops-when-signalled.mjs
 # The only check here that leaves the machine.  It stands down loudly
 # when no browser is present rather than failing, because a suite that
 # cannot run without Chrome is a suite people stop running; but on a
