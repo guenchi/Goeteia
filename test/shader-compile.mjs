@@ -113,6 +113,54 @@ test('the shader a real compiler must refuse is refused', () => {
         assert.match(String(r.vertex?.log ?? ''), /\S/, 'it was refused without saying why');
     });
 
+    // WHERE THIS GATE'S REACH ENDS, as a reading rather than as a
+    // belief.  test/shader-functions-are-reached.mjs asks whether every
+    // emitted function is called by a main, and the reason first given
+    // for that -- repeated from a comment in tools/shader-emit.ss --
+    // was that an uncalled function is dead code a driver discards
+    // before reading its body.  This row is that claim, measured: with
+    // nothing calling the function, four separate errors in its body
+    // are all refused.  Bodies are checked whether or not they are
+    // reached, so the other cell's value is the narrower one it now
+    // states -- the SIGNATURE, which only a call site can disagree
+    // with.
+    //
+    // It is here and not there because it needs this file's browser,
+    // and it is a row rather than a note because a reason that stops
+    // being true should turn something red.
+    test('an uncalled function body is compiled anyway', async () => {
+        const vs = PAIR.es100.vs;
+        const wrap = body => `precision mediump float;\n${body}\n`
+            + 'void main(){ gl_FragColor = vec4(1.0); }';
+        const bad = {
+            'undefined function': 'float unused(float x){ return nosuchfn(x); }',
+            'undeclared identifier': 'float unused(float x){ return x + undeclared_thing; }',
+            'dimension mismatch': 'float unused(float x){ vec3 v = x; return v; }',
+            'int from float literal': 'void unused(){ int n = 1.0; }',
+        };
+        const got = await withBrowser(async page => {
+            const out = {};
+            // The control comes first: an uncalled function with nothing
+            // wrong must COMPILE, or every refusal below is about
+            // something other than what is in the body.
+            out.control = await checkShader(page, vs, wrap('float unused(float x){ return x*2.0; }'));
+            for (const [k, src] of Object.entries(bad))
+                out[k] = await checkShader(page, vs, wrap(src));
+            return out;
+        }, { timeoutMs: 120000 });
+
+        assert.ok(got.control.fragment?.ok,
+            'an uncalled function with nothing wrong in it was refused, so the '
+            + 'refusals below say nothing about their bodies: '
+            + String(got.control.fragment?.log || '').split('\n')[0]);
+        const accepted = Object.keys(bad).filter(k => got[k].fragment?.ok);
+        assert.deepStrictEqual(accepted, [],
+            'these errors were NOT caught in a function nobody calls, so an '
+            + 'unreached function here really is unchecked and '
+            + 'test/shader-functions-are-reached.mjs understates what it is '
+            + 'for:\n  ' + accepted.join('\n  '));
+    });
+
     test('every shader the libraries hand out compiles and links', () => {
         const bad = results
             .filter(([e]) => !e.name.startsWith('control/'))

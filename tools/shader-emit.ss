@@ -45,10 +45,21 @@
 
 ;; A function set is not a program, so a real compiler cannot read one
 ;; on its own.  Wrapping it in the smallest program that CALLS every
-;; function is stronger than compiling the text would have been: the
-;; call sites make the compiler check the signatures, and a function
-;; nobody calls is dead code a driver is free to discard before it ever
-;; looks at the body.
+;; function is stronger than compiling the text would have been,
+;; because the call sites make the compiler check the SIGNATURES.
+;;
+;; This comment used to add "and a function nobody calls is dead code a
+;; driver is free to discard before it ever looks at the body", and that
+;; half was wrong.  Measured against the compiler this tree actually
+;; uses, with nothing calling the function: a call to an undefined
+;; function, a reference to an undeclared identifier, a dimension
+;; mismatch, and an int declared from a float literal were all four
+;; refused, each with a line number.  A body is checked whether or not
+;; it is reached.
+;;
+;; So what a call site buys is precise, and it is the part no other
+;; check here covers: a parameter list nothing calls is a parameter list
+;; nothing has ever disagreed with.
 ;; The dialect is a parameter because derivatives are not in every
 ;; one: dFdx and dFdy are core in ES 3.00 and need
 ;; GL_OES_standard_derivatives in ES 1.00, and a set that uses them

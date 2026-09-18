@@ -1,17 +1,25 @@
 // Two questions about the GLSL this tree emits that no browser is
 // needed to answer, and that nothing asked until now.
 //
-// ONE: IS THE FUNCTION ACTUALLY COMPILED?  tools/shader-emit.ss says it
-// itself, in a comment older than this cell: "a function nobody calls is
-// dead code a driver is free to discard before it ever looks at the
-// body."  That is why emit-functions! takes a call expression and wraps
-// the function list in the smallest main that calls them.  But the call
-// expression is written by hand, and nothing compared it against the
-// list it is supposed to reach.  So a library can add a function, be
-// registered in the emitter, and pass test/shader-compile.mjs with its
-// body never read: registration makes the TEXT reach a compiler, and
-// only a call makes the compiler READ it.  Those are different claims
-// and the green looks the same.
+// ONE: HAS ANYTHING EVER DISAGREED WITH THE SIGNATURE?  emit-functions!
+// in tools/shader-emit.ss wraps a function list in the smallest main
+// that calls every function, and the call expression is written by hand
+// with nothing comparing it against the list it is meant to reach.
+//
+// BE PRECISE ABOUT WHAT THAT COSTS, because the reason first written
+// here was the one that file's own comment gave -- that an uncalled
+// function is dead code a driver discards before reading its body --
+// and it is FALSE.  Measured against the compiler this tree uses, with
+// nothing calling the function: an undefined function, an undeclared
+// identifier, a dimension mismatch, and an int declared from a float
+// literal were all four refused.  That reading is now a row in
+// test/shader-compile.mjs so it cannot quietly stop being true.
+//
+// So bodies are checked either way, and what a call buys is the
+// SIGNATURE: a parameter list nothing calls is a parameter list nothing
+// has ever disagreed with.  Transcribe a vec2 parameter as a vec3 and
+// every other check here stays green.  That is a narrower claim than
+// the one this cell was written under, and it is the true one.
 //
 // The criterion is transitive reachability, not a direct call, and that
 // distinction is not theoretical: safe_unit is reached only through
@@ -115,10 +123,11 @@ test('every function this tree emits is reached from a main', () => {
     const dead = [...defined].filter(([n]) => !reached.has(n))
         .map(([n, where]) => `${n} (emitted in ${where.join(', ')})`);
     assert.deepStrictEqual(dead, [],
-        'these functions are emitted but no main reaches them, so a driver may '
-        + 'discard them before reading their bodies and a real GLSL compiler '
-        + 'never checks them.  Extend the call expression in '
-        + 'tools/shader-emit.ss that emit-functions! is given:\n  ' + dead.join('\n  '));
+        'these functions are emitted but no main reaches them, so nothing has '
+        + 'ever checked their signatures against a call -- their bodies are '
+        + 'compiled, their parameter lists are not.  Extend the call '
+        + 'expression in tools/shader-emit.ss that emit-functions! is '
+        + 'given:\n  ' + dead.join('\n  '));
 });
 
 test('every function this tree emits is snake_case', () => {
