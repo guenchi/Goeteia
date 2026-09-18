@@ -1,4 +1,9 @@
-;; expect: 536870911.0|536870912.0|536870913.0|1000000000000.0|1700000000000.0|9007199254740992.0|-1700000000000.0|-536870913.0|<big-flonum>|-<big-flonum>|+nan.0|0.5|1.0|536870911.5|0.25|100.0|-0.5|0.0
+;; expect: 536870911.0|536870912.0|536870913.0|1000000000000.0|1700000000000.0|9007199254740992.0|-1700000000000.0|-536870913.0|+inf.0|-inf.0|+nan.0|0.5|1.0|536870911.5|0.25|100.0|-0.5|0.0
+;; The infinities used to print "<big-flonum>" here too, by the same
+;; fall-through and with the same consequence; they now print +inf.0 and
+;; -inf.0, which are their external representations and which
+;; string->number reads back.
+;;
 ;; The printer's integer part used to go through %fl->fx, which is an
 ;; i31 fixnum and stops at 2^29-1 = 536870911.  Past that it printed the
 ;; placeholder "<big-flonum>" -- and returned successfully, so a caller

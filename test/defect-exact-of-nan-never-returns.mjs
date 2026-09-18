@@ -161,18 +161,21 @@ for (const [name, expr, want] of green) {
 // equivalent may raise &implementation-restriction.  A trap is not a
 // condition, so what the tree does today is not one of the standard's
 // options.
-// The irritant text is MEASURED, not guessed, and it is not what a
-// reader expects: this runtime renders an infinity as <big-flonum>
-// rather than as +inf.0, so the message names the sign and not the
-// value.  That is a separate gap with its own cell -- see
-// test/defect-nonfinite-numbers-do-not-survive-text.mjs -- and the
-// expectation here records what the message says today rather than
-// what it ought to say, because this cell is about raising versus
-// trapping and would otherwise fail for an unrelated reason.
+// The irritant text is MEASURED, not guessed.  It used to read
+// <big-flonum>, because this runtime rendered an infinity as a
+// placeholder rather than as +inf.0 -- so the condition named the SIGN
+// and not the value, and this cell pinned that spelling with a note
+// saying it recorded what the message said rather than what it should.
+//
+// The writer was repaired in the same batch as this line moved, so the
+// irritant now names the value.  Keeping the note would have been worse
+// than deleting it: a comment that says "this is wrong but pinned
+// anyway" goes stale the moment it is right, and then it argues against
+// a repair that has already happened.
 for (const [expr, irritant] of [
-    ['(exact +inf.0)', '<big-flonum>'],
-    ['(exact -inf.0)', '-<big-flonum>'],
-    ['(inexact->exact +inf.0)', '<big-flonum>'],
+    ['(exact +inf.0)', '+inf.0'],
+    ['(exact -inf.0)', '-inf.0'],
+    ['(inexact->exact +inf.0)', '+inf.0'],
 ]) {
     test('it raises rather than traps: ' + expr, () => {
         const r = evaluate(expr);

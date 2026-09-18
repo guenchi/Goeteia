@@ -8,9 +8,9 @@
 ;; number as its exact numeral, a symbol by name, and REFUSED when
 ;; the reader raises.  Bytes rather than printed text, because
 ;; comparing printed forms compares two printers: this
-;; implementation spells an infinity "<big-flonum>" by a recorded
-;; decision, and a text comparison once called that a reader
-;; disagreement when only the spelling differed.
+;; implementation once spelled an infinity "<big-flonum>", and a text
+;; comparison called that a reader disagreement when only the spelling
+;; differed.  It spells them +inf.0 and -inf.0 now.
 ;;
 ;; The rows are a CROSS PRODUCT of radix prefixes, exactness
 ;; prefixes, signs and bodies -- not a hand-written list.  The

@@ -1,4 +1,4 @@
-;; expect: trig 357c/c6b3 m4scalar 7c8c/267a m4simd baef/73e9 slerp 7d6d/512d gltf 1481/d453 intbits 4631/adbf fltext ce93/dbbc numlit bccc/537b edge 0478/553a bigfl 3e32/924a
+;; expect: trig 357c/c6b3 m4scalar 7c8c/267a m4simd baef/73e9 slerp 7d6d/512d gltf 1481/d453 intbits 4631/adbf fltext 3c41/0f57 numlit bccc/537b edge 0478/553a bigfl 3e32/924a
 ;; Copyright 2026 guenchi
 ;;
 ;; Licensed under the Apache License, Version 2.0 (the "License");
@@ -47,6 +47,16 @@
 ;;
 ;; Changing this line is a deliberate act.  Regenerate it only when you
 ;; can say which computation changed and why.
+;;
+;; fltext moved from ce93/dbbc to 3c41/0f57 when the printer stopped
+;; writing an infinity as "<big-flonum>" and started writing +inf.0 and
+;; -inf.0, the external representations string->number reads back.
+;; MEASURED rather than assumed: the verbose output is 13377 lines and
+;; exactly TWO of them differ, the two infinity lines; every other
+;; section's digest is unchanged.  The byte count moved 20754 -> 20741,
+;; which is -13, and that is the arithmetic of the two spellings
+;; shortening by 6 and by 7 -- a second reading that agrees with the
+;; first by a different route.
 ;;
 (import (rnrs) (web js) (gfx gl) (gfx fx) (gfx mat) (gfx gltf))
 

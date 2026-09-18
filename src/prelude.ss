@@ -123,11 +123,25 @@
          (mag (if neg (fl- zero x) x)))
     (when neg ($wb 45))
     (cond
-     ;; Infinity has no digits, and keeps the placeholder it has always
-     ;; had.  It is recognised by being its own double: nothing finite
-     ;; and non-zero satisfies that.
+     ;; Infinity has no digits, so it is spelled rather than computed.
+     ;; It is recognised by being its own double: nothing finite and
+     ;; non-zero satisfies that.
+     ;;
+     ;; +inf.0 and -inf.0 are the external representations, and they are
+     ;; what string->number reads back -- so an infinity now survives the
+     ;; round trip that every other flonum here already survived.  It
+     ;; used to print "<big-flonum>", which is not a number, not a
+     ;; symbol, and not readable as anything: the clause below recounts
+     ;; what that cost when a millisecond timestamp carried it out of
+     ;; (web json) with nothing raised anywhere.  That clause was
+     ;; repaired and this one was not, six lines apart, and the comment
+     ;; here called the placeholder continuity rather than the same
+     ;; defect.
+     ;;
+     ;; The sign is already out for a negative -- $wb 45 above -- so only
+     ;; the positive spelling carries its own +.
      ((and (not (fl=? mag zero)) (fl=? mag (fl* mag (fixnum->flonum 2))))
-      (%display-string "<big-flonum>" 0))
+      (%display-string (if neg "inf.0" "+inf.0") 0))
      ;; Zero has no significant digits to find, and the search below
      ;; would not terminate looking for them: $dec-exponent walks
      ;; powers of ten toward a value it can never reach.  The sign was
@@ -870,12 +884,33 @@
    ((and (pair? bs) (null? (cdr bs)) (= (car bs) 46))
     (errorf 'read (string-append "a lone . is not a datum at "
                                  (%at-line $reader-line $reader-column))))
+   ((%bytes->number bs) => (lambda (v) v))
+   ;; Number-shaped and denoting no number.  Refused by name rather than
+   ;; allowed to become a symbol: the reader answered an error here
+   ;; before this file grew a second caller, and a token silently
+   ;; turning into the symbol 1/0 would be a change nobody asked for.
+   ((%denominator-zero-token? bs) (%denominator-zero-error))
+   (else (string->symbol (%bytes->string bs)))))
+
+;; WHAT IS A NUMBER, once.  %finish-atom had these five clauses and
+;; string->number had two of them, so the public procedure was a proper
+;; subset of the reader: ratios, complexes and the non-finite spellings
+;; read from source and answered #f from text.  The face is stated here
+;; and both callers reach it -- the discipline %body->number already
+;; keeps for the four radices, which is why writing a second recogniser
+;; inside string->number would have been the wrong repair for a defect
+;; that IS a second recogniser.
+;;
+;; -> a number, or #f.  What #f MEANS is the caller's to say: the reader
+;; asks %denominator-zero-token? and refuses, string->number stops here.
+(define (%bytes->number bs)
+  (cond
    ((%special-number bs) => (lambda (v) v))
    ((%number-token? bs) (%parse-int bs))
    ((%decimal-token? bs) (%parse-decimal bs))
    ((%ratio-token? bs) (%parse-ratio bs))
    ((%complex-token? bs) (%parse-complex bs))
-   (else (string->symbol (%bytes->string bs)))))
+   (else #f)))
 (define (%split-at bs byte)
   ;; -> (before . after) at the first occurrence, or #f
   (let loop ((pre '()) (bs bs))
@@ -883,12 +918,45 @@
      ((null? bs) #f)
      ((= (car bs) byte) (cons (reverse pre) (cdr bs)))
      (else (loop (cons (car bs) pre) (cdr bs))))))
+;; A zero denominator is NOT a ratio token.  It has the shape and
+;; denotes nothing, so the recognisers answer no and each caller says
+;; what that means: string->number answers #f, and %finish-atom refuses
+;; it by name rather than letting it become a symbol.
 (define (%ratio-token? bs)
   (let ((halves (%split-at bs 47)))                ; /
     (and halves
          (%number-token? (car halves))
          (pair? (cdr halves))
-         (%all-digits? (cdr halves)))))
+         (%all-digits? (cdr halves))
+         (not (%all-zero-digits? (cdr halves))))))
+
+;; Ratio-shaped with a zero denominator: what %ratio-token? just
+;; refused, told apart from text that is not a numeral at all.
+;;
+;; A zero denominator has THREE positions, not one: the token itself,
+;; and either half of a complex numeral.  (read "1/0+2i") refused this
+;; before and must go on refusing it -- Chez does too -- so the test
+;; follows %complex-token? into the halves rather than stopping at the
+;; whole token.  It reuses %split-imag rather than restating how a
+;; complex numeral comes apart; that splitter already has two callers
+;; and this is the third.
+(define (%denominator-zero-token? bs)
+  (or (%zero-denominator-ratio? bs)
+      (let ((rev (reverse bs)))
+        (and (pair? rev)
+             (= (car rev) 105)                     ; trailing i
+             (let ((split (%split-imag (reverse (cdr rev)))))
+               (and split
+                    (or (%zero-denominator-ratio? (car split))
+                        (%zero-denominator-ratio? (cdr split)))))))))
+
+(define (%zero-denominator-ratio? bs)
+  (let ((halves (%split-at bs 47)))
+    (and halves
+         (%number-token? (car halves))
+         (pair? (cdr halves))
+         (%all-digits? (cdr halves))
+         (%all-zero-digits? (cdr halves)))))
 (define (%parse-ratio bs)
   (let ((halves (%split-at bs 47)))
     ($make-rat (%parse-int (car halves))
@@ -968,7 +1036,7 @@
   ;; inexact, so the two cannot describe different grammars: a number
   ;; face stated twice is a number face that will be edited once.
   (let ((r (%body->number bs 10)))
-    (and r (cadr r) (%apply-exactness r 'inexact))))
+    (and (%number-body? r) (cadr r) (%apply-exactness r 'inexact))))
 
 ;; ---- the number body, in any radix -------------------------------
 ;; A body is  sign? ( digits / digits | digits? . digits? exp? ) and
@@ -1000,7 +1068,34 @@
         (loop (cdr bs) (+ (* v radix) (%digit-val (car bs) radix)) (+ n 1))
         (list v n bs))))
 
-(define (%body->number bs radix)        ; -> (magnitude inexact? neg) or #f
+;; %body->number answers one of THREE things, and this is the third.
+;; A ratio whose denominator is zero has the shape of a number and
+;; denotes none, and the two callers disagree about what to do with it:
+;; the reader refuses it, string->number answers #f.  So the parser
+;; reports WHAT IT FOUND and each caller states its own policy -- a
+;; policy argument here would be the parser asking who called it.
+;;
+;; A fresh pair rather than a symbol: a symbol can be written down, and
+;; a magnitude that happened to be one would collide with it.  This
+;; value never leaves the file.
+(define %denominator-zero (list 'denominator-zero))
+
+;; The only way to ask whether an answer carries fields.  Every reader
+;; of car/cadr/caddr below goes through this first, so "indexed into
+;; the marker" is not a mistake that can be written here.
+(define (%number-body? r)
+  (and (pair? r) (not (eq? r %denominator-zero))))
+
+;; All digits and all of them zero -- a byte scan, NOT a parse.  A token
+;; predicate that answers by running the parser is how an error inside
+;; the parser escapes through a question that was only yes or no.
+(define (%all-zero-digits? bs)
+  (and (pair? bs)
+       (let loop ((bs bs))
+         (or (null? bs)
+             (and (= (car bs) 48) (loop (cdr bs)))))))
+
+(define (%body->number bs radix)  ; -> (magnitude inexact? neg) | #f | %denominator-zero
   (and
    (pair? bs)
    (let* ((neg (= (car bs) 45))
@@ -1020,13 +1115,17 @@
                   ;; deferred past the exactness prefix plus a separate
                   ;; 0/0-is-NaN case: a second shape in the parser for
                   ;; a spelling nobody writes.
-                  (when (= den-v 0)
-                    (errorf 'read
-                            (string-append
-                             "division by zero in a numeral -- write "
-                             "+inf.0, -inf.0 or +nan.0 at "
-                             (%at-line $reader-line $reader-column))))
-                  (list ($make-rat int-v den-v) #f neg)))))
+                  ;;
+                  ;; Reported rather than raised.  It used to raise from
+                  ;; here, and the raise travelled through
+                  ;; %decimal-token? -- a predicate whose whole body is
+                  ;; (if (%decimal->flonum bs) #t #f) -- so a caller that
+                  ;; had only asked "is this a number" was handed a
+                  ;; reader error, complete with a line and column it had
+                  ;; never read.
+                  (if (= den-v 0)
+                      %denominator-zero
+                      (list ($make-rat int-v den-v) #f neg))))))
         ;; a decimal point, an exponent, or neither
         (else
          (let* ((dotted (and (pair? rest) (= (car rest) 46)))
@@ -1085,6 +1184,8 @@
 ;; Turn (magnitude inexact? neg) into the number, under an exactness
 ;; that is 'exact, 'inexact, or #f for "whatever the spelling said".
 (define (%apply-exactness r want)
+  (unless (%number-body? r)
+    (errorf '%apply-exactness "not a number body" r))
   (let* ((mag (car r)) (neg (caddr r))
          (inexact? (if want (eq? want 'inexact) (cadr r))))
     (if inexact?
@@ -1128,9 +1229,10 @@
                                      (%at-line $reader-line $reader-column))))))
           (let* ((base (or radix 10))
                  (r (%body->number bs base)))
-            (if r
-                (%apply-exactness r exactness)
-                (%bad-prefixed bs base)))))))
+            (cond
+             ((eq? r %denominator-zero) (%denominator-zero-error))
+             (r (%apply-exactness r exactness))
+             (else (%bad-prefixed bs base))))))))
 
 ;; Say WHY, naming the byte and the base.  A reader that only reports
 ;; "that is not a number" sends the writer looking at the wrong end of
@@ -1141,6 +1243,17 @@
           (string-append "a number carries at most one " what
                          " prefix at "
                          (%at-line $reader-line $reader-column))))
+
+;; The reader's answer to a numeral that denotes no number.  Both
+;; reader legs -- the unprefixed one through %finish-atom and the
+;; prefixed one through %read-hash -- say it here, so the wording and
+;; the position are written once.
+(define (%denominator-zero-error)
+  (errorf 'read
+          (string-append
+           "division by zero in a numeral -- write "
+           "+inf.0, -inf.0 or +nan.0 at "
+           (%at-line $reader-line $reader-column))))
 
 (define (%bad-prefixed bs base)
   (let ((offender
@@ -1987,12 +2100,19 @@
 
 (define (number->string n)
   (with-output-to-string (lambda () (display n))))
+;; The same face the reader reads, and #f for everything else --
+;; including a numeral that denotes no number, which the reader refuses
+;; and this answers #f for, as R6RS requires and as the reference does.
+;;
+;; NOT the reader itself: %finish-atom falls back to string->symbol, and
+;; a procedure whose job is to answer #f cannot be built on one whose
+;; job is to answer a symbol.
+;;
+;; The `#` prefixes are still absent here, and wiring did not add them:
+;; they are read by %read-hash, one layer above the number body, so
+;; (string->number "#x10") is still #f where Chez answers 16.
 (define (string->number s)
-  (let ((bs (map (lambda (c) (char->integer c)) (string->list s))))
-    (cond
-     ((%number-token? bs) (%parse-int bs))
-     ((%decimal-token? bs) (%parse-decimal bs))
-     (else #f))))
+  (%bytes->number (map (lambda (c) (char->integer c)) (string->list s))))
 
 ;; gensyms: fresh uninterned symbol structs; identity comes from the
 ;; struct allocation, so even same-named gensyms are distinct

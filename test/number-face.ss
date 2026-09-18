@@ -11,9 +11,15 @@
 ;; eight bytes, an exact number by its exact numeral, a symbol by name.
 ;; An earlier version of this comparison used `display` and reported
 ;; +inf.0 as a disagreement -- the value was right and only the
-;; spelling differed, because this printer writes an infinity as
-;; "<big-flonum>" by a recorded decision.  The judge was wrong, not the
-;; two rows; the fix was to change the judge rather than to exempt them.
+;; spelling differed, because this printer wrote an infinity as
+;; "<big-flonum>".  The judge was wrong, not the two rows; the fix was
+;; to change the judge rather than to exempt them.
+;;
+;; The spelling has since been repaired and an infinity now prints as
+;; +inf.0.  The judge stays as it is: comparing values rather than text
+;; was right for a reason that had nothing to do with that defect, and
+;; a comparison that went back to `display` would break again the next
+;; time a spelling moves.
 (import (rnrs) (web fs) (gfx fx) (notrun))
 
 (define FIXTURE "test/number-face.tsv")

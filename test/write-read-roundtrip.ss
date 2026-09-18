@@ -60,12 +60,22 @@
 (not-exercised! "the printer truncates at twelve fractional digits, by a
 recorded decision -- docs/determinism.md says to use bit patterns for
 numeric goldens" "flonums needing more than twelve fractional digits")
-;; Infinities print as a token with no decimal expansion, on purpose.
-;; This one is not blocked on anything: it is a decision, and the token
-;; is deliberately not readable as a number.
-(not-exercised! "infinities print as <big-flonum>, a token rather than a
-numeral, by a recorded decision -- there is no decimal expansion to
-read back" "+inf.0 and -inf.0")
+;; Infinities print as +inf.0 and -inf.0, which ARE their numerals, and
+;; the reader takes both -- so these are cells rather than the exemption
+;; they used to be, by the same move NaN made one row down.
+;;
+;; The exemption's stated reason was that there is no decimal expansion
+;; to read back.  That was true of the PLACEHOLDER and never of the
+;; value: an infinity has an external representation, it just was not
+;; being written.  A reason that describes the workaround rather than
+;; the thing is how an exemption outlives what it was for.
+;;
+;; Built by arithmetic rather than written as a literal, like the NaN
+;; below: a literal here would be read by whichever reader parses this
+;; file, and the property under test is what THIS runtime's writer and
+;; reader do with each other.
+(trips? "flonum, positive infinity" (fl/ (fixnum->flonum 1) (fixnum->flonum 0)))
+(trips? "flonum, negative infinity" (fl/ (fixnum->flonum -1) (fixnum->flonum 0)))
 ;; NaN prints as "+nan.0", which IS its numeral, and the reader takes
 ;; that spelling now -- so this row is a cell rather than the exemption
 ;; it used to be.
