@@ -91,22 +91,112 @@
                                       (vec2 (fl 3) (fl 4)) (fl 1))
                         (dither_threshold gl_FragCoord.xy)
                         (fl 1)))
-(emit-functions! "surface" (append (mat-shader-functions)
-                                  (surface-shader-functions))
-                 '(vec4 (surface_normal (vec3 (fl 0) (fl 1) (fl 0))
-                                        (vec3 gl_FragCoord.x gl_FragCoord.y (fl 0))
-                                        gl_FragCoord.xy
-                                        (vec3 (fl 0 5) (fl 0 5) (fl 1))
-                                        (fl 1)
-                                        (?: (> gl_FragCoord.x (fl 0)) true false))
-                        (dot (apply_normal_map
-                              (tangent_frame (vec3 (fl 0) (fl 1) (fl 0))
-                                             (vec3 gl_FragCoord.x gl_FragCoord.y (fl 0))
-                                             gl_FragCoord.xy
-                                             true)
-                              (vec3 (fl 0 5) (fl 0 5) (fl 1))
-                              (fl 1))
-                             (vec3 (fl 1) (fl 1) (fl 1))))
+;; EVERY function in the set is called from main, and that is the point
+;; of the calls expression rather than a flourish: an uncalled function
+;; is one whose PARAMETER LIST nothing has ever disagreed with, and
+;; registering a set without reaching all of it checks every body and no
+;; signature. The bodies are covered either way -- see the paragraph
+;; below, which is a reading and not a belief. The sampler is declared
+;; here because triplanar_color takes one, and it rides in front of the
+;; function list so it lands after the precision line.
+;;
+;; What a call buys, measured against ANGLE rather than assumed: a body
+;; is checked whether or not anything calls it, and a call adds exactly
+;; two objections, to the TYPES and to the ARITY. Transposing two
+;; parameters of DIFFERENT types is refused; adding one is refused;
+;; transposing two parameters of the SAME type compiles, with the call
+;; left untouched, and returns the wrong number in silence. No argument
+;; list can buy that one back, because a call site compares types and
+;; never values.
+;;
+;; So the distinct values here are not for the compiler. They are for
+;; anything that DRAWS these -- a transposition shows up in the pixels
+;; only where the two arguments differ, and an argument list that
+;; passed 1.0 twice would hide it there too. Seven of these lists
+;; passed a repeated value when first written.
+;;
+;; water_shore_foam's depth is 0.15 and not something rounder because
+;; the function returns before its body on a depth at or past
+;; band + max(footprint, 0.001), which is 0.35 here. The first version
+;; passed 0.5 and every pixel took that branch, so the call reached the
+;; function and computed nothing -- reachable and dead at once. The
+;; arithmetic: smoothstep(0, 0.1, 0.5) is 1, smoothstep(0.0625, 0.35,
+;; 0.5) is 1, so contact is 0. At 0.15 contact is 0.78.
+;;
+;; The two bump vectors are 0.61, 0.38, 0.92 and not 0.5, 0.5, 1.0 for
+;; the same kind of reason, one layer further in. apply_normal_map turns
+;; a bump into bump*2-1, so 0.5, 0.5, 1.0 is exactly the z axis, and the
+;; caller normalises what comes back -- which removes everything an
+;; axis-aligned vector can carry about the basis it was multiplied by.
+;; tangent_frame was therefore reached and could not affect the result:
+;; perturbing its entire body left the drawn frame identical. Off the
+;; axis it contributes again. Only these two occurrences are bumps; the
+;; same triple appears as other arguments elsewhere and means something
+;; else there.
+(emit-functions! "surface" (append '((uniform sampler2D u_surface_tex))
+                                   (mat-shader-functions)
+                                   (surface-shader-functions))
+                 '(vec4 (+ (surface_normal (vec3 (fl 0) (fl 1) (fl 0))
+                                           (vec3 gl_FragCoord.x gl_FragCoord.y (fl 0))
+                                           gl_FragCoord.xy
+                                           (vec3 (fl 0 61) (fl 0 38) (fl 0 92))
+                                           (fl 1)
+                                           (?: (> gl_FragCoord.x (fl 0)) true false))
+                           (triplanar_color u_surface_tex
+                                           (vec3 gl_FragCoord.x gl_FragCoord.y (fl 0))
+                                           (vec3 (fl 0 5) (fl 0 25) (fl 0 25)))
+                           (triplanar_normal (vec3 (fl 0) (fl 1) (fl 0))
+                                            (vec3 (fl 0 5) (fl 0 5) (fl 1))
+                                            (vec3 (fl 0 6) (fl 0 4) (fl 0 9))
+                                            (vec3 (fl 0 45) (fl 0 55) (fl 0 8))
+                                            (vec3 (fl 0 5) (fl 0 25) (fl 0 25)))
+                           (surface_tangent (vec3 gl_FragCoord.x gl_FragCoord.y (fl 0))
+                                           gl_FragCoord.xy
+                                           (vec3 (fl 0) (fl 1) (fl 0)))
+                           (skin_diffuse (vec3 (fl 0) (fl 1) (fl 0))
+                                        (vec3 (fl 0 6) (fl 0 8) (fl 0))
+                                        (vec3 (fl 0 5) (fl 0 5) (fl 1)))
+                           (leaf_transmission (vec3 (fl 0 5) (fl 0 5) (fl 1))
+                                             (vec3 (fl 0) (fl 0) (fl 1))
+                                             (vec3 (fl 0 6) (fl 0 8) (fl 0))
+                                             (vec3 (fl 0) (fl 1) (fl 0))
+                                             gl_FragCoord.x)
+                           (water_transmission (vec3 (fl 0 5) (fl 0 5) (fl 1))
+                                              (vec3 (fl 0 2) (fl 0 4) (fl 0 6))
+                                              (vec3 (fl 0 1) (fl 0 2) (fl 0 3))
+                                              gl_FragCoord.x)
+                           (ambient_diffuse (vec3 (fl 0 5) (fl 0 5) (fl 1))
+                                           (fl 0 5)
+                                           (vec3 (fl 0) (fl 1) (fl 0))
+                                           (vec3 (fl 0 2) (fl 0 2) (fl 0 2))
+                                           (vec3 (fl 0 6) (fl 0 7) (fl 0 9))))
+                        (+ (dot (apply_normal_map
+                                 (tangent_frame (vec3 (fl 0) (fl 1) (fl 0))
+                                                (vec3 gl_FragCoord.x gl_FragCoord.y (fl 0))
+                                                gl_FragCoord.xy
+                                                true)
+                                 (vec3 (fl 0 61) (fl 0 38) (fl 0 92))
+                                 (fl 1))
+                                (vec3 (fl 1) (fl 1) (fl 1)))
+                           (fiber_specular (vec3 (fl 1) (fl 0) (fl 0))
+                                          (vec3 (fl 0) (fl 1) (fl 0))
+                                          (fl 0 5))
+                           (cloth_sheen (vec3 (fl 0) (fl 1) (fl 0))
+                                       (vec3 (fl 0) (fl 0) (fl 1))
+                                       (vec3 (fl 0 6) (fl 0 8) (fl 0)))
+                           (filtered_roughness (vec3 (fl 0) (fl 1) (fl 0)) (fl 0 5))
+                           (surface_height_blend gl_FragCoord.x (fl 0 5) (fl 0 3) (fl 0 1))
+                           (shore_wetness gl_FragCoord.x (fl 0 5) (fl 0 25))
+                           (water_path_length (vec3 gl_FragCoord.x (fl 2) (fl 0))
+                                            (vec3 (fl 0) (fl 0) (fl 0))
+                                            (fl 1))
+                           (water_foam_hash gl_FragCoord.xy)
+                           (water_foam_noise gl_FragCoord.xy)
+                           (water_shore_foam gl_FragCoord.xy (fl 0 15) (fl 0 1)
+                                             gl_FragCoord.x (fl 0 25))
+                           (dot (rot_axis (vec3 (fl 1) (fl 0) (fl 0))
+                                          (vec3 (fl 0) (fl 1) (fl 0)))
+                                (vec3 (fl 1) (fl 1) (fl 1)))))
                  'es300)
 
 (emit! "mesh" (mesh-shaders))

@@ -97,6 +97,153 @@
       ;; primitives it stands for.
       (define (surface_normal (vec3 n) (vec3 wp) (vec2 uv)
                               (vec3 bump) (float scale) (bool front)) vec3
-        (return (apply_normal_map (tangent_frame n wp uv front) bump scale)))))
+        (return (apply_normal_map (tangent_frame n wp uv front) bump scale)))
+
+      ;; ---- shading terms -------------------------------------------
+      ;;
+      ;; Closed functions of their arguments: no uniforms, no texture
+      ;; state beyond the sampler passed in, and no dependence on the
+      ;; stage they are called from except where a derivative is taken.
+      ;;
+      ;; surface_tangent and filtered_roughness take screen-space
+      ;; derivatives, so this set needs ES 3.00 or the OES derivative
+      ;; extension. Splitting those two out to keep the rest on ES 1.00
+      ;; would split a set that callers use together.
+
+      ;; Three samples of one texture along the cardinal planes, blended
+      ;; by the caller's weights. The samples bind to locals because a
+      ;; field of a CALL result has no spelling in this notation.
+      (define (triplanar_color (sampler2D tex) (vec3 point) (vec3 weights)) vec3
+        (local vec4 sx (texture tex point.yz))
+        (local vec4 sy (texture tex point.xz))
+        (local vec4 sz (texture tex point.xy))
+        (return (+ (* sx.rgb weights.x) (* sy.rgb weights.y) (* sz.rgb weights.z))))
+
+      ;; Height gradients projected onto the surface. The floor under
+      ;; each map's z keeps the gradient finite where that map is flat,
+      ;; and the last term removes the component along the base normal so
+      ;; the result stays a perturbation rather than a rotation.
+      (define (triplanar_normal (vec3 base) (vec3 x_map) (vec3 y_map) (vec3 z_map) (vec3 weights)) vec3
+        (local vec3 x (- (* x_map (fl 2)) (fl 1)))
+        (local vec3 y (- (* y_map (fl 2)) (fl 1)))
+        (local vec3 z (- (* z_map (fl 2)) (fl 1)))
+        (local vec3 gradient
+          (+ (/ (* (vec3 (fl 0) x.x x.y) weights.x) (max x.z (fl 0 25)))
+             (/ (* (vec3 y.x (fl 0) y.y) weights.y) (max y.z (fl 0 25)))
+             (/ (* (vec3 z.x z.y (fl 0)) weights.z) (max z.z (fl 0 25)))))
+        (return (normalize (- (+ base gradient) (* base (dot base gradient))))))
+
+      ;; A tangent that follows the texture's V axis. The guard is the
+      ;; degenerate case this shares with tangent_frame: where the UV
+      ;; derivatives carry no direction the tangent collapses to zero and
+      ;; normalize would divide by it, so an arbitrary perpendicular is
+      ;; substituted -- arbitrary being the honest answer there.
+      (define (surface_tangent (vec3 point) (vec2 uv) (vec3 normal)) vec3
+        (local vec3 a (dFdx point)) (local vec3 b (dFdy point))
+        (local vec2 u (dFdx uv)) (local vec2 v (dFdy uv))
+        (local vec3 t (- (* b u.x) (* a v.x)))
+        (set! t (- t (* normal (dot t normal))))
+        (if (< (dot t t) (fl 0 1 8))
+            (set! t (cross normal (?: (< (abs normal.y) (fl 0 9)) (vec3 0 1 0) (vec3 1 0 0)))))
+        (return (normalize t)))
+
+      ;; A normalized wrapped diffuse lobe: light that enters and leaves
+      ;; nearby, approximated without a blur pass. The two divisions keep
+      ;; the lobe energy-conserving as the wrap widens.
+      (define (skin_diffuse (vec3 normal) (vec3 light) (vec3 albedo)) vec3
+        (local float wrapped (/ (max (/ (+ (dot normal light) (fl 0 22)) (fl 1 22)) (fl 0)) (fl 1 22)))
+        (return (/ (* albedo wrapped) (fl 3 14159265))))
+
+      ;; An anisotropic highlight around a fiber's tangent, with the
+      ;; normalization that keeps total energy roughly constant as the
+      ;; exponent moves with roughness.
+      (define (fiber_specular (vec3 tangent) (vec3 half_direction) (float roughness)) float
+        (local float alignment (max (fl 0) (- (fl 1) (pow (dot tangent half_direction) (fl 2)))))
+        (local float exponent (mix (fl 110) (fl 18) roughness))
+        (return (* (pow alignment exponent) (sqrt exponent) (fl 0 45 3))))
+
+      ;; Retroreflection at grazing angles, which is what reads as cloth.
+      (define (cloth_sheen (vec3 normal) (vec3 view) (vec3 light)) float
+        (return (* (pow (- (fl 1) (max (dot normal view) (fl 0))) (fl 4))
+                   (max (dot normal light) (fl 0))
+                   (fl 0 12))))
+
+      ;; Light through a thin slab: a forward lobe for the light behind
+      ;; the surface, attenuated by thickness and tinted toward the
+      ;; wavelengths a leaf transmits rather than reflects.
+      (define (leaf_transmission (vec3 albedo) (vec3 view) (vec3 light) (vec3 normal) (float thickness)) vec3
+        (local float forward (pow (max (dot (- view) light) (fl 0)) (fl 4)))
+        (local float thin (* (exp (* (- (max thickness (fl 0))) (fl 1 8)))
+                             (+ (fl 0 4) (* (fl 0 6) (- (fl 1) (abs (dot normal light)))))))
+        (return (* albedo (vec3 (fl 0 70) (fl 0 86) (fl 0 42)) forward thin)))
+
+      ;; Roughness widened by the normal's variation inside one pixel, so
+      ;; a minified normal map does not alias into specular sparkle. The
+      ;; clamp keeps the result inside the range the BRDF was fitted over.
+      (define (filtered_roughness (vec3 normal) (float roughness)) float
+        (local vec3 dx (dFdx normal)) (local vec3 dy (dFdy normal))
+        (local float variance (min (fl 0 18) (* (fl 0 25) (+ (dot dx dx) (dot dy dy)))))
+        (return (clamp (sqrt (+ (* roughness roughness) variance)) (fl 0 16) (fl 0 98))))
+
+      ;; Where a layer wins against the surface under it: coverage biased
+      ;; by the height difference, with width as the transition.
+      (define (surface_height_blend (float coverage) (float base_height) (float layer_height) (float width)) float
+        (return (smoothstep (- width) width (- (+ coverage layer_height) base_height))))
+
+      ;; Beer-Lambert through a depth of water, with in-scattering taking
+      ;; over what absorption removes.
+      (define (water_transmission (vec3 bottom) (vec3 scattering) (vec3 absorption) (float distance)) vec3
+        (local vec3 transmittance (exp (* (- (max absorption (vec3 (fl 0)))) (max distance (fl 0)))))
+        (return (+ (* bottom transmittance) (* scattering (- (fl 1) transmittance)))))
+
+      ;; How wet ground is, from how far it sits above the water. The
+      ;; floor under band keeps the transition from becoming a step when
+      ;; a caller passes zero.
+      (define (shore_wetness (float ground_height) (float water_height) (float band)) float
+        (return (- (fl 1) (smoothstep (fl 0) (max band (fl 0 1 3)) (- ground_height water_height)))))
+
+      ;; Hemisphere ambient: ground below, sky above, with metals taking
+      ;; none of it as diffuse.
+      (define (ambient_diffuse (vec3 albedo) (float metallic) (vec3 normal) (vec3 ground) (vec3 sky)) vec3
+        (return (* albedo (- (fl 1) metallic) (mix ground sky (+ (* normal.y (fl 0 5)) (fl 0 5))))))
+
+      ;; ---- water optics --------------------------------------------
+
+      ;; The submerged length of one ray. Subtracting two rays' distances
+      ;; instead would invent shallow bands under refraction, so the
+      ;; fraction is taken along a single ray; a horizontal ray has no
+      ;; fraction to take and the branch answers it directly.
+      (define (water_path_length (vec3 eye) (vec3 bottom) (float height)) float
+        (local float span (abs (- bottom.y eye.y)))
+        (local float submerged (- height (min bottom.y eye.y)))
+        (if (== span (fl 0)) (return (?: (< bottom.y height) (distance bottom eye) (fl 0))))
+        (return (* (distance bottom eye) (clamp (/ submerged span) (fl 0) (fl 1)))))
+
+      ;; A hash and the value noise built on it. Both are functions of
+      ;; position alone, so foam does not swim when the camera moves.
+      (define (water_foam_hash (vec2 p)) float
+        (local vec3 q (fract (* (vec3 p.xyx) (fl 0 1031))))
+        (set! q (+ q (dot q (+ q.yzx (fl 33 33)))))
+        (return (fract (* (+ q.x q.y) q.z))))
+
+      (define (water_foam_noise (vec2 p)) float
+        (local vec2 cell (floor p)) (local vec2 f (fract p))
+        (set! f (* f f (- (fl 3) (* (fl 2) f))))
+        (return (mix (mix (water_foam_hash cell) (water_foam_hash (+ cell (vec2 1 0))) f.x)
+                     (mix (water_foam_hash (+ cell (vec2 0 1))) (water_foam_hash (+ cell (vec2 1 1))) f.x)
+                     f.y)))
+
+      ;; Foam at the contact line: in across the shallows and out again
+      ;; before deep water, broken up by noise in world space so the
+      ;; contour carries no repeating direction.
+      (define (water_shore_foam (vec2 position) (float depth) (float footprint) (float time) (float band)) float
+        (local float edge (max footprint (fl 0 1 3)))
+        (local float contact (* (smoothstep (fl 0) edge depth)
+                                (- (fl 1) (smoothstep (* band (fl 0 25)) (+ band edge) depth))))
+        (if (<= contact (fl 0)) (return (fl 0)))
+        (local vec2 drift (vec2 (* time (fl 0 35 3)) (* (- time) (fl 0 23 3))))
+        (local float patches (+ (* (water_foam_noise (+ (* position (fl 6 3)) drift)) (fl 0 65))
+                                (* (water_foam_noise (- (* position (fl 17 7)) drift)) (fl 0 35))))
+        (return (* contact (smoothstep (fl 0 48) (fl 0 74) patches))))))
 
   (define (surface-shader-functions) $surface-shader-functions))
