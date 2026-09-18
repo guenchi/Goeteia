@@ -306,6 +306,46 @@ exactly traps).
 **Workaround**: keep bitwise operands strictly below 2^29 — split
 wider values, or use lookup tables for hashing-style code.
 
+## `%mem-i32-ref` wraps at 2^29 instead of widening or trapping
+
+**Symptom**: a 32-bit value read out of linear memory comes back
+negative, or as a small number with no relation to what was written,
+and nothing raises.  A pointer read this way addresses the wrong
+place; a count read this way is a different count.
+
+**Cause**: the read narrows to a fixnum, which is signed 30-bit, and
+the narrowing is a wrap rather than a widening.  Measured, writing the
+value and reading it back:
+
+| written | `%mem-i32-ref` |
+|---|---|
+| 536870911 (2^29 - 1) | 536870911 |
+| 536870912 (2^29) | **-536870912** |
+| 1073741823 (2^30 - 1) | **-1** |
+| 2147483647 (2^31 - 1) | **-1** |
+
+This is worse than the bignum it is easy to assume: a bignum would at
+least carry the right value.  Note also that there is no unsigned read
+-- `%mem-i32-ref` and `%mem-i32-set!` are the only 32-bit integer
+accessors, and they are signed -- so even below the wrap, a u32 with
+its top bit set reads as a negative number.
+
+**Workaround**: assemble the value from `%mem-u8-ref`, which returns
+the byte and cannot wrap:
+
+```scheme
+(define (mem-u32-ref a)
+  (+ (%mem-u8-ref a)
+     (* 256 (%mem-u8-ref (+ a 1)))
+     (* 65536 (%mem-u8-ref (+ a 2)))
+     (* 16777216 (%mem-u8-ref (+ a 3)))))
+```
+
+The result is exact and correct for the whole u32 range; it is a
+bignum above 2^29 - 1, which costs arithmetic but is the true number.
+A consumer reading instance addresses out of a shared wasm memory
+arrived at the same four-byte reassembly independently.
+
 ## About a thousand constants per procedure
 
 **Symptom**: the module compiles, then refuses to load —
