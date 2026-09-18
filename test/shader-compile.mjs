@@ -128,6 +128,16 @@ test('the shader a real compiler must refuse is refused', () => {
     // It is here and not there because it needs this file's browser,
     // and it is a row rather than a note because a reason that stops
     // being true should turn something red.
+    //
+    // HOW FAR THE CLAIM REACHES, since a reading taken in front of one
+    // GL implementation is a reading about that implementation.  This
+    // ran under both of the ones reachable here and agreed: ANGLE's
+    // Metal backend on Apple silicon, and SwiftShader -- software,
+    // Vulkan, LLVM -- which shares no compiler with it.  Two mechanisms
+    // answering one question is worth more than one mechanism answering
+    // it twice.  Launching the second needs a flag tools/cdp.mjs does
+    // not yet accept, so this was measured by hand rather than being
+    // run on every pass; making it routine is a separate change.
     test('an uncalled function body is compiled anyway', async () => {
         const vs = PAIR.es100.vs;
         const wrap = body => `precision mediump float;\n${body}\n`
