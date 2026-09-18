@@ -1,6 +1,6 @@
 ;; A DOM counter -- a web page scripted in Goeteia, sx edition.
 ;; The whole UI is one template: unquotes are reactive holes.
-(import (web reactive) (web sx) (web dom))
+(import (rnrs) (web reactive) (web sx) (web dom))
 
 (define n (signal 0))
 (define (bump d) (lambda _ (signal-update! n (lambda (v) (+ v d)))))

@@ -6,7 +6,7 @@
 ;; depends on nothing beside itself.  The page itself is (web html)
 ;; SXML; the section string splices in through `raw`.
 ;; Regenerate with examples/mk-counter-embedded.sh.
-(import (web html))
+(import (rnrs) (web html))
 
 (display
  (html->document
@@ -28,7 +28,7 @@
      (div (@ (id "app")))
      ,(raw
        (conjure auto
-         (import (web reactive) (web sx) (web dom))
+         (import (rnrs) (web reactive) (web sx) (web dom))
          (define n (signal 0))
          (define (bump d) (lambda _ (signal-update! n (lambda (v) (+ v d)))))
          (sx-mount (get-element-by-id "app")

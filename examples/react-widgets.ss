@@ -1,7 +1,7 @@
 ;; Goeteia components for embedding into a React app -- see
 ;; react-embed.html.  Interior state lives in signals; React only
 ;; owns the host element and the props.
-(import (web reactive) (web sx) (web js) (web react))
+(import (rnrs) (web reactive) (web sx) (web js) (web react) (web dom))
 
 (react-component "Counter"
   (lambda (container props)

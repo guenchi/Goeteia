@@ -235,10 +235,45 @@ run_js() { # jsfile testfile
 # change under src/, lib/, rt/, the snapshot, or a cell each moves it,
 # and an untouched tree leaves it alone across repeated calls made
 # DURING a run, so the suite's own temporary files do not disturb it.
+# THREE PLACES BELOW, and none of them is redundant.  The first version
+# named four source extensions under four directories, and that one
+# shape lost three different kinds of file the cells depend on.  Each
+# line here closes one of them, and deleting any one reopens it.
+#
+# The cat line takes what is NAMED and has no extension to match on.
+# bin/goeteiac is a five-line driver that every stage0 compile in this
+# file executes, and no -name pattern here would catch it; adding bin
+# to the find below catches bin/goeteia.mjs and still misses goeteiac,
+# which is the opposite of the intent.
+#
+# The find line takes whole DIRECTORIES.  Three cells import
+# tools/cdp.mjs and two execute tools/shader-emit.ss, and tools was
+# outside the digest entirely, as was bin.
+#
+# The extension list takes what the filter's own question got wrong.
+# It asked "is this source", and the question is "does a cell read it".
+# A fixture is by definition not source, so the fixtures fell out while
+# sitting inside directories this digest already covered:
+# test/number-face.tsv is 138KB of golden data read row by row,
+# test/lib/c02-products.sc is an instrument the cells run under chez,
+# test/glbcheck.py is a checker a cell executes, and test/read.input is
+# stdin for test/read.ss reached through a name this harness computes
+# rather than writes, so neither a search for the name nor a scan for
+# directory-walking consumers would have turned it up.
+#
+# The list is derived rather than remembered: it is every extension
+# actually excluded under these directories, and .py and .input are the
+# two nobody would have listed from memory.  Widening this to every
+# file instead would trade a gate for a noise source -- it would hash
+# editor leftovers and anything anyone drops under test/ -- so the
+# omissions are meant to be found by a check that shouts, not by a
+# pattern that guesses.
 digest_now() {
-    { cat run-tests.sh goeteia.wasm 2>/dev/null
-      find test src lib rt -type f \
-           \( -name '*.ss' -o -name '*.mjs' -o -name '*.sh' -o -name '*.json' \) \
+    { cat run-tests.sh goeteia.wasm bin/goeteiac 2>/dev/null
+      find test src lib rt bin tools -type f \
+           \( -name '*.ss' -o -name '*.mjs' -o -name '*.sh' -o -name '*.json' \
+              -o -name '*.sc' -o -name '*.tsv' -o -name '*.glb' \
+              -o -name '*.html' -o -name '*.py' -o -name '*.input' \) \
            2>/dev/null | sort | tr '\n' '\0' | xargs -0 cat 2>/dev/null
     } | { md5 -q 2>/dev/null || md5sum 2>/dev/null | cut -d' ' -f1; }
 }
@@ -538,6 +573,8 @@ for m in test/macro-toplevel-hygiene.mjs \
          test/every-mjs-cell-is-listed-in-run-tests.mjs \
          test/defect-exact-of-nan-never-returns.mjs \
          test/defect-nonfinite-numbers-do-not-survive-text.mjs \
+         test/examples-all-compile.mjs \
+         test/counter-embedded-is-current.mjs \
          test/defect-v01-shader-check-can-vanish-unnoticed.mjs \
          test/c02-product-fn-specs.mjs \
          test/c02-product-trampoline.mjs \
