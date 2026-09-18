@@ -505,6 +505,13 @@ fi
 # line has to reach the log or the skip is silent -- and a red run's
 # output is the part worth reading.
 DOCS_OUT="$T/docs-mjs.out"
+# Two questions about the emitted GLSL that need no browser: is every
+# function actually reached by a main (an unreached one is dead code a
+# driver may discard before reading its body, so registering it does not
+# mean a compiler read it), and is it named like its neighbours.  It runs
+# through run_mjs and not beside the browser checks below precisely
+# because it must not stand down with them.
+run_mjs test/shader-functions-are-reached.mjs
 # The only check here that leaves the machine.  It stands down loudly
 # when no browser is present rather than failing, because a suite that
 # cannot run without Chrome is a suite people stop running; but on a

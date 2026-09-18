@@ -17,14 +17,12 @@
 // announcement goes through the same channel as every other stand-down
 // in this suite, so it appears in the run's summary instead of passing
 // in silence.
-import { execFileSync } from 'node:child_process';
 import { readdirSync, readFileSync } from 'node:fs';
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import assert from 'node:assert';
 import { findChrome, withBrowser, checkShader, NoBrowser } from '../tools/cdp.mjs';
+import { emitAll } from '../tools/shader-emit.mjs';
 
 const root = new URL('..', import.meta.url).pathname;
 
@@ -43,51 +41,13 @@ const PAIR = {
     },
 };
 
-function emitAll() {
-    const dir = mkdtempSync(join(tmpdir(), 'goeteia-shaders-'));
-    try {
-        const wasm = join(dir, 'emit.wasm');
-        execFileSync(join(root, 'bin/goeteiac'),
-                     [join(root, 'tools/shader-emit.ss'), wasm], { cwd: root });
-        const out = execFileSync('node', [join(root, 'rt/run.mjs'), wasm],
-                                 { cwd: root, encoding: 'utf8', maxBuffer: 64 << 20 });
-        const entries = [];
-        let cur = null, part = null;
-        for (const line of out.split('\n')) {
-            const h = line.match(/^=== (\S+) (es\d+)$/);
-            if (h) { cur = { name: h[1], dialect: h[2], vs: [], fs: [] }; entries.push(cur); part = null; continue; }
-            if (line === '--- vertex ---') { part = 'vs'; continue; }
-            if (line === '--- fragment ---') { part = 'fs'; continue; }
-            if (cur && part) cur[part].push(line);
-        }
-        return entries.map(e => ({
-            name: e.name, dialect: e.dialect,
-            vs: e.vs.join('\n').trim(), fs: e.fs.join('\n').trim(),
-        }));
-    } finally { rmSync(dir, { recursive: true, force: true }); }
-}
-
-if (!findChrome()) {
-    console.log('NOT EXERCISED HERE (no Chrome beside this tree; the shaders this tree emits are not put in front of a real GLSL compiler here. rt/verify.mjs compiles a PAGE\'s shaders for real, but only the ones a page links, and it needs the same Chrome this check could not find)');
-} else {
-    console.log('EXERCISED HERE: the shaders this tree emits are compiled by a real GLSL compiler');
-    const entries = emitAll();
-    const control = entries.filter(e => e.name.startsWith('control/'));
-    const real = entries.filter(e => !e.name.startsWith('control/'));
-    assert.ok(real.length > 15, `only ${real.length} shaders were emitted; the accessors or the parse are wrong`);
-    assert.strictEqual(control.length, 1, 'the deliberately invalid control did not come through');
-
-    const results = await withBrowser(async page => {
-        const out = [];
-        for (const e of [...real, ...control]) {
-            const vs = e.vs || PAIR[e.dialect].vs;
-            const fs = e.fs || PAIR[e.dialect].fs;
-            out.push([e, await checkShader(page, vs, fs)]);
-        }
-        return out;
-    }, { timeoutMs: 120000 });
-
-    test('every library that emits shaders is named in the emitter', () => {
+// THIS ONE NEEDS NO BROWSER, so it is not inside the branch below.  It
+// sat there until it was noticed that a machine without Chrome skipped
+// the registration question too -- and that question is about a list in
+// a file, which no GPU has an opinion about.  A check that stands down
+// for a reason that does not apply to it is a check that is absent
+// wherever the reason is true.
+test('every library that emits shaders is named in the emitter', () => {
     // The emitter is a list of names, and a list of names cannot shout
     // for what is missing from it.  Two libraries landed shader
     // functions and neither was added, so a real GLSL compiler had
@@ -124,6 +84,27 @@ if (!findChrome()) {
         'these accessors emit shader text that no compiler ever reads; ' +
         'add them to tools/shader-emit.ss:\n  ' + missing.join('\n  '));
 });
+
+if (!findChrome()) {
+    console.log('NOT EXERCISED HERE (no Chrome beside this tree; the shaders this tree emits are not put in front of a real GLSL compiler here. rt/verify.mjs compiles a PAGE\'s shaders for real, but only the ones a page links, and it needs the same Chrome this check could not find)');
+} else {
+    console.log('EXERCISED HERE: the shaders this tree emits are compiled by a real GLSL compiler');
+    const entries = emitAll();
+    const control = entries.filter(e => e.name.startsWith('control/'));
+    const real = entries.filter(e => !e.name.startsWith('control/'));
+    assert.ok(real.length > 15, `only ${real.length} shaders were emitted; the accessors or the parse are wrong`);
+    assert.strictEqual(control.length, 1, 'the deliberately invalid control did not come through');
+
+    const results = await withBrowser(async page => {
+        const out = [];
+        for (const e of [...real, ...control]) {
+            const vs = e.vs || PAIR[e.dialect].vs;
+            const fs = e.fs || PAIR[e.dialect].fs;
+            out.push([e, await checkShader(page, vs, fs)]);
+        }
+        return out;
+    }, { timeoutMs: 120000 });
+
 
 test('the shader a real compiler must refuse is refused', () => {
         const [, r] = results.find(([e]) => e.name.startsWith('control/'));
