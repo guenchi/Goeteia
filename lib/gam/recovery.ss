@@ -99,7 +99,7 @@
   ;; and the caller can log or display it without asking again.
   (define (recovery-loss! r amount)
     ($need-r 'recovery-loss! r)
-    (unless (and (real? amount) (not (< amount 0)))
+    (unless (and (real? amount) (<= 0 amount))
       (error 'recovery-loss! "a loss is a non-negative real" amount))
     ($amount! r amount)
     ($open! r #t)
@@ -113,7 +113,7 @@
   ;; there is nothing outstanding.
   (define (recovery-claim! r fraction)
     ($need-r 'recovery-claim! r)
-    (unless (and (real? fraction) (not (< fraction 0)) (not (< 1 fraction)))
+    (unless (and (real? fraction) (<= 0 fraction) (<= fraction 1))
       (error 'recovery-claim! "a fraction is a real from 0 to 1" fraction))
     (let ((owed (* fraction (recovery-pending r))))
       ($open! r #f)

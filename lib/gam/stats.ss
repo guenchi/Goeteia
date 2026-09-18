@@ -120,9 +120,9 @@
               (let ((name (car row)) (mx (cadr row)) (regen (caddr row)))
                 (unless (symbol? name)
                   (error 'make-stats "a pool name is a symbol" name))
-                (unless (and (real? mx) (not (< mx 0)))
+                (unless (and (real? mx) (<= 0 mx))
                   (error 'make-stats "a pool maximum is a non-negative real" name mx))
-                (unless (and (real? regen) (not (< regen 0)))
+                (unless (and (real? regen) (<= 0 regen))
                   (error 'make-stats "a regeneration rate is a non-negative real" name regen))
                 ;; A repeated name would leave one of the two pools
                 ;; unreachable: every lookup answers the first, so the
@@ -141,14 +141,27 @@
   (define (stat s name) ($p-value ($pool 'stat s name)))
   (define (stat-max s name) ($p-max ($pool 'stat-max s name)))
 
+  ;; (= v v) rather than a nan? predicate: NaN is the one real that is
+  ;; not equal to itself, and a pool value or a change to one may be any
+  ;; real, so there is no ordering test that would have excluded it.
+  ;;
+  ;; This is the door the non-negative checks do not cover, and it opens
+  ;; on the worst room: $clamp answers NaN for NaN, so the pool holds
+  ;; NaN; every later comparison against it is false; and a guard whose
+  ;; comparison is false PASSES.  Measured before this check existed, a
+  ;; pool set to NaN answered #t to stats-spend! and did not move, so the
+  ;; resource could be spent without limit and without the balance ever
+  ;; changing.
   (define (stat-set! s name v)
     (let ((p ($pool 'stat-set! s name)))
-      (unless (real? v) (error 'stat-set! "a pool value is a real" name v))
+      (unless (and (real? v) (= v v))
+        (error 'stat-set! "a pool value is a real" name v))
       ($p-value! p ($clamp p v))))
 
   (define (stat-add! s name d)
     (let ((p ($pool 'stat-add! s name)))
-      (unless (real? d) (error 'stat-add! "a pool change is a real" name d))
+      (unless (and (real? d) (= d d))
+        (error 'stat-add! "a pool change is a real" name d))
       ($p-value! p ($clamp p (+ ($p-value p) d)))))
 
   ;; All or nothing.  A partial spend is the worst of the three possible
@@ -156,7 +169,7 @@
   ;; asked to, and the pool is left at a value neither side chose.
   (define (stats-spend! s name amount)
     (let ((p ($pool 'stats-spend! s name)))
-      (unless (and (real? amount) (not (< amount 0)))
+      (unless (and (real? amount) (<= 0 amount))
         (error 'stats-spend! "a cost is a non-negative real" name amount))
       (and (not (< ($p-value p) amount))
            (begin ($p-value! p ($clamp p (- ($p-value p) amount))) #t))))
@@ -167,7 +180,7 @@
   ;; number it proposed.
   (define (stats-damage! s name amount)
     (let ((p ($pool 'stats-damage! s name)))
-      (unless (and (real? amount) (not (< amount 0)))
+      (unless (and (real? amount) (<= 0 amount))
         (error 'stats-damage! "damage is a non-negative real" name amount))
       (let* ((before ($p-value p))
              (after ($clamp p (- before amount))))
@@ -178,7 +191,7 @@
   ;; actually restored, which stops short at the maximum.
   (define (stats-heal! s name amount)
     (let ((p ($pool 'stats-heal! s name)))
-      (unless (and (real? amount) (not (< amount 0)))
+      (unless (and (real? amount) (<= 0 amount))
         (error 'stats-heal! "healing is a non-negative real" name amount))
       (let* ((before ($p-value p))
              (after ($clamp p (+ before amount))))
@@ -190,7 +203,7 @@
   ;; negative dt is refused rather than quietly draining every pool.
   (define (stats-regenerate! s dt)
     ($need-stats 'stats-regenerate! s)
-    (unless (and (real? dt) (not (< dt 0)))
+    (unless (and (real? dt) (<= 0 dt))
       (error 'stats-regenerate! "elapsed time is a non-negative real" dt))
     (let loop ((ps ($pools s)))
       (unless (null? ps)
@@ -220,7 +233,7 @@
   ;; error naming the level whose cost was wrong.
   (define (stats-gain-xp! s amount)
     ($need-stats 'stats-gain-xp! s)
-    (unless (and (real? amount) (not (< amount 0)))
+    (unless (and (real? amount) (<= 0 amount))
       (error 'stats-gain-xp! "experience is a non-negative real" amount))
     ($xp! s (+ ($xp s) amount))
     (let ((curve ($curve s)))

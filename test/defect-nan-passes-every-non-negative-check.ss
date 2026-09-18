@@ -1,13 +1,35 @@
 ;; expect: #t
-;; EXPECTED FAIL against the (gam ...) libraries.  Twenty-one argument
-;; checks are written (not (< x 0)).  NaN is a real and is not less than
-;; zero, so every one of them admits it, and what happens next differs
-;; by library -- which is why this is one cell over the family rather
-;; than a defect filed against one of them.
+;; HISTORY, NOT STATUS.  This cell was written red against the (gam ...)
+;; libraries at 0771288 and it passes now; it stays as the guard for the
+;; rule rather than as a report on today's colour.  A marker asserting a
+;; cell's CURRENT colour is the thing that decays -- see
+;; test/expected-fail-markers-are-honest.mjs.
 ;;
-;; MEASURED, and the spread is the point.  Two of the family were
-;; already repaired to (<= 0 x), which NaN fails; the rest were not, and
-;; they sit in the same files as the repairs.
+;; What was wrong: twenty-one argument checks were written
+;; (not (< x 0)), and seven more tested only (real? x) with no ordering
+;; test at all.  NaN is a real and is not less than zero, so every one
+;; of the twenty-eight admitted it, and what happened next differed by
+;; library -- which is why this is one cell over the family rather than
+;; a defect filed against one of them.
+;;
+;; A FALSE COMPARISON BEHIND `not` IS A PERMANENTLY OPEN DOOR.  The
+;; shape does not identify the defect on its own: web/css.ss:101,106 and
+;; lib/gfx/collide.ss:252 read the same way and are sound, because
+;; (integer? x) stands ahead of them and (integer? +nan.0) is #f.  What
+;; makes a site defective is the shape with NOTHING ahead of it that
+;; excludes NaN -- a property of the surrounding conjunction, not of the
+;; line.  Grep finds candidates here; only reading the conjunction
+;; decides.
+;;
+;; THE SWEEP CLOSED NaN, NOT EVERY NON-FINITE VALUE.  Infinities still
+;; reach fields and modifiers, and that is deliberate scope rather than
+;; an oversight: test/defect-infinity-reaches-fields-and-modifiers.ss
+;; carries six red rows for it, measured at the same width before and
+;; after this repair.
+;;
+;; MEASURED WHEN IT WAS RED, and the spread was the point.  Two of the
+;; family had already been repaired to (<= 0 x), which NaN fails; the
+;; rest had not, and they sat in the same files as the repairs.
 ;;
 ;;   abilities  ability-tick!      remaining := NaN, and ready? then
 ;;                                 answers #t FOREVER -- the cooldown is

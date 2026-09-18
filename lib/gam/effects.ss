@@ -104,7 +104,7 @@
   ;; would make effect-active? true for a state that gates nothing.
   (define (effects-tick! f dt)
     ($need-fx 'effects-tick! f)
-    (unless (and (real? dt) (not (< dt 0)))
+    (unless (and (real? dt) (<= 0 dt))
       (error 'effects-tick! "elapsed time is a non-negative real" dt))
     (let step ((rs ($rows f)))
       (unless (null? rs)

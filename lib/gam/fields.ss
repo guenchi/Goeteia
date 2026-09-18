@@ -93,19 +93,25 @@
 
   (define (make-field kind x z radius half-length yaw duration rate . rest)
     (let ((period (if (null? rest) $default-period (car rest))))
-      (unless (and (real? x) (real? z))
+      ;; (= x x) rather than a nan? predicate: NaN is the one real that
+      ;; is not equal to itself, and these values may legitimately be
+      ;; negative, so there is no ordering test that would have excluded
+      ;; it.  The runtime has no nan?, and one export for a concept used
+      ;; only in argument checks would be a public name for a private
+      ;; need.
+      (unless (and (real? x) (= x x) (real? z) (= z z))
         (error 'make-field "a position is two reals" x z))
       (unless (and (real? radius) (< 0 radius))
         (error 'make-field "a radius is a positive real" radius))
-      (unless (and (real? half-length) (not (< half-length 0)))
+      (unless (and (real? half-length) (<= 0 half-length))
         (error 'make-field "a half-length is a non-negative real" half-length))
-      (unless (real? yaw)
+      (unless (and (real? yaw) (= yaw yaw))
         (error 'make-field "a yaw is a real, in radians" yaw))
       (unless (and (real? duration) (< 0 duration))
         (error 'make-field "a duration is a positive real" duration))
-      (unless (real? rate)
+      (unless (and (real? rate) (= rate rate))
         (error 'make-field "a rate is a real, per unit of time" rate))
-      (unless (and (real? period) (not (< period 0)))
+      (unless (and (real? period) (<= 0 period))
         (error 'make-field "a settling period is a non-negative real" period))
       ;; kind is not checked: this library never looks at it.  It is
       ;; carried for the caller to key its own table by, on the same
@@ -131,7 +137,9 @@
   ;; the end cap, which is what makes the ends round rather than square.
   (define (field-contains? f x z)
     ($need-f 'field-contains? f)
-    (unless (and (real? x) (real? z))
+    ;; (= x x) excludes NaN, which `real?' admits and no ordering test
+    ;; here would have caught; see the note in make-field.
+    (unless (and (real? x) (= x x) (real? z) (= z z))
       (error 'field-contains? "a position is two reals" x z))
     (let* ((dx (- x ($x f)))
            (dz (- z ($z f)))
@@ -152,7 +160,7 @@
   ;; pruned before the next step would make the natural loop wrong.
   (define (field-step! f dt settle)
     ($need-f 'field-step! f)
-    (unless (and (real? dt) (not (< dt 0)))
+    (unless (and (real? dt) (<= 0 dt))
       (error 'field-step! "an elapsed time is a non-negative real" dt))
     (unless (procedure? settle)
       (error 'field-step! "settling takes a procedure of a field and an amount" settle))

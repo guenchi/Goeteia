@@ -116,7 +116,7 @@
   ;; a different question silently.
   (define (timeline-schedule! t delay payload)
     ($need-t 'timeline-schedule! t)
-    (unless (and (real? delay) (not (< delay 0)))
+    (unless (and (real? delay) (<= 0 delay))
       (error 'timeline-schedule! "a delay is a non-negative real" delay))
     (let ((entry (cons (+ ($now t) delay) payload)))
       ;; Walk past everything that is due no later than this one, so an
@@ -137,7 +137,7 @@
   ;; timeline that no longer contains what it is handling.
   (define (timeline-tick! t dt)
     ($need-t 'timeline-tick! t)
-    (unless (and (real? dt) (not (< dt 0)))
+    (unless (and (real? dt) (<= 0 dt))
       (error 'timeline-tick! "an elapsed time is a non-negative real" dt))
     ($now! t (+ ($now t) dt))
     (let ((limit (+ ($now t) $due-slack)))

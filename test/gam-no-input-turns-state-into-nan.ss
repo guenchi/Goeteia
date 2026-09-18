@@ -93,7 +93,7 @@
     (want "spending moves the pool or refuses"
           (or (not (equal? (stat s 'hp) before)) (nan? before)) #t)))
 
-;; ---- fields: the constructor is the whole surface
+;; ---- fields: the constructor and the one reader that takes a point
 (for-each
  (lambda (row)
    (want (list 'make-field 'refuses (car row))
@@ -108,8 +108,18 @@
               (list (lambda (f) (field-x f)) (lambda (f) (field-z f))
                     (lambda (f) (field-yaw f)) (lambda (f) (field-rate f))
                     (lambda (f) (field-life f)) (lambda (f) (field-radius f))))
-(want "field-contains? refuses a NaN position"
+(want "field-contains? refuses a NaN x"
       (try (lambda () (field-contains? (fresh-field) +nan.0 0.0))) 'refused)
+;; BOTH COORDINATES GET A ROW.  The guard names x and z separately, so a
+;; single row leaves half of it with nothing behind it -- and the half
+;; without a row is the one a later edit can drop in silence.
+(want "field-contains? refuses a NaN z"
+      (try (lambda () (field-contains? (fresh-field) 0.0 +nan.0))) 'refused)
+;; CONTROL: refusing every position would satisfy both rows above.
+(want "an ordinary point inside still answers yes"
+      (field-contains? (fresh-field) 0.0 0.0) #t)
+(want "an ordinary point outside still answers no"
+      (field-contains? (fresh-field) 100.0 0.0) #f)
 
 ;; ---- modifiers
 (define mod-readers (list (lambda (m) (modifier-ref m 'atk))))
@@ -146,13 +156,24 @@
 
 ;; ---- timeline: a dropped entry is invisible, so the reading is
 ;; ---- whether a scheduled action still happens.
-(let ((tl (make-timeline)) (fired 0))
+;; timeline-tick! ANSWERS what has come due; it does not call it.  The
+;; first version of this control asserted a side effect -- schedule a
+;; lambda that increments a counter, tick past it, expect the counter at
+;; one -- and that row was red on a pristine master and stayed red after
+;; the repair, because the payload is handed back rather than invoked
+;; and the counter never moves whatever the library does about NaN.
+;;
+;; A RED NEEDS ITS SOURCE VERIFIED EXACTLY AS A GREEN DOES.  That row
+;; did not point at the wrong defect; it pointed at one that does not
+;; exist, and the obvious next move on seeing it would have been to hunt
+;; through a correct repair for an error that was never there.
+(let ((tl (make-timeline)) (payload (lambda () 'ran)))
   (want "timeline-schedule! refuses a NaN delay"
-        (try (lambda () (timeline-schedule! tl +nan.0 (lambda () (set! fired (+ fired 1)))))) 'refused)
+        (try (lambda () (timeline-schedule! tl +nan.0 payload))) 'refused)
   (want "timeline-tick! refuses NaN" (try (lambda () (timeline-tick! tl +nan.0))) 'refused)
-  (timeline-schedule! tl 1.0 (lambda () (set! fired (+ fired 1))))
-  (timeline-tick! tl 2.0)
-  (want "an ordinary schedule still fires" fired 1)
+  (timeline-schedule! tl 1.0 payload)
+  (want "an ordinary schedule is answered when it comes due"
+        (timeline-tick! tl 2.0) (list payload))
   (want "and the timeline empties" (timeline-empty? tl) #t)
   (want "timeline-time is not NaN" (nan? (timeline-time tl)) #f))
 

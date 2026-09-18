@@ -92,7 +92,7 @@
   (define (make-ability id cost cooldown . rest)
     (unless (or (null? rest) (null? (cdr rest)))
       (error 'make-ability "an ability takes one payload, not several" id rest))
-    (unless (and (real? cost) (not (< cost 0)))
+    (unless (and (real? cost) (<= 0 cost))
       (error 'make-ability "a cost is a non-negative real" id cost))
     (unless (and (real? cooldown) (< 0 cooldown))
       (error 'make-ability "a cooldown is a positive real" id cooldown))
@@ -121,7 +121,7 @@
 
   (define (ability-tick! a dt)
     ($need-a 'ability-tick! a)
-    (unless (and (real? dt) (not (< dt 0)))
+    (unless (and (real? dt) (<= 0 dt))
       (error 'ability-tick! "elapsed time is a non-negative real" dt))
     (let ((left (- ($remaining a) dt)))
       ($remaining! a (if (< left ($zero a)) ($zero a) left))))

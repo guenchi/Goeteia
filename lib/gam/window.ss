@@ -92,9 +92,9 @@
   (define (make-window duration from to)
     (unless (and (real? duration) (< 0 duration))
       (error 'make-window "a duration is a positive real number of seconds" duration))
-    (unless (and (real? from) (not (< from 0)) (not (< 1 from)))
+    (unless (and (real? from) (<= 0 from) (<= from 1))
       (error 'make-window "the window opens at a fraction from 0 to 1" from))
-    (unless (and (real? to) (not (< to from)) (not (< 1 to)))
+    (unless (and (real? to) (<= from to) (<= to 1))
       (error 'make-window "the window closes at a fraction from `from' to 1" from to))
     (vector 'gam-window duration from to 0.0 0.0 '()))
 
@@ -109,7 +109,7 @@
   ;; than a growing number.
   (define (window-step! w dt)
     ($need-w 'window-step! w)
-    (unless (and (real? dt) (not (< dt 0)))
+    (unless (and (real? dt) (<= 0 dt))
       (error 'window-step! "an elapsed time is a non-negative real" dt))
     ($prev! w ($now w))
     ($now! w (let ((next (+ ($now w) dt)))

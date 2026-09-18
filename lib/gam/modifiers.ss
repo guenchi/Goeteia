@@ -144,7 +144,13 @@
         (error 'modifier-set! "a source is a symbol" source))
       (unless (symbol? attribute)
         (error 'modifier-set! "an attribute is a symbol" attribute))
-      (unless (real? value)
+      ;; (= value value) rather than a nan? predicate: NaN is the one
+      ;; real that is not equal to itself, and a modifier value is
+      ;; legitimately negative -- a debuff -- so there is no ordering
+      ;; test that would have excluded it.  A NaN here reaches the
+      ;; largest-wins comparison in modifier-ref, where every comparison
+      ;; against it is false and the entry neither wins nor loses.
+      (unless (and (real? value) (= value value))
         (error 'modifier-set! "a modifier value is a real" attribute value))
       (unless (or (not seconds) (and (real? seconds) (< 0 seconds)))
         (error 'modifier-set! "a duration is a positive real, or #f for forever"
@@ -216,7 +222,7 @@
   ;; instant.
   (define (modifier-tick! m dt)
     ($need-m 'modifier-tick! m)
-    (unless (and (real? dt) (not (< dt 0)))
+    (unless (and (real? dt) (<= 0 dt))
       (error 'modifier-tick! "an elapsed time is a non-negative real" dt))
     (let step ((l ($rows m)))
       (when (pair? l)
