@@ -2817,6 +2817,29 @@
                  (digit (%fl->fx (fl- m (fl* q two24)))))
             (loop q (+ acc (* digit scale)) (* scale 16777216)))))))
 (define (inexact->exact x)
+  ;; NaN and the infinities have no exact equivalent, and NEITHER branch
+  ;; below can say so -- each fails in its own way, and both are worse
+  ;; than an error.
+  ;;
+  ;; NaN reaches the doubling loop, where (fl=? m (flfloor m)) is false
+  ;; for NaN however many times it is doubled.  The loop never
+  ;; terminates AND k doubles every pass, so it allocates bignums
+  ;; without bound: measured at 47 minutes on one core with no output
+  ;; and no exit.  (exact (/ 0.0 0.0)) does it too, so this is reachable
+  ;; from arithmetic and not only from a literal.
+  ;;
+  ;; The infinities take the same loop but leave it at once, because
+  ;; flfloor of an infinity is that infinity, and then
+  ;; $fl->exact-integer traps in %fl->fx.  That is an abort rather than
+  ;; a condition -- guard cannot catch it and the process ends.
+  ;;
+  ;; Both are argument errors, not implementation limits, and `exact' is
+  ;; reached from data as often as from a literal: a parsed float, a
+  ;; division that went 0/0, a reading off a device.  A caller has to be
+  ;; able to skip the record and say which one it skipped, which an
+  ;; abort does not allow and an endless loop does not even report.
+  (when (and (flonum? x) (not ($fl-finite? x)))
+    (error 'inexact->exact "no exact equivalent" x))
   (cond
    ;; Integral doubles inside the signed 30-bit fixnum range need no
    ;; rational construction. Fractional and larger values keep the

@@ -478,6 +478,7 @@ for m in test/macro-toplevel-hygiene.mjs \
          test/defect-r09-worker-listener-revocation.mjs \
          test/defect-d01-doc-uv-offset.mjs \
          test/ascii-only.mjs \
+         test/defect-exact-of-nan-never-returns.mjs \
          test/defect-v01-shader-check-can-vanish-unnoticed.mjs \
          test/c02-product-fn-specs.mjs \
          test/c02-product-trampoline.mjs \
