@@ -129,15 +129,22 @@ test('the shader a real compiler must refuse is refused', () => {
     // and it is a row rather than a note because a reason that stops
     // being true should turn something red.
     //
-    // HOW FAR THE CLAIM REACHES, since a reading taken in front of one
-    // GL implementation is a reading about that implementation.  This
-    // ran under both of the ones reachable here and agreed: ANGLE's
-    // Metal backend on Apple silicon, and SwiftShader -- software,
-    // Vulkan, LLVM -- which shares no compiler with it.  Two mechanisms
-    // answering one question is worth more than one mechanism answering
-    // it twice.  Launching the second needs a flag tools/cdp.mjs does
-    // not yet accept, so this was measured by hand rather than being
-    // run on every pass; making it routine is a separate change.
+    // HOW FAR THE CLAIM REACHES.  An earlier version of this comment said
+    // the row had been run under two GL implementations -- ANGLE's Metal
+    // backend and SwiftShader -- which "share no compiler".  They share
+    // the part that decides THIS row: both are ANGLE, and ANGLE parses and
+    // validates a shader before either backend sees it.  Measured on
+    // 2026-09-22: the same rejected shaders give byte-identical error logs
+    // under both.  So a REFUSAL is one verdict, and asking the second
+    // implementation for it again reads the same verdict twice -- which is
+    // why this row, and the known-bad control, run under one.
+    //
+    // Acceptance is a different question, and a comment written the same
+    // night said otherwise and was wrong in the same way: a shader the
+    // front end accepts is then translated and linked by each backend on
+    // its own, and those can fail on their own.  What was measured is a
+    // rejected shader, not a set of accepted ones.  So the row at the end
+    // of this file, which asks that every shader links, runs under both.
     test('an uncalled function body is compiled anyway', async () => {
         const vs = PAIR.es100.vs;
         const wrap = body => `precision mediump float;\n${body}\n`
@@ -163,7 +170,18 @@ test('the shader a real compiler must refuse is refused', () => {
             'an uncalled function with nothing wrong in it was refused, so the '
             + 'refusals below say nothing about their bodies: '
             + String(got.control.fragment?.log || '').split('\n')[0]);
-        const accepted = Object.keys(bad).filter(k => got[k].fragment?.ok);
+        // A refusal has to be a compiler's refusal.  checkShader answers
+        // { context: null } when a page gets no GL context, and a probe
+        // with no fragment result is not "refused" -- nothing looked at
+        // it.  Counting only fragment.ok as acceptance made four probes
+        // that never reached a compiler read as four refusals.
+        const unread = Object.keys(bad)
+            .filter(k => !got[k].fragment || !/\S/.test(String(got[k].fragment.log || '')));
+        assert.deepStrictEqual(unread, [],
+            'these probes came back with no compiler verdict at all (no context, '
+            + 'or refused without a log), so they say nothing about whether the '
+            + 'body was checked:\n  ' + unread.join('\n  '));
+        const accepted = Object.keys(bad).filter(k => got[k].fragment.ok);
         assert.deepStrictEqual(accepted, [],
             'these errors were NOT caught in a function nobody calls, so an '
             + 'unreached function here really is unchecked and '
@@ -171,11 +189,52 @@ test('the shader a real compiler must refuse is refused', () => {
             + 'for:\n  ' + accepted.join('\n  '));
     });
 
+    const unlinked = rs => rs
+        .filter(([e]) => !e.name.startsWith('control/'))
+        .filter(([, r]) => !(r.vertex?.ok && r.fragment?.ok && r.linked))
+        .map(([e, r]) => `${e.name} (${e.dialect}): ${(r.vertex?.log || r.fragment?.log || r.programLog || 'link failed').split('\n')[0]}`);
+
     test('every shader the libraries hand out compiles and links', () => {
-        const bad = results
-            .filter(([e]) => !e.name.startsWith('control/'))
-            .filter(([, r]) => !(r.vertex?.ok && r.fragment?.ok && r.linked))
-            .map(([e, r]) => `${e.name} (${e.dialect}): ${(r.vertex?.log || r.fragment?.log || r.programLog || 'link failed').split('\n')[0]}`);
-        assert.deepStrictEqual(bad, []);
+        assert.deepStrictEqual(unlinked(results), []);
+    });
+
+    // THE SECOND BACKEND, for acceptance only (see HOW FAR THE CLAIM
+    // REACHES above).  test/shader-functions-are-executed.mjs builds the
+    // function sets on both backends before drawing them, but not the
+    // whole shaders -- fx, ibl, post, sprite, scene, gltf, mesh,
+    // particles -- so without this row nothing asks whether those link on
+    // a backend other than the default one.
+    const RENDERER = `(() => {
+        const c = document.createElement('canvas');
+        const gl = c.getContext('webgl2') || c.getContext('webgl');
+        if (!gl) return null;
+        const e = gl.getExtension('WEBGL_debug_renderer_info');
+        return String(e ? gl.getParameter(e.UNMASKED_RENDERER_WEBGL)
+                        : gl.getParameter(gl.RENDERER));
+    })()`;
+    const defaultRenderer = await withBrowser(page => page.evaluateInNewPage(RENDERER),
+                                              { timeoutMs: 120000 });
+    const second = await withBrowser(async page => {
+        const renderer = await page.evaluateInNewPage(RENDERER);
+        const out = [];
+        for (const e of real) {
+            const vs = e.vs || PAIR[e.dialect].vs;
+            const fs = e.fs || PAIR[e.dialect].fs;
+            out.push([e, await checkShader(page, vs, fs)]);
+        }
+        return { renderer, results: out };
+    }, { timeoutMs: 120000, flags: ['--use-angle=swiftshader'] });
+
+    // Without this, a flag that silently did nothing would make the row
+    // below the default backend asked twice.
+    test('the second launch is a different backend', () => {
+        assert.ok(second.renderer, 'the second launch has no GL context');
+        assert.match(second.renderer, /SwiftShader/);
+        assert.notStrictEqual(second.renderer, defaultRenderer,
+            'both launches report the same renderer');
+    });
+
+    test('[swiftshader] every shader the libraries hand out compiles and links', () => {
+        assert.deepStrictEqual(unlinked(second.results), []);
     });
 }

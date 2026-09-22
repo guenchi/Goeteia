@@ -5,6 +5,22 @@
 # emitted text must agree between hosts byte-for-byte.  Each test's
 # first line declares the expected output as ";; expect: <value>".
 cd "$(dirname "$0")"
+# The files whose contents identify the tree under test.  It is defined
+# here, before anything is printed, because it is also answered on its
+# own: `run-tests.sh --digest-files` prints the list and stops, and
+# test/digest-reach-is-decided.mjs reads that answer rather than keeping
+# a second copy of it.  Why each line is here is told beside digest_now.
+digest_files() {
+    printf '%s\n' run-tests.sh goeteia.wasm bin/goeteiac \
+        build.sh build-self.sh rebuild.sh package.json
+    find test src lib rt bin tools docs examples -type f \
+         \( -name '*.ss' -o -name '*.mjs' -o -name '*.sh' -o -name '*.json' \
+            -o -name '*.sc' -o -name '*.tsv' -o -name '*.glb' \
+            -o -name '*.html' -o -name '*.py' -o -name '*.input' \
+            -o -name '*.md' \) \
+         2>/dev/null | sort
+}
+if [ "${1-}" = --digest-files ]; then digest_files; exit 0; fi
 fail=0
 # Compiler output goes to a directory unique to THIS invocation.  The
 # paths used to be fixed (/tmp/goeteia-test*.wasm), so two runs of this
@@ -312,15 +328,26 @@ run_js() { # jsfile testfile
 #
 # No .md exists under test, src, lib, rt, bin or tools, so the
 # extension costs nothing outside docs.
+#
+# A FOURTH DRESS, and the reason the list is now checked rather than
+# trusted.  examples/ was outside the digest while two cells compiled all
+# forty-six examples/*.ss and ran examples/mk-counter-embedded.sh; the
+# root scripts build-self.sh and rebuild.sh were outside it while a cell
+# read their trap lines; build.sh was outside it while rt/dev.mjs, run by
+# a cell, executes it; and package.json was outside it while
+# bin/goeteia.mjs, run by a cell, reads its version.  The last two are
+# second-order -- a cell runs code that opens the file -- and no search
+# of test/ for the name finds them.
+#
+# So the list is not the end of it.  test/digest-reach-is-decided.mjs
+# takes every tracked file this list leaves out and requires each to be
+# named in test/digest-exemptions.tsv with a reason that can be checked
+# again.  It does not judge what is a dependency -- both textual tests
+# for that have counterexamples here -- it requires a DECISION, so the
+# next file that falls outside is a red and not a discovery.
 digest_now() {
-    { cat run-tests.sh goeteia.wasm bin/goeteiac 2>/dev/null
-      find test src lib rt bin tools docs -type f \
-           \( -name '*.ss' -o -name '*.mjs' -o -name '*.sh' -o -name '*.json' \
-              -o -name '*.sc' -o -name '*.tsv' -o -name '*.glb' \
-              -o -name '*.html' -o -name '*.py' -o -name '*.input' \
-              -o -name '*.md' \) \
-           2>/dev/null | sort | tr '\n' '\0' | xargs -0 cat 2>/dev/null
-    } | { md5 -q 2>/dev/null || md5sum 2>/dev/null | cut -d' ' -f1; }
+    digest_files | tr '\n' '\0' | xargs -0 cat 2>/dev/null \
+        | { md5 -q 2>/dev/null || md5sum 2>/dev/null | cut -d' ' -f1; }
 }
 # The self-hosted half of every .ss cell runs only "if goeteia.wasm is
 # present", and until now its absence said nothing at all.  That is the
@@ -561,6 +588,9 @@ DOCS_OUT="$T/docs-mjs.out"
 # through run_mjs and not beside the browser checks below precisely
 # because it must not stand down with them.
 run_mjs test/shader-functions-are-reached.mjs
+# Whether the tree digest's reach was DECIDED for every tracked file:
+# each one is hashed or exempted with a check that is re-run here.
+run_mjs test/digest-reach-is-decided.mjs
 # The harness measuring itself, which is unusual enough to say why: it
 # does NOT run the suite, it lifts run-tests.sh's own trap lines into a
 # small script and signals that.  An interrupted run used to delete its
@@ -580,6 +610,12 @@ else
     cat "$DOCS_OUT"
     echo "FAIL test/shader-compile.mjs"; fail=1
 fi
+# withBrowser's extra launch flags, and the refusals that need no
+# browser at all -- those rows run even where Chrome is absent.
+run_mjs test/cdp-launch-flags.mjs
+# Reachable is not executed: each emitted function's last return is
+# perturbed and the frame must change, under two GL implementations.
+run_mjs test/shader-functions-are-executed.mjs
 # The first check that judges a shader by what it PUTS ON THE SCREEN
 # rather than by whether it compiles.  Stands down loudly without a
 # browser, like the one above.

@@ -1,0 +1,21 @@
+# Tracked files left out of the tree digest on purpose.  One row per
+# decision: a path pattern (* stays within one path segment), a check,
+# and the reason.  The check is an extended regular expression that
+# test/digest-reach-is-decided.mjs runs with git grep over test,
+# run-tests.sh, rt, bin, tools, src and lib; it must match no code line.
+# When one does, something has started reading the file and the row is
+# red -- an exemption expires by itself instead of by someone noticing.
+# Its blind spot is a name computed at run time (read.input was found
+# that way); the reason column says what the check cannot see.
+#
+# pattern	check	reason
+examples/*.wasm	examples/[^'" ]*\.wasm	build products of the examples; cells compile examples/*.ss into temporary directories and never open the committed .wasm
+examples/assets/*.ktx2	\.ktx2	textures an example program loads in a browser at run time; cells compile the examples and do not run them
+bench/*	bench/	benchmarks run by hand; neither run-tests.sh nor any cell starts one
+playground.html	playground\.(html|js)	the web playground page; nothing in the suite loads it
+playground.js	playground\.(html|js)	the script the playground page loads; nothing in the suite loads the page
+README.md	['"/]README\.md['"]	published prose; no cell opens it
+llms.txt	llms\.txt	published prose for language models; no cell opens it
+LICENSE	['"/]LICENSE['"]	the licence text; every mention in the tree is the LICENSE-2.0 URL in a file header, which the check excludes by requiring a quoted path
+.gitignore	\.gitignore|\.gitattributes	git configuration; no cell reads it
+.gitattributes	\.gitignore|\.gitattributes	git configuration; no cell reads it

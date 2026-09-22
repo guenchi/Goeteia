@@ -50,6 +50,7 @@ import { spawn, execFileSync } from 'child_process';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
+import { inspect } from 'util';
 
 // ---- which browser, and saying so ----
 //
@@ -114,17 +115,12 @@ function describe(bin) {
     return { path: bin, version };
 }
 
-// ---- one browser process, many pages ----
-//
-// Launching costs 0.6s (installed Chrome) to 2.1s (Chrome for Testing)
-// on this machine, and that is PER PROCESS.  A caller with twenty
-// shaders to check opens twenty pages on one browser, not twenty
-// browsers.
-export async function withBrowser(fn, { timeoutMs = 30000 } = {}) {
-    const found = findChrome();
-    if (!found) throw new NoBrowser();
-    const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'goeteia-cdp-'));
-    const proc = spawn(found.path, [
+// The launch line, as one list.  spawn uses it, the collision check
+// below reads its switch names from it, and a test can walk it -- so
+// there is exactly one place a switch is added, and nothing that has to
+// be remembered in a second one.
+export function launchArgs(profile) {
+    return [
         '--headless=new', '--remote-debugging-port=0',
         `--user-data-dir=${profile}`, '--no-first-run',
         '--no-default-browser-check', '--disable-extensions',
@@ -140,7 +136,153 @@ export async function withBrowser(fn, { timeoutMs = 30000 } = {}) {
         // network chatter to sit behind either
         '--disable-sync', '--disable-background-networking',
         'about:blank',
-    ]);
+    ];
+}
+
+// A switch's name is what precedes its value: --user-data-dir=/x names
+// --user-data-dir.
+function switchName(arg) {
+    return arg.split('=')[0];
+}
+
+// Say what was received, not what type it has: typeof null is
+// 'object', typeof of a one-flag string is only 'string', and "an
+// array" does not say which array.  None of those tells a caller which
+// argument to fix.  JSON also makes a tab or a NUL inside a string
+// visible in the message instead of printing it raw.
+function describeValue(v) {
+    if (v === null) return 'null';
+    if (v === undefined) return 'undefined';
+    if (typeof v === 'string') return 'the string ' + JSON.stringify(v);
+    if (typeof v === 'object') {
+        // JSON first, because it makes a tab or a NUL visible; inspect when
+        // JSON cannot say it at all -- a BigInt inside, or a cycle.
+        let text;
+        try { text = JSON.stringify(v); } catch { text = undefined; }
+        if (text === undefined) text = inspect(v, { depth: 2, breakLength: Infinity });
+        const kind = Array.isArray(v) ? 'the array ' : 'the object ';
+        return kind + (text.length > 80 ? text.slice(0, 77) + '...' : text);
+    }
+    return 'the ' + typeof v + ' ' + String(v);
+}
+
+// Checked before anything is launched or created: a bad argument is
+// the caller's to fix, and a browser started on it would cost a launch
+// and a profile directory before saying so.  The array is required,
+// not merely iterable -- spreading a string into the launch line would
+// pass each of its characters as a separate argument.
+// Positional arguments are refused along with restated switches: the
+// option is for switches, and the launcher passes the only positional
+// argument itself.  (The checks do not run in that page -- each opens
+// its own through Target.createTarget -- so this is about keeping the
+// launch line the launcher's, not about protecting a page.)
+function checkFlags(flags) {
+    if (flags === undefined) return [];
+    if (!Array.isArray(flags)) {
+        const hint = typeof flags === 'string' ? ' -- a single flag still goes in an array' : '';
+        throw new TypeError('withBrowser: flags must be an array of strings; got ' +
+                            describeValue(flags) + hint);
+    }
+    const owned = new Set(launchArgs('').filter(a => a.startsWith('--'))
+                                         .map(a => switchName(a).toLowerCase()));
+    // Each slot is read once, and the value read is the value returned.
+    // A second read -- a slice() after the checks -- would hand spawn
+    // whatever a getter on the array answered the second time, not what
+    // was checked.
+    const out = [];
+    for (let i = 0; i < flags.length; i++) {
+        const f = flags[i];
+        if (typeof f !== 'string')
+            throw new TypeError('withBrowser: flags[' + i + '] must be a string; got ' +
+                                describeValue(f));
+        if (!f.startsWith('--'))
+            throw new RangeError('withBrowser: flags[' + i + '] must be a switch starting '
+                                 + 'with --; got ' + describeValue(f) + ' -- the launcher '
+                                 + 'passes the only positional argument itself');
+        // A bare -- is not a switch but the end of them.  Measured: with
+        // ['--', '--use-angle=swiftshader'] the browser exits with code 13
+        // before it listens -- after the launch has been paid for, and
+        // with an error that names neither flags nor --.
+        if (f === '--')
+            throw new RangeError('withBrowser: flags[' + i + '] is "--", which ends '
+                                 + 'switch parsing rather than being a switch');
+        // The name is held to letters, digits, - and _.  Measured: with
+        // '--remote-debugging-port' followed by a tab, the browser read it
+        // as a second --remote-debugging-port and printed no endpoint --
+        // Chrome trims what this comparison would not have.  A NUL cannot
+        // be carried by a process argument at all: spawn throws on it, and
+        // spawn runs before the cleanup below exists.
+        if (!/^--[A-Za-z0-9_-]+$/.test(switchName(f)))
+            throw new RangeError('withBrowser: flags[' + i + '] has a switch name that is '
+                                 + 'not letters, digits, - and _; got ' + describeValue(f));
+        if (f.includes('\0'))
+            throw new RangeError('withBrowser: flags[' + i + '] contains a NUL, which no '
+                                 + 'process argument can carry; got ' + describeValue(f));
+        // Compared without case: Chromium's parser lowercases switch
+        // names on Windows (read from its source, not measured here).
+        if (owned.has(switchName(f).toLowerCase()))
+            throw new RangeError('withBrowser: flags[' + i + '] restates ' + switchName(f)
+                                 + ', which the launcher sets itself; got '
+                                 + describeValue(f));
+        out.push(f);
+    }
+    return out;
+}
+
+// ---- one browser process, many pages ----
+//
+// Launching costs 0.6s (installed Chrome) to 2.1s (Chrome for Testing)
+// on this machine, and that is PER PROCESS.  A caller with twenty
+// shaders to check opens twenty pages on one browser, not twenty
+// browsers.
+//
+// `flags` is appended to the launch line, and it exists because a
+// reading taken in front of one GL implementation is a reading about
+// that implementation.  Whether a shader compiles, what a driver may
+// reassociate, how a value saturates -- the driver answers all of
+// those, and without this there was exactly one driver to ask.
+// --use-angle=swiftshader reaches a second one -- but only half of it is
+// second.  The same ANGLE front end parses and validates the shader in
+// both: measured 2026-09-22, a shader that must be refused produced
+// byte-identical error logs under the default and under SwiftShader.
+// What differs is everything after it -- translation for a back end,
+// code generation, rasterisation: Metal on the GPU against Vulkan on
+// SwiftShader's software rasteriser.  So where the front end refuses a
+// shader, a second run repeats the same refusal.  Where it accepts one,
+// the two back ends still each translate and build it, and can differ;
+// a second run is independent evidence about that, and about what is
+// drawn.  One refused shader was measured, not a set of accepted ones.
+//
+// Two spellings that look like the same request are not.  Measured on
+// 2026-09-18: --use-gl=swiftshader and --use-angle=swiftshader-webgl
+// both launch, both serve pages, and both leave getContext('webgl')
+// and getContext('webgl2') answering null.  Nothing fails loudly, and
+// a run with no context reads a great deal like "both sides agree" in
+// a frame comparison.  So a caller that changes implementation should
+// assert that it got a context and that the renderer string is not
+// the default one -- and should REPORT that string, not the flags it
+// passed.  The flags are what was asked for; the renderer string is
+// what was got.
+//
+// A repeated switch is not an error to Chrome: the last one wins
+// (measured with --use-angle in both orders).  So a caller's flag that
+// restated a switch the launcher sets would silently override it if it
+// came after, and would silently do nothing if it came before --
+// either placement decides quietly, in one direction or the other.  A
+// restated switch is refused instead, by name, and the names come from
+// launchArgs, the list spawn is given.  With that refused, where the
+// caller's flags go on the line no longer changes what they mean.
+//
+// What this does not cover: a switch with ANOTHER name that undoes one
+// the launcher sets.  --force-first-run defeats --no-first-run -- read
+// from Chromium's first_run.cc, not launched -- and no comparison of
+// names can see that.  The refusal guards restatement, not meaning.
+export async function withBrowser(fn, { timeoutMs = 30000, flags } = {}) {
+    const extra = checkFlags(flags);
+    const found = findChrome();
+    if (!found) throw new NoBrowser();
+    const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'goeteia-cdp-'));
+    const proc = spawn(found.path, [...launchArgs(profile), ...extra]);
     // Everything the browser says is kept, so that a launch which never
     // reaches the endpoint can be diagnosed from the error instead of
     // being written off as flaky.  An unexplained intermittent red
