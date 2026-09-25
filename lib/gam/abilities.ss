@@ -66,6 +66,23 @@
   ;; width to check and one shape to reason about; a type test that
   ;; accepted two lengths would also accept a six-slot vector that this
   ;; library can no longer produce.
+  ;; A real that is still finite once made inexact, which is what it
+  ;; becomes when +, -, * or / combines it with a flonum, or when sin or
+  ;; cos takes it; +, -, * and / on exact operands alone stay exact.  An
+  ;; exact number of any size is finite as an exact number, yet 2^1024
+  ;; becomes +inf.0 and 2^-1100 becomes 0.0 when that happens.  (- y y)
+  ;; is 0 for every finite flonum y and NaN for either infinity and for
+  ;; NaN; 1.7e308 passes, which a bound such as (< y 1e300) would
+  ;; wrongly refuse.  A positive bound is tested on (inexact v) for the
+  ;; same reason, since 2^-1100 is positive and becomes 0.0.  A
+  ;; non-negative bound is tested on v itself, the stricter of the two
+  ;; there, since -2^-1100 becomes -0.0 and (<= 0 -0.0) holds.  Either
+  ;; way the value is kept as given.  All of this measured on the three
+  ;; back ends.  One private copy per (gam ...) library whose checks use
+  ;; it; "Prelude gaps" in docs/limits.md says why, and all eight change
+  ;; together when that entry does.
+  (define ($finite? x) (let ((y (inexact x))) (= 0 (- y y))))
+
   (define ($a? a)
     (and (vector? a) (= (vector-length a) 7)
          (eq? (vector-ref a 0) 'gam-ability)))
@@ -92,10 +109,14 @@
   (define (make-ability id cost cooldown . rest)
     (unless (or (null? rest) (null? (cdr rest)))
       (error 'make-ability "an ability takes one payload, not several" id rest))
-    (unless (and (real? cost) (<= 0 cost))
-      (error 'make-ability "a cost is a non-negative real" id cost))
-    (unless (and (real? cooldown) (< 0 cooldown))
-      (error 'make-ability "a cooldown is a positive real" id cooldown))
+    (unless (and (real? cost) ($finite? cost) (<= 0 cost))
+      (error 'make-ability
+             "a cost is a non-negative real, finite as a flonum"
+             id cost))
+    (unless (and (real? cooldown) ($finite? cooldown) (< 0 (inexact cooldown)))
+      (error 'make-ability
+             "a cooldown is a real, positive and finite as a flonum"
+             id cooldown))
     (let ((zero (if (exact? cooldown) 0 (* 0.0 cooldown)))
           (payload (if (null? rest) #f (car rest))))
       ;; ready when made: nothing has been used yet, so nothing is owed
@@ -121,8 +142,10 @@
 
   (define (ability-tick! a dt)
     ($need-a 'ability-tick! a)
-    (unless (and (real? dt) (<= 0 dt))
-      (error 'ability-tick! "elapsed time is a non-negative real" dt))
+    (unless (and (real? dt) ($finite? dt) (<= 0 dt))
+      (error 'ability-tick!
+             "elapsed time is a non-negative real, finite as a flonum"
+             dt))
     (let ((left (- ($remaining a) dt)))
       ($remaining! a (if (< left ($zero a)) ($zero a) left))))
 
@@ -156,13 +179,17 @@
   ;; what lets a caller branch on the failure without first testing.
   (define (ability-lock! a seconds)
     ($need-a 'ability-lock! a)
-    ;; (<= 0 seconds) rather than (not (< seconds 0)): NaN is a real and
-    ;; is not less than zero, so the second form admits it, and a NaN
-    ;; lock then compares false against everything and becomes a silent
-    ;; no-op -- the caller's arithmetic went wrong somewhere upstream
-    ;; and this would be the last place that could have said so.
-    (unless (and (real? seconds) (<= 0 seconds))
-      (error 'ability-lock! "a lock is a non-negative real" seconds))
+    ;; $finite? rules out NaN and both infinities before (<= 0 seconds)
+    ;; rules out the negatives.  The ordering test was already chosen
+    ;; over (not (< seconds 0)) because NaN is a real and is not less
+    ;; than zero, so that form admitted it, and a NaN lock compares false
+    ;; against everything and becomes a silent no-op -- the caller's
+    ;; arithmetic went wrong somewhere upstream and this would be the
+    ;; last place that could have said so.
+    (unless (and (real? seconds) ($finite? seconds) (<= 0 seconds))
+      (error 'ability-lock!
+             "a lock is a non-negative real, finite as a flonum"
+             seconds))
     ;; Added to the cooldown's own zero so the stored time keeps the
     ;; cooldown's exactness.  Storing the argument as given would let an
     ;; exact lock on a flonum ability leave an exact remaining, and

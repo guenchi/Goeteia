@@ -60,6 +60,23 @@
   ;; inexact when it is not, so a pool set up in flonums stays in
   ;; flonums all the way down to empty instead of changing kind at the
   ;; one value a caller is most likely to compare against.
+  ;; A real that is still finite once made inexact, which is what it
+  ;; becomes when +, -, * or / combines it with a flonum, or when sin or
+  ;; cos takes it; +, -, * and / on exact operands alone stay exact.  An
+  ;; exact number of any size is finite as an exact number, yet 2^1024
+  ;; becomes +inf.0 and 2^-1100 becomes 0.0 when that happens.  (- y y)
+  ;; is 0 for every finite flonum y and NaN for either infinity and for
+  ;; NaN; 1.7e308 passes, which a bound such as (< y 1e300) would
+  ;; wrongly refuse.  A positive bound is tested on (inexact v) for the
+  ;; same reason, since 2^-1100 is positive and becomes 0.0.  A
+  ;; non-negative bound is tested on v itself, the stricter of the two
+  ;; there, since -2^-1100 becomes -0.0 and (<= 0 -0.0) holds.  Either
+  ;; way the value is kept as given.  All of this measured on the three
+  ;; back ends.  One private copy per (gam ...) library whose checks use
+  ;; it; "Prelude gaps" in docs/limits.md says why, and all eight change
+  ;; together when that entry does.
+  (define ($finite? x) (let ((y (inexact x))) (= 0 (- y y))))
+
   (define ($p-name p) (vector-ref p 0))
   (define ($p-value p) (vector-ref p 1))
   (define ($p-value! p v) (vector-set! p 1 v))
@@ -120,10 +137,14 @@
               (let ((name (car row)) (mx (cadr row)) (regen (caddr row)))
                 (unless (symbol? name)
                   (error 'make-stats "a pool name is a symbol" name))
-                (unless (and (real? mx) (<= 0 mx))
-                  (error 'make-stats "a pool maximum is a non-negative real" name mx))
-                (unless (and (real? regen) (<= 0 regen))
-                  (error 'make-stats "a regeneration rate is a non-negative real" name regen))
+                (unless (and (real? mx) ($finite? mx) (<= 0 mx))
+                  (error 'make-stats
+                         "a pool maximum is a non-negative real, finite as a flonum"
+                         name mx))
+                (unless (and (real? regen) ($finite? regen) (<= 0 regen))
+                  (error 'make-stats
+                         "a regeneration rate is a non-negative real, finite as a flonum"
+                         name regen))
                 ;; A repeated name would leave one of the two pools
                 ;; unreachable: every lookup answers the first, so the
                 ;; second could be written only by the code that built
@@ -141,9 +162,13 @@
   (define (stat s name) ($p-value ($pool 'stat s name)))
   (define (stat-max s name) ($p-max ($pool 'stat-max s name)))
 
-  ;; (= v v) rather than a nan? predicate: NaN is the one real that is
-  ;; not equal to itself, and a pool value or a change to one may be any
-  ;; real, so there is no ordering test that would have excluded it.
+  ;; $finite? rather than a cutoff: a pool value or a change to one may
+  ;; be any real finite as a flonum, and a cutoff would refuse legitimate
+  ;; values.  $clamp would map an infinity to the pool's bounds, and that
+  ;; is deterministic -- the reason to refuse it is what it hides.
+  ;; Measured 2026-09-23: a change of -inf.0 was clamped to 0 and emptied
+  ;; the pool without a word to the caller, so an arithmetic mistake
+  ;; upstream became a legal-looking move.
   ;;
   ;; This is the door the non-negative checks do not cover, and it opens
   ;; on the worst room: $clamp answers NaN for NaN, so the pool holds
@@ -154,14 +179,16 @@
   ;; changing.
   (define (stat-set! s name v)
     (let ((p ($pool 'stat-set! s name)))
-      (unless (and (real? v) (= v v))
-        (error 'stat-set! "a pool value is a real" name v))
+      (unless (and (real? v) ($finite? v))
+        (error 'stat-set! "a pool value is a real, finite as a flonum" name v))
       ($p-value! p ($clamp p v))))
 
   (define (stat-add! s name d)
     (let ((p ($pool 'stat-add! s name)))
-      (unless (and (real? d) (= d d))
-        (error 'stat-add! "a pool change is a real" name d))
+      (unless (and (real? d) ($finite? d))
+        (error 'stat-add!
+               "a pool change is a real, finite as a flonum"
+               name d))
       ($p-value! p ($clamp p (+ ($p-value p) d)))))
 
   ;; All or nothing.  A partial spend is the worst of the three possible
@@ -169,8 +196,10 @@
   ;; asked to, and the pool is left at a value neither side chose.
   (define (stats-spend! s name amount)
     (let ((p ($pool 'stats-spend! s name)))
-      (unless (and (real? amount) (<= 0 amount))
-        (error 'stats-spend! "a cost is a non-negative real" name amount))
+      (unless (and (real? amount) ($finite? amount) (<= 0 amount))
+        (error 'stats-spend!
+               "a cost is a non-negative real, finite as a flonum"
+               name amount))
       (and (not (< ($p-value p) amount))
            (begin ($p-value! p ($clamp p (- ($p-value p) amount))) #t))))
 
@@ -180,8 +209,10 @@
   ;; number it proposed.
   (define (stats-damage! s name amount)
     (let ((p ($pool 'stats-damage! s name)))
-      (unless (and (real? amount) (<= 0 amount))
-        (error 'stats-damage! "damage is a non-negative real" name amount))
+      (unless (and (real? amount) ($finite? amount) (<= 0 amount))
+        (error 'stats-damage!
+               "damage is a non-negative real, finite as a flonum"
+               name amount))
       (let* ((before ($p-value p))
              (after ($clamp p (- before amount))))
         ($p-value! p after)
@@ -191,8 +222,10 @@
   ;; actually restored, which stops short at the maximum.
   (define (stats-heal! s name amount)
     (let ((p ($pool 'stats-heal! s name)))
-      (unless (and (real? amount) (<= 0 amount))
-        (error 'stats-heal! "healing is a non-negative real" name amount))
+      (unless (and (real? amount) ($finite? amount) (<= 0 amount))
+        (error 'stats-heal!
+               "healing is a non-negative real, finite as a flonum"
+               name amount))
       (let* ((before ($p-value p))
              (after ($clamp p (+ before amount))))
         ($p-value! p after)
@@ -203,8 +236,10 @@
   ;; negative dt is refused rather than quietly draining every pool.
   (define (stats-regenerate! s dt)
     ($need-stats 'stats-regenerate! s)
-    (unless (and (real? dt) (<= 0 dt))
-      (error 'stats-regenerate! "elapsed time is a non-negative real" dt))
+    (unless (and (real? dt) ($finite? dt) (<= 0 dt))
+      (error 'stats-regenerate!
+             "elapsed time is a non-negative real, finite as a flonum"
+             dt))
     (let loop ((ps ($pools s)))
       (unless (null? ps)
         (let ((p (car ps)))
@@ -233,14 +268,28 @@
   ;; error naming the level whose cost was wrong.
   (define (stats-gain-xp! s amount)
     ($need-stats 'stats-gain-xp! s)
-    (unless (and (real? amount) (<= 0 amount))
-      (error 'stats-gain-xp! "experience is a non-negative real" amount))
+    (unless (and (real? amount) ($finite? amount) (<= 0 amount))
+      (error 'stats-gain-xp!
+             "experience is a non-negative real, finite as a flonum"
+             amount))
     ($xp! s (+ ($xp s) amount))
     (let ((curve ($curve s)))
       (if (not curve)
           0
           (let loop ((gained 0))
             (let ((need (curve ($level s))))
+              ;; +inf.0 is let through: a level whose cost is infinite can
+              ;; never be bought, so experience keeps accumulating and the
+              ;; loop stops -- which is how a curve says the cap has been
+              ;; reached.  That holds while the experience total is finite
+              ;; as a flonum.  Measured 2026-09-25: two gains of 1e308
+              ;; made it +inf.0, which is not less than +inf.0, and the
+              ;; capped level was bought; an exact total of 2^1024 is not
+              ;; less than +inf.0 here either.  Nothing here guards a
+              ;; total that overflows.
+              ;; This is an answer read during the loop, not a
+              ;; value stored, so it is held only to the bounds it always
+              ;; had; NaN fails (< 0 need) and is refused with the rest.
               (unless (and (real? need) (< 0 need))
                 (error 'stats-gain-xp!
                        "the level curve answered a cost that is not positive"

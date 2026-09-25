@@ -48,6 +48,7 @@
   ;; #(gam-inventory rows); rows is newest-first, and inventory-items
   ;; reverses it.  Prepending keeps a first add cheap; the reversal is
   ;; paid only by the caller that actually wants the listing.
+
   (define ($inv? b)
     (and (vector? b) (= (vector-length b) 2)
          (eq? (vector-ref b 0) 'gam-inventory)))
@@ -147,7 +148,15 @@
                   ;; and is not less than zero, so the second form
                   ;; admits it and one unusable weight turns the whole
                   ;; total into NaN, with nothing naming the item that
-                  ;; did it.
+                  ;; did it.  +inf.0 is let through: the total is then
+                  ;; infinite, heavier than any limit finite as a flonum,
+                  ;; which is a definite answer -- and the weight is read,
+                  ;; not stored.  (> +inf.0 +inf.0) is false, and measured
+                  ;; 2026-09-25 so is (> +inf.0 2^1024) here.  Not
+                  ;; always: a count is an exact integer of any size, and
+                  ;; measured 2026-09-25, a count of 2^1024 weighing 0.0
+                  ;; each gave NaN, so with the infinite item the total
+                  ;; was NaN rather than +inf.0.
                   (unless (and (real? w) (<= 0 w))
                     (error 'inventory-weight "no usable weight for that item" key w))
                   (loop (cdr rs) (+ total (* n w)))))))))

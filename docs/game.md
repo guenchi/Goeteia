@@ -41,6 +41,25 @@ believed. The loop would raise a level for free and never terminate, and
 about which level's cost was wrong, and it looks like the program is
 working.
 
+A level cap is a curve that answers `+inf.0`: a cost that can never be
+paid, so experience keeps accumulating and no level past it is gained --
+provided the experience total stays finite as a flonum. Two gains of
+`1e308` make it `+inf.0`, which is not less than `+inf.0`; two exact
+gains of `2^1023` make an exact `2^1024`, which this runtime does not
+find less than `+inf.0` either. In both cases the capped level is then
+bought; nothing guards a total that overflows.
+
+A real-valued argument to `(gam ...)` is refused unless it is finite as
+a flonum, because that is how the arithmetic reads it: an exact `2^1024`
+becomes `+inf.0`, and an exact `2^-1100` becomes `0.0`, which a positive
+bound then refuses. The value is kept as given. Item counts in
+`(gam inventory)` are exact integers and are not held to this: a count
+of `2^1024` is accepted. Two numbers read from
+procedures the caller supplies are let through when they are `+inf.0`:
+this cost, and an item's weight in `inventory-weight`. Neither is
+stored by the library, and each has a meaning of its own; NaN is
+refused in both.
+
 **There is no invulnerability timer, and that absence is the decision.**
 The library this grew out of had one, as a field on the stats value, and
 `stats-damage!` consulted it. That makes the meaning of "damage" depend
@@ -402,6 +421,15 @@ is solved for the one case that can be solved.
 The region is a capsule and its ends are round rather than square: a
 point past the end of the axis is inside when it is within the radius of
 the end cap, so the shape has no corners to fall out of as it turns.
+A point on the radius itself may be answered either way. The answer is
+computed through `sin` and `cos`, and for a radius of 5 at yaw 0 a
+point on the nominal radius came out inside it by about 6e-12 of the
+radius, because `(cos 0.0)` here is `0.9999999999939766`; for a radius
+of `5e-324` the rounding came out exact and the point was inside only
+because the comparison is `<=`. At other yaws the margin follows the
+accuracy of `sin` and `cos` (see "Trigonometric accuracy" in
+`docs/limits.md`). Do not rely on which side of the line an exact
+boundary point falls.
 Turning it turns the whole region, which is why the yaw is part of the
 field and not part of the question asked of it.
 

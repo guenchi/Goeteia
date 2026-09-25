@@ -66,6 +66,23 @@
   ;;
   ;; `from' and `to' are fractions of the duration, `time' and
   ;; `previous' are seconds.
+  ;; A real that is still finite once made inexact, which is what it
+  ;; becomes when +, -, * or / combines it with a flonum, or when sin or
+  ;; cos takes it; +, -, * and / on exact operands alone stay exact.  An
+  ;; exact number of any size is finite as an exact number, yet 2^1024
+  ;; becomes +inf.0 and 2^-1100 becomes 0.0 when that happens.  (- y y)
+  ;; is 0 for every finite flonum y and NaN for either infinity and for
+  ;; NaN; 1.7e308 passes, which a bound such as (< y 1e300) would
+  ;; wrongly refuse.  A positive bound is tested on (inexact v) for the
+  ;; same reason, since 2^-1100 is positive and becomes 0.0.  A
+  ;; non-negative bound is tested on v itself, the stricter of the two
+  ;; there, since -2^-1100 becomes -0.0 and (<= 0 -0.0) holds.  Either
+  ;; way the value is kept as given.  All of this measured on the three
+  ;; back ends.  One private copy per (gam ...) library whose checks use
+  ;; it; "Prelude gaps" in docs/limits.md says why, and all eight change
+  ;; together when that entry does.
+  (define ($finite? x) (let ((y (inexact x))) (= 0 (- y y))))
+
   (define ($w? w)
     (and (vector? w) (= (vector-length w) 7)
          (eq? (vector-ref w 0) 'gam-window)))
@@ -90,8 +107,11 @@
   ;; the empty interval at the step that crosses it rather than pretend
   ;; it never happened.
   (define (make-window duration from to)
-    (unless (and (real? duration) (< 0 duration))
-      (error 'make-window "a duration is a positive real number of seconds" duration))
+    (unless (and (real? duration) ($finite? duration)
+                 (< 0 (inexact duration)))
+      (error 'make-window
+             "a duration is a number of seconds, positive and finite as a flonum"
+             duration))
     (unless (and (real? from) (<= 0 from) (<= from 1))
       (error 'make-window "the window opens at a fraction from 0 to 1" from))
     (unless (and (real? to) (<= from to) (<= to 1))
@@ -109,8 +129,10 @@
   ;; than a growing number.
   (define (window-step! w dt)
     ($need-w 'window-step! w)
-    (unless (and (real? dt) (<= 0 dt))
-      (error 'window-step! "an elapsed time is a non-negative real" dt))
+    (unless (and (real? dt) ($finite? dt) (<= 0 dt))
+      (error 'window-step!
+             "an elapsed time is a non-negative real, finite as a flonum"
+             dt))
     ($prev! w ($now w))
     ($now! w (let ((next (+ ($now w) dt)))
                (if (< ($dur w) next) ($dur w) next))))

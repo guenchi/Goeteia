@@ -101,6 +101,21 @@ R6RS list helper `exists` are not provided.  Compose them locally
 operations.  Inverse trigonometry (`flasin`/`flacos`/`flatan`/
 `flatan2`) lives in `(gfx mat)`, not in the prelude.
 
+`finite?`, `infinite?` and `nan?` are not provided.  For a real `x`,
+`(= 0 (- x x))` is true exactly when `x` is finite: `x - x` is zero for
+every finite real, exact or inexact, and NaN for both infinities and
+for NaN.  It keeps `1.7e308`, which a cutoff such as `(< x 1e300)`
+wrongly refuses.  The `(gam ...)` libraries whose checks use it each
+carry a private copy of that test, applied to `(inexact x)`: `+`,
+`-`, `*` and `/` turn inexact as soon as a flonum takes part, `sin` and
+`cos` answer inexact for any real argument, and an exact number can be
+finite yet become `+inf.0` (`2^1024`) or `0.0` (`2^-1100`) when that
+happens.  When these
+procedures are provided, a program that defines one of them at top
+level will be refused -- a program may not define a name it imports --
+and will need `(import (except (rnrs) finite?))` or the like; this
+entry goes then, and the private copies become `(finite? (inexact x))`.
+
 `div`, `mod`, `div0` and `mod0` are present but accept **exact
 integers only** — deliberately narrower than R6RS, which defines them
 over the reals.  A flonum, a ratio or a zero divisor raises.  There is
