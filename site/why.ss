@@ -8,17 +8,16 @@
        (h1 "Why Scheme?")
        (span (@ (class "era")) "in the age of AI" ,(raw "&nbsp;") "programming"))
      (p (@ (class "lede"))
-        "Not because it reads elegantly to a human — because a "
-        "model can reliably " (em "generate") " it, " (em "verify") " it, and "
-        (em "manipulate") " it."))
+        "A model can reliably " (em "generate") " it, "
+        (em "verify") " it, and " (em "manipulate") " it — that matters "
+        "more than how it reads to a human."))
 
    `(section
-     (p "The bottleneck of AI-written code isn't taste — it's trust. A model "
-        "is strongest at producing " (strong "constrained structure") " and "
-        "weakest at " (strong "guaranteeing runtime semantics") ". Scheme's "
-        "value for AI is that its structure lines up with the first and hands the "
-        "second to a machine. That points to an optimum that looks different from "
-        "the one you'd pick for a human."))
+     (p "The bottleneck of AI-written code is trust. "
+        "Models are good at producing " (strong "constrained structure") ". "
+        "They are bad at " (strong "getting runtime behaviour right") ". "
+        "Scheme lines up with the first and hands the second to a machine "
+        "— a different set of priorities than you'd choose for a human writer."))
 
    `(section
      ,(layer "1" "Homoiconicity is the ideal substrate for generation"
@@ -28,25 +27,24 @@
          (li (b "No text↔AST round-trip.") " An s-expression the model emits is "
              "already a parsed tree. Generation, validation and rewriting all happen "
              "on the same structure — no fragile JS/TS parser standing between intent "
-             "and syntax. This is exactly what " (a (@ (href "agent.html")) "web-porter")
-             " leans on: the target language is s-expr, so verification and rewrites "
-             "work on the tree.")
+             "and syntax. " (a (@ (href "agent.html")) "web-porter")
+             " works this way: the target is s-expr, so verification and rewrites "
+             "stay on the tree.")
          (li (b "Structural validity is nearly free.") " JS invites missing "
              "semicolons, mismatched " (code "async") ", a forgotten " (code "await") ". "
-             "An s-expr is syntactically valid the moment its parens balance — the "
-             "error surface shrinks by an order of magnitude.")
+             "An s-expr is syntactically valid the moment its parens balance — "
+             "most syntax errors simply vanish.")
          (li (b "Macros let the model generate at the right altitude.") " It "
              "doesn't hand-roll a codec line by line; it emits one "
              (code "(define-message …)") " declaration and the macro expands it to "
              "correct code. The model writes intent — short, clear, checkable — and "
-             "the compiler writes the implementation. That's the division of labour "
-             "it's least likely to botch."))))
+             "the compiler writes the implementation."))))
 
    `(section
      ,(layer "2" "The generate–verify loop is the real win"
             '("Untrusted output, made trustworthy by a cheap, automatic oracle."))
      (div (@ (class "layer-body"))
-       (p "This is the part that's genuinely specific to AI. Generated code is "
+       (p "Generated code is "
           "not to be believed; it has to be " (em "proven") ". Scheme makes the proof "
           "cheap and automatic.")
        (ul (@ (class "points"))
@@ -56,10 +54,9 @@
              "them against each other exactly. The model never " (em "claims") " "
              "correctness — it is forced to demonstrate it (porting one codebase to "
              "another is just this contract).")
-         (li (b "An automatic oracle beats \"well-written.\"") " A check that "
+         (li (b "Automatic checks over hand-review.") " A check that "
              "mechanically rejects a wrong edit — a fixpoint, an invariant, a golden "
-             "comparison — holds on every change with no human in the loop, and is "
-             "worth more than any amount of prose polish. (A self-hosting compiler is "
+             "comparison — holds on every change, unattended. (A self-hosting compiler is "
              "the limit case: recompile itself and the output must match "
              "byte-for-byte.)")
          (li (b "read/write round-trip is a free property test.") " For any value, "
@@ -109,41 +106,40 @@
          (li (b "Same language on both ends, s-expr on the wire.") " There is no "
              "protocol to " (em "design") " — the model just " (code "read") "s and "
              (code "write") "s. No protocol, no protocol bug. For the thing a "
-             "model is most likely to get wrong, the best move is to delete it.")
+             "model is most likely to get wrong, the fix is not having one.")
          (li (b "Declarative schema for the heterogeneous case.") " Facing a "
              "foreign backend, the model generates a " (code "define-json") " / "
              (code "define-message") " schema rather than a hand-written codec — "
              "and the test checks symmetry directly: " (code "(decode (encode x)) = x") ".")
-         (li (b "Not hypothetical — it already ships.") " "
+         (li (b "Already in production.") " "
              (a (@ (href "https://igropyr.dev")) "Igropyr") ", a high-performance network "
              "server written in pure Scheme, already accepts s-expression payloads "
              "over the wire. The same-language, no-codec path is production, not a "
              "proposal."))
        (div (@ (class "callout"))
-         (span (@ (class "k")) "The optimum, in one line")
+         (span (@ (class "k")) "The argument, in one line")
          (p "Declarative protocol & schema, plus automatic differential and "
             "round-trip verification. The model emits short, declarative, "
             "structurally-valid " (em "intent") " — schemas, routes, " (code "sx")
             " templates; macros produce the implementation; the machine proves it "
-            "correct. Work lands on the model's strength; risk lands on the verifier."))))
+            "correct."))))
 
    `(section (@ (class "note"))
      (div (@ (class "note-head"))
-       (h2 "An honest counterpoint")
+       (h2 "A counterpoint")
        (span (@ (class "note-sub")) "Ecosystem and training data cut the other way"))
-     (p "Models have seen orders "
-        "of magnitude more JavaScript, so their intuitive recall for it is stronger; "
+     (p "Models have seen far more JavaScript, so their recall for JS idioms is stronger; "
         "writing Scheme leans harder on the verification scaffolding above to catch "
         "what recall would have caught for free. JavaScript is the language a model "
         "remembers better — but Scheme has the properties that " (em "matter") " for "
-        "code that must be verified anyway, provided you actually build the loop. "
-        "Here, it's built: differential testing, the self-hosting fixpoint, and "
+        "code that must be verified anyway — if you build the loop. "
+        "Here it is: differential testing, the self-hosting fixpoint, and "
         "read/write round-trips.")
      (p "And the ecosystem gap is narrower than it looks, because you don't have "
         "to leave the JavaScript world to enter Goeteia. Its " (code "(web js)")
         " FFI bridge reaches straight into the host: a port can call into any "
         "existing JavaScript library — the whole npm-scale ecosystem stays one call "
-        "away, seamlessly. You verify the code you write; you borrow, unchanged, the "
+        "away. You verify the code you write; you borrow, unchanged, the "
         "libraries the world already wrote."))))
 
 ;; shared base (palette + nav) from chrome, then this page's own rules,
