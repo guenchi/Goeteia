@@ -460,7 +460,7 @@ Both points are damped at one rate, and that is what holds the heading steady: t
 - `gltf-parse` — parse a GLB already sitting in staging at `base` for `len` bytes, and answer a `gltf`. It reads GLB only -- a `.gltf` JSON file with side-car buffers is not this entry point
 - `gltf-fetch!` — the browser loader: fetch `url`, copy the whole body into staging in one go, parse it, and call `k` with the `gltf`. Asynchronous -- it returns before `k` runs
 - `gltf-load-textures!` — decode the embedded images and give every textured primitive its texture slot, then call `k` with the `gltf` once the last image is up. Asynchronous, and until it has run `gprim-tex` is `#f` everywhere
-- `gltf-draw!` — draw every primitive with one program, view-projection `vp` and an optional root matrix. It refuses a program whose attribute schema does not match the primitive layout (name AND component count -- widths can cancel in the stride), and refuses one declaring per-instance `i_*` attributes, since it binds no instance buffer
+- `gltf-draw!` — draw every primitive with one program, view-projection `vp` and an optional root matrix. It refuses a program whose attribute schema does not match the primitive layout (name AND component count -- widths can cancel in the stride), and refuses one declaring per-instance `i_*` attributes, since it binds no instance buffer Where the program declares them, `u_color` is set to the base colour with its r g b sRGB-encoded -- the factor is linear in glTF, and the library's shaders decode `u_color` -- and `u_emissive` to the emissive factor as it is, linear
 - `gltf-textures` — the file's `textures[]` array verbatim, `#((image . sampler|#f) ...)`, duplicates and unreferenced entries included -- a re-export has to reproduce the array, not a set rebuilt from what the materials happened to use
 - `gltf-samplers` — the file's `samplers[]` array as a vector of `gsampler`s, likewise verbatim
 - `gltf-cameras` — the file's cameras, each `#(kind p0 p1 p2 p3)`: perspective is yfov aspect znear zfar, orthographic is xmag ymag znear zfar, and any key the file omitted is `#f` rather than a default
@@ -484,7 +484,7 @@ Both points are damped at one rate, and that is what holds the heading steady: t
 - `gprim-mrtex` — the GL texture slot the metallic-roughness map landed in after `gltf-load-textures!`, or `#f`
 - `gprim-morph-normals` — the per-target NORMAL deltas (3 floats per vertex per target), or `#f` where the file gave none. Inside the vector a target that carried none is a `#f` hole, so index per target -- do not assume the whole vector is present or absent together
 - `gprim-morph-tangents` — the per-target TANGENT deltas, with the same per-target `#f` holes
-- `gprim-base-color-factor` — what the FILE said, or `#f` where the material omits `baseColorFactor`. Use this one for a re-export: `gprim-color` falls back to a neutral grey, so there an omitted key and an explicit grey are one value
+- `gprim-base-color-factor` — what the FILE said, or `#f` where the material omits `baseColorFactor`. Use this one for a re-export: `gprim-color` falls back to the glTF default of 1, so there an omitted key and an explicit 1 are one value
 - `gprim-node` — which node this primitive came from -- a re-export needs to say which node carried the mesh
 - `gprim-skin` — the skin index this primitive is bound to, or `#f` when it is not skinned
 - `gltf-anims` — the animation table, each clip `#(name channels duration touched-nodes)`
@@ -531,7 +531,7 @@ Both points are damped at one rate, and that is what holds the heading steady: t
 - `gprim-ibytes` — how many bytes of index data
 - `gprim-icount` — how many indices -- the count a draw call wants, not a byte count
 - `gprim-index-u32?` — are the indices 32-bit? Which decides between `cmd-index-data!`/`cmd-draw-elements!` and their `32` twins
-- `gprim-color` — the base colour as an r g b a flonum vector, always a colour -- a neutral grey stands in where the material gave none, which is what a renderer wants
+- `gprim-color` — the base colour as an r g b a flonum vector, linear as glTF defines it, always a colour -- the glTF default of 1 stands in where the material gave none, which is what a renderer wants
 - `gprim-metallic` — the metallic factor
 - `gprim-roughness` — the roughness factor
 - `gprim-world` — the bind-pose model matrix captured at parse time. It does not move with animation; for what to feed `u_model` this frame use `gltf-prim-world`
@@ -981,6 +981,8 @@ This library answers how much of the target to draw; it does not build the mirro
 
 ## `(gfx srgb)`
 
+- `linear->srgb` — one channel from linear to sRGB-encoded on the CPU, the curve `encode_srgb` applies in a shader: a negative value gives 0, and at or below 0.0031308 the straight segment is used. For a linear value on its way to a uniform the shaders decode, such as a glTF base colour factor. A NaN is refused; an infinity is answered by the curve
+- `srgb->linear` — one channel from sRGB-encoded to linear on the CPU, the curve `decode_srgb` applies in a shader, with the straight segment at or below 0.04045. A NaN is refused
 - `srgb-shader-functions` — `decode_srgb` and `encode_srgb` as shader forms, each `vec3` to `vec3`: the exact piecewise sRGB curve of IEC 61966-2-1, a straight segment near black and a 2.4 power above it, not the single power 2.2 that is often used in its place -- the two agree in the middle and part in the dark. Decode what arrives sRGB-encoded, light in linear, encode what goes to the display. A caller splices the list once, after the precision statement -- an ES 1.00 fragment shader has no default float precision -- which in a quasiquoted form list is `,@(srgb-shader-functions)` just before `main`; splicing it twice defines each function twice. `decode_srgb` holds `pow`'s base at zero or above, so `pow` is never given a negative base, and `encode_srgb` takes a negative value as zero. Both are ES 1.00 and ES 3.00 alike. `(gfx mesh)`'s four fragment shaders, and `(gfx scene)`'s programs built from them, take their colors sRGB-encoded and write sRGB-encoded; `(gfx scene)`'s instanced program does not, using each instance's color as it comes. `(gfx post)`'s grade pass takes linear input and writes sRGB-encoded
 
 ## `(gfx surface)`
