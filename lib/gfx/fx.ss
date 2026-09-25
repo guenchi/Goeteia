@@ -59,6 +59,7 @@
           fx-program-attribute-names fx-program-attribute-schema
           fx-program-istride fx-program-blocks
           fx-use! fx-use-instanced! fx-uniform! fx-uniform?
+          fx-uniform-viewport-height! fx-uniform-viewport-size!
           fx-ticks! fx-loop! fx-loop-fixed!
           fx-init-input! key-down? key-went-down? key-went-up?
           keys-consume-edges! pointer-x pointer-y pointer-down?
@@ -508,20 +509,50 @@
                         ($fx-program-iattribs prog)))))))
 
   ;; scalar/vector cache: #t = unchanged since last send.  The cell
-  ;; vector is reused, so a steady uniform allocates once, ever
+  ;; vector is reused, so a steady uniform allocates once, ever.
+  ;;
+  ;; A name whose entry is $fx-replayed, not a vector, has had its
+  ;; value supplied at replay by fx-uniform-viewport-height! or -size!.
+  ;; What the GPU holds for it is not known here, so it is never
+  ;; "unchanged": every write is sent, and the mark stays, since
+  ;; replacing it with this value would make the next write of the
+  ;; same value look like a repeat of something the GPU may not hold.
+  (define $fx-replayed 'replayed)
   (define ($fx-same? cache name n v0 v1 v2 v3)
     (let ((prev (hashtable-ref cache name #f)))
       (if prev
-          (if (and (fl=? (vector-ref prev 0) v0)
-                   (or (< n 2) (fl=? (vector-ref prev 1) v1))
-                   (or (< n 3) (fl=? (vector-ref prev 2) v2))
-                   (or (< n 4) (fl=? (vector-ref prev 3) v3)))
-              #t
-              (begin (vector-set! prev 0 v0) (vector-set! prev 1 v1)
-                     (vector-set! prev 2 v2) (vector-set! prev 3 v3)
-                     #f))
+          (if (not (vector? prev))
+              #f
+              (if (and (fl=? (vector-ref prev 0) v0)
+                       (or (< n 2) (fl=? (vector-ref prev 1) v1))
+                       (or (< n 3) (fl=? (vector-ref prev 2) v2))
+                       (or (< n 4) (fl=? (vector-ref prev 3) v3)))
+                  #t
+                  (begin (vector-set! prev 0 v0) (vector-set! prev 1 v1)
+                         (vector-set! prev 2 v2) (vector-set! prev 3 v3)
+                         #f)))
           (begin (hashtable-set! cache name (vector v0 v1 v2 v3))
                  #f))))
+
+  ;; A uniform set to the viewport in force when the draw is replayed:
+  ;; its height into a float, or its width and height into a vec2.  For
+  ;; sizes in pixels of whatever target is being drawn into, which the
+  ;; canvas size is not once an offscreen target is bound.  The name is
+  ;; marked in the program's cache first, so fx-uniform! on it always
+  ;; sends from then on (see $fx-same?).
+  (define ($fx-uniform-replayed! who prog name type encode!)
+    (let ((u (hashtable-ref ($fx-program-uniforms prog) name #f)))
+      (unless u (error who "undeclared uniform" name))
+      (unless (eq? (cdr u) type)
+        (error who "the uniform is not of the type this sets" name (cdr u) type))
+      (hashtable-set! ($fx-program-ucache prog) name $fx-replayed)
+      (encode! (car u))))
+  (define (fx-uniform-viewport-height! prog name)
+    ($fx-uniform-replayed! 'fx-uniform-viewport-height! prog name 'float
+                           cmd-uniform-viewport-height!))
+  (define (fx-uniform-viewport-size! prog name)
+    ($fx-uniform-replayed! 'fx-uniform-viewport-size! prog name 'vec2
+                           cmd-uniform-viewport-size!))
 
   ;; dispatch on the declared type; sampler values are texture units.
   ;; Scalar and vector uniforms remember their last value and skip
@@ -924,8 +955,10 @@
       (cmd-buffer-data! ($fx-quad-base q) 32)
       (when (hashtable-contains? ($fx-program-uniforms prog) 'u_time)
         (fx-uniform! prog 'u_time t))
+      ;; the viewport this quad is replayed into, which is the target's
+      ;; when one is bound, not the canvas's
       (when (hashtable-contains? ($fx-program-uniforms prog) 'u_resolution)
-        (fx-uniform! prog 'u_resolution (fx-width) (fx-height)))))
+        (fx-uniform-viewport-size! prog 'u_resolution))))
 
   (define (fx-fullscreen-draw! q)
     (cmd-draw-arrays! GL-TRIANGLE-STRIP 0 4))

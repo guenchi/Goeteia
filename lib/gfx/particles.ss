@@ -253,7 +253,10 @@
         ($p-dirty! f #f))
       (fx-uniform! program 'u_viewproj vp)
       (fx-uniform! program 'u_time ($p-clock f))
-      (fx-uniform! program 'u_height ($p-fl (fx-height)))
+      ;; Point sizes are in pixels of the target being drawn into, so
+      ;; the height is the viewport's when the draw is replayed, which
+      ;; the replayer supplies; it is not known here.
+      (fx-uniform-viewport-height! program 'u_height)
       (fx-uniform! program 'u_size_max ($p-size-max f))
       (cmd-draw-arrays! GL-POINTS 0 (particles-capacity f))))
   ;; The two procedures above are what a person calls when they want

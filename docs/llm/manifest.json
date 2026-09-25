@@ -21,7 +21,7 @@
   "files": [
     {
       "path": "core.md",
-      "bytes": 9215,
+      "bytes": 9211,
       "budget": 9216,
       "budget_note": "core.md sits at the cap; adding needs tightening or splitting a section out, not raising this number -- the cap is the ceiling on what every task injects, so raising it enlarges every injection at once",
       "layer": 0,
@@ -223,7 +223,7 @@
         "core.md",
         "t1-static.md"
       ],
-      "bytes": 13177
+      "bytes": 13173
     },
     {
       "task": "page with state, controls or forms",
@@ -232,7 +232,7 @@
         "t1-static.md",
         "t2-interactive.md"
       ],
-      "bytes": 16885
+      "bytes": 16881
     },
     {
       "task": "3D scene or model viewer",
@@ -241,7 +241,7 @@
         "t1-static.md",
         "t3-mesh3d.md"
       ],
-      "bytes": 17835
+      "bytes": 17831
     },
     {
       "task": "shader effect / procedural visuals",
@@ -249,7 +249,7 @@
         "core.md",
         "t4-shader.md"
       ],
-      "bytes": 14171
+      "bytes": 14167
     },
     {
       "task": "a rig, an orrery, or several controllable degrees of freedom",
@@ -259,7 +259,7 @@
         "t3-mesh3d.md",
         "t5-animated.md"
       ],
-      "bytes": 22548
+      "bytes": 22544
     },
     {
       "task": "unknown, or a page mixing several of the above",
@@ -271,7 +271,7 @@
         "t4-shader.md",
         "t5-animated.md"
       ],
-      "bytes": 31466
+      "bytes": 31462
     }
   ],
   "verification": {

@@ -734,6 +734,34 @@ largest value instead, which would give a finite answer.  Both GL
 implementations measured here carry mediump at full precision, so
 neither shows either outcome.
 
+## Uniforms the replayer fills in from the viewport
+
+`fx-uniform-viewport-height!` and `fx-uniform-viewport-size!` (and
+through them `particles-draw!`, `fx-fullscreen-use!`'s `u_resolution`
+and the sprite batches) leave the value to the replayer, which reads
+the viewport in force as it replays.  Two things follow.
+
+While a replay is running, host code must not change the viewport --
+for instance from a hook wrapped around a GL call, or by starting
+another replay on the same context.  The replayer keeps what it read
+until its own next viewport command, and it has no guard against being
+re-entered.
+
+Reading the viewport costs a query of the context.  Within one replay
+it is made at the first such uniform after the replay starts and after
+each viewport command -- even one that sets the same viewport again --
+and again after a query answers nothing, as on a lost context.
+Measured 2026-09-25 in headless Chrome on an Apple M4 Pro, one
+`getParameter(VIEWPORT)` took a median of 37 us on both GL
+implementations tried (ANGLE on Metal, and ANGLE on SwiftShader), and
+about the same right after a viewport change or with a clear queued
+before it, over seven runs of ten thousand to a hundred thousand
+calls.  A frame that flushes several times pays it again in each
+replay that uses such a uniform.  Not measured: whole frames and their distribution, whether
+the cost is a synchronous call to the GPU process (no trace was taken),
+and any implementation other than ANGLE.  The library sets no budget
+for it; whether it matters is the application's frame time to decide.
+
 ## Compiler diagnostics are terse
 
 Runtime traps surface as `unreachable` or `illegal cast` with no

@@ -89,8 +89,8 @@ WebGPU, `stats` a HUD.
   every slot: allocate through `fx-alloc!` / `fx-buffer!` /
   `fx-program!`, never with hand-numbered `gl-*!`.
 - The drawing buffer is the canvas WIDTH/HEIGHT **attributes**
-  (800×600), which is also what `u_resolution` reports; CSS only
-  stretches the result.
+  (800×600); CSS only stretches it. `u_resolution` is the current
+  viewport's size.
 - `fx-loop!` hands the callback `t` and `dt` in **seconds**, one bridge
   call per frame.
 - A mat4 is a column-major 16-vector. **`(m4-mul a b)` applies `b`

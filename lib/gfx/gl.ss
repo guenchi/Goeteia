@@ -72,6 +72,7 @@
           cmd-draw-elements-instanced32!
           cmd-uniform-matrices! cmd-uniform-matrices4s!
           cmd-draw-arrays! cmd-viewport! cmd-blend!
+          cmd-uniform-viewport-height! cmd-uniform-viewport-size!
           GL-POINTS GL-LINES GL-TRIANGLES GL-TRIANGLE-STRIP)
   (import (rnrs) (web js))
 
@@ -382,6 +383,7 @@
      "      gl.beginQuery(tq.TIME_ELAPSED_EXT, tquery);"
      "    }"
      "    let p = base >> 2; const stop = end >> 2;"
+     "    let vp = null;"
      "    while (p < stop) switch (u[p++]) {"
      "     case 1: gl.clearColor(f[p], f[p+1], f[p+2], f[p+3]); p += 4;"
      "             gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT); break;"
@@ -399,7 +401,14 @@
      "     case 8: { const m = u[p] === 0 ? gl.POINTS : u[p] === 1 ? gl.LINES"
      "                : u[p] === 5 ? gl.TRIANGLE_STRIP : gl.TRIANGLES;"
      "               gl.drawArrays(m, u[p+1], u[p+2]); p += 3; break; }"
-     "     case 9: gl.viewport(u[p], u[p+1], u[p+2], u[p+3]); p += 4; break;"
+     "     case 9: gl.viewport(u[p], u[p+1], u[p+2], u[p+3]); p += 4;"
+     "             vp = null; break;"
+     "     case 45: if (vp === null) vp = gl.getParameter(gl.VIEWPORT);"
+     "              if (vp) gl.uniform1f(slots[u[p]], vp[3]);"
+     "              p += 1; break;"
+     "     case 46: if (vp === null) vp = gl.getParameter(gl.VIEWPORT);"
+     "              if (vp) gl.uniform2f(slots[u[p]], vp[2], vp[3]);"
+     "              p += 1; break;"
      "     case 10: if (u[p] === 1) { const m = u[p+1]; gl.enable(gl.BLEND);"
      "                gl.blendFunc(m === 2 ? gl.ONE : gl.SRC_ALPHA,"
      "                             m === 1 ? gl.ONE"
@@ -722,6 +731,18 @@
   (define (cmd-tf-end!) (u! 35))
   (define (cmd-uniform1i! slot v) (u! 12) (u! slot) (u! v))
   (define (cmd-uniform2f! slot x y) (u! 13) (u! slot) (f! x) (f! y))
+  ;; A uniform whose value is the viewport in force when the command is
+  ;; REPLAYED: its height (a float), or its width and height (a vec2).
+  ;; The value is not known when the command is written -- a draw can
+  ;; be encoded into one buffer and replayed after another sets the
+  ;; viewport, or replayed twice -- so the replayer supplies it.  It
+  ;; asks GL once per viewport change within a replay and keeps the
+  ;; answer until the next viewport command or the end of that replay;
+  ;; nothing is kept from one replay to the next, because another
+  ;; replayer or the host may set the viewport between them.  If the
+  ;; context is lost the query answers null and the upload is skipped.
+  (define (cmd-uniform-viewport-height! slot) (u! 45) (u! slot))
+  (define (cmd-uniform-viewport-size! slot) (u! 46) (u! slot))
   (define (cmd-uniform3f! slot x y z)
     (u! 19) (u! slot) (f! x) (f! y) (f! z))
   ;; m: a 16-element flonum vector, column-major ((gfx mat) makes them)

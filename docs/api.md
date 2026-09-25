@@ -338,7 +338,9 @@ Both points are damped at one rate, and that is what holds the heading steady: t
 - `fx-program-blocks` — the uniform BLOCK names the shaders declare, in order; block members never reach the uniform table, so this is the question to ask about a name that lives in a block, and it and fx-uniform? stay mutually exclusive
 - `fx-use!` — binds a program and a vertex buffer, wiring the attributes at the program's own stride unless another is given
 - `fx-use-instanced!` — binds a program with per-vertex data from one buffer and i_ attributes from another at divisor 1; draw it with cmd-draw-elements-instanced!
-- `fx-uniform!` — sets a uniform by name, encoding by its declared type; the same value twice sends no command, since GL uniform state is per-program and persistent
+- `fx-uniform!` — sets a uniform by name, encoding by its declared type; the same value twice sends no command, since GL uniform state is per-program and persistent. A name that `fx-uniform-viewport-height!` or `fx-uniform-viewport-size!` has set is sent every time from then on, since what the GPU holds for it is decided at replay
+- `fx-uniform-viewport-height!` — sets a float uniform by name to the height of the viewport in force when this upload is replayed, through `cmd-uniform-viewport-height!`; set the viewport (bind the target) before calling it. For sizes in pixels of whatever is being drawn into. The uniform must be declared, and declared float
+- `fx-uniform-viewport-size!` — the same for a vec2 uniform, set to the viewport's width and height
 - `fx-uniform?` — whether a program actually declares a uniform, so a renderer can bind optional resources only when the shader asks for them
 - `fx-ticks!` — runs a procedure every frame with the elapsed and delta time in seconds, and no GL side effects of its own -- so another renderer's loop can use it directly
 - `fx-loop!` — ticks plus the GL frame plumbing: begin the frame, set the viewport, run the caller's commands, check for overflow, flush once
@@ -356,7 +358,7 @@ Both points are damped at one rate, and that is what holds the heading steady: t
 - `pointer-motion!` — the accumulated motion since the last call as (dx . dy); reading it RESETS the accumulator, so poll it once per frame. Motion accumulates only while the pointer is captured -- mouse movement with no lock in force is not collected and does not appear here later
 - `fx-fullscreen!` — a fullscreen quad from fragment shader forms -- the whole of a post-processing pass's plumbing
 - `fx-quad-program` — the linked program behind a fullscreen quad, to set further uniforms on
-- `fx-fullscreen-use!` — binds a fullscreen quad for drawing at a time t; u_time and u_resolution are set only if the fragment declares them, and anything else goes through fx-uniform! on its program
+- `fx-fullscreen-use!` — binds a fullscreen quad for drawing at a time t; u_time and u_resolution are set only if the fragment declares them, and anything else goes through fx-uniform! on its program. `u_resolution` is the viewport's size when this call's upload is replayed -- the target's when one is bound, not the canvas's -- so bind the target before calling it, not between it and the draw; under a viewport whose origin is not 0, a shader that divides `gl_FragCoord.xy` by it must subtract the origin itself
 - `fx-fullscreen-draw!` — draws the bound fullscreen quad
 - `fx-quad-shaders` — the fullscreen quad's vertex shader as an enumeration table: entries are `(name dialect vertex-forms fragment-forms)`, dialect second because it decides which renderer the other two want (`glsl->string` for `es100`, the `glsl300-*` pair for `es300`). The one entry here is `es100` and its FRAGMENT half is `#f`: `fx-fullscreen!` takes the fragment shader from the caller, so this library has no partner to offer. Supplying one is the caller's job, and a tool compiling this table must pair it with something
 
@@ -397,6 +399,8 @@ Both points are damped at one rate, and that is what holds the heading steady: t
 - `cmd-uniform4f!` — set a vec4 uniform
 - `cmd-uniform1i!` — set an int uniform -- also how a sampler is pointed at a texture unit
 - `cmd-uniform2f!` — set a vec2 uniform
+- `cmd-uniform-viewport-height!` — set a float uniform to the height of the viewport in force when this command is replayed -- so a viewport encoded after it, before the draw, is not the one it reads. The replayer asks GL for it once per viewport change within a replay; the value is not known when the command is written, which is why it is not an argument. If the context is lost the upload is skipped
+- `cmd-uniform-viewport-size!` — the same for a vec2 uniform, set to the viewport's width and height
 - `cmd-uniform3f!` — set a vec3 uniform
 - `cmd-uniform-matrix4!` — set a mat4 uniform from a 16-element flonum vector, column-major, as `(gfx mat)` makes them
 - `cmd-uniform-matrix4s!` — the same when the matrix already lives in staging at `at`: the command carries its address and the replayer reads the sixteen floats in place -- three words instead of eighteen
@@ -771,7 +775,7 @@ A fixed GPU pool of point sprites: a particle's whole future is written once and
 - `particles-ambient-capacity` — how many of those are reserved for looping ambient particles; `particle-emit!` never writes below this index and `particle-ambient!` never writes above it
 - `particles-emitted` — how many particles have been emitted since the pool was made. It counts emissions, not living particles, and it never goes down -- it is a counter for diagnostics, not an occupancy
 - `particles-clock!` — set the time the pool renders at. Time is the caller's, because a fixed-step simulation and a frame-rate render disagree about what "now" is
-- `particles-draw!` — draw the pool at the view-projection given, uploading first if anything changed. It does NOT advance the clock: a draw that quietly stepped time would answer differently depending on how often it was called
+- `particles-draw!` — draw the pool at the view-projection given, uploading first if anything changed. It does NOT advance the clock: a draw that quietly stepped time would answer differently depending on how often it was called. Point sizes are in pixels of the viewport in force when the draw is replayed (the height is uploaded just before it), so drawing into an offscreen target of another height sizes them for that target
 - `particle-emit!` — one particle, born at the current clock, on the ring behind the ambient reserve. The ring overwrites its oldest entry rather than refusing, so a burst arriving at a full pool costs the oldest smoke rather than itself. A non-positive lifetime or size is refused by name, as is a pool whose reserve is the whole capacity
 - `particle-ambient!` — a looping particle in the reserve; `phase` shifts where in its loop it starts, so a field of them does not pulse in unison. Once the reserve is full it is refused by name rather than spilling into the burst ring, because silently taking a burst slot would make ambient particles disappear at a distance from the code that placed them
 - `particle-burst!` — `count` particles from one point, with speed, lifetime and size jittered so a burst does not look like a stamp. It goes through `particle-emit!`, so the same refusals apply and the same ring is consumed
@@ -967,7 +971,7 @@ This library answers how much of the target to draw; it does not build the mirro
 - `sprite!` — a textured quad: a pixel rect on screen from a pixel rect in the atlas, tinted. UVs are atlas pixels, so atlas growth never invalidates a written vertex
 - `rect!` — a solid tinted rectangle; it samples the white block at the atlas origin, so fills and text go through one program
 - `draw-text!` — draws a typeset layout at a position in a colour; the layout must have been prepared with this same atlas's measurer and line height
-- `batch-draw!` — one texture refresh if the atlas grew or gained glyphs, one buffer upload, one TRIANGLES draw -- a whole frame of sprites and text in a single call
+- `batch-draw!` — one texture refresh if the atlas grew or gained glyphs, one buffer upload, one TRIANGLES draw -- a whole frame of sprites and text in a single call. Pixel coordinates are the viewport's: `u_resolution` is the viewport's size when the draw is replayed (it is uploaded just before it) -- the target's when one is bound, not the canvas's
 - `load-image!` — loads an image URL and calls the continuation when the browser has the pixels; make-sheet is what to do with it there
 - `sheet?` — whether a value is a sprite sheet
 - `make-sheet` — uploads a loaded image or canvas as a premultiplied texture, for drawing source rectangles out of a sprite sheet
@@ -977,7 +981,7 @@ This library answers how much of the target to draw; it does not build the mirro
 - `make-sheet-batch` — a quad batch over a sprite sheet, with an optional capacity; it draws under premultiplied blending rather than the atlas's alpha mask
 - `sheet-batch-sheet` — the sheet a sheet batch draws from
 - `sheet!` — a destination pixel rect drawn from a source pixel rect of the sheet, tinted
-- `sheet-draw!` — uploads and draws everything written into the sheet batch since it was last drawn
+- `sheet-draw!` — uploads and draws everything written into the sheet batch since it was last drawn. Pixel coordinates are the viewport's: `u_resolution` is the viewport's size when the draw is replayed (it is uploaded just before it) -- the target's when one is bound, not the canvas's
 - `sprite-shaders` — the two sprite programs as `(name dialect vertex-forms fragment-forms)`, both `es100` and both sharing one vertex shader: `sprite` draws single quads and `sheet` draws from an atlas, differing only in the fragment half. Dialect is second because it decides which renderer the forms want
 
 ## `(gfx srgb)`

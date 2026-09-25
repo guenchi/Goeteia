@@ -324,7 +324,9 @@
         (cmd-buffer-data! ($sbatch-base sb) (* n 192))
         (cmd-bind-texture! 0 ($sheet-tslot sh))
         (fx-uniform! ($sbatch-prog sb) 'u_tex 0)
-        (fx-uniform! ($sbatch-prog sb) 'u_resolution (fx-width) (fx-height))
+        ;; pixel coordinates are the viewport's, which is the target's
+        ;; when one is bound; the replayer supplies it
+        (fx-uniform-viewport-size! ($sbatch-prog sb) 'u_resolution)
         (fx-uniform! ($sbatch-prog sb) 'u_texsize
                      (sheet-width sh) (sheet-height sh))
         (cmd-draw-arrays! GL-TRIANGLES 0 (* 6 n))
@@ -343,7 +345,8 @@
         (cmd-buffer-data! ($batch-base bt) (* n 192))
         (cmd-bind-texture! 0 ($atlas-tslot at))
         (fx-uniform! ($batch-prog bt) 'u_tex 0)
-        (fx-uniform! ($batch-prog bt) 'u_resolution (fx-width) (fx-height))
+        ;; pixel coordinates are the viewport's, as for sheet batches
+        (fx-uniform-viewport-size! ($batch-prog bt) 'u_resolution)
         (fx-uniform! ($batch-prog bt) 'u_texsize
                      ($atlas-dim at) ($atlas-dim at))
         (cmd-draw-arrays! GL-TRIANGLES 0 (* 6 n))

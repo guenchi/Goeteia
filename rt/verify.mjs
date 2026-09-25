@@ -307,10 +307,19 @@ export function makeWorld({ width = 800, height = 600 } = {}) {
 
     // ---- recording WebGL ------------------------------------------
     const rec = (op, extra) => { gl.push({ op, ...extra }); };
-    function makeGL() {
+    function makeGL(canvas) {
+        // The viewport is state, as in GL: set by viewport() and read back
+        // by getParameter(VIEWPORT), which the replayer asks when a
+        // uniform takes the viewport's size.  It starts as the canvas.
+        // The operands are GLint, so each is converted to a signed 32-bit
+        // integer first, as WebIDL does -- the replayer passes unsigned
+        // words, and 4294967295 arrives as -1.  A negative size is then
+        // refused and leaves the viewport as it was; there is no
+        // MAX_VIEWPORT_DIMS clamp here.
+        let vp = [0, 0, canvas ? canvas.width : 300, canvas ? canvas.height : 150];
         const base = {
             getExtension: () => null,
-            getParameter: () => 0,
+            getParameter: (p) => (p === 'VIEWPORT' ? Int32Array.from(vp) : 0),
             // The type comes through as its own name, because the
             // Proxy below answers an unknown ALL-CAPS member with the
             // string of that member.  It is kept because a pair of
@@ -412,7 +421,11 @@ export function makeWorld({ width = 800, height = 600 } = {}) {
             disable(c) { rec('disable', { c: String(c) }); },
             depthMask() {}, depthFunc() {}, blendFunc() {}, blendFuncSeparate() {},
             cullFace() {}, frontFace() {}, colorMask() {}, scissor() {},
-            viewport(x, y, w, h) { rec('viewport', { w, h }); },
+            viewport(x, y, w, h) {
+                rec('viewport', { w, h });
+                x |= 0; y |= 0; w |= 0; h |= 0;
+                if (w >= 0 && h >= 0) vp = [x, y, w, h];
+            },
             blitFramebuffer() {}, beginQuery() {}, endQuery() {},
             getQueryParameter: () => 0,
             beginTransformFeedback() {}, endTransformFeedback() {},
@@ -534,7 +547,7 @@ export function makeWorld({ width = 800, height = 600 } = {}) {
                 // getContext("constructor") or "__proto__" with an
                 // inherited prototype member instead of a mock
                 this._ctx ||= Object.create(null);
-                return this._ctx[k] ||= (k === '2d' ? make2D() : makeGL());
+                return this._ctx[k] ||= (k === '2d' ? make2D() : makeGL(this));
             },
             transferControlToOffscreen() { return this; },
             toDataURL: () => 'data:,',
