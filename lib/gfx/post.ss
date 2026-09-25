@@ -40,7 +40,7 @@
           make-blur blur-run! blur-texture
           make-bloom bloom-run! bloom-texture bloom-composite!
           make-fxaa fxaa-run! make-grade grade-run!
-          make-dof dof-run!
+          make-dof dof-run! tonemap-shader-functions
           post-shaders)
   (import (rnrs) (gfx gl) (gfx glsl) (gfx fx) (gfx srgb))
 
@@ -290,31 +290,77 @@
                                (fl/ 1.0 (fixnum->flonum ($dof-w d)))
                                (fl/ 1.0 (fixnum->flonum ($dof-h d)))))))
 
+  ;; ---- tone curves, as shader forms ----
+  ;; Linear radiance in, a display value in [0, 1] out -- with two
+  ;; exceptions: mode 0 passes the value through as it is, and this
+  ;; extended Reinhard reaches 1 at 3 and keeps rising past it.
+  ;; tonemap picks one by a float mode,
+  ;; each mode an interval of its own -- below 0.5 none, then 1
+  ;; reinhard, 2 aces, 3 aces-hill -- so a new curve cannot fall into
+  ;; an older one's range.
+  ;;
+  ;; tonemap_aces is Narkowicz's single-curve fit, per channel.
+  ;; tonemap_aces_hill is Stephen Hill's fit of the ACES reference
+  ;; rendering and output transforms: sRGB primaries to AP1 with the
+  ;; RRT's saturation folded in, the rational curve, back to sRGB, and
+  ;; a clamp.  Its coefficients are Hill's, unscaled.  The two are not
+  ;; interchangeable at one exposure: worked out in double precision,
+  ;; mid-grey 0.18 comes out 0.267 under Narkowicz's and 0.106 under
+  ;; Hill's, and between 0.05 and 2.0 Hill's needs about twice the
+  ;; exposure to give the same grey.  Hill's output matrix can take a
+  ;; saturated colour past 1 before the clamp: (4, 0.1, 0.05) gives a
+  ;; red of 1.18.
+  ;; GLSL's mat3 takes its numbers column by column, so each matrix
+  ;; below is Hill's written by columns.
+  (define $tonemap-shader-functions
+    '((define (tonemap_reinhard (vec3 x)) vec3
+        (local vec3 one (vec3 (fl 1) (fl 1) (fl 1)))
+        (return (* x (/ (+ one (/ x "9.0")) (+ one x)))))
+      (define (tonemap_aces (vec3 x)) vec3
+        (local vec3 one (vec3 (fl 1) (fl 1) (fl 1)))
+        (return (clamp (/ (* x (+ (* x "2.51") (vec3 "0.03" "0.03" "0.03")))
+                          (+ (* x (+ (* x "2.43") (vec3 "0.59" "0.59" "0.59")))
+                             (vec3 "0.14" "0.14" "0.14")))
+                       (vec3 (fl 0) (fl 0) (fl 0)) one)))
+      (define (tonemap_aces_hill (vec3 x)) vec3
+        (local vec3 v (* (mat3 "0.59719" "0.07600" "0.02840"
+                               "0.35458" "0.90834" "0.13383"
+                               "0.04823" "0.01566" "0.83777")
+                         (max x (vec3 (fl 0)))))
+        (local vec3 a (- (* v (+ v (vec3 "0.0245786"))) (vec3 "0.000090537")))
+        (local vec3 b (+ (* v (+ (* v "0.983729") (vec3 "0.4329510")))
+                         (vec3 "0.238081")))
+        (return (clamp (* (mat3 "1.60475" "-0.10208" "-0.00327"
+                                "-0.53108" "1.10813" "-0.07276"
+                                "-0.07367" "-0.00605" "1.07602")
+                          (/ a b))
+                       (vec3 (fl 0)) (vec3 (fl 1)))))
+      (define (tonemap (vec3 x) (float mode)) vec3
+        (if (< mode (fl 0 50)) (return x))
+        (if (< mode (fl 1 50)) (return (tonemap_reinhard x)))
+        (if (< mode (fl 2 50)) (return (tonemap_aces x)))
+        (return (tonemap_aces_hill x)))))
+  (define (tonemap-shader-functions) $tonemap-shader-functions)
+
   ;; ---- grade: exposure + tonemap + sRGB encode, LINEAR in, display out ----
-  ;; 'aces is the Narkowicz fit; 'reinhard the extended curve; 'none
-  ;; just exposure + the encode.  Point HDR scene targets at this, then
-  ;; (optionally) FXAA the result.  The encode is (gfx srgb)'s, the same
-  ;; one the mesh shaders end with.
+  ;; 'reinhard the extended curve, 'aces the Narkowicz fit, 'aces-hill
+  ;; Hill's fit (see the tone curves above); 'none just exposure + the
+  ;; encode.  Point HDR scene targets at this, then (optionally) FXAA the
+  ;; result.  The encode is (gfx srgb)'s, the same one the mesh shaders
+  ;; end with.
   (define $grade-fs
     `((precision mediump float)
       (uniform sampler2D u_src)
       (uniform vec2 u_texel)
       (uniform float u_exposure)
-      (uniform float u_mode)             ; 0 none, 1 reinhard, 2 aces
+      ;; 0 none, 1 reinhard, 2 aces, 3 aces-hill
+      (uniform float u_mode)
       ,@(srgb-shader-functions)
+      ,@(tonemap-shader-functions)
       (define (main) void
         (local vec2 uv (* gl_FragCoord.xy u_texel))
         (local vec4 c (texture2D u_src uv))
-        (local vec3 x (* c.rgb u_exposure))
-        (local vec3 one (vec3 (fl 1) (fl 1) (fl 1)))
-        (local vec3 rein (* x (/ (+ one (/ x "9.0")) (+ one x))))
-        (local vec3 aces (clamp (/ (* x (+ (* x "2.51") (vec3 "0.03" "0.03" "0.03")))
-                                   (+ (* x (+ (* x "2.43") (vec3 "0.59" "0.59" "0.59")))
-                                      (vec3 "0.14" "0.14" "0.14")))
-                                (vec3 (fl 0) (fl 0) (fl 0)) one))
-        (set! x (mix x rein (* (step (fl 0 50) u_mode)
-                               (- (fl 1) (step (fl 1 50) u_mode)))))
-        (set! x (mix x aces (step (fl 1 50) u_mode)))
+        (local vec3 x (tonemap (* c.rgb u_exposure) u_mode))
         (set! gl_FragColor
               (vec4 (encode_srgb x) c.a)))))
 
@@ -330,6 +376,7 @@
                                  ((none) 0.0)
                                  ((reinhard) 1.0)
                                  ((aces) 2.0)
+                                 ((aces-hill) 3.0)
                                  (else (error 'grade-run!
                                               "unknown tonemap" mode))))
                   (fx-uniform! p 'u_texel

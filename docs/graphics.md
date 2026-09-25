@@ -559,7 +559,9 @@ What loads: every primitive's POSITION (+ NORMAL, or +y when absent),
 u8/u16/u32 indices, node TRS/matrix transforms accumulated through the
 scene graph, `baseColorFactor` and metallic/roughness factors, the
 material's texture slots as references (below), embedded image data
-(`gltf-load-textures!`), cameras, skins, and animations. Untextured
+(`gltf-load-textures!`), cameras, skins, and animations; which of the
+material's maps `gltf-draw!` actually binds is in `docs/limits.md`
+("Maps `gltf-draw!` loads but does not draw"). Untextured
 the stride follows the ATTRIBUTES the asset carries, never the
 material: position+normal alone is 24 bytes, a `TEXCOORD_0` (or
 anything past it) adds the 8-byte uv slot, `TANGENT`, `COLOR_0`
@@ -1198,6 +1200,26 @@ tracked root has left the document — so switching to non-glyph UI
 drops the listeners without the page having to know it should. A
 stale disposer removes its own listeners but leaves the counter and
 the cleanup slot alone if a newer run has already claimed them.
+
+### `(gfx post)` — two ACES curves
+
+`grade-run!` offers two tone curves under the ACES name, and they are
+different fits.  `'aces` is Krzysztof Narkowicz's: one rational curve
+applied to each channel.  `'aces-hill` is Stephen Hill's fit of the
+ACES reference rendering and output transforms: the colour is taken
+from sRGB primaries into AP1 with the reference transform's saturation
+folded in, the curve is applied there, and the result is taken back
+and clamped to [0, 1].  Its coefficients are Hill's as published,
+unscaled.
+
+They do not give the same image at the same exposure.  Worked out in
+double precision, mid-grey 0.18 comes out 0.267 under Narkowicz's fit
+and 0.106 under Hill's, and between 0.05 and 2.0 Hill's needs about
+twice the exposure to give the same grey.  Switching between them is a
+change of exposure as well as of curve.  Hill's output matrix can also
+take a saturated colour past 1 before the clamp -- (4, 0.1, 0.05) gives
+a red of 1.18 -- so such a colour is cut at white rather than rolled
+off.  The curves are exported as `tonemap-shader-functions`.
 
 ### `(gfx sprite)` — 2D games
 

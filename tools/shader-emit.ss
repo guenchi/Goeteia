@@ -91,6 +91,17 @@
                                       (vec2 (fl 3) (fl 4)) (fl 1))
                         (dither_threshold gl_FragCoord.xy)
                         (fl 1)))
+;; Distinct arguments per curve, none at a fixed point: channels below
+;; and above the knee for Reinhard and Narkowicz's fit, a saturated
+;; colour for Hill's (it is the case its output matrix handles
+;; differently), and a mode taken from the pixel so that tonemap's
+;; intervals are not all decided by one constant.
+(emit-functions! "tonemap" (tonemap-shader-functions)
+                 '(vec4 (+ (tonemap_reinhard (vec3 (fl 0 18) (fl 0 5) (fl 2)))
+                           (tonemap_aces (vec3 (fl 0 25) (fl 1) (fl 3)))
+                           (tonemap_aces_hill (vec3 (fl 4) (fl 0 1) "0.05"))
+                           (tonemap (vec3 (fl 0 6) (fl 0 3) (fl 0 9)) gl_FragCoord.x))
+                        (fl 1)))
 ;; Each call has one component on the straight segment near black --
 ;; 0.02 is at or below decode's 0.04045, 0.002 at or below encode's
 ;; 0.0031308 -- and the others on the curve, so both sides of each

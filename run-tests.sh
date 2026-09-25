@@ -620,6 +620,11 @@ run_mjs test/shader-functions-are-executed.mjs
 # sRGB transfer functions give the sRGB values on two GL implementations.
 run_mjs test/no-gamma-approximation.mjs
 run_mjs test/srgb-transfer-on-gpu.mjs
+# The tone-mapping curves give their published values on two GL
+# implementations, and limits.md names the glTF maps a model drawn with
+# the library's shaders never shows.
+run_mjs test/tonemap-curves-on-gpu.mjs
+run_mjs test/gltf-unapplied-maps-are-documented.mjs
 # The first check that judges a shader by what it PUTS ON THE SCREEN
 # rather than by whether it compiles.  Stands down loudly without a
 # browser, like the one above.

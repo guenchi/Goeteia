@@ -697,6 +697,43 @@ The answers these libraries work out when asked and do not store --
 answer, and are never NaN: a NaN is refused, naming the item or the
 attribute that produced it.
 
+## Maps `gltf-draw!` loads but does not draw
+
+`gltf-load-textures!` reads all five of a material's maps and uploads
+them, but `gltf-draw!` does not bind them all.
+
+- `metallicRoughnessTexture` is loaded and uploaded and never bound by
+  `gltf-draw!`, so declaring a sampler for it is not enough.
+- `normalTexture`, `emissiveTexture` and `occlusionTexture` are bound
+  only when the program declares the matching sampler -- `u_nmap`,
+  `u_emap` and `u_omap` -- on units 1, 2 and 3.  Of the shaders that
+  ship with this library only `mesh-normal-fs` declares `u_nmap`; none
+  declares `u_emap` or `u_omap`.  So a model drawn with the library's
+  shaders shows neither its emissive map nor its occlusion map, and
+  nothing reports that they were left out.
+
+The base colour map is bound as `u_tex`, and the emissive factor sent
+as `u_emissive`, when the program declares them -- `mesh-normal-fs`
+declares neither.  For the normal, emissive and occlusion maps a caller
+writes a program that declares their samplers and samples them.  The
+metallic-roughness map cannot be had that way, because `gltf-draw!`
+never binds it.  The uploaded texture is `gprim-mrtex`: `gltf-draw!`
+binds units 0 to 3 only, so a caller can bind it on unit 4 or above
+with its own sampler and still draw through `gltf-draw!`.
+
+## The grade pass's tone curves at half precision
+
+The grade pass declares `precision mediump float`.  On a GPU that
+carries mediump as 16-bit floats, a high enough exposure -- from about a
+grey of 300 -- takes the intermediate values of both ACES curves,
+Narkowicz's and Hill's, past the largest 16-bit value.  What follows is
+the hardware's: simulated on the CPU with IEEE binary16 arithmetic, the
+values become infinities and the result NaN, which the final clamp does
+not repair; GLSL ES 1.00 also allows an overflow to saturate at the
+largest value instead, which would give a finite answer.  Both GL
+implementations measured here carry mediump at full precision, so
+neither shows either outcome.
+
 ## Compiler diagnostics are terse
 
 Runtime traps surface as `unreachable` or `illegal cast` with no
