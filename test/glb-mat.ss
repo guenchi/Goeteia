@@ -223,9 +223,12 @@
 
 ;; ---- (f) an absent base colour stays absent ----
 ;; gprim-color is the RENDERING value: a material without a
-;; baseColorFactor reads as the 0.8 grey every untextured primitive
-;; draws with, which is not the spec's [1,1,1,1] and so cannot be
-;; undone by a caller.  gprim-base-color-factor is the FILE's value,
+;; baseColorFactor reads as white, the spec's [1,1,1,1].  Until 2026-09
+;; it read as a 0.8 grey, and since the factor multiplies the base colour
+;; texture, every texture in a material without a factor was multiplied
+;; by that grey -- about 0.6 in linear light once the shader decoded it --
+;; instead of drawn as the file has it.  gprim-base-color-factor is the
+;; FILE's value,
 ;; #f when the key is absent, and a #f colour in a writer material
 ;; omits the key -- so absence survives a round trip.
 (define loc-nocolor
@@ -236,8 +239,10 @@
   (let ((j (glb-json loc-nocolor)) (p (car (gltf-prims g-nocolor))))
     (and (not (json-ref j "materials" 0 "pbrMetallicRoughness" "baseColorFactor"))
          (not (gprim-base-color-factor p))
-         (near? (vector-ref (gprim-color p) 0) 0.8)           ; the rendering fallback is untouched
-         (equal? (gprim-base-color-factor p-mat) (vector 0.5 0.25 1.0 1.0)))))   ; and a written one reads back as written
+         ;; the rendering fallback is the spec's white
+         (near? (vector-ref (gprim-color p) 0) 1.0)
+         ;; and a written factor reads back as written
+         (equal? (gprim-base-color-factor p-mat) (vector 0.5 0.25 1.0 1.0)))))
 
 ;; ---- (g) a NORMAL-only target: positions may be absent ----
 (define loc-nrm-only

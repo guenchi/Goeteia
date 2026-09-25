@@ -955,9 +955,9 @@ Each material texture slot is `(texture texcoord factor)` or `#f`, where
 a factor of 1 are the spec's defaults and are left out of the file. A
 material's base colour may be `#f`, which omits `baseColorFactor`
 entirely — use `gprim-base-color-factor` rather than `gprim-color` when
-re-exporting, because the latter substitutes a neutral grey for a
-material that never wrote one, and an omitted key and an explicit grey
-are the same value there.
+re-exporting, because the latter substitutes the glTF default of 1
+for a material that never wrote one, and an omitted key and an
+explicit 1 are the same value there.
 
 A primitive naming a `node` puts its mesh on that node; primitives
 sharing a node share one mesh, and a file where none names a node is one

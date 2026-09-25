@@ -177,7 +177,7 @@
 (define nomat-ok
   (and (not (json-ref (glb-json loc-nomat) "materials"))
        (equal? (gprim-color (car (gltf-prims g-nomat)))
-               (vector 0.8 0.8 0.8 1.0))))
+               (vector 1.0 1.0 1.0 1.0))))
 
 ;; ---- (b) several primitives, different layouts, one file --------
 (define pb (make-prim '(position normal) 3 '(0 1 2) #f))
@@ -202,7 +202,7 @@
        (equal? (gprim-color (list-ref (gltf-prims gm) 0))
                (vector 1.0 0.0 0.0 1.0))
        (equal? (gprim-color (list-ref (gltf-prims gm) 1))
-               (vector 0.8 0.8 0.8 1.0))
+               (vector 1.0 1.0 1.0 1.0))
        (equal? (gprim-color (list-ref (gltf-prims gm) 2))
                (vector 0.0 1.0 0.0 0.5))
        (header-ok? loc-m)
@@ -506,7 +506,7 @@
                (vector 1.0 0.0 0.0 1.0))
        ;; the loader's own default colour survives the trip as data
        (equal? (gprim-color (list-ref (gltf-prims gre) 1))
-               (vector 0.8 0.8 0.8 1.0))
+               (vector 1.0 1.0 1.0 1.0))
        (header-ok? loc-re)
        (json-pad-ok? loc-re)))
 

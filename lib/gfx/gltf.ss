@@ -170,7 +170,7 @@
           gprim-emissive gprim-ntex gprim-etex gprim-otex
           gltf-shaders)
   (import (rnrs) (web js) (gfx gl) (gfx glsl) (gfx fx) (gfx mat)
-          (gfx mesh) (web json) (gfx meshopt))
+          (gfx mesh) (web json) (gfx meshopt) (gfx srgb))
 
   (define ($gltf-fl v) (if (flonum? v) v (exact->inexact v)))
 
@@ -249,12 +249,28 @@
             (immutable icount gprim-icount)
             (immutable iu32 gprim-index-u32?) ; 32-bit indices?
             (immutable color gprim-color)     ; r g b a flonum vector
+            ;; u_color's cache: #(r g b er eg eb), the linear r g b
+            ;; last encoded and their sRGB encoding.  u_color is what
+            ;; the shaders decode, and gprim-color stays linear, as
+            ;; glTF defines the factor and as glb-write! writes it
+            ;; back.  The encoding is cached rather than done at each
+            ;; draw.  Measured 2026-09-25 on one development machine
+            ;; under node, averaged over 300000 calls cycling through
+            ;; the 997 values 0.001 to 0.997: linear->srgb took about
+            ;; 2.3 us a channel on the wasm back end and 61 us on the
+            ;; JS one.  At that rate, three channels for 1000
+            ;; primitives would be 6.9 ms and 184 ms a frame.  A channel
+            ;; on the straight segment near black costs far less.  The
+            ;; cache is checked against gprim-color at each draw,
+            ;; because that vector can be changed after loading and the
+            ;; upload must follow it.
+            (mutable color-srgb $gprim-color-srgb $gprim-color-srgb!)
             ;; what the FILE said, or #f where the material omits
             ;; baseColorFactor.  gprim-color always answers with a
-            ;; colour, falling back to a neutral grey, which is what
-            ;; a renderer wants and what a RE-EXPORT cannot use: an
-            ;; omitted key and an explicit grey are one value there
-            ;; and two different files here.
+            ;; colour, falling back to the glTF default of 1, which is
+            ;; what a renderer wants and what a RE-EXPORT cannot use:
+            ;; an omitted key and an explicit 1 are one value there and
+            ;; two different files here.
             (immutable base-factor gprim-base-color-factor)
             (immutable mr $gprim-mr)          ; (metallic . roughness)
             (immutable world gprim-world)     ; m4, the bind pose
@@ -417,8 +433,32 @@
                         ($gltf-fl (vector-ref f 2))
                         ($gltf-fl (vector-ref f 3)))))))
 
+  ;; A fresh u_color cache for colour c: its r g b, and theirs through
+  ;; linear->srgb.  Alpha is linear in glTF and the shaders do not
+  ;; decode it, so it is not cached; the upload reads it from c.
+  (define ($srgb-cache c)
+    (let ((r (vector-ref c 0)) (g (vector-ref c 1)) (b (vector-ref c 2)))
+      (vector r g b (linear->srgb r) (linear->srgb g) (linear->srgb b))))
+
+  ;; The cache for p, renewed first if gprim-color no longer holds the
+  ;; r g b it was made from.
+  (define ($current-srgb! p)
+    (let ((c (gprim-color p)) (k ($gprim-color-srgb p)))
+      (if (and (= (vector-ref c 0) (vector-ref k 0))
+               (= (vector-ref c 1) (vector-ref k 1))
+               (= (vector-ref c 2) (vector-ref k 2)))
+          k
+          (let ((k2 ($srgb-cache c)))
+            ($gprim-color-srgb! p k2)
+            k2))))
+
+  ;; An absent baseColorFactor is the glTF default, 1 in every channel.
+  ;; It multiplies the base colour texture.  Under the earlier fallback
+  ;; of 0.8, every such texture was multiplied by that grey -- about 0.6
+  ;; in linear light once the shader decoded it -- instead of drawn as
+  ;; the file has it.
   (define ($material-color json mi)
-    (let ((fallback (vector 0.8 0.8 0.8 1.0)))
+    (let ((fallback (vector 1.0 1.0 1.0 1.0)))
       (if (not mi)
           fallback
           (let* ((mat (vector-ref (json-ref json "materials") mi))
@@ -2667,6 +2707,8 @@
                 (pack (+ k 2) (+ at 4)))))
         ($make-gprim vbase vbytes ibase ibytes icount u32?
                      ($material-color json (json-ref prim "material"))
+                     ($srgb-cache
+                      ($material-color json (json-ref prim "material")))
                      ($material-base-factor json
                                             (json-ref prim "material"))
                      ($material-mr json (json-ref prim "material"))
@@ -3280,10 +3322,14 @@
                  (fx-uniform! prog 'u_mvp (m4-mul vp world))
                  (when (fx-uniform? prog 'u_model)
                    (fx-uniform! prog 'u_model world))))
-           ;; optional like u_model: a flat user shader may omit it
+           ;; optional like u_model: a flat user shader may omit it.
+           ;; Both branches above reach this point.  u_color is
+           ;; sRGB-encoded, which is what the shaders decode, so the
+           ;; linear factor goes up through its encoded cache.
            (when (fx-uniform? prog 'u_color)
-             (fx-uniform! prog 'u_color (vector-ref c 0) (vector-ref c 1)
-                          (vector-ref c 2) (vector-ref c 3)))
+             (let ((k ($current-srgb! p)))
+               (fx-uniform! prog 'u_color (vector-ref k 3) (vector-ref k 4)
+                            (vector-ref k 5) (vector-ref c 3))))
            (if (gprim-index-u32? p)
                (cmd-draw-elements32! GL-TRIANGLES (gprim-icount p))
                (cmd-draw-elements! GL-TRIANGLES (gprim-icount p))))))
