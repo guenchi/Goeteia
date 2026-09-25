@@ -222,9 +222,11 @@
                                         ((eq? ($group e) (caar g)) (drop (cdr g)))
                                         (else (cons (car g) (drop (cdr g)))))))))))))))) 
 
-  ;; An attribute nothing has claimed answers zero rather than raising:
-  ;; the absence of every modifier is a state a caller reaches by doing
-  ;; nothing at all, and it has an obvious right answer.
+  ;; An attribute nothing has claimed has a total of zero rather than
+  ;; raising: the absence of every modifier is a state a caller reaches
+  ;; by doing nothing at all, and it has an obvious right answer.  It is
+  ;; scaled like any other total, so an infinite scale makes it NaN and
+  ;; it is refused below like any other.
   (define (modifier-ref m attribute)
     ($need-m 'modifier-ref m)
     (unless (symbol? attribute)
@@ -236,7 +238,23 @@
         (error 'modifier-ref
                "the scale mapping answered something that is not an attribute"
                attribute scale))
-      (if scale (* base (+ 1 ($base m scale))) base)))
+      ;; The answer is read, not stored, so an infinity is let through,
+      ;; as inventory-weight lets it through; a NaN is refused, naming
+      ;; the attribute.  The two sums cannot be NaN, since each adds one
+      ;; finite value at a time, but their product can -- zero times an
+      ;; infinite scale, or an infinite base times a scale of exactly
+      ;; -1 -- with every value written being finite.  Checking when a
+      ;; value is written would not be enough: removing a row or letting
+      ;; one run out can move a sum to an infinity without any write.
+      (if scale
+          (let* ((scaled ($base m scale))
+                 (p (* base (+ 1 scaled))))
+            (unless (= p p)
+              (error 'modifier-ref
+                     "the scaled value is not a number"
+                     attribute base scaled))
+            p)
+          base)))
 
   ;; Claims with no duration are left alone; the rest count down and are
   ;; dropped at zero.  Reaching exactly zero drops the claim, because a

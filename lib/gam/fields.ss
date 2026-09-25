@@ -245,9 +245,19 @@
     (when (< 0 ($life f))
       ;; Clamped to the life remaining: this is the last partial period
       ;; the header is about.
-      (let ((lived (min dt ($life f))))
-        ($life! f (max 0.0 (- ($life f) dt)))
-        ($acc! f (+ ($acc f) lived))
+      ;; Both new values are worked out before either is stored, and
+      ;; the accumulator is checked first: a finite accumulator and a
+      ;; finite step can add up to one that is not, and a refused step
+      ;; leaves the life and the accumulator as they were.
+      (let* ((lived (min dt ($life f)))
+             (next-life (max 0.0 (- ($life f) dt)))
+             (next-acc (+ ($acc f) lived)))
+        (unless ($finite? next-acc)
+          (error 'field-step!
+                 "the settling accumulator would not be finite as a flonum"
+                 ($acc f) dt))
+        ($life! f next-life)
+        ($acc! f next-acc)
         ;; Expiry settles whatever has accumulated, however little, so
         ;; the tail of the life is never dropped for being short.
         (when (or (not (< ($acc f) ($period f))) (not (< 0 ($life f))))

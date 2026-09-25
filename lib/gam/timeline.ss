@@ -137,7 +137,15 @@
       (error 'timeline-schedule!
              "a delay is a non-negative real, finite as a flonum"
              delay))
-    (let ((entry (cons (+ ($now t) delay) payload)))
+    (let* ((deadline (+ ($now t) delay))
+           (entry (cons deadline payload)))
+      ;; A finite clock and a finite delay can still add up to a
+      ;; deadline that is not finite, and such an entry would never come
+      ;; due; it is refused before it is queued.
+      (unless ($finite? deadline)
+        (error 'timeline-schedule!
+               "the deadline would not be finite as a flonum"
+               ($now t) delay))
       ;; Walk past everything that is due no later than this one, so an
       ;; equal deadline lands after the entries already holding it.
       (let insert ((rest ($queue t)) (seen '()))
@@ -160,7 +168,15 @@
       (error 'timeline-tick!
              "an elapsed time is a non-negative real, finite as a flonum"
              dt))
-    ($now! t (+ ($now t) dt))
+    ;; Worked out, checked, then stored: two finite steps can add up to
+    ;; a clock that is not finite, and a refused step leaves the clock
+    ;; and the queue as they were.
+    (let ((next (+ ($now t) dt)))
+      (unless ($finite? next)
+        (error 'timeline-tick!
+               "the clock would not be finite as a flonum"
+               ($now t) dt))
+      ($now! t next))
     (let ((limit (+ ($now t) $due-slack)))
       (let take ((rest ($queue t)) (due '()))
         (if (or (null? rest) (< limit (caar rest)))

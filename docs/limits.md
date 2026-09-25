@@ -651,6 +651,52 @@ loop-phase precision on sub-microsecond clips — are documented
 where they live, in the header of `lib/gfx/gltf.ss`.  That header is the contract; this
 file only points at it.
 
+## `(gam ...)` holds its sums as flonums
+
+The quantities the `(gam ...)` libraries accumulate -- experience, a
+timeline's clock and the deadlines in its queue, a field's settling
+accumulator -- are held within flonum range: a value may be exact, but
+it must stay finite once made inexact.  A call whose sum would leave that
+range is refused, and the refused call leaves the state as it was:
+two gains of `1e308` are one gain accepted and one refused.  Counts are
+exact integers and are not held to it: an item count, a level, a
+`once` or quest count can be as large as memory allows.
+
+`stats-gain-xp!` buys levels one at a time, in the call, asking the
+curve for each level's cost and calling the level hook after each one.
+There is no cap on how many levels one call buys and no bound on how
+long it runs: the work is the number of levels bought times what the
+curve and the hook cost.  Two shapes make that number unbounded, and
+the library cannot tell either from a legitimate one.  A curve whose
+costs shrink faster than the total is spent, in exact arithmetic, never
+runs out: a total of 1 against a cost of `1/2^level` buys a level every
+time.  A hook that grants experience is asking for more levels in the
+same call, and if it always grants enough for the next one the call
+never returns.
+
+A level whose cost is below the total's flonum resolution is refused,
+because buying it would leave the stored total unchanged -- measured
+2026-09-25, `1e308` less `1000` is `1e308` -- and a curve that kept
+answering such a cost would keep the loop going for ever.  This refuses
+some calls that used to end: a curve that answers `1000` for one level
+and `+inf.0` after it used to buy that one level with a total of `1e308`
+and stop, and it is now refused at that level.  The test is whether the
+difference compares equal to the total.  An exact total minus an exact
+cost never does; an exact total against a flonum cost is compared as
+flonums, so an exact `2^54 + 1` against a cost of `1.0` is refused,
+though subtracting would store the smaller `2^54`.  When a
+level is refused, the gain and every level bought before it in the same
+call are already committed; calling again with the same amount adds it
+again.  An exact total against exact costs is never rounded, so an
+exact `2^1023` against a cost of `1000` is accepted and runs
+`2^1023 / 1000` steps -- the accepted consequence of charging level by
+level.
+
+The answers these libraries work out when asked and do not store --
+`inventory-weight`, `modifier-ref` -- may be infinite, which is an
+answer, and are never NaN: a NaN is refused, naming the item or the
+attribute that produced it.
+
 ## Compiler diagnostics are terse
 
 Runtime traps surface as `unreachable` or `illegal cast` with no

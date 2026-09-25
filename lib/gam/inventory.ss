@@ -152,14 +152,24 @@
                   ;; infinite, heavier than any limit finite as a flonum,
                   ;; which is a definite answer -- and the weight is read,
                   ;; not stored.  (> +inf.0 +inf.0) is false, and measured
-                  ;; 2026-09-25 so is (> +inf.0 2^1024) here.  Not
-                  ;; always: a count is an exact integer of any size, and
-                  ;; measured 2026-09-25, a count of 2^1024 weighing 0.0
-                  ;; each gave NaN, so with the infinite item the total
-                  ;; was NaN rather than +inf.0.
+                  ;; 2026-09-25 so is (> +inf.0 2^1024) here.
                   (unless (and (real? w) (<= 0 w))
                     (error 'inventory-weight "no usable weight for that item" key w))
-                  (loop (cdr rs) (+ total (* n w)))))))))
+                  ;; Each item's share is checked on its own, so the one
+                  ;; that is not a number is the one named.  A count is
+                  ;; an exact integer of any size, and a share can still
+                  ;; be NaN when every input is usable: measured
+                  ;; 2026-09-25, a count of 2^1024 weighing 0.0 each
+                  ;; gave NaN.  The running total cannot become NaN from
+                  ;; shares that are numbers: each is zero or more, and
+                  ;; an infinity plus anything zero or more is that
+                  ;; infinity.
+                  (let ((c (* n w)))
+                    (unless (= c c)
+                      (error 'inventory-weight
+                             "a count times its weight is not a number"
+                             key n w))
+                    (loop (cdr rs) (+ total c)))))))))
 
   ;; Fresh pairs, not the rows themselves: the bag's contents are the
   ;; library's, and a caller that was handed the internal pairs could

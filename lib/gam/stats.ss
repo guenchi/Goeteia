@@ -272,7 +272,16 @@
       (error 'stats-gain-xp!
              "experience is a non-negative real, finite as a flonum"
              amount))
-    ($xp! s (+ ($xp s) amount))
+    ;; Two gains that are each finite can add up to a total that is not,
+    ;; and nothing after this point could recover from it: the total is
+    ;; worked out, checked, and only then stored, so a refused gain
+    ;; leaves the total as it was.
+    (let ((next (+ ($xp s) amount)))
+      (unless ($finite? next)
+        (error 'stats-gain-xp!
+               "the experience total would not be finite as a flonum"
+               ($xp s) amount))
+      ($xp! s next))
     (let ((curve ($curve s)))
       (if (not curve)
           0
@@ -281,12 +290,10 @@
               ;; +inf.0 is let through: a level whose cost is infinite can
               ;; never be bought, so experience keeps accumulating and the
               ;; loop stops -- which is how a curve says the cap has been
-              ;; reached.  That holds while the experience total is finite
-              ;; as a flonum.  Measured 2026-09-25: two gains of 1e308
-              ;; made it +inf.0, which is not less than +inf.0, and the
-              ;; capped level was bought; an exact total of 2^1024 is not
-              ;; less than +inf.0 here either.  Nothing here guards a
-              ;; total that overflows.
+              ;; reached.  That holds because the total is kept finite as
+              ;; a flonum by the check above.  Measured 2026-09-25, before
+              ;; that check: two gains of 1e308 made it +inf.0, which is
+              ;; not less than +inf.0, and the capped level was bought.
               ;; This is an answer read during the loop, not a
               ;; value stored, so it is held only to the bounds it always
               ;; had; NaN fails (< 0 need) and is refused with the rest.
@@ -294,10 +301,27 @@
                 (error 'stats-gain-xp!
                        "the level curve answered a cost that is not positive"
                        ($level s) need))
+              ;; The loop ends only because each level bought makes the
+              ;; stored total smaller.  A cost below the total's flonum
+              ;; resolution does not: measured 2026-09-25, 1e308 less
+              ;; 1000 is 1e308, and the loop ran for ever.  So a
+              ;; purchase is refused when the difference compares equal
+              ;; to the total.  An exact total minus an exact cost never
+              ;; does.  A mixed pair is compared as flonums, as it is
+              ;; subtracted, so a purchase that would only round an
+              ;; exact total down to the nearest flonum is refused as
+              ;; well: exact 2^54 + 1 less 1.0 stores 2^54, which
+              ;; compares equal to the total.  There is no cap on the
+              ;; number of levels one call may buy; docs/limits.md says
+              ;; what that costs.
               (if (< ($xp s) need)
                   gained
-                  (begin
-                    ($xp! s (- ($xp s) need))
+                  (let ((left (- ($xp s) need)))
+                    (when (= left ($xp s))
+                      (error 'stats-gain-xp!
+                             "the experience total is too large for a level's cost to be subtracted from it"
+                             ($level s) ($xp s) need))
+                    ($xp! s left)
                     ($level! s (+ ($level s) 1))
                     (let ((hook ($on-level s)))
                       (when hook (hook s ($level s))))

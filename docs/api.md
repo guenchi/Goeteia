@@ -95,7 +95,7 @@ adds up to.
 - `field-rate` — the rate the field carries, per unit of time; the amount settled is this multiplied by the time accumulated
 - `field-period` — how much time accumulates before the field settles up; zero settles on every step
 - `field-contains?` — whether a point on the ground plane lies in the region. This is a 2D test on x and z; the capsule tests in `(gfx collide)` are 3D and are not another implementation of it
-- `field-step!` — advances the life by an elapsed time and calls the caller's procedure with the field and the amount owed whenever a period has accumulated, and once more at expiry so the last partial period is paid rather than dropped; the elapsed time is clamped to the life remaining, a dead field is quiet, and a negative time is refused
+- `field-step!` — advances the life by an elapsed time and calls the caller's procedure with the field and the amount owed whenever a period has accumulated, and once more at expiry so the last partial period is paid rather than dropped; the elapsed time is clamped to the life remaining, a dead field is quiet, and a negative time is refused. A step that would take the settling accumulator past a finite flonum is refused before the life or the accumulator changes
 
 ## `(gam inventory)`
 
@@ -103,7 +103,7 @@ adds up to.
 - `inventory-count` — how many of a key the bag holds, 0 when it holds none
 - `inventory-add!` — adds a positive exact count and answers the count afterwards; zero is refused as well as a negative, since adding nothing means the arithmetic that produced it went wrong
 - `inventory-take!` — all or nothing: enough, and it is removed with #t; not enough, and #f with not one removed
-- `inventory-weight` — what the bag weighs, folding a caller's procedure over the rows: it is asked about each KEY and answers that item's weight, which is multiplied by the count. A weight that is missing, negative or not a real number is an error naming the key, never a zero, because a total that is quietly too small surfaces as a carrying limit that is never reached. An empty bag weighs EXACT zero -- this library has no weights of its own and so no exactness of its own
+- `inventory-weight` — what the bag weighs, folding a caller's procedure over the rows: it is asked about each KEY and answers that item's weight, which is multiplied by the count. A weight that is missing, negative or not a real number is an error naming the key, never a zero, because a total that is quietly too small surfaces as a carrying limit that is never reached. An empty bag weighs EXACT zero -- this library has no weights of its own and so no exactness of its own. A count times its weight that is not a number -- a count too large to be a flonum times a weight of 0.0 -- is an error naming the key, the count and the weight; an infinite total is an answer
 - `inventory-items` — the rows as fresh pairs, in the order their keys were FIRST added, on both compiler targets; a key taken down to zero keeps its row and its place, so putting it back does not move it to the end and make the listing a record of what the player did
 
 ## `(gam modifiers)`
@@ -112,7 +112,7 @@ adds up to.
 - `modifiers?` — whether a value is a modifier set
 - `modifier-set!` — one source's claim on one attribute: source, attribute and value, then optionally a duration in seconds (#f for forever), an exclusive group (#f for none) and whether it can be dispelled. A source holds at most one claim per attribute, so applying the same source again REPLACES its own claim and leaves every other source alone -- which is what makes "refresh this" one call that cannot double-stack or over-remove. Every position is type-checked except source against attribute, which are both plain symbols and cannot be told apart here
 - `modifier-remove-source!` — drops every claim a source holds, across all attributes
-- `modifier-ref` — what an attribute comes to right now: ungrouped claims added, plus the largest MAGNITUDE from each exclusive group, all multiplied by `1 +` the total of the scaling attribute if the mapping names one. An attribute nothing has claimed answers 0 rather than raising, since that state is reached by doing nothing. Scaling is one level deep: the scaling attribute's own total obeys the same stacking rules but is not itself scaled
+- `modifier-ref` — what an attribute comes to right now: ungrouped claims added, plus the largest MAGNITUDE from each exclusive group, all multiplied by `1 +` the total of the scaling attribute if the mapping names one. An attribute nothing has claimed has a total of 0 rather than raising, since that state is reached by doing nothing; it is scaled like any other total. Scaling is one level deep: the scaling attribute's own total obeys the same stacking rules but is not itself scaled. An infinite answer is let through; one that is not a number -- zero times an infinite scale, or an infinite total times a scale of exactly -1 -- is an error naming the attribute and both totals
 - `modifier-tick!` — counts every timed claim down by an elapsed time and drops those that reach zero; claims with no duration are untouched, and a negative time is refused
 - `modifier-dispel!` — drops the claims marked dispellable and nothing else, across every attribute
 - `modifier-clear!` — drops every claim
@@ -200,7 +200,7 @@ adds up to.
 - `stats-refill!` — every pool to its maximum
 - `stats-level` — the current level, which starts at 1
 - `stats-xp` — the experience accumulated toward the next level
-- `stats-gain-xp!` — adds experience and answers how many levels were gained; with no curve it is always 0, and a curve answering a cost of zero or less is refused because believing it would raise levels for free and never terminate
+- `stats-gain-xp!` — adds experience and answers how many levels were gained; with no curve it is always 0, and a curve answering a cost of zero or less is refused because believing it would raise levels for free and never terminate. The total is kept finite as a flonum: a gain that would take it past that is refused and leaves the total as it was. A level whose cost is below the total's flonum resolution -- subtracting it would leave the total unchanged -- is refused rather than bought for ever, naming the level, the total and the cost; the gain and any levels bought before it stay committed. There is no cap on the levels one call buys, so a curve or a hook that keeps making the next level affordable keeps the call running (see `docs/limits.md`)
 
 ## `(gam timeline)`
 
@@ -208,8 +208,8 @@ adds up to.
 - `timeline?` — whether a value is a timeline
 - `timeline-time` — the timeline's own clock, which moves only when the caller ticks it
 - `timeline-empty?` — whether nothing at all is scheduled
-- `timeline-schedule!` — queues a payload at now plus a delay; equal deadlines keep insertion order, a zero delay means the next tick rather than this instant, and a negative delay is refused rather than clamped
-- `timeline-tick!` — advances the clock and answers the payloads now due, earliest first, as data for the caller to interpret; the queue is written back before they are answered, so scheduling from inside the handling adds to a timeline that no longer holds what is being handled
+- `timeline-schedule!` — queues a payload at now plus a delay; equal deadlines keep insertion order, a zero delay means the next tick rather than this instant, and a negative delay is refused rather than clamped. A delay whose deadline would not be a finite flonum is refused before anything is queued
+- `timeline-tick!` — advances the clock and answers the payloads now due, earliest first, as data for the caller to interpret; the queue is written back before they are answered, so scheduling from inside the handling adds to a timeline that no longer holds what is being handled. A step that would take the clock past a finite flonum is refused and leaves the clock and the queue as they were
 - `timeline-clear!` — drops everything queued and leaves the timeline usable; there is no way to cancel one payload, which would need a name for it that only the caller has
 
 ## `(gam window)`
