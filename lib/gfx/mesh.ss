@@ -51,7 +51,7 @@
           mesh-lit-vs mesh-lit-fs mesh-tex-vs mesh-tex-fs
           mesh-normal-vs mesh-normal-fs mesh-pbr-vs mesh-pbr-fs
           mesh-shaders)
-  (import (rnrs) (gfx mat))
+  (import (rnrs) (gfx mat) (gfx srgb))
 
   (define $mesh-pi 3.141592653589793)
   (define $mesh-2pi 6.283185307179586)
@@ -871,25 +871,33 @@
         (set! gl_Position (* u_mvp (vec4 a_pos (fl 1))))
         (set! v_normal (vec3 (* u_model (vec4 a_normal (fl 0))))))))
 
-  ;; colors come in as sRGB, light in linear, encode back out --
-  ;; the pow pair all the shipped fragment shaders share
+  ;; Colors come in sRGB-encoded and light adds up in linear, so the
+  ;; color is decoded on the way in and the result encoded on the way
+  ;; out, with (gfx srgb)'s pair -- which all the shipped fragment
+  ;; shaders share.
   (define mesh-lit-fs
-    '((precision mediump float)
+    `((precision mediump float)
       (uniform vec3 u_light)                  ; unit vector toward the light
       (uniform vec4 u_color)
       (uniform float u_ambient)
       (varying vec3 v_normal)
+      ,@(srgb-shader-functions)
       (define (main) void
         (local vec3 n (normalize v_normal))
         (local float d (max (dot n u_light) (fl 0)))
-        (local vec3 base (pow u_color.rgb (vec3 "2.2" "2.2" "2.2")))
+        (local vec3 base (decode_srgb u_color.rgb))
         (local vec3 c (* base (+ u_ambient (* d (- (fl 1) u_ambient)))))
         (set! gl_FragColor
-              (vec4 (pow c (vec3 "0.4545" "0.4545" "0.4545"))
+              (vec4 (encode_srgb c)
                     u_color.a)))))
 
   ;; the same light over a texture: sample * u_color tint, then the
   ;; ambient/diffuse factor.  Pair with mesh-write-uv! (stride 32).
+  ;; The sample and the tint are each decoded and then multiplied.
+  ;; Multiplying the encoded values and decoding the product is not the
+  ;; same thing: it was exact under a single power curve, which
+  ;; distributes over a product, and it is not under the sRGB curve,
+  ;; whose straight segment near black does not.
   (define mesh-tex-vs
     '((attribute vec3 a_pos)
       (attribute vec3 a_normal)
@@ -903,22 +911,23 @@
         (set! v_normal (vec3 (* u_model (vec4 a_normal (fl 0)))))
         (set! v_uv a_uv))))
   (define mesh-tex-fs
-    '((precision mediump float)
+    `((precision mediump float)
       (uniform vec3 u_light)
       (uniform vec4 u_color)
       (uniform float u_ambient)
       (uniform sampler2D u_tex)
       (varying vec3 v_normal)
       (varying vec2 v_uv)
+      ,@(srgb-shader-functions)
       (define (main) void
         (local vec3 n (normalize v_normal))
         (local float d (max (dot n u_light) (fl 0)))
-        (local vec4 t (* (texture2D u_tex v_uv) u_color))
-        (local vec3 base (pow t.rgb (vec3 "2.2" "2.2" "2.2")))
+        (local vec4 t (texture2D u_tex v_uv))
+        (local vec3 base (* (decode_srgb t.rgb) (decode_srgb u_color.rgb)))
         (local vec3 c (* base (+ u_ambient (* d (- (fl 1) u_ambient)))))
         (set! gl_FragColor
-              (vec4 (pow c (vec3 "0.4545" "0.4545" "0.4545"))
-                    t.a)))))
+              (vec4 (encode_srgb c)
+                    (* t.a u_color.a))))))
 
   ;; the tangent-space normal-mapped variant of the lit program:
   ;; pairs with mesh-write-tan!'s 48-byte layout.  u_model must be
@@ -941,7 +950,7 @@
         (set! v_t (vec3 (* u_model (vec4 a_tangent.xyz (fl 0)))))
         (set! v_b (* (cross v_n v_t) a_tangent.w)))))
   (define mesh-normal-fs
-    '((precision mediump float)
+    `((precision mediump float)
       (uniform sampler2D u_nmap)        ; rgb = tangent-space normal
       (uniform vec3 u_light)
       (uniform vec4 u_color)
@@ -950,16 +959,17 @@
       (varying vec3 v_t)
       (varying vec3 v_b)
       (varying vec3 v_n)
+      ,@(srgb-shader-functions)
       (define (main) void
         (local vec4 s (texture2D u_nmap v_uv))
         (local vec3 tn (- (* s.rgb (fl 2)) (vec3 (fl 1) (fl 1) (fl 1))))
         (local vec3 n (normalize (+ (+ (* v_t tn.x) (* v_b tn.y))
                                     (* v_n tn.z))))
         (local float d (max (dot n u_light) (fl 0)))
-        (local vec3 base (pow u_color.rgb (vec3 "2.2" "2.2" "2.2")))
+        (local vec3 base (decode_srgb u_color.rgb))
         (local vec3 c (* base (+ u_ambient (* d (- (fl 1) u_ambient)))))
         (set! gl_FragColor
-              (vec4 (pow c (vec3 "0.4545" "0.4545" "0.4545"))
+              (vec4 (encode_srgb c)
                     u_color.a)))))
 
   ;; ---- PBR: Cook-Torrance GGX with a real light probe ----
@@ -968,7 +978,19 @@
   ;; chain holds GGX convolutions, u_mips = levels - 1) and u_lut is
   ;; ibl-brdf-lut!'s scale/bias table.  Pair with mesh-write! (stride
   ;; 24); gltf's gprim-metallic/gprim-roughness feed the factor
-  ;; uniforms directly.  Reinhard tonemap + gamma on the way out.
+  ;; uniforms directly.  Reinhard tonemap + sRGB encode on the way out.
+  ;;
+  ;; The probe holds sRGB-encoded bytes and is decoded here, where it
+  ;; is read.  (gfx ibl) averages the source cube map's samples as they
+  ;; are stored, encoded, and writes the average back encoded; an
+  ;; average of encoded values is not the encoding of the average.
+  ;; The decode works channel by channel, a straight line near black
+  ;; that bends upward above it, so before the average is rounded to a
+  ;; byte a channel is no lighter than its linear average, and darker
+  ;; where its samples differ and are not all on that straight segment;
+  ;; the rounding can then move it half a step either way.  That
+  ;; approximation is (gfx ibl)'s, and
+  ;; decoding here is still the right step for what it stores.
   (define mesh-pbr-vs
     '((attribute vec3 a_pos)
       (attribute vec3 a_normal)
@@ -982,7 +1004,7 @@
         (set! v_n (vec3 (* u_model (vec4 a_normal (fl 0))))))))
 
   (define mesh-pbr-fs
-    '((precision mediump float)
+    `((precision mediump float)
       (uniform vec3 u_light)              ; unit vector toward the light
       (uniform vec3 u_eye)
       (uniform vec4 u_albedo)             ; sRGB in, like u_color
@@ -993,6 +1015,7 @@
       (uniform float u_mips)
       (varying vec3 v_n)
       (varying vec3 v_wp)
+      ,@(srgb-shader-functions)
       (define (main) void
         (local vec3 n (normalize v_n))
         (local vec3 v (normalize (- u_eye v_wp)))
@@ -1001,7 +1024,7 @@
         (local float ndv (max (dot n v) "0.001"))
         (local float ndh (max (dot n h) (fl 0)))
         (local float hdv (max (dot h v) (fl 0)))
-        (local vec3 albedo (pow u_albedo.rgb (vec3 "2.2" "2.2" "2.2")))
+        (local vec3 albedo (decode_srgb u_albedo.rgb))
         (local vec3 f0 (mix (vec3 "0.04" "0.04" "0.04")
                             albedo u_metallic))
         ;; GGX distribution
@@ -1025,10 +1048,10 @@
         ;; split-sum ambient: the prefiltered mip chain picks the
         ;; blur by roughness, the LUT folds in the BRDF integral
         (local vec4 irr4 (textureCube u_sky n u_mips))
-        (local vec3 irr (pow irr4.rgb (vec3 "2.2" "2.2" "2.2")))
+        (local vec3 irr (decode_srgb irr4.rgb))
         (local vec3 r (reflect (- v) n))
         (local vec4 pre4 (textureCube u_sky r (* u_roughness u_mips)))
-        (local vec3 pre (pow pre4.rgb (vec3 "2.2" "2.2" "2.2")))
+        (local vec3 pre (decode_srgb pre4.rgb))
         (local vec4 ab (texture2D u_lut (vec2 ndv u_roughness)))
         (local vec3 c (+ direct
                          (+ (* (* kd albedo) irr)
@@ -1036,7 +1059,7 @@
                                       (vec3 ab.g ab.g ab.g))))))
         (set! c (/ c (+ c one)))          ; Reinhard
         (set! gl_FragColor
-              (vec4 (pow c (vec3 "0.4545" "0.4545" "0.4545"))
+              (vec4 (encode_srgb c)
                     u_albedo.a)))))
   ;; ---- the same shaders, as data ----
   ;;

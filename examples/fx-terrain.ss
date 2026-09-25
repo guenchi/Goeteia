@@ -4,7 +4,7 @@
 ;; altitude, and exponential fog folds the far hills into the sky.
 ;; One mesh, one draw call, no assets.
 (import (rnrs) (web js) (web dom) (gfx gl) (gfx glsl) (gfx fx)
-        (gfx mat) (gfx mesh))
+        (gfx mat) (gfx mesh) (gfx srgb))
 
 (fx-init! (get-element-by-id "c"))
 
@@ -31,13 +31,17 @@
        (set! v_n a_normal)
        (set! v_h a_pos.y)
        (set! v_dist (distance a_pos u_eye))))
-   '((precision mediump float)
+   `((precision mediump float)
      (uniform vec3 u_light)
      (varying vec3 v_n)
      (varying float v_h)
      (varying float v_dist)
+     ,@(srgb-shader-functions)
      (define (main) void
-       ;; altitude ramp: grass, rock, snow
+       ;; altitude ramp: grass, rock, snow.  These, and the fog color
+       ;; below, are linear values, not sRGB: they are lit and fogged
+       ;; as they stand and only the result is encoded, so there is
+       ;; nothing here to decode.
        (local vec3 base (mix (vec3 "0.13" "0.30" "0.11")
                              (vec3 "0.30" "0.26" "0.23")
                              (smoothstep (fl 1) (fl 4) v_h)))
@@ -49,7 +53,7 @@
        (local float f (- (fl 1) (exp (- (* v_dist "0.011")))))
        (set! c (mix c (vec3 "0.35" "0.46" "0.62") f))
        (set! gl_FragColor
-             (vec4 (pow c (vec3 "0.4545" "0.4545" "0.4545"))
+             (vec4 (encode_srgb c)
                    (fl 1)))))))
 
 (define vbuf (fx-buffer!))

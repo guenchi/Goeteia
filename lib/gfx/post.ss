@@ -42,7 +42,7 @@
           make-fxaa fxaa-run! make-grade grade-run!
           make-dof dof-run!
           post-shaders)
-  (import (rnrs) (gfx gl) (gfx glsl) (gfx fx))
+  (import (rnrs) (gfx gl) (gfx glsl) (gfx fx) (gfx srgb))
 
   ;; ---- the floor: one fullscreen pass ----
   (define (post-quad! fs-forms) (fx-fullscreen! fs-forms))
@@ -182,7 +182,7 @@
   (define (bloom-texture b) (blur-texture ($bloom-blur b)))
 
   ;; ---- FXAA: the classic screen-space anti-alias, one pass ----
-  ;; Runs on DISPLAY-READY (gamma-encoded) color -- put it last.
+  ;; Runs on DISPLAY-READY (sRGB-encoded) color -- put it last.
   (define $fxaa-fs
     '((precision mediump float)
       (uniform sampler2D u_src)
@@ -290,16 +290,18 @@
                                (fl/ 1.0 (fixnum->flonum ($dof-w d)))
                                (fl/ 1.0 (fixnum->flonum ($dof-h d)))))))
 
-  ;; ---- grade: exposure + tonemap + gamma, LINEAR in, display out ----
+  ;; ---- grade: exposure + tonemap + sRGB encode, LINEAR in, display out ----
   ;; 'aces is the Narkowicz fit; 'reinhard the extended curve; 'none
-  ;; just exposure + gamma.  Point HDR scene targets at this, then
-  ;; (optionally) FXAA the result.
+  ;; just exposure + the encode.  Point HDR scene targets at this, then
+  ;; (optionally) FXAA the result.  The encode is (gfx srgb)'s, the same
+  ;; one the mesh shaders end with.
   (define $grade-fs
-    '((precision mediump float)
+    `((precision mediump float)
       (uniform sampler2D u_src)
       (uniform vec2 u_texel)
       (uniform float u_exposure)
       (uniform float u_mode)             ; 0 none, 1 reinhard, 2 aces
+      ,@(srgb-shader-functions)
       (define (main) void
         (local vec2 uv (* gl_FragCoord.xy u_texel))
         (local vec4 c (texture2D u_src uv))
@@ -314,7 +316,7 @@
                                (- (fl 1) (step (fl 1 50) u_mode)))))
         (set! x (mix x aces (step (fl 1 50) u_mode)))
         (set! gl_FragColor
-              (vec4 (pow x (vec3 "0.4545" "0.4545" "0.4545")) c.a)))))
+              (vec4 (encode_srgb x) c.a)))))
 
   (define (make-grade) (post-quad! $grade-fs))
   (define (grade-run! q src-tex tgt mode exposure w h)

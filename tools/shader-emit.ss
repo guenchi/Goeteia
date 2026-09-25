@@ -18,7 +18,7 @@
 ;; against a stub would look identical to a run against a compiler.
 (import (rnrs) (gfx glsl) (gfx surface)
         (gfx fx) (gfx ibl) (gfx post) (gfx sprite) (gfx scene)
-        (gfx mat) (gfx lod)
+        (gfx mat) (gfx lod) (gfx srgb)
         (gfx gltf) (gfx mesh) (gfx particles))
 
 (define (render dialect forms)
@@ -91,14 +91,27 @@
                                       (vec2 (fl 3) (fl 4)) (fl 1))
                         (dither_threshold gl_FragCoord.xy)
                         (fl 1)))
+;; Each call has one component on the straight segment near black --
+;; 0.02 is at or below decode's 0.04045, 0.002 at or below encode's
+;; 0.0031308 -- and the others on the curve, so both sides of each
+;; step are reached.  0 and 1 are fixed points of both directions and
+;; would reach neither side in a way that shows.
+(emit-functions! "srgb" (srgb-shader-functions)
+                 '(vec4 (+ (decode_srgb (vec3 "0.02" (fl 0 5) (fl 0 8)))
+                           (encode_srgb (vec3 "0.002" (fl 0 25) (fl 0 6))))
+                        (fl 1)))
 ;; EVERY function in the set is called from main, and that is the point
 ;; of the calls expression rather than a flourish: an uncalled function
 ;; is one whose PARAMETER LIST nothing has ever disagreed with, and
 ;; registering a set without reaching all of it checks every body and no
 ;; signature. The bodies are covered either way -- see the paragraph
 ;; below, which is a reading and not a belief. The sampler is declared
-;; here because triplanar_color takes one, and it rides in front of the
-;; function list so it lands after the precision line.
+;; here because triplanar_color and triplanar_srgb take one, and it
+;; rides in front of the function list so it lands after the precision
+;; line. The srgb list is spliced ahead of surface-srgb's because
+;; triplanar_srgb calls decode_srgb, in the order the DEPENDENCY note
+;; in (gfx surface) gives; its result goes through encode_srgb so that
+;; every function this entry emits is called.
 ;;
 ;; What a call buys, measured against ANGLE rather than assumed: a body
 ;; is checked whether or not anything calls it, and a call adds exactly
@@ -133,70 +146,89 @@
 ;; axis it contributes again. Only these two occurrences are bumps; the
 ;; same triple appears as other arguments elsewhere and means something
 ;; else there.
+(define surface-calls
+  '(vec4 (+ (surface_normal (vec3 (fl 0) (fl 1) (fl 0))
+                              (vec3 gl_FragCoord.x gl_FragCoord.y (fl 0))
+                              gl_FragCoord.xy
+                              (vec3 (fl 0 61) (fl 0 38) (fl 0 92))
+                              (fl 1)
+                              (?: (> gl_FragCoord.x (fl 0)) true false))
+              (triplanar_color u_surface_tex
+                              (vec3 gl_FragCoord.x gl_FragCoord.y (fl 0))
+                              (vec3 (fl 0 5) (fl 0 25) (fl 0 25)))
+              (triplanar_normal (vec3 (fl 0) (fl 1) (fl 0))
+                               (vec3 (fl 0 5) (fl 0 5) (fl 1))
+                               (vec3 (fl 0 6) (fl 0 4) (fl 0 9))
+                               (vec3 (fl 0 45) (fl 0 55) (fl 0 8))
+                               (vec3 (fl 0 5) (fl 0 25) (fl 0 25)))
+              (surface_tangent (vec3 gl_FragCoord.x gl_FragCoord.y (fl 0))
+                              gl_FragCoord.xy
+                              (vec3 (fl 0) (fl 1) (fl 0)))
+              (skin_diffuse (vec3 (fl 0) (fl 1) (fl 0))
+                           (vec3 (fl 0 6) (fl 0 8) (fl 0))
+                           (vec3 (fl 0 5) (fl 0 5) (fl 1)))
+              (leaf_transmission (vec3 (fl 0 5) (fl 0 5) (fl 1))
+                                (vec3 (fl 0) (fl 0) (fl 1))
+                                (vec3 (fl 0 6) (fl 0 8) (fl 0))
+                                (vec3 (fl 0) (fl 1) (fl 0))
+                                gl_FragCoord.x)
+              (water_transmission (vec3 (fl 0 5) (fl 0 5) (fl 1))
+                                 (vec3 (fl 0 2) (fl 0 4) (fl 0 6))
+                                 (vec3 (fl 0 1) (fl 0 2) (fl 0 3))
+                                 gl_FragCoord.x)
+              (ambient_diffuse (vec3 (fl 0 5) (fl 0 5) (fl 1))
+                              (fl 0 5)
+                              (vec3 (fl 0) (fl 1) (fl 0))
+                              (vec3 (fl 0 2) (fl 0 2) (fl 0 2))
+                              (vec3 (fl 0 6) (fl 0 7) (fl 0 9))))
+           (+ (dot (apply_normal_map
+                    (tangent_frame (vec3 (fl 0) (fl 1) (fl 0))
+                                   (vec3 gl_FragCoord.x gl_FragCoord.y (fl 0))
+                                   gl_FragCoord.xy
+                                   true)
+                    (vec3 (fl 0 61) (fl 0 38) (fl 0 92))
+                    (fl 1))
+                   (vec3 (fl 1) (fl 1) (fl 1)))
+              (fiber_specular (vec3 (fl 1) (fl 0) (fl 0))
+                             (vec3 (fl 0) (fl 1) (fl 0))
+                             (fl 0 5))
+              (cloth_sheen (vec3 (fl 0) (fl 1) (fl 0))
+                          (vec3 (fl 0) (fl 0) (fl 1))
+                          (vec3 (fl 0 6) (fl 0 8) (fl 0)))
+              (filtered_roughness (vec3 (fl 0) (fl 1) (fl 0)) (fl 0 5))
+              (surface_height_blend gl_FragCoord.x (fl 0 5) (fl 0 3) (fl 0 1))
+              (shore_wetness gl_FragCoord.x (fl 0 5) (fl 0 25))
+              (water_path_length (vec3 gl_FragCoord.x (fl 2) (fl 0))
+                               (vec3 (fl 0) (fl 0) (fl 0))
+                               (fl 1))
+              (water_foam_hash gl_FragCoord.xy)
+              (water_foam_noise gl_FragCoord.xy)
+              (water_shore_foam gl_FragCoord.xy (fl 0 15) (fl 0 1)
+                                gl_FragCoord.x (fl 0 25))
+              (dot (rot_axis (vec3 (fl 1) (fl 0) (fl 0))
+                             (vec3 (fl 0) (fl 1) (fl 0)))
+                   (vec3 (fl 1) (fl 1) (fl 1))))))
 (emit-functions! "surface" (append '((uniform sampler2D u_surface_tex))
                                    (mat-shader-functions)
-                                   (surface-shader-functions))
-                 '(vec4 (+ (surface_normal (vec3 (fl 0) (fl 1) (fl 0))
-                                           (vec3 gl_FragCoord.x gl_FragCoord.y (fl 0))
-                                           gl_FragCoord.xy
-                                           (vec3 (fl 0 61) (fl 0 38) (fl 0 92))
-                                           (fl 1)
-                                           (?: (> gl_FragCoord.x (fl 0)) true false))
-                           (triplanar_color u_surface_tex
-                                           (vec3 gl_FragCoord.x gl_FragCoord.y (fl 0))
-                                           (vec3 (fl 0 5) (fl 0 25) (fl 0 25)))
-                           (triplanar_normal (vec3 (fl 0) (fl 1) (fl 0))
-                                            (vec3 (fl 0 5) (fl 0 5) (fl 1))
-                                            (vec3 (fl 0 6) (fl 0 4) (fl 0 9))
-                                            (vec3 (fl 0 45) (fl 0 55) (fl 0 8))
-                                            (vec3 (fl 0 5) (fl 0 25) (fl 0 25)))
-                           (surface_tangent (vec3 gl_FragCoord.x gl_FragCoord.y (fl 0))
-                                           gl_FragCoord.xy
-                                           (vec3 (fl 0) (fl 1) (fl 0)))
-                           (skin_diffuse (vec3 (fl 0) (fl 1) (fl 0))
-                                        (vec3 (fl 0 6) (fl 0 8) (fl 0))
-                                        (vec3 (fl 0 5) (fl 0 5) (fl 1)))
-                           (leaf_transmission (vec3 (fl 0 5) (fl 0 5) (fl 1))
-                                             (vec3 (fl 0) (fl 0) (fl 1))
-                                             (vec3 (fl 0 6) (fl 0 8) (fl 0))
-                                             (vec3 (fl 0) (fl 1) (fl 0))
-                                             gl_FragCoord.x)
-                           (water_transmission (vec3 (fl 0 5) (fl 0 5) (fl 1))
-                                              (vec3 (fl 0 2) (fl 0 4) (fl 0 6))
-                                              (vec3 (fl 0 1) (fl 0 2) (fl 0 3))
-                                              gl_FragCoord.x)
-                           (ambient_diffuse (vec3 (fl 0 5) (fl 0 5) (fl 1))
-                                           (fl 0 5)
-                                           (vec3 (fl 0) (fl 1) (fl 0))
-                                           (vec3 (fl 0 2) (fl 0 2) (fl 0 2))
-                                           (vec3 (fl 0 6) (fl 0 7) (fl 0 9))))
-                        (+ (dot (apply_normal_map
-                                 (tangent_frame (vec3 (fl 0) (fl 1) (fl 0))
-                                                (vec3 gl_FragCoord.x gl_FragCoord.y (fl 0))
-                                                gl_FragCoord.xy
-                                                true)
-                                 (vec3 (fl 0 61) (fl 0 38) (fl 0 92))
-                                 (fl 1))
-                                (vec3 (fl 1) (fl 1) (fl 1)))
-                           (fiber_specular (vec3 (fl 1) (fl 0) (fl 0))
-                                          (vec3 (fl 0) (fl 1) (fl 0))
-                                          (fl 0 5))
-                           (cloth_sheen (vec3 (fl 0) (fl 1) (fl 0))
-                                       (vec3 (fl 0) (fl 0) (fl 1))
-                                       (vec3 (fl 0 6) (fl 0 8) (fl 0)))
-                           (filtered_roughness (vec3 (fl 0) (fl 1) (fl 0)) (fl 0 5))
-                           (surface_height_blend gl_FragCoord.x (fl 0 5) (fl 0 3) (fl 0 1))
-                           (shore_wetness gl_FragCoord.x (fl 0 5) (fl 0 25))
-                           (water_path_length (vec3 gl_FragCoord.x (fl 2) (fl 0))
-                                            (vec3 (fl 0) (fl 0) (fl 0))
-                                            (fl 1))
-                           (water_foam_hash gl_FragCoord.xy)
-                           (water_foam_noise gl_FragCoord.xy)
-                           (water_shore_foam gl_FragCoord.xy (fl 0 15) (fl 0 1)
-                                             gl_FragCoord.x (fl 0 25))
-                           (dot (rot_axis (vec3 (fl 1) (fl 0) (fl 0))
-                                          (vec3 (fl 0) (fl 1) (fl 0)))
-                                (vec3 (fl 1) (fl 1) (fl 1)))))
+                                   (srgb-shader-functions)
+                                   (surface-shader-functions)
+                                   (surface-srgb-shader-functions))
+                 `(vec4 (+ (encode_srgb
+                            (triplanar_srgb u_surface_tex
+                                            (vec3 gl_FragCoord.y gl_FragCoord.x (fl 0))
+                                            (vec3 (fl 0 2) (fl 0 3) (fl 0 5))))
+                           ,(cadr surface-calls))
+                        ,(caddr surface-calls))
+                 'es300)
+;; The same list without (gfx srgb): mat and surface alone, as a caller
+;; that never uses triplanar_srgb splices them.  That combination has
+;; to keep compiling.  The entry above supplies srgb, so it cannot show
+;; a function in surface's main list coming to depend on srgb; this one
+;; is refused by the compiler when that happens.
+(emit-functions! "surface-alone" (append '((uniform sampler2D u_surface_tex))
+                                         (mat-shader-functions)
+                                         (surface-shader-functions))
+                 surface-calls
                  'es300)
 
 (emit! "mesh" (mesh-shaders))

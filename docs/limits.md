@@ -621,6 +621,18 @@ Two sharp edges besides the cost:
   resolve framebuffer for you, but it can only show what
   `fx-resolve!` has already blitted there.
 
+## A glTF base color factor is decoded as if it were sRGB
+
+The shaders that ship with this library take `u_color` as sRGB-encoded
+and decode it before lighting (see `(gfx srgb)` in the API index).  A
+glTF material's `baseColorFactor` is not encoded: the glTF
+specification defines it as linear.  `(gfx gltf)` passes the factor to
+the shader as `u_color` unchanged, so a linear value is decoded as if
+it were encoded, and a factor below one comes out darker than the
+specification says -- a
+factor of 0.5 is lit as about 0.21.  Factors of exactly 0 and 1 are
+unaffected, since the curve leaves both where they are.
+
 ## Animation semantics
 
 - **`gltf-animate!` wraps its clock, so `t = duration` is the

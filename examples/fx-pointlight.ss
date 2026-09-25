@@ -6,7 +6,7 @@
 ;; Watch the pillar shadows sweep the floor as the light wanders.
 ;; Needs WebGL 2.
 (import (rnrs) (web js) (web dom) (gfx gl) (gfx glsl) (gfx fx)
-        (gfx mat) (gfx mesh))
+        (gfx mat) (gfx mesh) (gfx srgb))
 
 (fx-init! (get-element-by-id "c"))
 
@@ -45,13 +45,14 @@
        (set! gl_Position (* u_mvp (vec4 a_pos (fl 1))))
        (set! v_wp (vec3 (* u_model (vec4 a_pos (fl 1)))))
        (set! v_n (* (mat3 u_model) a_normal))))
-   '((precision mediump float)
+   `((precision mediump float)
      (uniform samplerCube u_shadow)
      (uniform vec3 u_lpos)
      (uniform float u_far)
      (uniform vec4 u_color)
      (varying vec3 v_wp)
      (varying vec3 v_n)
+     ,@(srgb-shader-functions)
      (define (main) void
        (local vec3 dv (- v_wp u_lpos))
        (local float dist (length dv))
@@ -62,11 +63,11 @@
        (local float diff (max (dot (normalize v_n) l) (fl 0)))
        (local float atten (/ (fl 1) (+ (fl 1) (* "0.015"
                                                   (* dist dist)))))
-       (local vec3 base (pow u_color.rgb (vec3 "2.2" "2.2" "2.2")))
+       (local vec3 base (decode_srgb u_color.rgb))
        (local vec3 c (* base (+ "0.06"
                                 (* (* (* diff lit) atten) "2.4"))))
        (set! gl_FragColor
-             (vec4 (pow c (vec3 "0.4545" "0.4545" "0.4545"))
+             (vec4 (encode_srgb c)
                    u_color.a))))))
 
 ;; the bulb itself: unlit, it IS the light

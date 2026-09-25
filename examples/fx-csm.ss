@@ -5,7 +5,7 @@
 ;; ones).  Each fragment projects into the near cascade first and
 ;; falls back to the far one when it lands outside.  Needs WebGL 2.
 (import (rnrs) (web js) (web dom) (gfx gl) (gfx glsl) (gfx fx)
-        (gfx mat) (gfx mesh))
+        (gfx mat) (gfx mesh) (gfx srgb))
 
 (fx-init! (get-element-by-id "c"))
 
@@ -37,7 +37,7 @@
        (set! v_sh0 (* u_lvp0 p))
        (set! v_sh1 (* u_lvp1 p))
        (set! v_n (* (mat3 u_model) a_normal))))
-   '((precision mediump float)
+   `((precision mediump float)
      (uniform sampler2D u_shadow0)
      (uniform sampler2D u_shadow1)
      (uniform vec3 u_light)
@@ -45,6 +45,7 @@
      (varying vec3 v_n)
      (varying vec4 v_sh0)
      (varying vec4 v_sh1)
+     ,@(srgb-shader-functions)
      (define (main) void
        (local vec3 s0 (+ (* (/ v_sh0.xyz v_sh0.w) (fl 0 50))
                          (vec3 (fl 0 50) (fl 0 50) (fl 0 50))))
@@ -59,10 +60,10 @@
        (local float lit1 (step (- s1.z "0.003") t1.r))
        (local float lit (mix lit1 lit0 use0))
        (local float d (max (dot (normalize v_n) u_light) (fl 0)))
-       (local vec3 base (pow u_color.rgb (vec3 "2.2" "2.2" "2.2")))
+       (local vec3 base (decode_srgb u_color.rgb))
        (local vec3 c (* base (+ (fl 0 25) (* (fl 0 75) (* d lit)))))
        (set! gl_FragColor
-             (vec4 (pow c (vec3 "0.4545" "0.4545" "0.4545"))
+             (vec4 (encode_srgb c)
                    u_color.a))))))
 
 ;; ---- geometry: a wide ground, a field of pillars ----

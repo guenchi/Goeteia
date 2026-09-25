@@ -6,7 +6,7 @@
 ;; clip space, ripples the lookup with moving sines, and blends
 ;; toward the reflection by a Fresnel term.  All existing parts.
 (import (rnrs) (web js) (web dom) (gfx gl) (gfx glsl) (gfx fx)
-        (gfx mat) (gfx mesh))
+        (gfx mat) (gfx mesh) (gfx srgb))
 
 (fx-init! (get-element-by-id "c"))
 
@@ -37,14 +37,17 @@
        (set! gl_Position (* u_mvp (vec4 a_pos (fl 1))))
        (set! v_n a_normal)
        (set! v_h a_pos.y)))
-   '((precision mediump float)
+   `((precision mediump float)
      (uniform vec3 u_light)
      (uniform float u_clip)              ; 1 = discard below water
      (varying vec3 v_n)
      (varying float v_h)
+     ,@(srgb-shader-functions)
      (define (main) void
        (if (< (* v_h u_clip) (- "0.05")) (discard))
-       ;; sand at the shore, grass above, rock on the tops
+       ;; sand at the shore, grass above, rock on the tops.  These are
+       ;; linear values, not sRGB: they are lit as they stand and only
+       ;; the result is encoded, so there is nothing here to decode.
        (local vec3 base (mix (vec3 "0.45" "0.38" "0.24")
                              (vec3 "0.13" "0.30" "0.11")
                              (smoothstep (fl 0 30) (fl 1 50) v_h)))
@@ -53,7 +56,7 @@
        (local float d (max (dot (normalize v_n) u_light) (fl 0)))
        (local vec3 c (* base (+ (fl 0 30) (* (fl 0 70) d))))
        (set! gl_FragColor
-             (vec4 (pow c (vec3 "0.4545" "0.4545" "0.4545"))
+             (vec4 (encode_srgb c)
                    (fl 1)))))))
 
 (define water-p

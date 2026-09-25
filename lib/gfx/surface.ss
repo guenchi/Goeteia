@@ -27,8 +27,16 @@
 ;; lists is enough. Forgetting it is an undefined-function error at
 ;; shader compile time, which is loud, but it names safe_unit and not
 ;; the reason, so it is said here.
+;;
+;; triplanar_srgb is in a list of its own, surface-srgb-shader-functions,
+;; because it calls decode_srgb from (gfx srgb), and a compiler checks
+;; every function body in a shader whether or not anything calls it: in
+;; the main list it would make (gfx srgb) a requirement of every caller,
+;; including the ones that already splice mat and surface and nothing
+;; else. A caller that wants it splices, in this order: mat, srgb,
+;; surface, surface-srgb.
 (library (gfx surface)
-  (export surface-shader-functions)
+  (export surface-shader-functions surface-srgb-shader-functions)
   (import (rnrs))
 
   (define $surface-shader-functions
@@ -49,12 +57,17 @@
       ;;   can, and so this does not depend on a fragment-stage
       ;;   built-in.
       ;;
-      ;;   A triangle with zero area in UV space makes both tangent
-      ;;   columns zero, and the reciprocal square root of zero is
-      ;;   infinity. The floor under the larger of the two squared
-      ;;   lengths keeps the result finite; the basis it gives is
-      ;;   arbitrary, which is the honest answer when the texture
-      ;;   coordinates carry no direction.
+      ;;   Where the texture coordinate does not change across the
+      ;;   pixel quad, both tangent columns are zero, and the
+      ;;   reciprocal square root of zero is infinity. The floor under
+      ;;   the larger of the two squared lengths keeps the result
+      ;;   finite, and the columns stay zero: a normal map applied
+      ;;   through this frame keeps only its z component, so the normal
+      ;;   that comes out is the shading normal, untilted -- or its
+      ;;   opposite, for a texel whose z is negative. A triangle with
+      ;;   zero area in UV space whose coordinate still changes along
+      ;;   one direction gives two parallel columns instead: finite,
+      ;;   and a tilt along that one direction only.
       (define (tangent_frame (vec3 n) (vec3 wp) (vec2 uv) (bool front)) mat3
         (local vec3 nn (?: front (safe_unit n) (- (safe_unit n))))
         (local vec3 dp1 (dFdx wp))
@@ -162,7 +175,10 @@
         (local float exponent (mix (fl 110) (fl 18) roughness))
         (return (* (pow alignment exponent) (sqrt exponent) (fl 0 45 3))))
 
-      ;; Retroreflection at grazing angles, which is what reads as cloth.
+      ;; A sheen that grows as the view grazes the surface:
+      ;; (1 - max(N.V, 0))^4, times max(N.L, 0) for the light that
+      ;; reaches it, times 0.12. It does not depend on where the light
+      ;; is relative to the view.
       (define (cloth_sheen (vec3 normal) (vec3 view) (vec3 light)) float
         (return (* (pow (- (fl 1) (max (dot normal view) (fl 0))) (fl 4))
                    (max (dot normal light) (fl 0))
@@ -178,8 +194,11 @@
         (return (* albedo (vec3 (fl 0 70) (fl 0 86) (fl 0 42)) forward thin)))
 
       ;; Roughness widened by the normal's variation inside one pixel, so
-      ;; a minified normal map does not alias into specular sparkle. The
-      ;; clamp keeps the result inside the range the BRDF was fitted over.
+      ;; that a minified normal map aliases less into specular sparkle.
+      ;; The variation is read from the derivatives, which see only the
+      ;; change between neighboring pixels, so finer variation than that
+      ;; goes unseen. The added variance is held at 0.18 at most and the
+      ;; result clamped to [0.16, 0.98].
       (define (filtered_roughness (vec3 normal) (float roughness)) float
         (local vec3 dx (dFdx normal)) (local vec3 dy (dFdy normal))
         (local float variance (min (fl 0 18) (* (fl 0 25) (+ (dot dx dx) (dot dy dy)))))
@@ -246,4 +265,22 @@
                                 (* (water_foam_noise (- (* position (fl 17 7)) drift)) (fl 0 35))))
         (return (* contact (smoothstep (fl 0 48) (fl 0 74) patches))))))
 
-  (define (surface-shader-functions) $surface-shader-functions))
+  (define (surface-shader-functions) $surface-shader-functions)
+
+  ;; Kept apart from the list above; see DEPENDENCY at the top.
+  (define $surface-srgb-shader-functions
+    '(
+      ;; triplanar_color for a texture that holds sRGB-encoded color,
+      ;; answered linear. Each sample is decoded before the blend: the
+      ;; transfer curve is not linear, so decoding a blend of encoded
+      ;; samples is not the blend of their linear values. A texture that
+      ;; holds data rather than color -- a normal map, roughness, a mask
+      ;; -- is linear already and goes through triplanar_color.
+      (define (triplanar_srgb (sampler2D tex) (vec3 point) (vec3 weights)) vec3
+        (local vec4 sx (texture tex point.yz))
+        (local vec4 sy (texture tex point.xz))
+        (local vec4 sz (texture tex point.xy))
+        (return (+ (* (decode_srgb sx.rgb) weights.x)
+                   (* (decode_srgb sy.rgb) weights.y)
+                   (* (decode_srgb sz.rgb) weights.z))))))
+  (define (surface-srgb-shader-functions) $surface-srgb-shader-functions))

@@ -616,6 +616,10 @@ run_mjs test/cdp-launch-flags.mjs
 # Reachable is not executed: each emitted function's last return is
 # perturbed and the frame must change, under two GL implementations.
 run_mjs test/shader-functions-are-executed.mjs
+# No shader converts colour with the gamma 2.2 approximation, and the
+# sRGB transfer functions give the sRGB values on two GL implementations.
+run_mjs test/no-gamma-approximation.mjs
+run_mjs test/srgb-transfer-on-gpu.mjs
 # The first check that judges a shader by what it PUTS ON THE SCREEN
 # rather than by whether it compiles.  Stands down loudly without a
 # browser, like the one above.

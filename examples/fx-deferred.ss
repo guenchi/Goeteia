@@ -6,7 +6,7 @@
 ;; scene traversals.  Lighting price stops depending on scene
 ;; complexity: the classic trade.  Needs WebGL 2.
 (import (rnrs) (web js) (web dom) (gfx gl) (gfx glsl) (gfx fx)
-        (gfx mat) (gfx mesh) (gfx post) (gfx stats))
+        (gfx mat) (gfx mesh) (gfx post) (gfx stats) (gfx srgb))
 
 (fx-init! (get-element-by-id "c"))
 
@@ -24,7 +24,7 @@
        (set! v_pos w.xyz)
        (set! v_normal (vec3 (* u_model (vec4 a_normal (fl 0)))))
        (set! gl_Position (* u_mvp (vec4 a_pos (fl 1))))))
-   '((precision mediump float)
+   `((precision mediump float)
      (uniform vec4 u_albedo)
      (uniform float u_reflect)           ; rides o_normal.w for SSR
      (varying vec3 v_normal)
@@ -32,9 +32,10 @@
      (out 0 vec4 o_albedo)
      (out 1 vec4 o_normal)
      (out 2 vec4 o_pos)
+     ,@(srgb-shader-functions)
      (define (main) void
        ;; albedo arrives sRGB; the light math downstream is linear
-       (set! o_albedo (vec4 (pow u_albedo.rgb (vec3 "2.2" "2.2" "2.2"))
+       (set! o_albedo (vec4 (decode_srgb u_albedo.rgb)
                             u_albedo.a))
        (set! o_normal (vec4 (normalize v_normal) u_reflect))
        ;; w = 1 marks a covered pixel; the clear leaves 0 behind
