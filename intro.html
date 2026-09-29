@@ -1,0 +1,306 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><link rel="icon" type="image/svg+xml" href="favicon.svg"><title>Beyond Files</title><meta name="description" content="An animated introduction: why files fail as the substrate for multi-agent systems, and the block graph that replaces them."><style>:root{--bg:#070b17;--panel:#111831;--line:#253157;--ink:#e8ecf8;--dim:#8e98bd;--azure:#4f8ff7;--mono:ui-monospace, "SF Mono", Menlo, Consolas, monospace;}*{box-sizing:border-box;}body{margin:0;background:var(--bg);color:var(--ink);font-family:Inter, system-ui, -apple-system, "Segoe UI", sans-serif;line-height:1.55;}a{color:var(--azure);text-decoration:none;}.top{max-width:1280px;margin:0 auto;padding:18px 16px 10px;display:flex;align-items:baseline;gap:14px;flex-wrap:wrap;}.brand{font-family:"Times New Roman", Times, serif;font-size:24px;color:var(--azure);}.top h1{font-size:17px;font-weight:500;margin:0;color:var(--dim);}.player{max-width:1280px;margin:0 auto;padding:0 16px;}#stage{display:none;width:100%;aspect-ratio:16 / 9;border-radius:14px;background:#0a0f1f;cursor:pointer;box-shadow:0 20px 60px rgba(0,0,0,.45);border:1px solid var(--line);}.live #stage{display:block;}.bar{display:none;align-items:center;gap:14px;margin:12px 0 6px;}.live .bar{display:flex;}#play{width:44px;height:36px;border-radius:8px;border:1px solid var(--line);background:var(--panel);color:var(--ink);font-size:15px;cursor:pointer;}#track{flex:1;height:8px;border-radius:4px;background:var(--panel);border:1px solid var(--line);cursor:pointer;overflow:hidden;}#fill{height:100%;width:0;background:var(--azure);}#clock{font-family:var(--mono);font-size:13px;color:var(--dim);min-width:92px;text-align:right;}.chapters{list-style:none;padding:0;margin:14px 0 40px;display:grid;grid-template-columns:repeat(auto-fill, minmax(236px, 1fr));gap:10px;}.ch{width:100%;height:100%;text-align:left;padding:10px 12px;border-radius:10px;border:1px solid var(--line);background:var(--panel);color:var(--ink);font:inherit;cursor:pointer;}.ch:hover{border-color:var(--azure);}.ch.on{border-color:var(--azure);background:#16224a;}.ch .k{display:block;font-family:var(--mono);font-size:11px;color:var(--azure);letter-spacing:1px;}.ch .t{display:block;font-weight:600;font-size:15px;}.ch .s{display:none;color:var(--dim);font-size:13px;margin-top:4px;}body:not(.live) .ch .s{display:block;}body:not(.live) .ch{cursor:default;}.note{max-width:1280px;margin:0 auto 40px;padding:0 16px;color:var(--dim);font-size:13px;}kbd{font-family:var(--mono);border:1px solid var(--line);border-radius:4px;padding:0 5px;}</style></head><body><div class="top"><a class="brand" href="index.html">Goeteia</a><h1>Beyond Files — why multi-agent systems need blocks, not files</h1></div><div class="player"><canvas id="stage" width="1600" height="900" aria-label="Animated introduction; the chapter list below is its transcript"></canvas><div class="bar"><button id="play" aria-label="Pause">❚❚</button><div id="track"><div id="fill"></div></div><span id="clock">0:00</span></div><ol class="chapters"><li><button class="ch" data-k="" data-t="Beyond files"><span class="k">·</span><span class="t">Beyond files</span><span class="s">Markdown and plain source files are great for humans to write in. As the memory and engineering substrate for multi-agent systems, they hit five systemic walls.</span></button></li><li><button class="ch" data-k="WALL 1 / 5" data-t="Silent write errors"><span class="k">WALL 1 / 5</span><span class="t">Silent write errors</span><span class="s">Plain text has zero structural validation on write: a botched patch quietly drops a section. Reading back after every write to verify doubles the token burn.</span></button></li><li><button class="ch" data-k="WALL 2 / 5" data-t="Concurrent overwrites &amp; environment collisions"><span class="k">WALL 2 / 5</span><span class="t">Concurrent overwrites &amp; environment collisions</span><span class="s">No block-level isolation: parallel writers blindly overwrite each other, and a shared working directory corrupts each other's execution state.</span></button></li><li><button class="ch" data-k="WALL 3 / 5" data-t="The token black hole"><span class="k">WALL 3 / 5</span><span class="t">The token black hole</span><span class="s">Files grow monotonically and the file is the unit of addressing, so needing one rule or function means reading the whole monolith.</span></button></li><li><button class="ch" data-k="WALL 4 / 5" data-t="Runaway long-tail topology"><span class="k">WALL 4 / 5</span><span class="t">Runaway long-tail topology</span><span class="s">A file-based knowledge base decays into thousands of atomic notes and a handful of massive files; splitting them by hand shatters the logical flow.</span></button></li><li><button class="ch" data-k="WALL 5 / 5" data-t="Drifting indexes"><span class="k">WALL 5 / 5</span><span class="t">Drifting indexes</span><span class="s">Vector indexes and line-number maps are detached from the text; when a paragraph moves they go stale silently, feeding hallucinations while semantic breaks stay invisible to Git.</span></button></li><li><button class="ch" data-k="THE SHIFT" data-t="Stop organizing content by files"><span class="k">THE SHIFT</span><span class="t">Stop organizing content by files</span><span class="s">Blocks store both documentation and source code. Files are still projected when needed, but a file boundary no longer decides what is read, written, or run.</span></button></li><li><button class="ch" data-k="FEATURE 1 / 7" data-t="A minimal query surface for agents"><span class="k">FEATURE 1 / 7</span><span class="t">A minimal query surface for agents</span><span class="s">outline, search, refs and batch answer in dense S-expressions, one item per line, with the token footprint visible before reading.</span></button></li><li><button class="ch" data-k="FEATURE 2 / 7" data-t="One unified graph across docs and code"><span class="k">FEATURE 2 / 7</span><span class="t">One unified graph across docs and code</span><span class="s">Design sections, source files, macros, functions and decision records are equal blocks with stable IDs, joined by typed, directed edges.</span></button></li><li><button class="ch" data-k="FEATURE 3 / 7" data-t="Global backlinks at near-zero cost"><span class="k">FEATURE 3 / 7</span><span class="t">Global backlinks at near-zero cost</span><span class="s">One refs query shows every mention; search reads only the answering block: 15% of the tokens of reading the full document, and a corpus outline is 6% of its raw Markdown.</span></button></li><li><button class="ch" data-k="FEATURE 4 / 7" data-t="Deterministic context assembly"><span class="k">FEATURE 4 / 7</span><span class="t">Deterministic context assembly</span><span class="s">Datalog-style queries over in-memory facts, and a budget-bounded context compiler: must-read constraints, then evidence, with every exclusion explained.</span></button></li><li><button class="ch" data-k="FEATURE 5 / 7" data-t="Human–agent symbiosis in the IDE"><span class="k">FEATURE 5 / 7</span><span class="t">Human–agent symbiosis in the IDE</span><span class="s">A semantic lens above every definition, renames that name the docs they left behind, agent drafts reviewed with the whole IDE, and precision test runs.</span></button></li><li><button class="ch" data-k="FEATURE 6 / 7" data-t="Zero-conflict workspaces &amp; isolated execution"><span class="k">FEATURE 6 / 7</span><span class="t">Zero-conflict workspaces &amp; isolated execution</span><span class="s">Private scratchpads with their own environments; commit is atomic with baseline optimistic locking, and a stale baseline is refused with everything needed to merge.</span></button></li><li><button class="ch" data-k="FEATURE 7 / 7" data-t="A Lisp machine: a living knowledge base"><span class="k">FEATURE 7 / 7</span><span class="t">A Lisp machine: a living knowledge base</span><span class="s">Scheme blocks evaluate in place inside quota-bound sandboxes, and at any historical cut of the log, reproducibly.</span></button></li><li><button class="ch" data-k="" data-t="Blocks, not files"><span class="k">·</span><span class="t">Blocks, not files</span><span class="s">One living graph for docs, code, tests and decisions — shared by humans and agents.</span></button></li></ol></div><p class="note"><kbd>space</kbd> play / pause · <kbd>←</kbd> <kbd>→</kbd> chapters. Every frame is drawn by Scheme compiled to WebAssembly by Goeteia, with a JavaScript twin generated from the same source — see <a href="https://github.com/guenchi/Goeteia/blob/website/site/intro.ss">site/intro.ss</a>.</p><script type="module">
+// Copyright 2026 guenchi
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+// The js.* import bridge shared by every Goeteia host.
+
+function makeJsBridge(getExports) {
+    let nameBuf = [];
+    let argStack = [];
+    let staged = [];
+    const cbStack = [];
+    const utf8Decoder = new TextDecoder();
+    const utf8Encoder = new TextEncoder();
+    const localGlobals = new Map();
+    const isLocalGlobal = key => typeof key === 'string' &&
+        key.startsWith('__goeteia_');
+    let instanceGlobal;
+    // eval'd code sees `globalThis` bound to this instance's proxy, so
+    // `globalThis.__goeteia_*` resolves to per-instance state. Only the
+    // `globalThis` identifier is shadowed -- a bare unqualified
+    // `__goeteia_*` inside eval would still reach the real global, but
+    // Scheme codegen always accesses globals qualified (js-get), so it
+    // never emits that form.
+    const scopedEval = code => Function(
+        'globalThis', 'code', 'return eval(code);'
+    )(instanceGlobal, String(code));
+    instanceGlobal = new Proxy(globalThis, {
+        get(target, key) {
+            if (key === 'eval') return scopedEval;
+            if (key === '__goeteia_mem') return getExports()?.memory;
+            if (localGlobals.has(key)) return localGlobals.get(key);
+            return Reflect.get(target, key, target);
+        },
+        set(target, key, value) {
+            if (isLocalGlobal(key)) { localGlobals.set(key, value); return true; }
+            // propagate a real failure (e.g. a non-writable global) so a
+            // strict-mode assignment throws instead of silently no-op'ing
+            return Reflect.set(target, key, value, target);
+        },
+    });
+    const takeName = () => {
+        // Goeteia strings are UTF-8 byte arrays; decode to a real JS
+        // string so non-ASCII (  ,    ,    ) crosses correctly
+        const s = utf8Decoder.decode(new Uint8Array(nameBuf));
+        nameBuf = [];
+        return s;
+    };
+    const takeArgs = () => {
+        const a = argStack;
+        argStack = [];
+        return a;
+    };
+    return {
+        arg_byte: b => nameBuf.push(b),
+        global: () => instanceGlobal,
+        get: obj => obj[takeName()],
+        set: (obj, v) => { obj[takeName()] = v; },
+        push: v => argStack.push(v),
+        call: (f, thisv) => f.apply(
+            thisv === instanceGlobal ? globalThis : thisv, takeArgs()),
+        new: ctor => new ctor(...takeArgs()),
+        string: () => takeName(),
+        str_len: s => { staged = [...utf8Encoder.encode(String(s))]; return staged.length; },
+        str_byte: i => staged[i],
+        number: x => x,
+        to_number: v => Number(v),
+        eq: (a, b) => (a === b ? 1 : 0),
+        bool: v => (v ? 1 : 0),
+        undefined: () => undefined,
+        fn: closure => (...args) => {
+            const frame = { args, ret: undefined };
+            cbStack.push(frame);
+            try {
+                getExports()['$jscb'](closure);
+            } finally {
+                cbStack.pop();
+            }
+            return frame.ret;
+        },
+        cb_argc: () => cbStack[cbStack.length - 1].args.length,
+        cb_arg: i => cbStack[cbStack.length - 1].args[i],
+        cb_ret: v => { cbStack[cbStack.length - 1].ret = v; },
+        // suspend the whole wasm stack on a promise (JSPI); without
+        // engine support this is the identity and js-await is a no-op
+        await: (typeof WebAssembly.Suspending === 'function')
+            ? new WebAssembly.Suspending(p => Promise.resolve(p))
+            : p => p,
+    };
+}
+
+// call an exported main through JSPI when available, so js-await can
+// suspend; falls back to a plain call (and a plain value) without it
+function callMain(ex) {
+    return (typeof WebAssembly.promising === 'function')
+        ? WebAssembly.promising(ex.main)()
+        : ex.main();
+}
+
+const jsBridgeStubs = {
+    arg_byte: () => {}, global: () => undefined, get: () => undefined,
+    set: () => {}, push: () => {}, call: () => undefined,
+    new: () => undefined, string: () => '', str_len: () => 0,
+    str_byte: () => 0, number: () => 0, to_number: () => 0,
+    eq: () => 0, bool: () => 0, undefined: () => undefined,
+    fn: () => undefined, cb_argc: () => 0, cb_arg: () => undefined,
+    cb_ret: () => {}, await: p => p,
+};
+
+// Copyright 2026 guenchi
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+// Browser loader for compiled Goeteia modules, main thread: full DOM
+// access through the js bridge.
+
+
+// Instantiate an already-compiled module against the DOM bridge and run
+// its main.  Pages that compile Goeteia in the browser hold the bytes
+// rather than a URL, so this is the half of loadGoeteia they need.
+async function runGoeteiaBytes(bytes) {
+    let exportsRef = null;
+    const io = {
+        write_byte: b => loadGoeteia._out.push(b),
+        read_byte: () => -1,
+        path_byte: () => {}, open_read: () => -1, open_write: () => -1,
+        fread: () => -1, fwrite: () => {}, fclose: () => {},
+    };
+    let instance;
+    try {
+        ({ instance } = await WebAssembly.instantiate(
+            bytes, { io, js: makeJsBridge(() => exportsRef) }));
+    } catch {
+        // an engine that advertises WebAssembly.Suspending yet rejects
+        // the import: retry with a pass-through await
+        const js = makeJsBridge(() => exportsRef);
+        js.await = p => p;
+        ({ instance } = await WebAssembly.instantiate(bytes, { io, js }));
+    }
+    exportsRef = instance.exports;
+    await callMain(instance.exports);
+    return instance.exports;
+}
+
+// Compile Scheme source in the browser: the compiler module reads the
+// text as its stdin and writes the module bytes as its stdout.  A page
+// that ships sources instead of a binary -- "compiled by Goeteia in
+// your browser" -- needs exactly this and nothing else.
+async function compileGoeteia(source, compilerUrl = 'goeteia.wasm') {
+    const input = new TextEncoder().encode(source);
+    const out = [];
+    let pos = 0;
+    const { instance } = await WebAssembly.instantiate(
+        await (await fetch(compilerUrl)).arrayBuffer(),
+        {
+            io: {
+                write_byte: b => out.push(b),
+                read_byte: () => (pos < input.length ? input[pos++] : -1),
+                path_byte: () => {}, open_read: () => -1, open_write: () => -1,
+                fread: () => -1, fwrite: () => {}, fclose: () => {},
+            },
+            js: jsBridgeStubs,          // the compiler never calls out to JS
+        });
+    try {
+        instance.exports.main();
+    } catch (cause) {
+        // Compiler diagnostics share stdout with successful module bytes.
+        // Preserve them when main traps instead of reducing every source
+        // error to the Wasm engine's unhelpful "unreachable" message.
+        const output = new TextDecoder().decode(new Uint8Array(out)).trim();
+        const error = new Error(
+            output || `Goeteia: compile failed: ${cause.message}`);
+        error.cause = cause;
+        error.output = output;
+        throw error;
+    }
+    if (out.length === 0) throw new Error('Goeteia: compile produced no output');
+    return new Uint8Array(out);
+}
+
+// The whole browser-compiler cycle: fetch a source list in parallel,
+// concatenate in order (dependencies before dependents -- the compiler
+// splices each (library ...) and treats (import ...) as a no-op), and
+// compile.  This is what a page that ships sources instead of a binary
+// actually calls.
+async function compileGoeteiaFrom(urls, compilerUrl = 'goeteia.wasm') {
+    const texts = await Promise.all(
+        urls.map(u => fetch(u).then(r => {
+            if (!r.ok) throw new Error(`Goeteia: ${u} not found`);
+            return r.text();
+        })));
+    return compileGoeteia(texts.join('\n'), compilerUrl);
+}
+
+async function loadGoeteia(url) {
+    return runGoeteiaBytes(await (await fetch(url)).arrayBuffer());
+}
+loadGoeteia._out = [];
+// A page-global handle: a define-js section (a JS-target Scheme
+// program, e.g. capability-gating logic deciding whether a heavy
+// module should load at all) has no other way to reach this loader,
+// which lives in the glue's module scope.  Any wasm/auto section's
+// glue runs before later scripts in document order, so the handle is
+// set by the time such a section needs it.
+globalThis.__goeteia_load = loadGoeteia;
+globalThis.__goeteia_run = runGoeteiaBytes;
+globalThis.__goeteia_compile = compileGoeteia;
+globalThis.__goeteia_compile_from = compileGoeteiaFrom;
+
+// Run a module in a Worker over an OffscreenCanvas: the render loop
+// leaves the main thread entirely (a busy main thread no longer
+// drops frames).  Input forwards as messages -- keys from the
+// window, pointer events from the canvas -- and rt/worker.mjs
+// re-dispatches them to the module's listeners.  The module finds
+// its canvas at (js-get (js-global) "__goeteia_canvas").
+// Does this engine run WasmGC?  Validate a minimal module carrying
+// one struct type -- pre-GC engines reject the typecode
+function hasWasmGC() {
+    try {
+        return WebAssembly.validate(new Uint8Array(
+            [0, 97, 115, 109, 1, 0, 0, 0, 1, 3, 1, 95, 0]));
+    } catch { return false; }
+}
+
+const browserIO = () => ({
+    write_byte: b => loadGoeteia._out.push(b),
+    read_byte: () => -1,
+    path_byte: () => {}, open_read: () => -1, open_write: () => -1,
+    fread: () => -1, fwrite: () => {}, fclose: () => {},
+});
+
+// Run a --js compiled module from inline text (a single-file page
+// carries it in an inert <script> tag).  The text is an ES module;
+// scoping it through Function needs only the export keywords gone.
+function runGoeteiaInline(text) {
+    const body = String(text).replace(/^export /gm, '');
+    const main = new Function(body + '\nreturn main;')();
+    return main(browserIO());
+}
+
+// The two-artifact entry: the wasm module when the engine has WasmGC,
+// otherwise the --js compiled fallback.  `fallback` is either a CSS
+// selector for an inert inline <script> tag (the single-file page,
+// zero extra requests) or a .js/.mjs URL fetched only when actually
+// needed -- the lazy shape: WasmGC users never download the fallback,
+// and the file caches independently of the page.  ?goeteia=js forces
+// the fallback, for testing it on a GC engine.
+async function loadGoeteiaAuto(url, fallback = 'script[type="goeteia/js"]') {
+    const forced = new URLSearchParams(location.search).get('goeteia') === 'js';
+    if (!forced && hasWasmGC()) return loadGoeteia(url);
+    if (/\.m?js([?#]|$)/.test(fallback)) {
+        // Evaluating the cached module namespace directly would reuse the
+        // generated kernel's module-scoped memory and FFI locals on every
+        // call.  Fetching still benefits from the browser's HTTP cache, but
+        // runGoeteiaInline creates a fresh runtime scope for each launch.
+        const href = new URL(fallback, location.href).href;
+        const response = await fetch(href);
+        if (!response.ok)
+            throw new Error(`Goeteia: ${href} not found`);
+        return runGoeteiaInline(await response.text());
+    }
+    const tag = document.querySelector(fallback);
+    if (!tag) throw new Error('no Goeteia fallback on this page');
+    return runGoeteiaInline(tag.textContent);
+}
+
+function loadGoeteiaWorker(url, canvas) {
+    const off = canvas.transferControlToOffscreen();
+    const worker = new Worker(new URL('./worker.mjs', import.meta.url),
+                              { type: 'module' });
+    worker.postMessage(
+        { wasm: new URL(url, location.href).href, canvas: off }, [off]);
+    const fwd = (kind, extra) =>
+        worker.postMessage(Object.assign({ event: kind }, extra));
+    window.addEventListener('keydown', e => fwd('keydown', { key: e.key }));
+    window.addEventListener('keyup', e => fwd('keyup', { key: e.key }));
+    for (const k of ['pointermove', 'pointerdown', 'pointerup', 'click'])
+        canvas.addEventListener(k, e =>
+            fwd(k, { offsetX: e.offsetX, offsetY: e.offsetY }));
+    return worker;
+}
+
+loadGoeteiaAuto('intro.wasm', 'intro.js');
+</script>
+</body></html>
