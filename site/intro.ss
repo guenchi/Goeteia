@@ -1359,7 +1359,8 @@
               ((string=? k "ArrowLeft") (jump! -1))))
       (js-undefined)))
 
-  ;; ?theme=light|dark, else the reader's last choice
+  ;; ?theme=light|dark, else the reader's last choice, else the host's
+  ;; data-theme, else the system colour scheme
   (define theme-btn (get-element-by-id "theme"))
   (define (apply-theme! l)
     (set-theme! l)
@@ -1379,7 +1380,11 @@
   (apply-theme!
    (string=? "light"
              (let ((q (param "new URLSearchParams(location.search).get('theme')")))
-               (if (string=? q "") (param "localStorage.getItem('theourgia-intro-theme')") q))))
+               (cond ((not (string=? q "")) q)
+                     ((not (string=? (param "localStorage.getItem('theourgia-intro-theme')") ""))
+                      (param "localStorage.getItem('theourgia-intro-theme')"))
+                     ;; otherwise the host's theme, then the system's
+                     (else (param "document.documentElement.getAttribute('data-theme')||(matchMedia('(prefers-color-scheme: light)').matches?'light':'dark')"))))))
 
   ;; ?t=SECONDS opens paused on that frame; reduced motion starts paused
   (let ((q (param "new URLSearchParams(location.search).get('t')")))
