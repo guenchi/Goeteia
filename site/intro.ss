@@ -67,11 +67,47 @@
   (define SANS "Inter, system-ui, -apple-system, \"Segoe UI\", sans-serif")
   (define MONO "ui-monospace, \"SF Mono\", Menlo, Consolas, monospace")
 
-  (define BG "#0a0f1f") (define PANEL "#121a33") (define PANEL2 "#17213f")
-  (define LINE "#2a3659") (define INK "#e8ecf8") (define DIM "#8e98bd")
-  (define FAINT "#4b5680") (define AZURE "#4f8ff7") (define RED "#ff6b6b")
-  (define GREEN "#3ddc97") (define AMBER "#ffb547") (define VIOLET "#a78bfa")
-  (define TEAL "#2dd4bf") (define PINK "#f472b6")
+  ;; two palettes; set-theme! rebinds every colour, and scenes read
+  ;; them at draw time, so a switch takes effect on the next frame
+  (define BG #f) (define PANEL #f) (define PANEL2 #f) (define LINE #f)
+  (define INK #f) (define DIM #f) (define FAINT #f) (define AZURE #f)
+  (define RED #f) (define GREEN #f) (define AMBER #f) (define VIOLET #f)
+  (define TEAL #f) (define PINK #f)
+  (define ONACC #f)                       ; text on a filled accent
+  (define HEAD #f) (define TRACK #f) (define TERM #f) (define TAB #f)
+  (define HILITE #f) (define EDGE #f) (define SCRIM #f) (define CAPBG #f)
+  (define light? #f)
+  (define (set-theme! l)
+    (set! light? l)
+    (let ((v (if l
+                 '#("#f5f7fc" "#ffffff" "#f7f9ff" "#d6ddec" "#14203a" "#566080"
+                    "#a9b2cb" "#1f63e0" "#dc3b3b" "#138a52" "#c46f00" "#7446e0"
+                    "#0b8f84" "#cf2f7c" "#ffffff" "#e9effc" "#e8ecf5" "#fbfcff"
+                    "#eef2fa" "#d7e4ff" "#b7c2dc" "rgba(255,255,255,0.93)"
+                    "rgba(255,255,255,0.92)")
+                 '#("#0a0f1f" "#121a33" "#17213f" "#2a3659" "#e8ecf8" "#8e98bd"
+                    "#4b5680" "#4f8ff7" "#ff6b6b" "#3ddc97" "#ffb547" "#a78bfa"
+                    "#2dd4bf" "#f472b6" "#0a0f1f" "#1c2850" "#0e1530" "#0b1128"
+                    "#141d3c" "#2a3a70" "#3a4a80" "rgba(10,15,31,0.9)"
+                    "rgba(7,11,23,0.82)"))))
+      (set! BG (vector-ref v 0)) (set! PANEL (vector-ref v 1))
+      (set! PANEL2 (vector-ref v 2)) (set! LINE (vector-ref v 3))
+      (set! INK (vector-ref v 4)) (set! DIM (vector-ref v 5))
+      (set! FAINT (vector-ref v 6)) (set! AZURE (vector-ref v 7))
+      (set! RED (vector-ref v 8)) (set! GREEN (vector-ref v 9))
+      (set! AMBER (vector-ref v 10)) (set! VIOLET (vector-ref v 11))
+      (set! TEAL (vector-ref v 12)) (set! PINK (vector-ref v 13))
+      (set! ONACC (vector-ref v 14)) (set! HEAD (vector-ref v 15))
+      (set! TRACK (vector-ref v 16)) (set! TERM (vector-ref v 17))
+      (set! TAB (vector-ref v 18)) (set! HILITE (vector-ref v 19))
+      (set! EDGE (vector-ref v 20)) (set! SCRIM (vector-ref v 21))
+      (set! CAPBG (vector-ref v 22))))
+  (set-theme! #f)
+  ;; data tables name colours by symbol, resolved per frame
+  (define (col c)
+    (case c
+      ((AZURE) AZURE) ((VIOLET) VIOLET) ((GREEN) GREEN) ((AMBER) AMBER)
+      ((TEAL) TEAL) ((PINK) PINK) ((RED) RED) (else c)))
 
   (define cv (get-element-by-id "stage"))
   (define ctx (js-method cv "getContext" "2d"))
@@ -227,7 +263,7 @@
            (w (+ (text-w s px 500 #t) (* 1.4 px)))
            (h (* 1.9 px)))
       (box x (- y (/ h 2)) w h (/ h 2) (if filled c PANEL) c 1.5)
-      (mtxt s (+ x (* 0.7 px)) (+ y 1) px (if filled BG c) "left" 500)
+      (mtxt s (+ x (* 0.7 px)) (+ y 1) px (if filled ONACC c) "left" 500)
       w))
   (define (chip-c s x y c . o)             ; centred on x
     (let ((px (if (pair? o) (car o) 15)))
@@ -243,7 +279,7 @@
 
   (define (doc-card x y w h name accent)
     (box x y w h 12 PANEL2 LINE 1.5)
-    (box x y w 38 12 "#1c2850" #f)
+    (box x y w 38 12 HEAD #f)
     (circle (+ x 20) (+ y 19) 5 accent #f)
     (mtxt name (+ x 34) (+ y 20) 15 DIM))
 
@@ -264,7 +300,7 @@
     (when label (mtxt label x (+ y r 22) 15 c "center" 500)))
 
   (define (bar x y w h frac c)
-    (box x y w h (/ h 2) "#0e1530" LINE 1)
+    (box x y w h (/ h 2) TRACK LINE 1)
     (box x y (* w (clamp01 frac)) h (/ h 2) c #f))
 
   ;; a graph node: type tag, label, stable id
@@ -282,23 +318,25 @@
   (define (toast s x y c)
     (let ((w (+ (text-w s 18 600 #f) 36)))
       (box (- x (/ w 2)) (- y 21) w 42 21 c #f)
-      (txt s x (+ y 1) 18 BG "center" 600)))
+      (txt s x (+ y 1) 18 ONACC "center" 600)))
 
   ;; background: gradient + dot grid, rendered once offscreen
-  (define bg
+  (define (make-bg inner outer dots)
     (let* ((c (js-method (document) "createElement" "canvas"))
            (g (js-method c "getContext" "2d")))
       (js-set! c "width" W) (js-set! c "height" H)
       (let ((gr (js-method g "createRadialGradient" 800 380 60 800 450 1000)))
-        (js-method gr "addColorStop" 0 "#131c3a")
-        (js-method gr "addColorStop" 1 "#070b17")
+        (js-method gr "addColorStop" 0 inner)
+        (js-method gr "addColorStop" 1 outer)
         (js-set! g "fillStyle" gr)
         (js-method g "fillRect" 0 0 W H))
-      (js-set! g "fillStyle" "rgba(120,140,200,0.10)")
+      (js-set! g "fillStyle" dots)
       (do ((y 20 (+ y 40))) ((> y H))
         (do ((x 20 (+ x 40))) ((> x W))
           (js-method g "fillRect" x y 2 2)))
       c))
+  (define bg-dark (make-bg "#131c3a" "#070b17" "rgba(120,140,200,0.10)"))
+  (define bg-light (make-bg "#ffffff" "#e9eef8" "rgba(60,80,140,0.13)"))
 
   ;; deterministic pseudo-random numbers
   (define seed 12345)
@@ -559,25 +597,25 @@
 
   ;; the 12-block graph shared by the shift and the outro
   (define gnodes
-    (vector (list 520 330 AZURE "doc" "§Overview") (list 800 250 AZURE "doc" "§Write path")
-            (list 1080 330 AZURE "doc" "§Recovery") (list 1180 500 VIOLET "code" "commit()")
-            (list 1080 670 VIOLET "code" "store.py") (list 800 740 GREEN "test" "test W3")
-            (list 520 670 VIOLET "macro" "define-block") (list 420 500 AMBER "adr" "ADR-12")
-            (list 660 440 VIOLET "fn" "fee()") (list 940 440 AZURE "doc" "§Billing")
-            (list 660 580 GREEN "test" "test W7") (list 940 580 AMBER "req" "R-118")))
+    (vector (list 520 330 'AZURE "doc" "§Overview") (list 800 250 'AZURE "doc" "§Write path")
+            (list 1080 330 'AZURE "doc" "§Recovery") (list 1180 500 'VIOLET "code" "commit()")
+            (list 1080 670 'VIOLET "code" "store.py") (list 800 740 'GREEN "test" "test W3")
+            (list 520 670 'VIOLET "macro" "define-block") (list 420 500 'AMBER "adr" "ADR-12")
+            (list 660 440 'VIOLET "fn" "fee()") (list 940 440 'AZURE "doc" "§Billing")
+            (list 660 580 'GREEN "test" "test W7") (list 940 580 'AMBER "req" "R-118")))
   (define gedges '((0 1) (1 2) (1 3) (2 4) (3 5) (3 9) (4 6) (6 8) (7 0) (8 9) (8 10)
                    (9 11) (11 3) (10 5) (7 11) (2 3)))
   (define (gpos i) (let ((n (vector-ref gnodes i))) (cons (car n) (cadr n))))
   (define (draw-edges alpha-of)
     (for-each (lambda (e)
                 (let ((a (gpos (car e))) (b (gpos (cadr e))) (al (alpha-of e)))
-                  (fade al (line (car a) (cdr a) (car b) (cdr b) "#3a4a80" 2))))
+                  (fade al (line (car a) (cdr a) (car b) (cdr b) EDGE 2))))
               gedges))
   (define (draw-gnode i x y s)
     (let ((n (vector-ref gnodes i)))
       (at x y s
-        (box -80 -26 160 52 10 PANEL2 (caddr n) 2)
-        (mtxt (cadddr n) -68 -10 11 (caddr n) "left" 600)
+        (box -80 -26 160 52 10 PANEL2 (col (caddr n)) 2)
+        (mtxt (cadddr n) -68 -10 11 (col (caddr n)) "left" 600)
         (mtxt (string-append "b:" (hex (+ 4096 (* 97 i)))) 70 -10 11 FAINT "right")
         (txt (list-ref n 4) -68 12 16 INK "left" 600))))
 
@@ -616,7 +654,7 @@
       (7.0 out "(b:7f3b mentions) (t:w3 checks)")
       (7.2 out "(adr:12 decides)")))
   (define (s-f1 t)
-    (box 150 170 880 590 14 "#0b1128" LINE 1.5)
+    (box 150 170 880 590 14 TERM LINE 1.5)
     (circle 176 196 6 RED #f) (circle 198 196 6 AMBER #f) (circle 220 196 6 GREEN #f)
     (mtxt "store  —  agent-a" 590 197 14 FAINT "center")
     (let loop ((ls term-lines) (y 250))
@@ -657,14 +695,14 @@
 
   ;; 8 -- one unified graph
   (define f2-nodes                        ; name (repo-x repo-y) (gx gy) colour tag id
-    (vector (list "R-118 requirement" 1100 330 330 260 AMBER "requirement" "b:3f1a")
-            (list "§Write path" 1100 440 330 470 AZURE "design section" "b:7f3a")
-            (list "ADR-12" 1100 550 330 680 AMBER "decision record" "b:a012")
-            (list "discussion #41" 1100 660 1270 560 TEAL "discussion" "b:d041")
-            (list "commit.ss" 500 330 800 300 VIOLET "source file" "b:91c0")
-            (list "define-block" 500 440 800 520 PINK "scheme macro" "b:91c2")
-            (list "validate_patch()" 500 550 800 710 VIOLET "python function" "b:b7e9")
-            (list "test W3" 500 660 1270 300 GREEN "test" "b:e0w3")))
+    (vector (list "R-118 requirement" 1100 330 330 260 'AMBER "requirement" "b:3f1a")
+            (list "§Write path" 1100 440 330 470 'AZURE "design section" "b:7f3a")
+            (list "ADR-12" 1100 550 330 680 'AMBER "decision record" "b:a012")
+            (list "discussion #41" 1100 660 1270 560 'TEAL "discussion" "b:d041")
+            (list "commit.ss" 500 330 800 300 'VIOLET "source file" "b:91c0")
+            (list "define-block" 500 440 800 520 'PINK "scheme macro" "b:91c2")
+            (list "validate_patch()" 500 550 800 710 'VIOLET "python function" "b:b7e9")
+            (list "test W3" 500 660 1270 300 'GREEN "test" "b:e0w3")))
   (define f2-edges                        ; from to label main?
     '((0 4 "met by" #t) (4 7 "checked by" #t) (7 3 "decided in" #t)
       (4 5 "uses" #f) (6 5 "uses" #f) (1 4 "specifies" #f) (2 1 "supersedes" #f)))
@@ -688,7 +726,7 @@
           (let* ((e (car es)) (a (f2-pos (car e) m)) (b (f2-pos (cadr e) m))
                  (p (ro t (+ 4.6 (* 0.5 j)) (+ 5.3 (* 0.5 j))))
                  (main (cadddr e))
-                 (c (if main AZURE "#3a4a80")))
+                 (c (if main AZURE EDGE)))
             (let ((s0 (box-edge (car b) (cdr b) (car a) (cdr a) 131 37))
                   (s1 (box-edge (car a) (cdr a) (car b) (cdr b) 131 37)))
               (arrow (car s0) (cdr s0) (car s1) (cdr s1) c (if main 3 2) p))
@@ -704,7 +742,7 @@
           (circle (lerp (car a) (car b) (ez p)) (lerp (cdr a) (cdr b) (ez p)) 8 AZURE #f)))
       (do ((i 0 (+ i 1))) ((= i 8))
         (let ((n (vector-ref f2-nodes i)) (p (f2-pos i m)))
-          (node (car p) (cdr p) 250 62 (list-ref n 5) (list-ref n 6) (car n) (list-ref n 7))))))
+          (node (car p) (cdr p) 250 62 (col (list-ref n 5)) (list-ref n 6) (car n) (list-ref n 7))))))
 
   ;; 9 -- global backlinks
   (define (s-f3 t)
@@ -771,7 +809,7 @@
       (txt "budget" 134 430 16 DIM)
       (mtxt "8,000 tokens" 220 430 18 AMBER "left" 700))
     (fade (ro t 1.6 2.2)
-      (box 560 170 490 330 14 "#0b1128" LINE)
+      (box 560 170 490 330 14 TERM LINE)
       (mtxt "query  ·  Datalog over in-memory facts" 584 202 14 DIM "left" 600)
       (let loop ((ls '("live(B) :- block(B),"
                        "   not superseded(B), not refuted(B)."
@@ -856,9 +894,9 @@
   (define (s-f5 t)
     (let* ((rn (ro t 5 5.8))
            (fname (if (> rn 0.5) "apply_patch" "commit_patch")))
-      (box 100 170 930 590 14 "#0b1128" LINE)
-      (box 100 170 930 44 14 "#141d3c" #f)
-      (box 116 180 170 34 8 "#0b1128" #f)
+      (box 100 170 930 590 14 TERM LINE)
+      (box 100 170 930 44 14 TAB #f)
+      (box 116 180 170 34 8 TERM #f)
       (mtxt "commit.py" 136 198 15 INK) (mtxt "design.md" 316 198 15 FAINT)
       (fade (ro t 10.6 11.2) (chip "scratchpad · agent-b draft" 760 194 AMBER 13))
       (let loop ((ls code-lines) (y 262))
@@ -877,7 +915,7 @@
                        (c (case kind ((kw) VIOLET) ((fn) AZURE) (else INK)))
                        (w (text-w s 18 400 #t)))
                   (when (and (string=? s0 "$") (between? rn 0.05 0.99))
-                    (box (- x 4) (- y 14) (+ w 8) 28 4 "#2a3a70" #f))
+                    (box (- x 4) (- y 14) (+ w 8) 28 4 HILITE #f))
                   (mtxt s x y 18 c)
                   (seg (cddr ps) (+ x w)))))
             (loop (cdr ls) (+ y 38)))))
@@ -988,14 +1026,14 @@
       (let ((p (ro t 5.2 6.2)))
         (when (between? t 5.2 6.3)
           (box (lerp 300 700 p) (lerp 520 250 p) 90 30 8 GREEN #f)
-          (mtxt "commit" (+ (lerp 300 700 p) 45) (+ (lerp 520 250 p) 16) 13 BG "center" 700)))
+          (mtxt "commit" (+ (lerp 300 700 p) 45) (+ (lerp 520 250 p) 16) 13 ONACC "center" 700)))
       (fade (ro t 6.2 6.6) (chip "✓ agent-a committed" 150 390 GREEN 14))
       ;; agent-b is refused, merges, recommits
       (let* ((up (ro t 7 8)) (down (ro t 8 8.7))
              (y (if (< t 8) (lerp 520 280 up) (lerp 280 520 down))))
         (when (between? t 7 8.7)
           (box 755 y 90 30 8 (if (< t 8) VIOLET RED) #f)
-          (mtxt "commit" 800 (+ y 16) 13 BG "center" 700)))
+          (mtxt "commit" 800 (+ y 16) 13 ONACC "center" 700)))
       (fade (* (ro t 8 8.5) (- 1 (ramp t 12.2 12.6)))
         (box 1030 160 430 160 12 PANEL RED 2)
         (mtxt "✗ stale-baseline" 1054 192 18 RED "left" 700)
@@ -1008,7 +1046,7 @@
       (let ((p (ro t 12.4 13.3)))
         (when (between? t 12.4 13.4)
           (box 755 (lerp 520 250 p) 90 30 8 GREEN #f)
-          (mtxt "commit" 800 (+ (lerp 520 250 p) 16) 13 BG "center" 700)))
+          (mtxt "commit" 800 (+ (lerp 520 250 p) 16) 13 ONACC "center" 700)))
       (fade (ro t 13.3 13.7) (chip "✓ agent-b committed" 1030 230 GREEN 14))
       (fade (ro t 2 2.6) (mtxt "still exploring · nothing touches main" 1270 720 14 AMBER "center"))))
 
@@ -1026,7 +1064,7 @@
         (mtxt "(display (late-fee 30))" 134 336 20 INK))
       (let ((press (or (between? t 1.4 1.8) (between? t 10 10.4))))
         (box 134 376 110 40 10 (if press GREEN PANEL) GREEN 2)
-        (mtxt "▶ eval" 189 397 16 (if press BG GREEN) "center" 700))
+        (mtxt "▶ eval" 189 397 16 (if press ONACC GREEN) "center" 700))
       (arrow 700 305 790 305 GREEN 3 (max (ro t 1.6 2.2) (ro t 10.2 10.8)))
       ;; the sandbox
       (box 800 170 680 270 14 PANEL TEAL 2)
@@ -1068,7 +1106,7 @@
       (do ((i 0 (+ i 1))) ((= i 12))
         (let ((g (gpos i)))
           (draw-gnode i (+ (car g) (* 6 (sin (+ t i)))) (+ (cdr g) (* 6 (cos (+ (* 0.8 t) i)))) 1))))
-    (box 170 300 1260 400 24 "rgba(10,15,31,0.9)" LINE 1)
+    (box 170 300 1260 400 24 SCRIM LINE 1)
     (fade (ro t 0.4 1.4)
       (mtxt "THEOURGIA" 800 336 20 AZURE "center" 700)
       (txt "Blocks, not files." 800 394 68 INK "center" 800))
@@ -1202,7 +1240,7 @@
                 (n (length ls))
                 (y0 (- 846 (* 36 (- n 1)))))
            (fade a
-             (box 110 (- y0 30) 1380 (+ 58 (* 36 (- n 1))) 16 "rgba(7,11,23,0.82)" LINE 1)
+             (box 110 (- y0 30) 1380 (+ 58 (* 36 (- n 1))) 16 CAPBG LINE 1)
              (let loop ((ls ls) (y y0))
                (unless (null? ls)
                  (txt (car ls) 800 y 27 INK "center" 500)
@@ -1221,7 +1259,7 @@
       (js-set! ctx "textBaseline" "middle")
       (js-set! ctx "lineCap" "round")
       (js-set! ctx "lineJoin" "round")
-      (js-method ctx "drawImage" bg 0 0 W H)
+      (js-method ctx "drawImage" (if light? bg-light bg-dark) 0 0 W H)
       (fade a
         (unless (string=? (vector-ref kickers i) "")
           (fade (ro t 0.1 0.8)
@@ -1321,12 +1359,33 @@
               ((string=? k "ArrowLeft") (jump! -1))))
       (js-undefined)))
 
+  ;; ?theme=light|dark, else the reader's last choice
+  (define theme-btn (get-element-by-id "theme"))
+  (define (apply-theme! l)
+    (set-theme! l)
+    (js-method (js-get (js-get (document) "body") "classList") "toggle" "light" l)
+    (set-text! theme-btn (if l "☾" "☀"))
+    (js-method theme-btn "setAttribute" "aria-label"
+               (if l "Switch to dark theme" "Switch to light theme")))
+  (add-event-listener! theme-btn "click"
+    (lambda (e)
+      (apply-theme! (not light?))
+      (js-eval (string-append "try{localStorage.setItem('theourgia-intro-theme','"
+                              (if light? "light" "dark") "')}catch(e){}"))
+      (js-undefined)))
+  (define (param code)
+    (js->string (js-eval (string-append "(function(){try{return String(" code
+                                        "||'')}catch(e){return ''}})()"))))
+  (apply-theme!
+   (string=? "light"
+             (let ((q (param "new URLSearchParams(location.search).get('theme')")))
+               (if (string=? q "") (param "localStorage.getItem('theourgia-intro-theme')") q))))
+
   ;; ?t=SECONDS opens paused on that frame; reduced motion starts paused
-  (let* ((q (js->string (js-get (js-get (js-global) "location") "search")))
-         (n (string-length q)))
+  (let ((q (param "new URLSearchParams(location.search).get('t')")))
     (cond
-     ((and (> n 3) (string=? (substring q 0 3) "?t="))
-      (seek! (let ((v (string->number (substring q 3 n)))) (if v v 0)))
+     ((string->number q)
+      (seek! (string->number q))
       (set-playing! #f))
      ((js-truthy? (js-get (js-method (js-global) "matchMedia"
                                      "(prefers-reduced-motion: reduce)")
@@ -1341,7 +1400,11 @@
 (define page-css
   '((":root" (--bg "#070b17") (--panel "#111831") (--line "#253157")
              (--ink "#e8ecf8") (--dim "#8e98bd") (--azure "#4f8ff7")
+             (--stage "#0a0f1f") (--chon "#16224a") (--shadow "rgba(0,0,0,.45)")
              (--mono "ui-monospace, \"SF Mono\", Menlo, Consolas, monospace"))
+    ("body.light" (--bg "#eef2f9") (--panel "#ffffff") (--line "#d6ddec")
+                  (--ink "#14203a") (--dim "#566080") (--azure "#1f63e0")
+                  (--stage "#f5f7fc") (--chon "#e3ecff") (--shadow "rgba(20,32,58,.14)"))
     ("*" (box-sizing border-box))
     (body (margin 0) (background (var bg)) (color (var ink))
           (font-family "Inter, system-ui, -apple-system, \"Segoe UI\", sans-serif")
@@ -1354,13 +1417,13 @@
     (".top h1" (font-size (px 17)) (font-weight 500) (margin 0) (color (var dim)))
     (".player" (max-width (px 1280)) (margin 0 auto) (padding 0 (px 16)))
     ("#stage" (display none) (width (pct 100)) (aspect-ratio "16 / 9")
-              (border-radius (px 14)) (background "#0a0f1f") (cursor pointer)
-              (box-shadow "0 20px 60px rgba(0,0,0,.45)")
+              (border-radius (px 14)) (background (var stage)) (cursor pointer)
+              (box-shadow "0 20px 60px var(--shadow)")
               (border (px 1) solid (var line)))
     (".live #stage" (display block))
     (".bar" (display none) (align-items center) (gap (px 14)) (margin (px 12) 0 (px 6)))
     (".live .bar" (display flex))
-    ("#play" (width (px 44)) (height (px 36)) (border-radius (px 8))
+    ("#play, #theme" (width (px 44)) (height (px 36)) (border-radius (px 8))
              (border (px 1) solid (var line)) (background (var panel)) (color (var ink))
              (font-size (px 15)) (cursor pointer))
     ("#track" (flex 1) (height (px 8)) (border-radius (px 4)) (background (var panel))
@@ -1375,7 +1438,7 @@
            (border-radius (px 10)) (border (px 1) solid (var line)) (background (var panel))
            (color (var ink)) (font "inherit") (cursor pointer))
     (".ch:hover" (border-color (var azure)))
-    (".ch.on" (border-color (var azure)) (background "#16224a"))
+    (".ch.on" (border-color (var azure)) (background (var chon)))
     (".ch .k" (display block) (font-family (var mono)) (font-size (px 11))
               (color (var azure)) (letter-spacing (px 1)))
     (".ch .t" (display block) (font-weight 600) (font-size (px 15)))
@@ -1414,7 +1477,8 @@
          (div (@ (class "bar"))
            (button (@ (id "play") (aria-label "Pause")) "❚❚")
            (div (@ (id "track")) (div (@ (id "fill"))))
-           (span (@ (id "clock")) "0:00"))
+           (span (@ (id "clock")) "0:00")
+           (button (@ (id "theme") (aria-label "Switch to light theme")) "☀"))
          (ol (@ (class "chapters")) ,@(map chapter-item chapters)))
        (p (@ (class "note"))
           (kbd "space") " play / pause · " (kbd "←") " " (kbd "→") " chapters. "
