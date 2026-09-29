@@ -1,4 +1,4 @@
-;; intro.html — "Beyond Files", a 2D animated introduction, authored
+;; intro.html — "Theourgia: Beyond Files", a 2D animated introduction, authored
 ;; in Scheme and rendered by Goeteia.
 ;;
 ;; The generator half writes the page: the stage, the player controls
@@ -313,6 +313,8 @@
   (define (s-intro t)
     (fade (ro t 0.2 1.2)
       (txt "Files are great for humans to write in." 800 190 54 INK "center" 700))
+    (fade (ro t 0 0.8)
+      (mtxt "THEOURGIA" 800 110 18 AZURE "center" 700))
     (fade (ro t 4.2 5.2)
       (txt "As the substrate for multi-agent systems, they hit five walls."
            800 256 30 RED "center" 500))
@@ -1068,7 +1070,8 @@
           (draw-gnode i (+ (car g) (* 6 (sin (+ t i)))) (+ (cdr g) (* 6 (cos (+ (* 0.8 t) i)))) 1))))
     (box 170 300 1260 400 24 "rgba(10,15,31,0.9)" LINE 1)
     (fade (ro t 0.4 1.4)
-      (txt "Blocks, not files." 800 390 68 INK "center" 800))
+      (mtxt "THEOURGIA" 800 336 20 AZURE "center" 700)
+      (txt "Blocks, not files." 800 394 68 INK "center" 800))
     (fade (ro t 1.4 2.4)
       (txt "One living graph for docs, code, tests and decisions —" 800 458 24 DIM "center")
       (txt "shared by humans and agents." 800 492 24 DIM "center"))
@@ -1110,7 +1113,7 @@
              (3.5 7.8 "Move a paragraph and the index goes stale — without warning. The agent is fed the wrong context.")
              (7.8 11.5 "Cross-file semantic breaks stay invisible to Git.")))
      (list 9 s-shift
-           '((0 3 "So the system stops organizing content by files.")
+           '((0 3 "So Theourgia stops organizing content by files.")
              (3 6 "Blocks store documentation and source code alike — each one independently addressable.")
              (6 9 "Files are still projected when needed, but a file boundary no longer decides what is read, written or run.")))
      (list 11 s-f1
@@ -1397,14 +1400,14 @@
        (meta (@ (charset "utf-8")))
        (meta (@ (name "viewport") (content "width=device-width, initial-scale=1")))
        (link (@ (rel "icon") (type "image/svg+xml") (href "favicon.svg")))
-       (title "Beyond Files")
+       (title "Theourgia: Beyond Files")
        (meta (@ (name "description")
-                (content "An animated introduction: why files fail as the substrate for multi-agent systems, and the block graph that replaces them.")))
+                (content "An animated introduction to Theourgia: why files fail as the substrate for multi-agent systems, and the block graph that replaces them.")))
        (style ,(css->string page-css)))
       (body
        (div (@ (class "top"))
          (a (@ (class "brand") (href "index.html")) "Goeteia")
-         (h1 "Beyond Files — why multi-agent systems need blocks, not files"))
+         (h1 "Theourgia — why multi-agent systems need blocks, not files"))
        (div (@ (class "player"))
          (canvas (@ (id "stage") (width "1600") (height "900")
                     (aria-label "Animated introduction; the chapter list below is its transcript")))
