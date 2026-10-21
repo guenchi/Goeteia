@@ -155,6 +155,41 @@ an exported contract: a wrong one makes a program compile here and fail
 on another R6RS implementation, silently. A refusal that names the
 remedy is the safe side of that trade.
 
+## A program cannot yet define its own core keyword
+
+A name excluded from `(rnrs)` with `except` may be defined by the
+program, and its calls are meant to reach that definition. For
+procedures that works. For the **core syntactic keywords** (`if`,
+`when`, `and`, `let`, `quote` and the rest) it is not implemented: the
+compiler recognises them by their spelling, not by what the program's
+clause binds, so a program-defined one does not reliably mean the
+program's definition, and nothing says when it does not.
+
+For `if`, what happens depends on where the definition and the calls
+are, measured with `(import (except (rnrs) if))`:
+
+- a two-part call to a top-level `(define (if a b) ...)`, and a call to
+  an internal definition, reached the program's definition;
+- a three-part call to a top-level definition, or one inside a
+  procedure defined before the `if` was, stopped at run time with
+  `illegal cast`;
+- an `if` the program never defined compiled as the keyword;
+- a definition or call with other than two or three parts -- a
+  four-parameter `(define (if a b c d) ...)`, a rest-argument
+  `(define (if . xs) ...)` -- is refused as `malformed if`, because the
+  check on the keyword's shape cannot tell the program's `if` from the
+  keyword.
+
+The other keywords fail in their own ways. Excluding and then defining
+`when` or `and` is refused with a message about the wrong name
+(`imported name may not be defined ... if`, because the definition's
+own header was expanded as an expression); `let` stops the compiler
+with an internal error; and a program-defined `quote` is ignored, the
+keyword answering instead.
+
+Until the keywords are resolved by scope, do not exclude one to define
+your own; choose another name.
+
 ## Trigonometric accuracy
 
 `sin` and `cos` reduce the argument with one rounded subtraction of

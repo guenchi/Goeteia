@@ -551,9 +551,10 @@
 
 ;; A renamed keyword has to reach the LATER passes under the name they
 ;; know, not merely be dispatched on here.  Most core forms are not
-;; arms of the case below -- `if' is not -- so they fall to the
-;; application branch, which copies the head through verbatim; a form
-;; left spelled `when-else' then arrives at code generation as a call
+;; arms of the case below -- `if' is one only to check its shape, and
+;; then does what the application branch does -- and that branch copies
+;; the head through verbatim; a form left spelled `when-else' then
+;; arrives at code generation as a call
 ;; to something nothing defines.  Dispatching correctly and emitting
 ;; the original spelling are two different jobs and this is the second.
 (define (rename-head e)
@@ -566,9 +567,51 @@
             e))
       e))
 
+;; An if is a test and one or two branches, and nothing else is.  The
+;; readers of an if after expansion take its parts by position --
+;; compile-if, loop-ok?, the JavaScript back end's three -- and none
+;; looks past the third: (if #t 'a 'b 'c) compiled to 'a and the fourth
+;; part was never compiled, while (if #t) and (if) failed inside the
+;; compiler with an error about its own list operations rather than
+;; about the program.  So an if is checked here, as it is expanded, and
+;; the transformer language, which meta-eval reads unexpanded, makes
+;; the same check.  An improper tail is malformed too.
+;;
+;; What this does not cover, so that nobody reads it as a guarantee
+;; that a back end never meets a malformed if:
+;;   - an if the compiler builds itself is built well formed rather
+;;     than checked: and, or, not and cond return theirs without
+;;     expanding them again, and compile-nary-value writes its own
+;;     after expansion.  (when, unless, do, case and a record type's
+;;     accessors send theirs back through xpand, so those are checked
+;;     here like any other.)
+;;   - a head that is lexically bound is a call and never reaches this
+;;     check, and lexically-bound? compares spellings, so a macro's if
+;;     that lands under a local binding spelled if is taken for a call
+;;     and passes through unchecked to a back end that dispatches on
+;;     the spelling.  That is a defect in how keywords are shadowed,
+;;     not in this check.
+;;   - a transformer is checked only where it runs, so an if in a
+;;     branch it never takes, or in a macro never used, is not.
+;;
+;; The check goes by the spelling, as every reader of an if does, so in
+;; a program that excludes if from (rnrs) and defines its own, a
+;; definition or call with other than two or three parts is refused
+;; here as a malformed if.  What an excluded if means there is not
+;; decided by this check; see docs/limits.md.
+(define (check-if-form e)
+  (let count ((l (cdr e)) (n 0))
+    (cond ((pair? l) (count (cdr l) (+ n 1)))
+          ((and (null? l) (or (= n 2) (= n 3))) #t)
+          (else
+           (errorf 'goeteia
+                   "malformed if: it takes a test and one or two branches:"
+                   (strip-marks e))))))
+
 (define (xpand-core-form e)
   (case (resolve-tag (car e))
         ((quote define-syntax) e)
+        ((if) (check-if-form e) (xpand* e))
         ((lambda)
          `(lambda ,(cadr e)
             . ,(xpand-body* (cddr e) (binder-names (cadr e)))))
@@ -1295,6 +1338,7 @@
         ((syntax) (transcribe (cadr e) env #f))
         ((quasiquote) (meta-qq (cadr e) env 0))
         ((if)
+         (check-if-form e)
          (if (not (eq? (meta-eval (cadr e) env) #f))
              (meta-eval (caddr e) env)
              (if (pair? (cdddr e)) (meta-eval (cadddr e) env) (void))))

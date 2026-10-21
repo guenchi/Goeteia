@@ -625,6 +625,9 @@ run_mjs test/srgb-transfer-on-gpu.mjs
 # the library's shaders never shows.
 run_mjs test/tonemap-curves-on-gpu.mjs
 run_mjs test/gltf-unapplied-maps-are-documented.mjs
+# An if with more than three parts or fewer than two is refused at
+# compile time, on both compilers and both targets.
+run_mjs test/if-arity-is-checked.mjs
 # The first check that judges a shader by what it PUTS ON THE SCREEN
 # rather than by whether it compiles.  Stands down loudly without a
 # browser, like the one above.
