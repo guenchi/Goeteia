@@ -932,7 +932,7 @@ This library answers how much of the target to draw; it does not build the mirro
 ## `(gfx retarget)`
 
 - `retarget-clip!` — map one animation clip from a source rig onto a target rig, answering a clip descriptor `(gfx glb)` takes verbatim. Every target joint gets a rotation channel; an unmapped one holds its bind rotation
-- `retarget-write-glb!` — the target asset plus one retargeted clip as GLB bytes, answering `(base . length)` that `gltf-parse` reads back. The clip replaces one of the same name; `keep-anims? #f` drops the rest
+- `retarget-write-glb!` — the target asset plus one retargeted clip as GLB bytes, answering `(base . length)` that `gltf-parse` reads back. The clip replaces one of the same name; `keep-anims? #f` drops the rest. Of each primitive's material only the colour is carried: its current rendering colour (`gprim-color`) is written as `baseColorFactor`, while metallic, roughness, emissive and every texture slot are left out and read back as glTF's defaults. A primitive whose source wrote no `baseColorFactor` comes back with an explicit white `(1 1 1 1)`, which glTF defines as the same colour
 - `retarget-report` — the same walk as `retarget-clip!` but reporting instead of producing: which rule matched what, the two rigs' extents and their ratio, and which joints received a translation track. This is what to read when a retarget looks wrong
 - `retarget-normalize-name` — fold the spellings of one joint name into a single key -- namespace prefixes (`rig:Hips`, `rig|Hips`), any separator and any casing all collapse
 - `retarget-glb-node-names` — the node names out of a GLB's own JSON chunk, indexed by node. The loader keeps a node's transform and parent but not its name, and matching by name needs them

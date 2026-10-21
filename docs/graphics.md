@@ -802,6 +802,14 @@ needs no adapter beyond the accessors `(gfx gltf)` already exports:
       (gltf-prims g)))
 ```
 
+Of each primitive's material this carries only the colour, as
+`retarget-write-glb!` does: `'color (gprim-color p)` writes the current
+rendering colour as `baseColorFactor` and nothing else, so metallic,
+roughness, emissive and every texture slot read back as glTF's
+defaults, and a primitive whose source wrote no `baseColorFactor` comes
+back with an explicit white `(1 1 1 1)`, which glTF defines as the same
+colour.
+
 #### Skeletons and clips
 
 `glb-write!` takes a key/value tail of its own for everything that is
