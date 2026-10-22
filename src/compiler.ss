@@ -3948,8 +3948,8 @@
 ;; ---- the i32 context: raw machine integers in locals ----
 ;; The closed set: operations whose result always fits i31 given
 ;; fixnum inputs, so boxing at a generic reference (wrap-int) is
-;; always faithful.  shift-left normalizes to 31 signed bits inside
-;; the context, matching what boxing would have truncated; quotient
+;; always faithful.  The two shifts answer exactly or refuse (see
+;; checked-shift), so what they leave is a fixnum too; quotient
 ;; requires a positive literal divisor ((-2^30)/(-1) would escape
 ;; i31); remainder/quotient demand provably-fixnum arguments, since
 ;; their generic spelling handles bignums.  i32 slots ride
@@ -4024,10 +4024,8 @@
               ((bitwise-and) (list a b #x71))
               ((bitwise-ior) (list a b #x72))
               ((bitwise-xor) (list a b #x73))
-              ((bitwise-arithmetic-shift-right) (list a b #x75))
-              ((bitwise-arithmetic-shift-left)
-               ;; normalize to 31 signed bits: what boxing keeps
-               (list a b #x74 (i32const 1) #x74 (i32const 1) #x75))
+              ((bitwise-arithmetic-shift-right bitwise-arithmetic-shift-left)
+               (list a b (checked-shift rop cell)))
               ((remainder) (list a b #x6F))
               ((quotient) (list a b #x6D)))))))
    (else (list (compile-exp e locals cell #f) (unwrap-int)))))
@@ -4049,10 +4047,83 @@
             ((bitwise-and) #x71)
             ((bitwise-ior) #x72)
             ((bitwise-xor) #x73)
-            ((bitwise-arithmetic-shift-left)
-             (list #x74 (i32const 1) #x74 (i32const 1) #x75))
-            (else #x75))
+            (else (checked-shift op cell)))
           (wrap-int))))
+
+;; An arithmetic shift of two machine integers on the stack, leaving
+;; the exact result or refusing.  Fixnums run from -2^29 to 2^29 - 1.
+;; The bare instructions are wrong at both ends: i32.shl wraps a result
+;; that does not fit (1 << 29 came out -2^29) and both shifts take the
+;; count modulo 32 (1 << 32 came out 1, 1024 >> 40 came out 4).
+;;
+;; Left: a count from 0 to 29 shifts in 64 bits, where nothing is lost,
+;; and the result must land in the fixnum range; zero shifted by any
+;; non-negative count is zero; anything else -- a larger count, a
+;; negative one, a result out of range -- is refused.  Right: a
+;; negative count is refused, and a count of 31 or more answers what 31
+;; answers, 0 or -1 by the sign, which is the exact result.
+;;
+;; A refusal calls the prelude's $shl-refused or $shr-refused, which
+;; raise a condition naming the procedure, so a guard catches it; the
+;; unreachable after the call only tells the validator that nothing
+;; comes back.  A trap would not be catchable, and a compile-time error
+;; would refuse a program whose overflowing shift is never reached.
+(define (checked-shift op cell)
+  ;; two lets, not one: each allocates a local, and the two hosts that
+  ;; run this compiler need not evaluate one let's inits in the same
+  ;; order.  Not let* either: the expander makes its innermost body a
+  ;; begin, which the internal defines below may not sit in
+  (let ((n (i32-scratch! cell)))
+   (let ((k (i32-scratch! cell)))
+    (define (refuse)
+      (list (local-get n) (wrap-int) (local-get k) (wrap-int)
+            (generic-call (if (eq? op 'bitwise-arithmetic-shift-left)
+                              '$shl-refused
+                              '$shr-refused))
+            #x00))
+    ;; n sign-extended, shifted by k, in 64 bits
+    (define (wide)
+      (list (local-get n) #xAC (local-get k) #xAD #x86))
+    (list
+     (local-set k) (local-set n)
+     (if (eq? op 'bitwise-arithmetic-shift-left)
+         (list (local-get k) (i32const 30) #x49
+               #x04 T-I32
+               ;; in range iff it fits 32 bits and then bits 29 to 31
+               ;; agree -- the test * makes, with small constants only,
+               ;; because a constant of 2^29 or more is not a fixnum in
+               ;; the self-hosted compiler and sleb could not encode it
+               (wide) (wide) #xC4 #x51
+               #x04 T-I32
+               (wide) #xA7 (i32const 29) #x75
+               (wide) #xA7 (i32const 31) #x75
+               #x46
+               #x05 (i32const 0) #x0B
+               #x04 T-I32 (wide) #xA7 #x05 (refuse) #x0B
+               #x05
+               (local-get n) OP-I32-EQZ
+               (local-get k) (i32const 0) #x4E
+               #x71
+               #x04 T-I32 (i32const 0) #x05 (refuse) #x0B
+               #x0B)
+         (list (local-get k) (i32const 0) #x48
+               #x04 T-I32
+               (refuse)
+               #x05
+               ;; select keeps k when k < 31, unsigned, and 31 otherwise
+               (local-get n)
+               (local-get k) (i32const 31)
+               (local-get k) (i32const 31) #x49
+               #x1B
+               #x75
+               #x0B))))))
+
+;; A local that holds a raw i32 rather than an eqref: locals-decl reads
+;; the (- -100000 slot) entry in *f64-slots* as i32.
+(define (i32-scratch! cell)
+  (let ((v (fresh-local! cell)))
+    (set! *f64-slots* (cons (- -100000 v) *f64-slots*))
+    v))
 
 (define (compile-f64 e locals cell)
   (define (direct rop)
@@ -4403,13 +4474,9 @@
      (list (arg 0) (untag) (arg 1) (untag)
            (case op ((bitwise-and) #x71) ((bitwise-ior) #x72) (else #x73))
            (gc-op #x1C)))
-    ((bitwise-arithmetic-shift-left)
-     ;; (n<<1) << k = (n<<k) << 1
-     (list (arg 0) (untag) (arg 1) (unwrap-int) #x74 (gc-op #x1C)))
-    ((bitwise-arithmetic-shift-right)
-     ;; ((n<<1) >> k) & -2 = (n>>k) << 1
-     (list (arg 0) (untag) (arg 1) (unwrap-int) #x75
-           (i32const -2) #x71 (gc-op #x1C)))
+    ((bitwise-arithmetic-shift-left bitwise-arithmetic-shift-right)
+     (list (arg 0) (unwrap-int) (arg 1) (unwrap-int)
+           (checked-shift op cell) (wrap-int)))
     ((vector?) (list (arg 0) (ref-test TY-VECTOR) (boolify)))
     ((%make-vector)
      ;; (fill n) on the stack; array.new
@@ -4722,7 +4789,8 @@
 ;; seed published for a function nothing calls -- is pinned by
 ;; test/defect-spec-candidate-by-name.mjs.
 (define $spec-denylist
-  '($add2 $sub2 $mul2 $quot2 $rem2 $eq2 $lt2 $escape))
+  '($add2 $sub2 $mul2 $quot2 $rem2 $eq2 $lt2 $escape
+    $shl-refused $shr-refused))
 
 (define (compute-fn-specs! fn-defs main-steps)
   (set! *fn-specs* '())
@@ -5558,7 +5626,9 @@
         (cons 'remainder '(begin $rem2))
         (cons '= '(begin $eq2))
         (cons '< '(begin $lt2))
-        (cons 'zero? '(begin $eq2))))
+        (cons 'zero? '(begin $eq2))
+        (cons 'bitwise-arithmetic-shift-left '(begin $shl-refused))
+        (cons 'bitwise-arithmetic-shift-right '(begin $shr-refused))))
 
 (define (prune-dead forms extra-roots)
   (let ((table (fold-left (lambda (acc f)

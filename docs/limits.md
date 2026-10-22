@@ -346,15 +346,39 @@ Chez's answer.
 
 ## Bitwise operations and big operands
 
-**Symptom**: `illegal cast` trap in integer code that looks
-correct.
+The bitwise operations work on fixnums, which run from -2^29 to
+2^29 - 1 (the i31 representation).
 
-**Cause**: bitwise operators work on i31-tagged fixnums and an
-operand at or beyond 2^29 traps (measured: 2^29 - 4 works, 2^29
-exactly traps).
-
-**Workaround**: keep bitwise operands strictly below 2^29 — split
+**An operand of 2^29 or more traps.** The symptom is an `illegal cast`
+trap in integer code that looks correct (measured: 2^29 - 4 works,
+2^29 exactly traps). Keep bitwise operands strictly below 2^29 — split
 wider values, or use lookup tables for hashing-style code.
+
+**Since 2026-10-22 the arithmetic shifts answer exactly or refuse.**
+
+- `bitwise-arithmetic-shift-left` whose exact result is not a fixnum is
+  refused with a condition naming `bitwise-arithmetic-shift-left`,
+  which a `guard` can catch. It is not promoted to a bignum, because no
+  other bitwise operation here takes one. Zero shifted by any
+  non-negative count is zero.
+- `bitwise-arithmetic-shift-right` by 31 or more answers 0 or -1 by the
+  sign, which is its exact result.
+- A negative count is refused by either, naming the procedure.
+
+Before, both took the count modulo 32 and the left shift wrapped its
+result, with nothing to say so: `(bitwise-arithmetic-shift-left 1 29)`
+answered -536870912, a shift left by 32 answered the operand unchanged,
+and `(bitwise-arithmetic-shift-right 1024 40)` answered 4. The refusal
+happens when the shift runs, not when the program compiles, so a
+constant shift that would overflow can sit in a branch that is never
+taken.
+
+A malformed asset can therefore fail deep inside a decoder. The
+decoders shift as they read -- meshopt's index deltas, the
+variable-length counts in KTX's Basis data, zstd's offset codes -- and a
+stream that drives one of those shifts past the fixnum range used to
+decode silently into something else; it is now refused, from inside
+the decoder, as a `bitwise-arithmetic-shift-left` condition.
 
 ## `%mem-i32-ref` wraps at 2^29 instead of widening or trapping
 

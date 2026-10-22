@@ -2490,6 +2490,19 @@
 ;; The compiler's inline fixnum paths call $add2/$sub2/$mul2/$quot2/
 ;; $rem2/$lt2/$eq2 on overflow or non-fixnum operands.
 
+;; The inline arithmetic shifts call these when they cannot answer
+;; exactly: a left shift whose result is not a fixnum, or a negative
+;; count for either.  The bitwise operations take fixnums only, so the
+;; answer is a refusal and not a bignum; it is a condition naming the
+;; procedure, so a guard can catch it.
+(define ($shl-refused n k)
+  (if (< k 0)
+      (error 'bitwise-arithmetic-shift-left "negative shift count" n k)
+      (error 'bitwise-arithmetic-shift-left
+             "the shifted value is not a fixnum" n k)))
+(define ($shr-refused n k)
+  (error 'bitwise-arithmetic-shift-right "negative shift count" n k))
+
 (define ($bn-limbs-of n)                ; fixnum magnitude -> limb vector
   (let count ((m n) (k 0))
     (if (zero? m)

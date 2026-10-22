@@ -6,7 +6,14 @@
 // of the first two was seen to move under a real mutation before the
 // cell was trusted:
 //   mix   with i32-expr? made false, a nested bitwise intermediate is
-//         boxed and unboxed two more times: ref.i31 4 -> 6, i31.get 10 -> 12.
+//         boxed and unboxed two more times: ref.i31 6 -> 8, i31.get 10 -> 12.
+//         (Before shifts were checked the clean count was 4 -> 6.  mix
+//         shifts right, and since 2026-10-22 a shift that is refused
+//         boxes its operand and count to name them in the error; those
+//         two ref.i31 sit in the refusal branch, which runs only for a
+//         negative count, and count here because this file counts the
+//         code, not what runs.  The intermediate on the path taken stays
+//         raw: i31.get is unchanged.)
 //   gate  with compile-test's (= <) arm removed, the comparison in test
 //         position goes through the generic primitive: call 3 -> 4,
 //         ref.i31 3 -> 5.
@@ -38,7 +45,7 @@ test('the walker consumes every function body exactly', () => {
 
 test('mix keeps its nested bitwise intermediate raw', () => {
     const r = m.inspect('mix'); assert.ok(r && r.clean, 'mix missing');
-    assert.equal(r.count(REF_I31), 4, `mix tags ${r.count(REF_I31)} times`);
+    assert.equal(r.count(REF_I31), 6, `mix tags ${r.count(REF_I31)} times`);
     assert.equal(r.count(I31_GET), 10, `mix untags ${r.count(I31_GET)} times`);
 });
 
