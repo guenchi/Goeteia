@@ -1985,7 +1985,7 @@ Render a list of GLSL forms to a GLSL source string.
 => "attribute vec2 p; void main() { gl_Position = vec4(p, 0.0, 1.0); gl_PointSize = 2.0; } "
 ```
 
-Top-level forms: `attribute`/`uniform`/`varying`, `precision`, `(const T name expr)`, and `define` for functions, whose parameters are `(T arg)` or, qualified, `(in T arg)` / `(out T arg)` / `(inout T arg)`. Statements: `local`, `set!`, `return`, `if`/`if-else`, `discard`, and the loop exits `(break)` and `(continue)`. Expressions: `+ - * /` are infix, comparisons `< > <= >= ==`, anything else is a call; symbols pass through verbatim, so swizzles like `p.x` just work. Float literals use the whole-plus-hundredths convention—`(fl 2)` → `2.0`, `(fl 0 50)` → `0.5`, `(fl 1 25)` → `1.25`—so no Scheme flonum (and no printer noise) ever reaches the source.
+Top-level forms: `attribute`/`uniform`/`varying`, `precision`, `(const T name expr)`, and `define` for functions, whose parameters are `(T arg)` or, qualified, `(in T arg)` / `(out T arg)` / `(inout T arg)`. Statements: `local`, `set!`, `return`, `if`/`if-else`, `discard`, the loop exits `(break)` and `(continue)`, and the call statement `(call f arg ...)` → `f(arg, ...);`, for a function called for its effect (a `void` one, or one whose `out`/`inout` arguments are the point). Expressions: `+ - * /` are infix, comparisons `< > <= >= ==`, anything else is a call; symbols pass through verbatim, so swizzles like `p.x` just work. Float literals use the whole-plus-hundredths convention—`(fl 2)` → `2.0`, `(fl 0 50)` → `0.5`, `(fl 1 25)` → `1.25`—so no Scheme flonum (and no printer noise) ever reaches the source.
 
 #### More glsl: loops, arrays, and interface extraction
 
@@ -1999,9 +1999,11 @@ sweeps (PCF shadows, blurs) need:
 ```
 
 `(break)` and `(continue)` belong inside a `for` of the same function, as
-GLSL requires: `glsl->string` (and `glsl-check`) refuses one outside a
-loop, or one with anything after it, at the form rather than in a shader
-that silently fails to compile.
+GLSL requires, and only as statements: `glsl->string` (and `glsl-check`)
+refuses one outside a loop, one with anything after it, and one in an
+expression — `(set! x (break))`, or a constant's initializer — at the
+form rather than in a shader that silently fails to compile. A `(call)`
+with no function name is refused the same way.
 
 Array uniforms declare a size — `(uniform (array mat4 32) u_joints)` —
 and `(at u_joints i)` indexes them, for skinning.
