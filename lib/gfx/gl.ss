@@ -63,6 +63,7 @@
           gl-compressed-level! gl-texture-base-level!
           gl-texture-sampler!
           cmd-depth! cmd-depth-write!
+          cmd-depth-func! cmd-polygon-offset! cmd-color-mask! cmd-cull-face!
           gl-vao! cmd-bind-vao! cmd-unbind-vao!
           gl-ubo! gl-uniform-block! cmd-bind-ubo! cmd-ubo-data!
           gl-tf-program! cmd-tf-buffer! cmd-tf-begin! cmd-tf-end!
@@ -423,6 +424,19 @@
      "     case 15: if (u[p] === 1) gl.enable(gl.DEPTH_TEST);"
      "              else gl.disable(gl.DEPTH_TEST); p += 1; break;"
      "     case 42: gl.depthMask(u[p] === 1); p += 1; break;"
+     "     case 47: gl.depthFunc([gl.NEVER, gl.LESS, gl.EQUAL, gl.LEQUAL,"
+     "                gl.GREATER, gl.NOTEQUAL, gl.GEQUAL, gl.ALWAYS][u[p]]);"
+     "              p += 1; break;"
+     "     case 48: if (u[p] === 1) { gl.enable(gl.POLYGON_OFFSET_FILL);"
+     "                gl.polygonOffset(f[p+1], f[p+2]); }"
+     "              else gl.disable(gl.POLYGON_OFFSET_FILL); p += 3; break;"
+     "     case 49: gl.colorMask(u[p] === 1, u[p+1] === 1, u[p+2] === 1,"
+     "                u[p+3] === 1); p += 4; break;"
+     "     case 50: if (u[p] === 0) gl.disable(gl.CULL_FACE);"
+     "              else { gl.enable(gl.CULL_FACE);"
+     "                gl.cullFace(u[p] === 1 ? gl.BACK : u[p] === 2 ? gl.FRONT"
+     "                            : gl.FRONT_AND_BACK); }"
+     "              p += 1; break;"
      "     case 16: gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, slots[u[p]]);"
      "              p += 1; break;"
      "     case 17: gl.bufferData(gl.ELEMENT_ARRAY_BUFFER,"
@@ -762,6 +776,74 @@
   ;; passes keep the test (occluded by opaque) but stop writing (so
   ;; blended fragments don't occlude each other)
   (define (cmd-depth-write! on?) (u! 42) (u! (if on? 1 0)))
+
+  ;; ---- rasterizer state, in the stream ----
+  ;; The depth comparison, the polygon offset, the colour write mask
+  ;; and face culling.  As commands they take effect where they sit in
+  ;; the stream, between the draws they govern; set by a direct call
+  ;; they would take effect where the CALL happened, which a frame
+  ;; encoded in one order and replayed in another gets wrong.
+  ;;
+  ;; Every argument is checked before the first word is written.  An
+  ;; opcode left in the stream without its operands would be read by
+  ;; the replayer as operands of the next command, and everything
+  ;; replayed after it would be wrong; a refusal therefore leaves the
+  ;; write cursor where it was.  The names are refused with the
+  ;; procedure's own name, never mapped to a default.
+  (define ($depth-func-code f)
+    (case f
+      ((never) 0) ((less) 1) ((equal) 2) ((lequal) 3)
+      ((greater) 4) ((notequal) 5) ((gequal) 6) ((always) 7)
+      (else #f)))
+  (define (cmd-depth-func! f)
+    (let ((code ($depth-func-code f)))
+      (unless code
+        (error 'cmd-depth-func!
+               (string-append "not a depth function: never less equal lequal"
+                              " greater notequal gequal always")
+               f))
+      (u! 47) (u! code)))
+
+  ;; The operands are stored by f!, as f32 words, so what has to hold is
+  ;; that the number survives that store: a real that equals itself (NaN
+  ;; does not; finite? is not bound here) and is no larger in magnitude
+  ;; than the largest f32.  A check against infinity alone let 1e39, or
+  ;; an exact 10^40, through, and the f32 store turned it into Infinity.
+  ;; The largest f32 itself is accepted: it stores exactly.
+  (define $f32-max 3.4028234663852886e38)
+  (define ($f32-real? x)
+    (and (real? x) (= x x) (<= (abs x) $f32-max)))
+  ;; an offset of zero changes no depth value, so zero for both turns
+  ;; the offset off rather than enabling it to do nothing
+  (define (cmd-polygon-offset! factor units)
+    (unless ($f32-real? factor)
+      (error 'cmd-polygon-offset!
+             "the factor is not a finite real number within f32 range"
+             factor))
+    (unless ($f32-real? units)
+      (error 'cmd-polygon-offset!
+             "the units are not a finite real number within f32 range"
+             units))
+    (u! 48)
+    (u! (if (and (zero? factor) (zero? units)) 0 1))
+    (f! (inexact factor))
+    (f! (inexact units)))
+
+  ;; each channel is a Scheme truth value, as cmd-depth! reads its
+  ;; argument: only #f masks a channel off
+  (define (cmd-color-mask! r g b a)
+    (u! 49) (u! (if r 1 0)) (u! (if g 1 0)) (u! (if b 1 0)) (u! (if a 1 0)))
+
+  ;; off is a name like the others, not a truth value: #f is refused
+  (define ($cull-face-code m)
+    (case m
+      ((off) 0) ((back) 1) ((front) 2) ((front-and-back) 3)
+      (else #f)))
+  (define (cmd-cull-face! m)
+    (let ((code ($cull-face-code m)))
+      (unless code
+        (error 'cmd-cull-face! "not a face: off back front front-and-back" m))
+      (u! 50) (u! code)))
   ;; indexed meshes: a buffer slot bound as the element array, u16
   ;; indices uploaded from the staging memory, one drawElements
   (define (cmd-bind-index! slot) (u! 16) (u! slot))

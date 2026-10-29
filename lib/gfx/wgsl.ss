@@ -25,12 +25,17 @@
 ;;                                         -- feed gpu-pipeline!
 ;;
 ;; The subset that travels: attribute/uniform/varying declarations,
-;; define'd helper functions, main, local/set!/if/if-else/for/
-;; return/discard, the infix arithmetic and the common intrinsics.
-;; A sampler2D uniform becomes a sampler + texture binding pair
-;; after the struct (declaration order; gpu-texgroup! matches), and
-;; (texture2D u_tex uv) respells as textureSample.  What does not
-;; travel (yet): cube textures, arrays, uniform blocks.
+;; define'd helper functions (a parameter (T a), or (in T a), which
+;; WGSL spells as a plain one), main, local/set!/if/if-else/for/
+;; return/discard/break/continue, the infix arithmetic and the common
+;; intrinsics.  A sampler2D uniform becomes a sampler + texture binding
+;; pair after the struct (declaration order; gpu-texgroup! matches),
+;; and (texture2D u_tex uv) respells as textureSample.  What does not
+;; travel (yet): cube textures, arrays, uniform blocks, top-level
+;; (const ...) forms, and out and inout parameters, which WGSL could
+;; only express through a pointer.  The last two are refused by
+;; wgsl-check rather than left out: a form the module does not know
+;; would otherwise vanish from it without a word.
 ;; Two spelling rules WGSL forces on the forms:
 ;; constructors do not truncate (no (vec3 some-vec4) -- go through a
 ;; local and swizzle), and varyings are main's business only.
@@ -168,6 +173,8 @@
            "return; "
            (string-append "return " ($wgsl-expr (cadr s)) "; ")))
       ((discard) "discard; ")
+      ((break) "break; ")
+      ((continue) "continue; ")
       ((if)
        (string-append "if (" ($wgsl-expr (cadr s)) ") { "
                       (apply string-append (map $wgsl-stmt (cddr s)))
@@ -200,9 +207,14 @@
            (body (cdddr f)))
       (string-append
        "fn " (symbol->string name) "("
+       ;; (T a), or (in T a): wgsl-check has refused every other
+       ;; qualifier, so the parts are read by position here -- the
+       ;; forms are substituted by now, and the qualifier's spelling
+       ;; is not looked at again
        ($wgsl-join (map (lambda (p)
-                          (string-append (symbol->string (cadr p))
-                                         " : " ($wgsl-type (car p))))
+                          (let ((tp (if (pair? (cddr p)) (cdr p) p)))
+                            (string-append (symbol->string (cadr tp))
+                                           " : " ($wgsl-type (car tp)))))
                         params)
                    ", ")
        ")"
@@ -329,26 +341,54 @@
                  (loop (cdr xs)))
           #t)))
 
-  (define ($wgsl-check-stmt s)
+  ;; in-for? is passed down, as in (gfx glsl): an argument cannot be
+  ;; left set by a refusal raised inside the loop it describes
+  (define ($wgsl-check-stmt s in-for?)
     (if (pair? s)
         (case (car s)
           ((local) ($wgsl-check-name "local variable" ($wgsl-nth s 2)))
-          ((if) ($wgsl-check-stmts ($wgsl-drop s 2)))
+          ((if) ($wgsl-check-stmts ($wgsl-drop s 2) in-for?))
           ((if-else)
-           (begin ($wgsl-check-stmts ($wgsl-nth s 2))
-                  ($wgsl-check-stmts ($wgsl-nth s 3))))
+           (begin ($wgsl-check-stmts ($wgsl-nth s 2) in-for?)
+                  ($wgsl-check-stmts ($wgsl-nth s 3) in-for?)))
           ((for)
            (begin ($wgsl-check-name "loop index"
                                     ($wgsl-nth ($wgsl-nth s 1) 1))
-                  ($wgsl-check-stmts ($wgsl-drop s 2))))
+                  ($wgsl-check-stmts ($wgsl-drop s 2) #t)))
+          ((break continue)
+           (cond
+            ((not in-for?)
+             (error 'wgsl
+                    (string-append (symbol->string (car s))
+                                   " outside a for of the same function")
+                    s))
+            ((not (null? (cdr s)))
+             (error 'wgsl
+                    (string-append (symbol->string (car s))
+                                   " takes no operands")
+                    s))
+            (else #t)))
           (else #t))
         #t))
 
-  (define ($wgsl-check-stmts ss)
+  (define ($wgsl-check-stmts ss in-for?)
     (let loop ((ss ss))
       (if (pair? ss)
-          (begin ($wgsl-check-stmt (car ss)) (loop (cdr ss)))
+          (begin ($wgsl-check-stmt (car ss) in-for?) (loop (cdr ss)))
           #t)))
+
+  ;; (T a) and (in T a) travel; out and inout have no WGSL spelling
+  ;; short of a pointer, and any other first part is not a qualifier
+  (define ($wgsl-check-param p)
+    (if (and (pair? p) (pair? (cdr p)) (pair? (cddr p)))
+        (case (car p)
+          ((in) ($wgsl-check-name "function parameter" (caddr p)))
+          ((out inout)
+           (error 'wgsl
+                  "out and inout parameters do not travel to WGSL" p))
+          (else
+           (error 'wgsl "a parameter qualifier is in, out or inout" p)))
+        ($wgsl-check-name "function parameter" ($wgsl-nth p 1))))
 
   ;; Only names the *user* introduces are checked -- the ones that
   ;; land in the module as identifiers: attribute parameters, the
@@ -369,12 +409,18 @@
                   ($wgsl-check-each "struct member" ($wgsl-nth f 2) 1)))
           ((storage)                    ; (storage name (array T))
            ($wgsl-check-name "storage buffer" ($wgsl-nth f 1)))
-          ((define)                     ; (define (name (T a) ...) RET stmt ...)
+          ((const)
+           (error 'wgsl
+                  "a top-level (const ...) does not travel to WGSL yet" f))
+          ;; (define (name param ...) RET stmt ...)
+          ((define)
            (let ((head ($wgsl-nth f 1)))
              (begin ($wgsl-check-name "function" ($wgsl-nth head 0))
-                    ($wgsl-check-each "function parameter"
-                                      ($wgsl-drop head 1) 1)
-                    ($wgsl-check-stmts ($wgsl-drop f 3)))))
+                    (let loop ((ps ($wgsl-drop head 1)))
+                      (when (pair? ps)
+                        ($wgsl-check-param (car ps))
+                        (loop (cdr ps))))
+                    ($wgsl-check-stmts ($wgsl-drop f 3) #f))))
           (else #t))
         #t))
 

@@ -245,6 +245,32 @@
 (emit! "mesh" (mesh-shaders))
 (emit! "particles" (particles-shaders))
 
+;; Forms rather than a library: parameter qualifiers, a top-level
+;; constant and the two loop exits, which no library shader uses yet.
+;; They are the forms test/glsl-qualifiers-const-and-loop-exits.ss
+;; reads as text; here a real compiler reads them, in both dialects --
+;; the call passes an inout and an out argument, so the compiler checks
+;; that both are l-values of the declared types.
+(define glsl-forms-vs
+  '((attribute vec2 a_pos)
+    (define (main) void (set! gl_Position (vec4 a_pos (fl 0) (fl 1))))))
+(define glsl-forms-fs
+  '((precision mediump float)
+    (const float K (fl 2))
+    (define (f (inout vec3 a) (out float b) (in float c) (float d)) float
+      (set! a (* a c)) (set! b (+ c d)) (return K))
+    (define (main) void
+      (local vec3 v (vec3 (fl 1)))
+      (local float w (fl 0))
+      (local float r (fl 0))
+      (for (int i 0 (< i 4) (+ i 1))
+        (if (== i 2) (continue))
+        (if-else (> i 2) ((break)) ((set! r (f v w K (fl 1))))))
+      (set! gl_FragColor (vec4 v (+ w r))))))
+(emit! "glsl-forms"
+       (list (list "qualifiers-const-loop-exits" 'es100 glsl-forms-vs glsl-forms-fs)
+             (list "qualifiers-const-loop-exits" 'es300 glsl-forms-vs glsl-forms-fs)))
+
 ;; the control: a vertex shader a real compiler must refuse
 (display "=== control/known-bad es100") (newline)
 (display "--- vertex ---") (newline)

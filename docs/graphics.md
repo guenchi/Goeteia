@@ -64,8 +64,14 @@ the 32-bit variants), instancing (`cmd-attrib-divisor!`,
 (`gl-texture-array!`, `cmd-bind-texture-array!`), UBOs (`gl-ubo!`,
 `gl-uniform-block!`, `cmd-ubo-data!`), transform feedback
 (`gl-tf-program!`, `cmd-tf-begin!` / `cmd-tf-end!`), half-float vertex
-attributes (`cmd-vertex-attrib-h!`), a GPU frame timer
-(`gl-gpu-timer!` / `gl-gpu-ms`), and pixel readback. Readback is the
+attributes (`cmd-vertex-attrib-h!`), rasterizer state (`cmd-depth!`,
+`cmd-depth-write!`, `cmd-depth-func!`, `cmd-polygon-offset!`,
+`cmd-color-mask!`, `cmd-cull-face!`, `cmd-blend!`), a GPU frame timer
+(`gl-gpu-timer!` / `gl-gpu-ms`), and pixel readback. A state command
+applies to the draws that follow it in the stream, whenever and however
+often the stream is replayed, not at the moment of a JS call; a name or
+number it does not accept is refused when the command is encoded, before
+any word of it is written. Readback is the
 upload path run backwards, and stays a command like any other:
 `cmd-read-pixels!` encodes a rectangle plus a staging address, and the
 replayer hands `gl.readPixels` a view aimed straight at that address —
@@ -143,9 +149,11 @@ helper functions, and verify headlessly.
 
 Top-level forms: `(attribute T name)`, `(uniform T name)`,
 `(varying T name)`, `(precision P T)`, `(out loc T name)` (an ESSL 3.00
-MRT output), and `(define (name (T arg) ...) RET stmt ...)`. Statements
-include `local`, `set!`, `return`, `if` / `if-else`, `for`, and
-`discard`. In expressions, symbols pass through verbatim (`p`,
+MRT output), `(const T name expr)`, and
+`(define (name param ...) RET stmt ...)`, where a parameter is `(T arg)`
+or, qualified, `(in T arg)`, `(out T arg)` or `(inout T arg)`.
+Statements include `local`, `set!`, `return`, `if` / `if-else`, `for`,
+`discard`, and the loop exits `(break)` and `(continue)`. In expressions, symbols pass through verbatim (`p`,
 `gl_Position`, `v.xy`); exact integers are themselves; `(fl W [F [width]])`
 is a float literal with the digits after the point as written (`(fl 2)` →
 `"2.0"`, `(fl 0 50)` → `"0.5"`, `(fl 0 5 2)` → `"0.05"`, the third operand
@@ -161,8 +169,9 @@ array — `((array mat4 256) u_joints)` — which is how a block carries a
 palette; std140 gives a `mat4` array the tight 64-byte stride, so such a
 block maps one to one onto a run of matrices in staging memory.
 Every position that *introduces* a name — the three global
-declarations, `out`, uniform-block names and members, function names and
-parameters, `local`, and a `for` index — is checked against the GLSL ES
+declarations, `out`, a `const`, uniform-block names and members, function
+names and parameters (the last part of a qualified one), `local`, and a
+`for` index — is checked against the GLSL ES
 1.00 and 3.00 keyword and reserved lists (plus the `gl_` prefix and any
 `__`), and a hit is an error from `glsl->string` naming the identifier
 and the declaration that introduced it. Both dialects refuse the union
@@ -170,8 +179,11 @@ of the two lists, so `sample`, `filter`, `layout` and `smooth` are
 refused even when emitting 1.00: the forms are dialect-neutral and one
 call away from `glsl300-vs->string`. *References* to built-ins
 (`gl_Position`, `gl_FragColor`, `gl_FrontFacing`) are untouched — the
-check is about declarations. `glsl-check` runs it alone, without
-rendering.
+check is about declarations. The same check refuses what the GLSL
+compiler would: a `(break)` or `(continue)` that is not inside a `for` of
+the same function, a loop exit with anything after it, and a parameter
+qualifier other than `in`, `out` and `inout`. `glsl-check` runs it alone,
+without rendering.
 
 `glsl-attributes`, `glsl-uniforms`, `glsl-varyings` and
 `glsl-uniform-blocks` read the interface back out of the forms — how
@@ -199,8 +211,13 @@ texture binding pair (matching `gpu-texgroup!` on the other side).
 attribute declarations. Two spelling rules WGSL forces: constructors do
 not truncate (go through a `local` and swizzle instead of
 `(vec3 some-vec4)`), and order uniform members mat4 / vec4 / vec3+pad /
-f32 for the std140-like alignment. `examples/gpu-tex.html` runs a shader
-from forms with a texture from staging bytes.
+f32 for the std140-like alignment. `(break)`, `(continue)` and an `in`
+parameter travel; a top-level `(const ...)` and an `out` or `inout`
+parameter do not (WGSL could express the last two only through a
+pointer), and `wgsl-check` refuses them rather than leaving them out of
+the module, as it refuses a loop exit outside a `for`.
+`examples/gpu-tex.html` runs a shader from forms with a texture from
+staging bytes.
 
 Every position that *introduces* a name — the three global declarations,
 `struct` names and members, `storage` bindings, function names and

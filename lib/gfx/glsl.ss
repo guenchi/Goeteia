@@ -32,7 +32,10 @@
 ;;   (out loc T name)      -- a fragment output at an explicit
 ;;                            location; ESSL 3.00 only (MRT), and it
 ;;                            replaces gl_FragColor in that shader
-;;   (define (name (T arg) ...) RET stmt ...)
+;;   (const T name expr)   -> "const T name = expr;"
+;;   (define (name param ...) RET stmt ...)
+;;                         -- a param is (T arg), or (Q T arg) with
+;;                            Q one of in out inout
 ;; Statements:
 ;;   (local T name expr)   -> "T name = expr;"
 ;;   (set! lhs expr)       -> "lhs = expr;"
@@ -43,6 +46,8 @@
 ;;                            (step (+ name k) / (- name k) becomes
 ;;                            += / -= as ESSL 1.00 loops require)
 ;;   (discard)
+;;   (break) (continue)    -- only inside a (for ...) of the same
+;;                            function, as GLSL requires
 ;; Expressions:
 ;;   symbols pass through verbatim (p, gl_Position, v.xy);
 ;;   exact integers as themselves; (fl W F [width]) is a float literal
@@ -61,7 +66,10 @@
 ;; Every position that introduces a name is checked against the GLSL
 ;; ES reserved words (glsl-check runs it alone), so an identifier the
 ;; driver would reject is an error here instead of a shader that
-;; silently fails to compile and draws nothing.
+;; silently fails to compile and draws nothing.  The same check refuses
+;; a loop exit outside a for, a loop exit with operands, and a
+;; parameter qualifier other than in, out and inout -- all of them
+;; shaders the driver would refuse, said here at the form instead.
 ;;
 (library (gfx glsl)
   (export glsl->string glsl-attributes glsl-uniforms glsl-varyings
@@ -194,6 +202,8 @@
          (if (null? (cdr s)) "return; "
              (string-append "return " (expr->glsl (cadr s)) "; ")))
         ((discard) "discard; ")
+        ((break) "break; ")
+        ((continue) "continue; ")
         ((if)
          (string-append "if (" (expr->glsl (cadr s)) ") { "
                         (apply string-append (map stmt->glsl (cddr s)))
@@ -230,8 +240,15 @@
                           "} ")))
         (else (error 'glsl "bad statement" s)))))
 
-  (define (param->glsl p)                 ; (T name)
-    (string-append (symbol->string (car p)) " " (symbol->string (cadr p))))
+  ;; (T name) or (Q T name); glsl-check has already refused a
+  ;; qualifier that is not in, out or inout
+  (define (param->glsl p)
+    (if (pair? (cddr p))
+        (string-append (symbol->string (car p)) " "
+                       (symbol->string (cadr p)) " "
+                       (symbol->string (caddr p)))
+        (string-append (symbol->string (car p)) " "
+                       (symbol->string (cadr p)))))
 
   (define (form->glsl f)
     (case (car f)
@@ -249,8 +266,13 @@
                       (symbol->string (caddr f)) "; "))
       ((out)
        (error 'glsl "out needs the ESSL 3.00 dialect (fx-program3!)" f))
+      ((const)
+       ;; (const T name expr): the same in both dialects
+       (string-append "const " (symbol->string (cadr f)) " "
+                      (symbol->string (caddr f)) " = "
+                      (expr->glsl (cadddr f)) "; "))
       ((define)
-       ;; (define (name (T a) ...) RET stmt ...)
+       ;; (define (name param ...) RET stmt ...)
        (let* ((head (cadr f))
               (name (car head))
               (params (cdr head))
@@ -394,26 +416,54 @@
                  (loop (cdr xs)))
           #t)))
 
-  (define ($glsl-check-stmt s)
+  ;; in-for? says whether the statement sits inside a (for ...) of
+  ;; the function being checked.  It is an argument, passed down, and
+  ;; not a variable the walk sets and clears: a refusal raised inside a
+  ;; for would skip the clearing, and the next forms checked would be
+  ;; read as inside a loop they are not in.
+  (define ($glsl-check-stmt s in-for?)
     (if (pair? s)
         (case (car s)
           ((local) ($glsl-check-name "local variable" ($glsl-nth s 2)))
-          ((if) ($glsl-check-stmts ($glsl-drop s 2)))
+          ((if) ($glsl-check-stmts ($glsl-drop s 2) in-for?))
           ((if-else)
-           (begin ($glsl-check-stmts ($glsl-nth s 2))
-                  ($glsl-check-stmts ($glsl-nth s 3))))
+           (begin ($glsl-check-stmts ($glsl-nth s 2) in-for?)
+                  ($glsl-check-stmts ($glsl-nth s 3) in-for?)))
           ((for)
            (begin ($glsl-check-name "loop index"
                                     ($glsl-nth ($glsl-nth s 1) 1))
-                  ($glsl-check-stmts ($glsl-drop s 2))))
+                  ($glsl-check-stmts ($glsl-drop s 2) #t)))
+          ((break continue)
+           (cond
+            ((not in-for?)
+             (error 'glsl
+                    (string-append (symbol->string (car s))
+                                   " outside a for of the same function")
+                    s))
+            ((not (null? (cdr s)))
+             (error 'glsl
+                    (string-append (symbol->string (car s))
+                                   " takes no operands")
+                    s))
+            (else #t)))
           (else #t))
         #t))
 
-  (define ($glsl-check-stmts ss)
+  (define ($glsl-check-stmts ss in-for?)
     (let loop ((ss ss))
       (if (pair? ss)
-          (begin ($glsl-check-stmt (car ss)) (loop (cdr ss)))
+          (begin ($glsl-check-stmt (car ss) in-for?) (loop (cdr ss)))
           #t)))
+
+  ;; a parameter is (T name) or (Q T name): its name is the last part,
+  ;; and a qualifier, when there is one, must be in, out or inout
+  (define ($glsl-check-param p)
+    (if (and (pair? p) (pair? (cdr p)) (pair? (cddr p)))
+        (begin
+          (unless (memq (car p) '(in out inout))
+            (error 'glsl "a parameter qualifier is in, out or inout" p))
+          ($glsl-check-name "function parameter" (caddr p)))
+        ($glsl-check-name "function parameter" ($glsl-nth p 1))))
 
   ;; The payload of (fl ...) is printed without being looked at
   ;; (fl-literal->string just concatenates), so a negative digit count
@@ -479,12 +529,18 @@
            (begin ($glsl-check-name "uniform block" ($glsl-nth f 1))
                   ($glsl-check-each "uniform block member"
                                     ($glsl-drop f 2) 1)))
-          ((define)                     ; (define (name (T a) ...) RET stmt ...)
+          ;; (const T name expr)
+          ((const)
+           ($glsl-check-name "constant" ($glsl-nth f 2)))
+          ;; (define (name param ...) RET stmt ...)
+          ((define)
            (let ((head ($glsl-nth f 1)))
              (begin ($glsl-check-name "function" ($glsl-nth head 0))
-                    ($glsl-check-each "function parameter"
-                                      ($glsl-drop head 1) 1)
-                    ($glsl-check-stmts ($glsl-drop f 3)))))
+                    (let loop ((ps ($glsl-drop head 1)))
+                      (when (pair? ps)
+                        ($glsl-check-param (car ps))
+                        (loop (cdr ps))))
+                    ($glsl-check-stmts ($glsl-drop f 3) #f))))
           (else #t))
         #t))
 

@@ -421,6 +421,10 @@ Both points are damped at one rate, and that is what holds the heading steady: t
 - `gl-texture-sampler!` — apply a glTF sampler to a texture slot; pass `#f` for a filter the file omitted and the creation default stays
 - `cmd-depth!` — turn the depth test on or off
 - `cmd-depth-write!` — the depth WRITE mask, independent of the test: a translucent pass keeps the test but stops writing, so blended fragments do not occlude each other
+- `cmd-depth-func!` — the depth comparison, one of `'never` `'less` `'equal` `'lequal` `'greater` `'notequal` `'gequal` `'always`, taking effect where the command sits in the stream; any other name is refused when the command is encoded, before any word is written
+- `cmd-polygon-offset!` — the polygon offset `factor` and `units`, which turns `POLYGON_OFFSET_FILL` on; both zero turns it off. Exact numbers are accepted; a value that is not a finite real number within f32 range (magnitude at most 3.4028234663852886e38, the largest f32, which is itself accepted) is refused when the command is encoded, before any word is written
+- `cmd-color-mask!` — the colour write mask, one Scheme truth value per channel `r g b a`, read as `cmd-depth!` reads its argument: only `#f` masks a channel off
+- `cmd-cull-face!` — face culling: `'off` disables it, `'back` `'front` `'front-and-back` enable it on that face. `'off` is a name, not a truth value, so `#f` is refused like any other name, when the command is encoded and before any word is written
 - `gl-vao!` — a vertex array object: record a whole attribute setup once and rebind it with one word per frame
 - `cmd-bind-vao!` — bind a recorded attribute setup
 - `cmd-unbind-vao!` — unbind it, so later attribute commands do not edit the recording
