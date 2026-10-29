@@ -5334,6 +5334,16 @@
 ;; origin.  Nobody in this tree writes that, and tightening the macro
 ;; table is a separate change with its own hygiene questions; the
 ;; looseness is recorded rather than left to be discovered.
+;;
+;; A library may export a binding it IMPORTED (R6RS 7.1), under the
+;; name its own clause gives it: (export g) over (rename (a) (f g)),
+;; a:f over (prefix (a) a:), or a name from (rnrs).  None of those is
+;; defined anywhere under the exported spelling, so the third arm asks
+;; binding-origin, the same trace references resolve through, whether
+;; the library's clause carries the name to another library.  A name
+;; the clause does not provide traces to the library itself and is
+;; still refused.  The first arm stays as wide as it was: it reads
+;; every scope's definitions, not this library's alone.
 (define (check-library-exports! forms)
   (let ((defined (fold-left (lambda (acc f)
                               (if (define-form? f)
@@ -5345,7 +5355,9 @@
      (lambda (lib)
        (for-each
         (lambda (n)
-          (unless (or (memq n defined) (assq n *macros*))
+          (unless (or (memq n defined) (assq n *macros*)
+                      (not (equal? (binding-origin (car lib) n)
+                                   (cons (car lib) n))))
             (errorf 'goeteia "library exports a name nothing defines:"
                     n 'in (car lib))))
         (cdr lib)))
@@ -5417,10 +5429,18 @@
 (define (scope-of-form f i prefix-len)
   (if (< i prefix-len) *prelude-scope* (or (form-scope f) 'the-program)))
 
+;; A library's key is spelled with its PRINTED name, the one spelling
+;; resolved-key also builds from: a reference only ever has the origin
+;; library's printed string, and there is no inverse back to the name
+;; list.  lib-prefix joins the parts with "/" where the printed name
+;; joins them with a space, so the two agreed only for a one-part name,
+;; and no other scope could reach a keyed definition in (a b).  The
+;; privates namespace-library renames keep lib-prefix; they are never
+;; referenced from outside the library.
 (define (scope-prefix scope)
   (cond ((eq? scope 'the-program) "%program")
         ((eq? scope *prelude-scope*) "%prelude")
-        ((pair? scope) (lib-prefix scope))
+        ((pair? scope) (lib-name-string scope))
         (else "%anon")))
 
 ;; (form . scope) for every top-level form, in order.
