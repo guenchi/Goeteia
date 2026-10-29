@@ -644,6 +644,9 @@ run_mjs test/large-literal-stays-out-of-main.mjs
 # The self-hosted compiler reads and compiles long quoted lists in
 # constant stack, to wasm and to JS, and the values come out in order.
 run_mjs test/long-lists-are-read.mjs
+# A call of 20,000 arguments and a body of 20,000 expressions compile
+# under node's default stack on the self-hosted compiler, and run.
+run_mjs test/long-code-is-compiled.mjs
 # An only, except or rename naming what its import set does not
 # provide is refused, in a program's import and a library's.
 run_mjs test/import-sets-name-only-what-is-there.mjs

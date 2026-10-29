@@ -1048,9 +1048,11 @@
                  (lambda (ls) (list (compiler-introduced 'list->vector) ls))
                  (lambda (d) (list 'quote d)))))
 (define (xpand* es)
-  (if (pair? es)
-      (cons (xpand (car es)) (xpand* (cdr es)))
-      es))
+  ;; first to last, iterating: a list of 20,000 forms is one level
+  (let loop ((es es) (acc '()))
+    (if (pair? es)
+        (loop (cdr es) (cons (xpand (car es)) acc))
+        (append-reverse acc es))))
 (define (xpand-cond clauses)
   (if (null? clauses)
       '(begin)
@@ -1846,7 +1848,23 @@
                                (if (memq (cadr e) acc)
                                    acc
                                    (cons (cadr e) acc))))
-        (else (assigned-vars (car e) (assigned-vars (cdr e) acc))))
+        ;; The recursion read the cdr before the car, the cdr as a form
+        ;; of its own.  The spine is walked by iteration instead, up to
+        ;; a tail headed by quote or set! -- which the recursion read
+        ;; as that form -- and that tail is read first, then the
+        ;; elements from the last to the first, so acc collects the
+        ;; same names in the same order.
+        (else
+         (let spine ((p e) (rev '()))
+           (let ((d (cdr p)))
+             (if (and (pair? d)
+                      (not (memq (resolve-tag (car d)) '(quote set!))))
+                 (spine d (cons (car p) rev))
+                 (let fold ((rev (cons (car p) rev))
+                            (acc (assigned-vars d acc)))
+                   (if (null? rev)
+                       acc
+                       (fold (cdr rev) (assigned-vars (car rev) acc)))))))))
       acc))
 
 (define (avc e scope assigned)
@@ -1902,9 +1920,11 @@
       (else (avc* e scope assigned))))
    (else e)))
 (define (avc* es scope assigned)
-  (if (pair? es)
-      (cons (avc (car es) scope assigned) (avc* (cdr es) scope assigned))
-      es))
+  ;; first to last, iterating: a list of 20,000 forms is one level
+  (let loop ((es es) (acc '()))
+    (if (pair? es)
+        (loop (cdr es) (cons (avc (car es) scope assigned) acc))
+        (append-reverse acc es))))
 ;; a body may open with internal defines; they become boxed
 ;; letrec*-style bindings so mutual recursion works
 (define (internal-def? f)
@@ -3602,10 +3622,19 @@
   (cond
    ((null? es) (global-get G-VOID))
    ((null? (cdr es)) (compile-exp (car es) locals cell tail?))
+   ;; The expressions compile first to last, by iteration, and the code
+   ;; is then nested from the last outward: the same tree the
+   ;; recursion built, without a stack frame per expression.
    (else
-    (let* ((head (compile-exp (car es) locals cell #f))
-           (rest (compile-body (cdr es) locals cell tail?)))
-      (list head OP-DROP rest)))))
+    (let loop ((es es) (heads '()))
+      (if (null? (cdr es))
+          (let build ((hs heads)
+                      (code (compile-exp (car es) locals cell tail?)))
+            (if (null? hs)
+                code
+                (build (cdr hs) (list (car hs) OP-DROP code))))
+          (loop (cdr es)
+                (cons (compile-exp (car es) locals cell #f) heads)))))))
 
 (define (compile-global-set e locals cell)
   (let* ((r (unmark (cadr e)))
@@ -5941,14 +5970,23 @@
 
 ;; map that returns the original list when nothing changed, so
 ;; untouched forms keep their identity (and their recorded locs)
+;;
+;; f runs first to last; the list is then rebuilt from its end, and a
+;; suffix in which nothing changed is the original suffix itself, the
+;; sharing the recursion gave.  Callers test the answer with eq?.  The
+;; walk iterates both ways, so a long list costs no stack.
 (define (map-same f ls)
-  (if (null? ls)
-      ls
-      (let* ((h (f (car ls)))
-             (t (map-same f (cdr ls))))
-        (if (and (eq? h (car ls)) (eq? t (cdr ls)))
-            ls
-            (cons h t)))))
+  (let collect ((p ls) (rev '()))
+    (if (null? p)
+        (let rebuild ((rev rev) (t '()))
+          (if (null? rev)
+              t
+              (let ((q (car (car rev))) (h (cdr (car rev))))
+                (rebuild (cdr rev)
+                         (if (and (eq? h (car q)) (eq? t (cdr q)))
+                             q
+                             (cons h t))))))
+        (collect (cdr p) (cons (cons p (f (car p))) rev)))))
 
 (define ($inline-binding f scope cands)   ; one let binding (n v)
   (lambda (b)
@@ -6454,10 +6492,12 @@
 ;; expects a form, and an ordinary map over it raises rather than
 ;; walking. The define arm below does not walk formals at all; this
 ;; keeps the generic arm safe for every other improper tail.
+;;
+;; It iterates, first to last, so a long list costs no stack.
 (define (map-tail g l)
-  (cond ((pair? l) (cons (g (car l)) (map-tail g (cdr l))))
-        ((null? l) '())
-        (else l)))
+  (let loop ((l l) (acc '()))
+    (cond ((pair? l) (loop (cdr l) (cons (g (car l)) acc)))
+          (else (append-reverse acc l)))))
 
 ;;;; ------------------------------------------------------------------
 ;;;; compound literals: one object per quote
@@ -7264,26 +7304,50 @@
 ;; resumes inside unquote, so `(div ,(conjure ...)) still mounts
 ;; while `(conjure ...) stays a list.
 (define (embed-expand form) (embed-expand* form 0))
+;; Which arm of embed-expand* a pair takes: literal (quote), quasi
+;; (quasiquote), unquoted (unquote or unquote-splicing), mount, or #f
+;; for the generic arm.
+;; The dispatch and the list walk both ask this, so a tail is read as a
+;; form exactly when embed-expand* would read it as one.
+(define ($embed-arm form qq)
+  (let ((h (and (symbol? (car form)) (unmark (car form))))
+        (single? (and (pair? (cdr form)) (null? (cddr form)))))
+    (cond
+     ((not h) #f)
+     ((eq? h 'quote) 'literal)
+     ((and (eq? h 'quasiquote) single?) 'quasi)
+     ((and (memq h '(unquote unquote-splicing)) single? (> qq 0)) 'unquoted)
+     ((and (= qq 0) (assq h $conjure-forms)) 'mount)
+     (else #f))))
 (define (embed-expand* form qq)
-  (cond
-   ((not (pair? form)) form)
-   ((and (symbol? (car form)) (eq? (unmark (car form)) 'quote)) form)
-   ((and (symbol? (car form)) (eq? (unmark (car form)) 'quasiquote)
-         (pair? (cdr form)) (null? (cddr form)))
-    (list (car form) (embed-expand* (cadr form) (+ qq 1))))
-   ((and (symbol? (car form))
-         (memq (unmark (car form)) '(unquote unquote-splicing))
-         (pair? (cdr form)) (null? (cddr form)) (> qq 0))
-    (list (car form) (embed-expand* (cadr form) (- qq 1))))
-   ((and (= qq 0)
-         (symbol? (car form))
-         (assq (unmark (car form)) $conjure-forms))
-    (let ((e (assq (unmark (car form)) $conjure-forms)))
-      (if (cdr e)
-          (conjure-define form (cdr e))
-          (embed-compile form))))
-   (else (cons (embed-expand* (car form) qq)
-               (embed-expand* (cdr form) qq)))))
+  (if (not (pair? form))
+      form
+      (case ($embed-arm form qq)
+        ((literal) form)
+        ((quasi)
+         (list (car form) (embed-expand* (cadr form) (+ qq 1))))
+        ((unquoted)
+         (list (car form) (embed-expand* (cadr form) (- qq 1))))
+        ((mount)
+         (let ((e (assq (unmark (car form)) $conjure-forms)))
+           (if (cdr e)
+               (conjure-define form (cdr e))
+               (embed-compile form))))
+        ;; Along the cdr by iteration, recurring only into the cars: a
+        ;; form is as long as its longest list, and one recursion per
+        ;; element overflowed the self-hosted compiler's stack at
+        ;; 20,000.  A tail that $embed-arm puts in a special arm is
+        ;; handed back to embed-expand* whole, because the recursion
+        ;; read such a tail as a form; any other tail took this arm, so
+        ;; walking it here is the same answer.  The cars are expanded
+        ;; first to last.
+        (else
+         (let loop ((f form) (acc '()))
+           (let ((acc (cons (embed-expand* (car f) qq) acc))
+                 (d (cdr f)))
+             (if (and (pair? d) (not ($embed-arm d qq)))
+                 (loop d acc)
+                 (append-reverse acc (embed-expand* d qq)))))))))
 
 (define (compile-program forms locs)
   ;; split at the drivers' (%prelude-end) marker, materialize the

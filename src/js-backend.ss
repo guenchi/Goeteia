@@ -749,10 +749,16 @@
   (cond
    ((null? es) "return VOID;")
    ((null? (cdr es)) (jt (car es) env lctx))
+   ;; first to last by iteration, then nested from the last outward:
+   ;; the tree the recursion built, without a frame per expression
    (else
-    (let* ((head (jx (car es) env lctx))
-           (rest (jt-body (cdr es) env lctx)))
-      (list "(" head ");" rest)))))
+    (let loop ((es es) (heads '()))
+      (if (null? (cdr es))
+          (let build ((hs heads) (code (jt (car es) env lctx)))
+            (if (null? hs)
+                code
+                (build (cdr hs) (list "(" (car hs) ");" code))))
+          (loop (cdr es) (cons (jx (car es) env lctx) heads)))))))
 
 (define (jt e env lctx)
   (if (pair? e)
