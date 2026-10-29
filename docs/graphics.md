@@ -1135,7 +1135,20 @@ alpha). `fx-ticks!` (the timing pump) and `fx-init-input!` (polled keys /
 pointer, with `key-down?`, `pointer-x`, `pointer-lock!`) have no GL
 dependency, so a Three.js or WebGPU scene uses them directly. Render
 targets: `fx-target!`, `fx-target-hdr!`, `fx-target-mrt!` (a G-buffer,
-n half-float attachments one shader fills in one pass), `fx-cube-target!`.
+n half-float attachments one shader fills in one pass, with a 24-bit depth
+texture, `(fx-target-depth-texture t)`, that a later pass can sample),
+`fx-target-mrt-msaa!` (the same G-buffer multisampled: `fx-resolve!` blits
+every attachment and the depth into the textures that are sampled),
+`fx-cube-target!`. `fx-target-mrt-msaa!` needs WebGL 2 and
+`EXT_color_buffer_float` or `EXT_color_buffer_half_float`, and takes the
+largest sample count that RGBA16F and 24-bit depth both offer up to the
+one asked for — `(fx-target-samples t)` says which — or refuses, having
+allocated nothing. What a resolve gives along a silhouette is up to the
+implementation (some blend of the pixel's samples, not the nearest
+surface), so normals, materials and depth can disagree on an edge; and a
+depth texture is sampled only after drawing has moved to another target.
+The depth texture comes with `fx-target-mrt!`; `gl-target-mrt!` called
+directly makes one only when given a depth slot.
 `(fx-read-target! t base)` copies a whole target back into staging
 memory at `base` (`w*h*4` RGBA8 bytes from `fx-alloc!`); like
 `fx-bind-target!` it leaves the framebuffer bound, and on a

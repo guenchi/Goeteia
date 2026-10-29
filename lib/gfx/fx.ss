@@ -49,7 +49,8 @@
           fx-mesh! fx-mesh? fx-mesh-use! fx-mesh-draw! fx-mesh-count
           fx-width fx-height
           fx-target! fx-target-hdr! fx-target-msaa! fx-resolve!
-          fx-target-mrt! fx-mrt-texture
+          fx-target-mrt! fx-target-mrt-msaa! fx-mrt-texture
+          fx-target-depth-texture fx-target-samples
           fx-cube-target! fx-bind-cube-face!
           fx-target? fx-target-texture
           fx-target-width fx-target-height
@@ -234,20 +235,30 @@
         (cmd-draw-elements! GL-TRIANGLES (fx-mesh-count h))))
 
   ;; ---- offscreen render targets (webgl2) ----
+  ;; rfb: a multisampled target's resolve framebuffer, or #f; depth: the
+  ;; slot of a depth texture a later pass can sample, or #f; samples: the
+  ;; count an fx-target-mrt-msaa! target was made with, #f for every other
+  ;; target; kind: plain, msaa or mrt-msaa, which is what fx-resolve!
+  ;; dispatches on; colours: the colour attachments
   (define-record-type (fx-target $make-fx-target fx-target?)
     (fields (immutable fb $fx-target-fb)
             (immutable tex fx-target-texture)  ; sample it like any texture
             (immutable w fx-target-width)
             (immutable h fx-target-height)
-            (immutable rfb $fx-target-rfb)))   ; msaa resolve fb, or #f
+            (immutable rfb $fx-target-rfb)
+            (immutable depth fx-target-depth-texture)
+            (immutable samples fx-target-samples)
+            (immutable kind $fx-target-kind)
+            (immutable colours $fx-target-colours)))
 
   (define (fx-target! w h . depth-only?)
     (let* ((fb (fx-slot!))
            (tex (fx-slot!)))
       (if (and (pair? depth-only?) (car depth-only?))
-          (gl-target! fb tex w h #t)
-          (gl-target! fb tex w h))
-      ($make-fx-target fb tex w h #f)))
+          (begin (gl-target! fb tex w h #t)
+                 ($make-fx-target fb tex w h #f tex #f 'plain 0))
+          (begin (gl-target! fb tex w h)
+                 ($make-fx-target fb tex w h #f #f #f 'plain 1)))))
 
   ;; a half-float target: values past 1.0 survive for bloom and
   ;; tonemapping (WebGL 2 + EXT_color_buffer_float)
@@ -255,19 +266,22 @@
     (let* ((fb (fx-slot!))
            (tex (fx-slot!)))
       (gl-target-hdr! fb tex w h)
-      ($make-fx-target fb tex w h #f)))
+      ($make-fx-target fb tex w h #f #f #f 'plain 1)))
 
   ;; a multi render target: n half-float attachments behind one
   ;; framebuffer -- the G-buffer of deferred shading.  A fragment
   ;; shader with (out 0 ...) (out 1 ...) forms (fx-program3!) fills
   ;; every attachment in one pass; (fx-mrt-texture t i) is the
-  ;; texture that caught output i
+  ;; texture that caught output i, and (fx-target-depth-texture t) the
+  ;; DEPTH_COMPONENT24 texture holding its depth, sampleable once drawing
+  ;; has moved to another target
   (define (fx-target-mrt! n w h)
     (let* ((fb (fx-slot!))
            (t0 (fx-slot!)))
       (let eat ((k 1)) (when (< k n) (fx-slot!) (eat (+ k 1))))
-      (gl-target-mrt! fb t0 n w h)
-      ($make-fx-target fb t0 w h #f)))
+      (let ((d (fx-slot!)))
+        (gl-target-mrt! fb t0 n w h d)
+        ($make-fx-target fb t0 w h #f d #f 'plain n))))
   (define (fx-mrt-texture t i) (+ (fx-target-texture t) i))
 
   ;; a cube target: six faces around a point.  Bind face i, render
@@ -278,7 +292,7 @@
       (let eat ((k 1)) (when (< k 6) (fx-slot!) (eat (+ k 1))))
       (let ((tex (fx-slot!)))
         (gl-cube-target! fb tex dim)
-        ($make-fx-target fb tex dim dim #f))))
+        ($make-fx-target fb tex dim dim #f #f #f 'plain 1))))
   (define (fx-bind-cube-face! t i)
     (cmd-bind-target! (+ ($fx-target-fb t) i))
     (cmd-viewport! 0 0 (fx-target-width t) (fx-target-height t)))
@@ -290,13 +304,46 @@
            (rfb (fx-slot!))
            (tex (fx-slot!)))
       (gl-target-msaa! fb rfb tex w h samples)
-      ($make-fx-target fb tex w h rfb)))
+      ($make-fx-target fb tex w h rfb #f #f 'msaa 1)))
 
+  ;; an antialiased G-buffer: fx-target-mrt!'s n RGBA16F outputs and its
+  ;; sampleable depth, rendered multisampled.  Draw into it as into any
+  ;; target, then (fx-resolve! t) before sampling (fx-mrt-texture t i) or
+  ;; (fx-target-depth-texture t).  It needs WebGL2 and
+  ;; EXT_color_buffer_float or EXT_color_buffer_half_float, and uses the
+  ;; largest sample count both RGBA16F and DEPTH_COMPONENT24 offer that
+  ;; does not exceed `samples` -- fewer than asked is possible, and
+  ;; (fx-target-samples t) says how many.  When it cannot make the target
+  ;; it refuses and says why, and has allocated nothing.
+  ;;
+  ;; What a resolve gives at a silhouette is up to the implementation: a
+  ;; resolved colour or depth there is some blend of the pixel's samples,
+  ;; not the nearest surface, so normals, materials and depth may disagree
+  ;; along an edge.  A consumer that reads them together checks its own
+  ;; edges.
+  (define (fx-target-mrt-msaa! n w h samples)
+    (let* ((fb (fx-slot!))
+           (rfb (fx-slot!))
+           (t0 (fx-slot!)))
+      (let eat ((k 1)) (when (< k n) (fx-slot!) (eat (+ k 1))))
+      (let* ((d (fx-slot!))
+             (made (gl-target-mrt-msaa! fb rfb t0 n d w h samples)))
+        (if (string? made)
+            (error 'fx-target-mrt-msaa! made)
+            ($make-fx-target fb t0 w h rfb d made 'mrt-msaa n)))))
+
+  ;; a single-colour multisampled target resolves its colour; an
+  ;; fx-target-mrt-msaa! target resolves every attachment and its depth
   (define (fx-resolve! t)
-    (unless ($fx-target-rfb t)
-      (error 'fx-resolve! "not a multisampled target"))
-    (cmd-resolve! ($fx-target-fb t) ($fx-target-rfb t)
-                  (fx-target-width t) (fx-target-height t)))
+    (case ($fx-target-kind t)
+      ((msaa)
+       (cmd-resolve! ($fx-target-fb t) ($fx-target-rfb t)
+                     (fx-target-width t) (fx-target-height t)))
+      ((mrt-msaa)
+       (cmd-resolve-mrt! ($fx-target-fb t) ($fx-target-rfb t)
+                         ($fx-target-colours t)
+                         (fx-target-width t) (fx-target-height t)))
+      (else (error 'fx-resolve! "not a multisampled target"))))
 
   ;; the whole image of a target, back in the staging memory: w*h*4
   ;; RGBA8 bytes at `base` (allocate it with fx-alloc!), readable with

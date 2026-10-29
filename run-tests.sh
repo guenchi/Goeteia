@@ -625,6 +625,9 @@ run_mjs test/srgb-transfer-on-gpu.mjs
 # the library's shaders never shows.
 run_mjs test/tonemap-curves-on-gpu.mjs
 run_mjs test/gltf-unapplied-maps-are-documented.mjs
+# The multisampled multi render target resolves to what a raw-WebGL2
+# resolve gives in the same context, on two GL implementations.
+run_mjs test/mrt-msaa-on-gpu.mjs
 # An if with more than three parts or fewer than two is refused at
 # compile time, on both compilers and both targets.
 run_mjs test/if-arity-is-checked.mjs

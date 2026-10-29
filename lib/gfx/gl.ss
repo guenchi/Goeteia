@@ -46,8 +46,9 @@
           gl-texture! gl-texture-upload! gl-texture-data! gl-cubemap!
           gl-cubemap-empty! gl-cube-face-fb! gl-slot-object!
           gl-target! gl-target-hdr! gl-target-msaa! gl-cube-target!
-          gl-target-mrt!
-          cmd-bind-target! cmd-bind-canvas! cmd-resolve! cmd-read-pixels!
+          gl-target-mrt! gl-target-mrt-msaa!
+          cmd-bind-target! cmd-bind-canvas! cmd-resolve! cmd-resolve-mrt!
+          cmd-read-pixels!
           cmd-region! cmd-begin! cmd-flush! cmd-pos cmd-draws
           cmd-clear! cmd-use-program! cmd-bind-buffer! cmd-buffer-data!
           cmd-vertex-attrib! cmd-vertex-attrib-h!
@@ -87,7 +88,8 @@
   (define replayer-src
     (string-append
      "globalThis.__goeteia_gl = (canvas, memory) => {"
-     " const gl = canvas.getContext('webgl2') || canvas.getContext('webgl');"
+     " const gl2 = canvas.getContext('webgl2');"
+     " const gl = gl2 || canvas.getContext('webgl');"
      " if (gl.getExtension) gl.getExtension('EXT_color_buffer_float');"
      " const slots = [];"
      " const compile = (kind, src) => {"
@@ -223,7 +225,7 @@
      "    }"
      "    gl.bindFramebuffer(gl.FRAMEBUFFER, null);"
      "    slots[slot] = fb; },"
-     "  targetMrt(slot, tslot0, n, w, h) {"
+     "  targetMrt(slot, tslot0, n, w, h, dslot) {"
      "    const fb = gl.createFramebuffer();"
      "    gl.bindFramebuffer(gl.FRAMEBUFFER, fb);"
      "    const bufs = [];"
@@ -241,11 +243,26 @@
      "      bufs.push(gl.COLOR_ATTACHMENT0 + i);"
      "      slots[tslot0 + i] = t;"
      "    }"
-     "    const rb = gl.createRenderbuffer();"
-     "    gl.bindRenderbuffer(gl.RENDERBUFFER, rb);"
-     "    gl.renderbufferStorage(gl.RENDERBUFFER, gl.DEPTH_COMPONENT16, w, h);"
-     "    gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT,"
-     "                               gl.RENDERBUFFER, rb);"
+     "    if (dslot >= 0) {"
+     "      const dt = gl.createTexture();"
+     "      gl.bindTexture(gl.TEXTURE_2D, dt);"
+     "      gl.texImage2D(gl.TEXTURE_2D, 0, gl.DEPTH_COMPONENT24, w, h, 0,"
+     "                    gl.DEPTH_COMPONENT, gl.UNSIGNED_INT, null);"
+     "      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);"
+     "      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);"
+     "      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);"
+     "      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);"
+     "      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_COMPARE_MODE, gl.NONE);"
+     "      gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT,"
+     "                              gl.TEXTURE_2D, dt, 0);"
+     "      slots[dslot] = dt;"
+     "    } else {"
+     "      const rb = gl.createRenderbuffer();"
+     "      gl.bindRenderbuffer(gl.RENDERBUFFER, rb);"
+     "      gl.renderbufferStorage(gl.RENDERBUFFER, gl.DEPTH_COMPONENT16, w, h);"
+     "      gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT,"
+     "                                 gl.RENDERBUFFER, rb);"
+     "    }"
      "    gl.drawBuffers(bufs);"
      "    gl.bindFramebuffer(gl.FRAMEBUFFER, null);"
      "    slots[slot] = fb; },"
@@ -298,6 +315,91 @@
      "      slots[slot + i] = fb;"
      "    }"
      "    gl.bindFramebuffer(gl.FRAMEBUFFER, null); },"
+     "  targetMrtMsaa(slot, rslot, tslot0, n, dslot, w, h, samples) {"
+     "    if (!gl2) return 'needs a WebGL2 context, and this one is WebGL1';"
+     "    if (!(n >= 1) || !(w >= 1) || !(h >= 1) || !(samples >= 1))"
+     "      return 'n, w, h and samples must each be at least 1';"
+     "    if (!gl.getExtension('EXT_color_buffer_float') &&"
+     "        !gl.getExtension('EXT_color_buffer_half_float'))"
+     "      return 'rendering RGBA16F needs EXT_color_buffer_float or'"
+     "        + ' EXT_color_buffer_half_float, and the context has neither';"
+     "    const maxDraw = gl.getParameter(gl.MAX_DRAW_BUFFERS);"
+     "    const maxAtt = gl.getParameter(gl.MAX_COLOR_ATTACHMENTS);"
+     "    if (n > maxDraw || n > maxAtt)"
+     "      return n + ' attachments: MAX_DRAW_BUFFERS is ' + maxDraw"
+     "        + ' and MAX_COLOR_ATTACHMENTS ' + maxAtt;"
+     "    const maxRb = gl.getParameter(gl.MAX_RENDERBUFFER_SIZE);"
+     "    const maxTex = gl.getParameter(gl.MAX_TEXTURE_SIZE);"
+     "    if (w > maxRb || h > maxRb || w > maxTex || h > maxTex)"
+     "      return w + 'x' + h + ': MAX_RENDERBUFFER_SIZE is ' + maxRb"
+     "        + ' and MAX_TEXTURE_SIZE ' + maxTex;"
+     "    const cl = Array.from(gl.getInternalformatParameter("
+     "      gl.RENDERBUFFER, gl.RGBA16F, gl.SAMPLES) || []);"
+     "    const dl = Array.from(gl.getInternalformatParameter("
+     "      gl.RENDERBUFFER, gl.DEPTH_COMPONENT24, gl.SAMPLES) || []);"
+     "    let s = 0;"
+     "    for (const c of cl) if (c <= samples && c > s && dl.indexOf(c) >= 0) s = c;"
+     "    if (!s)"
+     "      return 'no sample count up to ' + samples + ' is offered both by'"
+     "        + ' RGBA16F [' + cl + '] and by DEPTH_COMPONENT24 [' + dl + ']';"
+     "    const made = [];"
+     "    const undo = why => {"
+     "      gl.bindFramebuffer(gl.FRAMEBUFFER, null);"
+     "      for (const [kind, o] of made)"
+     "        if (kind === 'fb') gl.deleteFramebuffer(o);"
+     "        else if (kind === 'rb') gl.deleteRenderbuffer(o);"
+     "        else gl.deleteTexture(o);"
+     "      return why; };"
+     "    const complete = which => {"
+     "      const st = gl.checkFramebufferStatus(gl.FRAMEBUFFER);"
+     "      return st === gl.FRAMEBUFFER_COMPLETE ? null"
+     "        : 'the ' + which + ' framebuffer is not complete (status ' + st + ')'; };"
+     "    const tex = (ifmt, fmt, type) => {"
+     "      const t = gl.createTexture(); made.push(['tex', t]);"
+     "      gl.bindTexture(gl.TEXTURE_2D, t);"
+     "      gl.texImage2D(gl.TEXTURE_2D, 0, ifmt, w, h, 0, fmt, type, null);"
+     "      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);"
+     "      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);"
+     "      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);"
+     "      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);"
+     "      return t; };"
+     "    const bufs = [];"
+     "    for (let i = 0; i < n; i++) bufs.push(gl.COLOR_ATTACHMENT0 + i);"
+     "    const rf = gl.createFramebuffer(); made.push(['fb', rf]);"
+     "    gl.bindFramebuffer(gl.FRAMEBUFFER, rf);"
+     "    const colour = [];"
+     "    for (let i = 0; i < n; i++) {"
+     "      const t = tex(gl.RGBA16F, gl.RGBA, gl.HALF_FLOAT);"
+     "      gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0 + i,"
+     "                              gl.TEXTURE_2D, t, 0);"
+     "      colour.push(t);"
+     "    }"
+     "    const dt = tex(gl.DEPTH_COMPONENT24, gl.DEPTH_COMPONENT, gl.UNSIGNED_INT);"
+     "    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_COMPARE_MODE, gl.NONE);"
+     "    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT,"
+     "                            gl.TEXTURE_2D, dt, 0);"
+     "    gl.drawBuffers(bufs);"
+     "    const r1 = complete('resolve');"
+     "    if (r1) return undo(r1);"
+     "    const fb = gl.createFramebuffer(); made.push(['fb', fb]);"
+     "    gl.bindFramebuffer(gl.FRAMEBUFFER, fb);"
+     "    const rb = fmt => {"
+     "      const r = gl.createRenderbuffer(); made.push(['rb', r]);"
+     "      gl.bindRenderbuffer(gl.RENDERBUFFER, r);"
+     "      gl.renderbufferStorageMultisample(gl.RENDERBUFFER, s, fmt, w, h);"
+     "      return r; };"
+     "    for (let i = 0; i < n; i++)"
+     "      gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0 + i,"
+     "                                 gl.RENDERBUFFER, rb(gl.RGBA16F));"
+     "    gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT,"
+     "                               gl.RENDERBUFFER, rb(gl.DEPTH_COMPONENT24));"
+     "    gl.drawBuffers(bufs);"
+     "    const r2 = complete('multisampled');"
+     "    if (r2) return undo(r2);"
+     "    gl.bindFramebuffer(gl.FRAMEBUFFER, null);"
+     "    slots[slot] = fb; slots[rslot] = rf; slots[dslot] = dt;"
+     "    for (let i = 0; i < n; i++) slots[tslot0 + i] = colour[i];"
+     "    return String(s); },"
      "  targetMsaa(slot, rslot, tslot, w, h, samples) {"
      "    const t = gl.createTexture();"
      "    gl.bindTexture(gl.TEXTURE_2D, t);"
@@ -518,6 +620,26 @@
      "                                 gl.COLOR_BUFFER_BIT, gl.NEAREST);"
      "              gl.bindFramebuffer(gl.FRAMEBUFFER, null);"
      "              p += 4; break;"
+     "     case 51: { const n = u[p+2], w = u[p+3], h = u[p+4];"
+     "              gl.bindFramebuffer(gl.READ_FRAMEBUFFER, slots[u[p]]);"
+     "              gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, slots[u[p+1]]);"
+     "              const all = [];"
+     "              for (let i = 0; i < n; i++) {"
+     "                const one = [];"
+     "                for (let j = 0; j < n; j++)"
+     "                  one.push(j === i ? gl.COLOR_ATTACHMENT0 + j : gl.NONE);"
+     "                gl.readBuffer(gl.COLOR_ATTACHMENT0 + i);"
+     "                gl.drawBuffers(one);"
+     "                gl.blitFramebuffer(0, 0, w, h, 0, 0, w, h,"
+     "                                   gl.COLOR_BUFFER_BIT, gl.NEAREST);"
+     "                all.push(gl.COLOR_ATTACHMENT0 + i);"
+     "              }"
+     "              gl.blitFramebuffer(0, 0, w, h, 0, 0, w, h,"
+     "                                 gl.DEPTH_BUFFER_BIT, gl.NEAREST);"
+     "              gl.drawBuffers(all);"
+     "              gl.readBuffer(gl.COLOR_ATTACHMENT0);"
+     "              gl.bindFramebuffer(gl.FRAMEBUFFER, null);"
+     "              p += 5; break; }"
      "     case 43: gl.readPixels(u[p], u[p+1], u[p+2], u[p+3], gl.RGBA,"
      "                gl.UNSIGNED_BYTE,"
      "                new Uint8Array(memory.buffer, u[p+4],"
@@ -571,17 +693,41 @@
     (js-method $gl "target" slot tslot w h 2))
   ;; a multi render target (webgl2 drawBuffers): one framebuffer in
   ;; `slot` with n half-float color attachments in slots tslot0..
-  ;; tslot0+n-1 plus a depth renderbuffer -- a shader with (out ...)
+  ;; tslot0+n-1 plus a depth attachment -- a shader with (out ...)
   ;; forms writes them all in one pass.  Filters are NEAREST: a
   ;; G-buffer is read back pixel for pixel, and half-float LINEAR
-  ;; would need one more extension for nothing
-  (define (gl-target-mrt! slot tslot0 n w h)
-    (js-method $gl "targetMrt" slot tslot0 n w h))
+  ;; would need one more extension for nothing.  Given a depth slot
+  ;; dslot, the depth is a DEPTH_COMPONENT24 texture there, which a
+  ;; later pass can sample (NEAREST, compare mode off, the depth in .r);
+  ;; without one it is a 16-bit renderbuffer, as it always was
+  (define (gl-target-mrt! slot tslot0 n w h . dslot)
+    (js-method $gl "targetMrt" slot tslot0 n w h
+               (if (pair? dslot) (car dslot) -1)))
   ;; six half-float faces around a point: slots slot..slot+5 become
   ;; framebuffers (one per face, sharing a depth renderbuffer) and
   ;; tslot the cube map they render into -- point-light shadows
   (define (gl-cube-target! slot tslot dim)
     (js-method $gl "cubeTarget" slot tslot dim))
+  ;; a multisampled multi render target (webgl2): render into `slot`,
+  ;; n RGBA16F renderbuffers and a DEPTH_COMPONENT24 one; then
+  ;; cmd-resolve-mrt! blits them into `rslot`, whose textures are
+  ;; tslot0..tslot0+n-1 and, for the depth, dslot (as gl-target-mrt!'s
+  ;; with a depth slot).
+  ;;
+  ;; The sample count is the largest one that RGBA16F and
+  ;; DEPTH_COMPONENT24 renderbuffers both offer and that does not exceed
+  ;; `samples` -- the attachments of one framebuffer have to agree.  The
+  ;; answer is that count, or, when nothing could be made, a string
+  ;; saying why: a WebGL1 context, neither EXT_color_buffer_float nor
+  ;; EXT_color_buffer_half_float, n, w, h or samples out of range or past
+  ;; the context's limits, no common count, or a framebuffer that is not
+  ;; complete.  Every refusal leaves nothing behind: the checks run before
+  ;; anything is allocated, and a framebuffer found incomplete is deleted
+  ;; with everything made for it.
+  (define (gl-target-mrt-msaa! slot rslot tslot0 n dslot w h samples)
+    (let ((answer (js->string (js-method $gl "targetMrtMsaa" slot rslot
+                                         tslot0 n dslot w h samples))))
+      (or (string->number answer) answer)))
   ;; a multisampled target: render into `slot`, then cmd-resolve!
   ;; blits it into `rslot`, whose texture `tslot` is what you sample
   (define (gl-target-msaa! slot rslot tslot w h samples)
@@ -856,6 +1002,17 @@
     ($draw!) (u! 18) (u! mode) (u! count))
   ;; render into an offscreen target, or back to the canvas
   (define (cmd-bind-target! slot) (u! 20) (u! slot))
+  ;; resolve a gl-target-mrt-msaa! target, in one command so nothing
+  ;; can fall between its parts.  For each attachment i: readBuffer
+  ;; COLOR_ATTACHMENTi, drawBuffers with that attachment at position i and
+  ;; NONE elsewhere (a blit writes every draw buffer that is not NONE), and
+  ;; a NEAREST colour blit; then one NEAREST depth blit, the only filter
+  ;; WebGL2 allows for depth.  The resolve framebuffer's drawBuffers and
+  ;; the read framebuffer's readBuffer are restored while each is still
+  ;; bound, and the canvas is bound last, as cmd-resolve! leaves it.  The
+  ;; viewport is not touched, and scissoring is assumed off.
+  (define (cmd-resolve-mrt! slot rslot n w h)
+    (u! 51) (u! slot) (u! rslot) (u! n) (u! w) (u! h))
   (define (cmd-resolve! slot rslot w h)  ; blit msaa -> its resolve fb
     (u! 26) (u! slot) (u! rslot) (u! w) (u! h))
   (define (cmd-bind-canvas!) (u! 21))
