@@ -1906,6 +1906,44 @@ func -> boolean -> void
 Enable or disable the depth test.
 
 ```
+procedure: (cmd-depth-func! f)
+
+func -> symbol -> void
+```
+The depth comparison: one of `'never` `'less` `'equal` `'lequal`
+`'greater` `'notequal` `'gequal` `'always`.
+
+```
+procedure: (cmd-polygon-offset! factor units)
+
+func -> number -> number -> void
+```
+Turn the polygon offset on with that factor and units; both zero turns it
+off. Exact numbers are accepted; a value that is not a finite real number
+within f32 range is refused.
+
+```
+procedure: (cmd-color-mask! r g b a)
+
+func -> any -> any -> any -> any -> void
+```
+The colour write mask, one Scheme truth value per channel: only `#f`
+masks a channel off.
+
+```
+procedure: (cmd-cull-face! m)
+
+func -> symbol -> void
+```
+Face culling: `'off`, or `'back` `'front` `'front-and-back` to cull that
+face. `'off` is a name, so `#f` is refused like any other unknown name.
+
+Like the other state commands these apply to the draws that follow them
+in the stream, whenever and however often it is replayed, not at the
+moment of the call. A name or number one of them does not accept is
+refused when the command is encoded, before any word of it is written.
+
+```
 procedure: (cmd-blend! mode)
 
 func -> symbol -> void
@@ -1947,7 +1985,7 @@ Render a list of GLSL forms to a GLSL source string.
 => "attribute vec2 p; void main() { gl_Position = vec4(p, 0.0, 1.0); gl_PointSize = 2.0; } "
 ```
 
-Top-level forms: `attribute`/`uniform`/`varying`, `precision`, and `define` for functions. Statements: `local`, `set!`, `return`, `if`/`if-else`, `discard`. Expressions: `+ - * /` are infix, comparisons `< > <= >= ==`, anything else is a call; symbols pass through verbatim, so swizzles like `p.x` just work. Float literals use the whole-plus-hundredths convention—`(fl 2)` → `2.0`, `(fl 0 50)` → `0.5`, `(fl 1 25)` → `1.25`—so no Scheme flonum (and no printer noise) ever reaches the source.
+Top-level forms: `attribute`/`uniform`/`varying`, `precision`, `(const T name expr)`, and `define` for functions, whose parameters are `(T arg)` or, qualified, `(in T arg)` / `(out T arg)` / `(inout T arg)`. Statements: `local`, `set!`, `return`, `if`/`if-else`, `discard`, and the loop exits `(break)` and `(continue)`. Expressions: `+ - * /` are infix, comparisons `< > <= >= ==`, anything else is a call; symbols pass through verbatim, so swizzles like `p.x` just work. Float literals use the whole-plus-hundredths convention—`(fl 2)` → `2.0`, `(fl 0 50)` → `0.5`, `(fl 1 25)` → `1.25`—so no Scheme flonum (and no printer noise) ever reaches the source.
 
 #### More glsl: loops, arrays, and interface extraction
 
@@ -1959,6 +1997,11 @@ sweeps (PCF shadows, blurs) need:
   (set! acc (+ acc (texture2D u_src (+ uv (* i step))))))
 => "for (int i = 0; (i < 3); i = (i + 1)) { ... } "
 ```
+
+`(break)` and `(continue)` belong inside a `for` of the same function, as
+GLSL requires: `glsl->string` (and `glsl-check`) refuses one outside a
+loop, or one with anything after it, at the form rather than in a shader
+that silently fails to compile.
 
 Array uniforms declare a size — `(uniform (array mat4 32) u_joints)` —
 and `(at u_joints i)` indexes them, for skinning.
