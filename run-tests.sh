@@ -638,6 +638,12 @@ run_mjs test/generated-let-is-not-captured.mjs
 # leaves main and the code section small, dead ones are not built, and
 # one reachable only through an export is, on both targets.
 run_mjs test/large-literal-stays-out-of-main.mjs
+# The self-hosted compiler reads and compiles long quoted lists in
+# constant stack, to wasm and to JS, and the values come out in order.
+run_mjs test/long-lists-are-read.mjs
+# An only, except or rename naming what its import set does not
+# provide is refused, in a program's import and a library's.
+run_mjs test/import-sets-name-only-what-is-there.mjs
 # The first check that judges a shader by what it PUTS ON THE SCREEN
 # rather than by whether it compiles.  Stands down loudly without a
 # browser, like the one above.

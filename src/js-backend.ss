@@ -169,20 +169,24 @@
             (loop (cdr ts) (cons (car ts) (cons sep acc)))))))
 
 (define (jbytes tree)
-  ;; tree: string | list of trees -> byte list
-  (let ((acc '()))
-    (let walk ((t tree))
-      (cond
-       ((null? t) #f)
-       ((pair? t) (walk (car t)) (walk (cdr t)))
-       ((string? t)
-        (let ((n (string-length t)))
-          (let loop ((i 0))
-            (when (< i n)
-              (set! acc (cons (char->integer (string-ref t i)) acc))
-              (loop (+ i 1))))))
-       (else #f)))
-    (jsquash (reverse acc))))
+  ;; tree: string | list of trees -> byte list.  Walked with a worklist,
+  ;; as the wasm side's flatten is: a text tree can nest as deep as the
+  ;; program is long -- the symbol registry nests one level for each
+  ;; interned symbol -- and one frame per level ran the self-hosted
+  ;; compiler out of stack.
+  (let walk ((stack (list tree)) (acc '()))
+    (if (null? stack)
+        (jsquash (reverse acc))
+        (let ((t (car stack)) (rest (cdr stack)))
+          (cond
+           ((pair? t) (walk (cons (car t) (cons (cdr t) rest)) acc))
+           ((string? t)
+            (let ((n (string-length t)))
+              (let loop ((i 0) (acc acc))
+                (if (< i n)
+                    (loop (+ i 1) (cons (char->integer (string-ref t i)) acc))
+                    (walk rest acc)))))
+           (else (walk rest acc)))))))
 
 ;; The emitters parenthesize defensively, so `((x))` is systematic.
 ;; One text pass deletes a paren pair whose matching pair sits
@@ -1521,18 +1525,19 @@
                        ";\n")))
              (reverse *jconsts*)))
            ;; the interned-symbol registry: a fresh list per call, in
-           ;; interning order, mirroring the wasm registry function
+           ;; interning order, mirroring the wasm registry function.  It
+           ;; is built by L2 from a flat array: written as nested pair
+           ;; literals it nested one level per symbol, and a module with
+           ;; tens of thousands of symbols failed to load, its text too
+           ;; deep for the JS parser.
            (rsyms-text
-            (list "const RSYMS=()=>("
-                  (fold-left (lambda (acc e)
-                               (if (eq? (caar e) 'sym)
-                                   (list "{t:\"pair\",a:C"
-                                         (jb28 (cdr e)) ",d:"
-                                         acc "}")
-                                   acc))
-                             "NIL"
-                             *jconsts*)
-                  ");\n"))
+            (list "const RSYMS=()=>(L2(["
+                  (jsep ","
+                        (map-in-order
+                         (lambda (e) (list "C" (jb28 (cdr e))))
+                         (filter (lambda (e) (eq? (caar e) 'sym))
+                                 (reverse *jconsts*))))
+                  "]));\n"))
            (var-decl
             (if (null? *vars*)
                 '()

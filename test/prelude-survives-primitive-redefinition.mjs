@@ -18,6 +18,16 @@
 // not to exercise them, which is why the row is "prints 1" and not
 // "the prelude's calls resolve to the prelude": the second is what the
 // fix establishes, the first is what a program can observe.
+//
+// THE IMPORT CLAUSE depends on the name.  An except may name only what
+// (rnrs) provides (R6RS 7.1; the compiler refuses the rest), so a name
+// (rnrs) exports is excluded and then defined, and a compiler internal --
+// the %-names, which (rnrs) does not export -- is simply defined, with
+// (rnrs) imported whole: a name that is not imported may be defined.  The
+// rule is by spelling, and it is checked both ways by what the compiler
+// answers: an internal without a % would be refused in the except, and a
+// %-name (rnrs) came to export would be refused as a definition of an
+// imported name, so either change turns its row red rather than passing.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
@@ -45,7 +55,8 @@ function answerAfterRedefining(name) {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'goeteia-prim-'));
     const ss = path.join(dir, 'p.ss');
     const wasm = path.join(dir, 'p.wasm');
-    fs.writeFileSync(ss, `(import (except (rnrs) ${name}))\n(define (${name} . args) ${body})\n(display 1)\n`);
+    const clause = name.startsWith('%') ? '(rnrs)' : `(except (rnrs) ${name})`;
+    fs.writeFileSync(ss, `(import ${clause})\n(define (${name} . args) ${body})\n(display 1)\n`);
     const c = spawnSync(path.join(root, 'bin/goeteiac'), [ss, wasm], { encoding: 'utf8', timeout: 120000 });
     if (!fs.existsSync(wasm)) { fs.rmSync(dir, { recursive: true, force: true }); return `COMPILE-ERR: ${(c.stderr || '').trim().split('\n').pop()}`; }
     const r = spawnSync('node', [path.join(root, 'rt/run.mjs'), wasm], { encoding: 'utf8', timeout: 20000 });

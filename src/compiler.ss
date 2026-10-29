@@ -51,16 +51,33 @@
       (let* ((h (f (car l1) (car l2)))
              (t (map2* f (cdr l1) (cdr l2))))
         (cons h t))))
-;; stable ascending insertion sort keyed by a numeric projection
+;; Ascending sort keyed by a numeric projection: a merge sort, whose
+;; recursion is as deep as the list's length is long in binary digits
+;; and whose merge iterates.  It replaced an insertion sort that
+;; recursed once per element both ways and took time quadratic in the
+;; length, and a program with 20,000 strings and symbols in its
+;; literals interns 20,000 constants that are sorted here.
+;;
+;; Elements whose keys are equal come out in the reverse of their
+;; order in ls, which is what the insertion sort did: the list is
+;; reversed, then sorted stably.  Every caller's keys are distinct
+;; today, so this only keeps the answer the same if one ever is not.
 (define (sort-by key ls)
-  (if (null? ls)
-      '()
-      (insert-by key (car ls) (sort-by key (cdr ls)))))
-(define (insert-by key x ls)
-  (cond
-   ((null? ls) (list x))
-   ((< (key x) (key (car ls))) (cons x ls))
-   (else (cons (car ls) (insert-by key x (cdr ls))))))
+  (define (merge a b)
+    (let loop ((a a) (b b) (acc '()))
+      (cond
+       ((null? a) (append-reverse acc b))
+       ((null? b) (append-reverse acc a))
+       ((< (key (car b)) (key (car a))) (loop a (cdr b) (cons (car b) acc)))
+       (else (loop (cdr a) b (cons (car a) acc))))))
+  ;; the first n elements of l, sorted
+  (define (sort l n)
+    (if (< n 2)
+        (if (= n 1) (list (car l)) '())
+        (let ((h (quotient n 2)))
+          (merge (sort l h) (sort (list-tail l h) (- n h))))))
+  (let ((r (reverse ls)))
+    (sort r (length r))))
 (define (self-id x) x)
 ;; R6RS map may process elements in any order; codegen effects
 ;; (function indices, interned literals) need source order
@@ -361,7 +378,15 @@
 (define (strip-marks x)
   (cond
    ((symbol? x) (unmark x))
-   ((pair? x) (cons (strip-marks (car x)) (strip-marks (cdr x))))
+   ;; Along the cdr by iteration, recurring only into the cars: a
+   ;; quoted list is as long as the program makes it, and one frame per
+   ;; element ran the self-hosted compiler out of stack.
+   ((pair? x)
+    (let spine ((l x) (rev '()))
+      (if (pair? l)
+          (spine (cdr l) (cons (strip-marks (car l)) rev))
+          (let onto ((r rev) (acc (strip-marks l)))
+            (if (null? r) acc (onto (cdr r) (cons (car r) acc)))))))
    (else x)))
 (define (rename-introduced s)
   (let ((e (assq s *renames*)))
@@ -2433,16 +2458,37 @@
            (list spelling (if kw 'keyword 'variable) (cdr id) id)))
        (merge-import-bindings specs)))
 
+;; R6RS 7.1: every identifier an only, an except or a rename names must
+;; be in the set it applies to, and naming one that is not is a syntax
+;; violation.  Ignored, it let a misspelt except remove nothing and say
+;; nothing, and an only naming a missing identifier import less than it
+;; appeared to.  The set is the one this level applies to, after every
+;; inner level, so only naming what an inner except removed, or except
+;; naming the unprefixed spelling of what an inner prefix renamed, is
+;; refused as well.
+(define (import-set-provides! tag base names)
+  (for-each
+   (lambda (n)
+     (unless (assq n base)
+       (errorf 'goeteia
+               (string-append "(" (symbol->string tag)
+                              " ...) names an identifier its import set"
+                              " does not provide:")
+               n)))
+   names))
+
 (define (import-spec-bindings spec)
   (let ((tag (and (pair? spec) (symbol? (car spec)) (unmark (car spec)))))
     (case tag
       ((except)
        (let ((base (import-spec-bindings (cadr spec)))
              (drop (map unmark (cddr spec))))
+         (import-set-provides! 'except base drop)
          (filter (lambda (b) (not (memq (car b) drop))) base)))
       ((only)
        (let ((base (import-spec-bindings (cadr spec)))
              (keep (map unmark (cddr spec))))
+         (import-set-provides! 'only base keep)
          (filter (lambda (b) (memq (car b) keep)) base)))
       ((rename)
        ;; the original is freed and the alias is bound, which is why
@@ -2451,6 +2497,7 @@
               (pairs (map (lambda (pr) (cons (unmark (car pr)) (unmark (cadr pr))))
                           (cddr spec)))
               (olds (map car pairs)))
+         (import-set-provides! 'rename base olds)
          (fold-left (lambda (acc pr)
                       (let ((e (assq (car pr) base)))
                         (if e (cons (cons (cdr pr) (cdr e)) acc) acc)))
