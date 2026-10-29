@@ -313,9 +313,12 @@ Both points are damped at one rate, and that is what holds the heading steady: t
 - `fx-target!` — an offscreen render target of a given size, or a depth-only one; its texture samples like any other
 - `fx-target-hdr!` — a half-float target, so values past 1.0 survive for bloom and tonemapping; needs WebGL 2 with EXT_color_buffer_float
 - `fx-target-msaa!` — a multisampled target: render into it as usual, then fx-resolve! before sampling its texture
-- `fx-resolve!` — blits a multisampled target into the texture that can be sampled; passes rendered after this call are not in it until it is called again
-- `fx-target-mrt!` — a target with several colour attachments written in one pass; fx-mrt-texture says which texture caught which output
+- `fx-resolve!` — blits a multisampled target into the texture that can be sampled; passes rendered after this call are not in it until it is called again. An fx-target-mrt-msaa! target resolves every colour attachment and its depth
+- `fx-target-mrt!` — a target with several colour attachments written in one pass; fx-mrt-texture says which texture caught which output, and fx-target-depth-texture where its 24-bit depth is, sampleable once drawing has moved to another target
+- `fx-target-mrt-msaa!` — fx-target-mrt!, multisampled: an antialiased G-buffer whose depth can be sampled after fx-resolve!. Needs WebGL 2 with EXT_color_buffer_float or EXT_color_buffer_half_float; uses the largest sample count RGBA16F and 24-bit depth both offer up to the one asked for, and refuses, allocating nothing, when there is none
 - `fx-mrt-texture` — the texture that caught output i of a multiple-render-target
+- `fx-target-depth-texture` — the depth texture of a target that has one to sample (a multiple-render-target, single- or multisampled, or a depth-only fx-target!), else #f
+- `fx-target-samples` — the sample count an fx-target-mrt-msaa! target was made with, which can be fewer than asked; #f for every other target
 - `fx-cube-target!` — a cube target of a given face size: render the world once per face, then sample it with a direction -- point-light shadows
 - `fx-bind-cube-face!` — binds one face of a cube target as the thing being rendered into
 - `fx-target?` — whether a value is a render target
@@ -379,10 +382,12 @@ Both points are damped at one rate, and that is what holds the heading steady: t
 - `gl-target-hdr!` — a half-float (RGBA16F) target: light in real HDR and tonemap later
 - `gl-target-msaa!` — a multisampled target: render into `slot`, `cmd-resolve!` blits it into `rslot`, and `tslot` is the texture you sample
 - `gl-cube-target!` — six half-float faces around a point: `slot`..`slot+5` become framebuffers sharing one depth renderbuffer, and `tslot` is the cube map they render into -- point-light shadows
-- `gl-target-mrt!` — a multi render target: one framebuffer with `n` half-float colour attachments in `tslot0`..`tslot0+n-1` plus depth, for a shader whose `(out ...)` forms write several buffers at once
+- `gl-target-mrt!` — a multi render target: one framebuffer with `n` half-float colour attachments in `tslot0`..`tslot0+n-1` plus depth, for a shader whose `(out ...)` forms write several buffers at once. Given a depth slot `dslot`, the depth is a 24-bit texture there that can be sampled (fx-target-mrt! always passes one); without it, a 16-bit renderbuffer
+- `gl-target-mrt-msaa!` — a multisampled multi render target: `slot` is drawn into, and `cmd-resolve-mrt!` blits its `n` colour attachments and its depth into `rslot`, whose textures are `tslot0`.. and `dslot`. Answers the sample count used, or a string saying why nothing was made
 - `cmd-bind-target!` — render into an offscreen target from here on
 - `cmd-bind-canvas!` — render back to the canvas
 - `cmd-resolve!` — blit a multisampled target into its resolve framebuffer; the sampled texture is only valid afterwards
+- `cmd-resolve-mrt!` — resolve a gl-target-mrt-msaa! target in one command: each colour attachment in turn, then the depth, then the canvas is bound again
 - `cmd-read-pixels!` — read a `w` by `h` rectangle back into staging memory as `w*h*4` bytes at `base`, readable with `%mem-u8-ref` once `cmd-flush!` returns. This stalls the frame -- the GPU has to finish first
 - `cmd-region!` — point the command encoder at a staging region, with an optional byte limit; everything encoded afterwards is written there
 - `cmd-begin!` — start a frame: reset the write cursor and the draw counter
