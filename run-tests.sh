@@ -628,6 +628,12 @@ run_mjs test/gltf-unapplied-maps-are-documented.mjs
 # An if with more than three parts or fewer than two is refused at
 # compile time, on both compilers and both targets.
 run_mjs test/if-arity-is-checked.mjs
+# An import set may nest -- only, except, rename and prefix over another
+# set -- on both compilers and both targets.
+run_mjs test/import-sets-nest.mjs
+# The lets the expander generates for let* and letrec bodies are not
+# captured by a program's own let macro where they were not before.
+run_mjs test/generated-let-is-not-captured.mjs
 # The first check that judges a shader by what it PUTS ON THE SCREEN
 # rather than by whether it compiles.  Stands down loudly without a
 # browser, like the one above.

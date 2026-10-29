@@ -530,17 +530,23 @@
 
 (define (xpand e)
   (if (pair? e)
-      (let ((macro (let ((tag (resolve-tag (car e))))
-                     (and (symbol? tag)
-                          (not (lexically-bound? (car e)))
-                          (not (eq? tag 'quote))
-                          (not (eq? tag 'define-syntax))
-                          (or (macro-by-identity (car e))
-                              (assq tag *macros*))))))
+      (let ((macro (macro-for (car e))))
         (if macro
             (xpand (apply-macro (cdr macro) e))
             (xpand-core e)))
       e))
+
+;; The macro, if any, that a form with this head is handed to.  xpand
+;; asks it of every form; the letrec arm also asks it of a head it is
+;; about to generate, before deciding what to generate.
+(define (macro-for head)
+  (let ((tag (resolve-tag head)))
+    (and (symbol? tag)
+         (not (lexically-bound? head))
+         (not (eq? tag 'quote))
+         (not (eq? tag 'define-syntax))
+         (or (macro-by-identity head)
+             (assq tag *macros*)))))
 
 (define (xpand-core e)
   (if (lexically-bound? (car e))
@@ -643,10 +649,26 @@
              (xpand `(begin . ,(cdr (car cs)))))
             (else (pick (cdr cs))))))
         ((cond) (xpand-cond (cdr e)))
+        ;; A let* body is an R6RS <body>: it may open with definitions,
+        ;; and they bind recursively, as a let's do.  The innermost level
+        ;; is therefore a let with no bindings, not a begin: a begin in
+        ;; expression position collects no definitions, so a define in
+        ;; the body was reported unbound.  The outer levels stay one
+        ;; binding each, which is what keeps let*'s sequential scope.
+        ;;
+        ;; That let is the compiler's, not the program's, so it goes to
+        ;; xpand-core-form and not to xpand: xpand looks a macro up by
+        ;; spelling first, and a program that excludes let and defines a
+        ;; let macro of its own would otherwise capture a let it never
+        ;; wrote.  The begin this replaces could not be captured that way,
+        ;; so going through xpand made (let* () 7) answer the macro's
+        ;; value.  The other lets the expander writes (the outer let*
+        ;; levels, letrec's, a named let, do) are still looked up by
+        ;; spelling; that predates this and is not changed here.
         ((let*)
          (let ((bs (cadr e)))
            (if (null? bs)
-               (xpand `(begin . ,(cddr e)))
+               (xpand-core-form `(let () . ,(cddr e)))
                (xpand `(let (,(car bs)) (let* ,(cdr bs) . ,(cddr e)))))))
         ((let)
          (if (symbol? (cadr e))
@@ -669,11 +691,28 @@
              `(let ,(map (lambda (b) (list (car b) (xpand (cadr b))))
                          (cadr e))
                 . ,(xpand-body* (cddr e) (map car (cadr e))))))
+        ;; The body follows the assignments that initialise the bindings,
+        ;; so it is wrapped in a let of its own: placed straight after
+        ;; the set!s, its definitions came after expressions and were not
+        ;; collected as the body's definitions.
+        ;;
+        ;; Both lets are the compiler's, and both are expanded through
+        ;; xpand, so a program that defines a let macro of its own gets
+        ;; both.  The outer one it got before this wrapper existed; the
+        ;; inner one would be new, and a macro that passes a let with
+        ;; bindings through but rewrites one without them would change
+        ;; the body's value.  So the wrapper is added only where no macro
+        ;; takes a let, and there the inner let meets the same selection
+        ;; the outer one did, so no let macro takes it either.  Where one
+        ;; does, the body is placed as it was before, definitions in it
+        ;; are not collected, and the result is what it was.
         ((letrec letrec*)
          (let ((bs (cadr e)))
            (xpand `(let ,(map (lambda (b) `(,(car b) (begin))) bs)
                      ,@(map (lambda (b) `(set! ,(car b) ,(cadr b))) bs)
-                     . ,(cddr e)))))
+                     . ,(if (macro-for 'let)
+                            (cddr e)
+                            `((let () . ,(cddr e))))))))
         ((do)
          (let ((bs (cadr e)) (tc (caddr e)) (cmds (cdddr e))
                (loop (gensym "loop")))
@@ -1178,9 +1217,16 @@
 ;; exactly what this scope wants lowered; a name a SISTER LIBRARY
 ;; exports is the opposite, a definition the program wrote and this
 ;; library asked for by name.
+;; An import set may be built from another (R6RS 7.1 defines only,
+;; except, rename and prefix over an <import set>), so the library is
+;; found by unwrapping every level, not one: one level read the inner
+;; set of (except (only (rnrs) car) car) as a library name.  What the
+;; levels filter or rename is import-spec-bindings' business; this only
+;; finds which library the clause draws on.
 (define (import-spec-target spec)
-  (if (and (pair? spec) (memq (unmark (car spec)) '(only except rename prefix)))
-      (cadr spec)
+  (if (and (pair? spec) (pair? (cdr spec))
+           (memq (unmark (car spec)) '(only except rename prefix)))
+      (import-spec-target (cadr spec))
       spec))
 
 (define (imported-names import-clause)

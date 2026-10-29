@@ -298,9 +298,12 @@
                                              (number->string (car lf)))
                               (cdr lf))))))))
 (define (spec-target spec)
-  ;; (only L ...) (except L ...) (rename L (old new) ...) -> L
-  (if (memq (car spec) '(only except rename prefix))
-      (cadr spec)
+  ;; (only S ...) (except S ...) (rename S (old new) ...) (prefix S p)
+  ;; -> the library S draws on, S being a library name or another of
+  ;; these sets (R6RS 7.1 nests them), so every level is unwrapped
+  (if (and (pair? spec) (pair? (cdr spec))
+           (memq (car spec) '(only except rename prefix)))
+      (spec-target (cadr spec))
       spec))
 (define (spec-aliases spec)
   ;; The compiler emits a rename's aliases now, from the clause it

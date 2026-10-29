@@ -130,9 +130,17 @@ function parseSpecs(form) {
     return parseSexpr(form).slice(1);
 }
 
+// The library an import set draws on.  only, except, rename and prefix
+// apply to an import set, not to a library name (R6RS 7.1), so they nest
+// and every level is unwrapped: reading one level took the inner set of
+// (except (only (rnrs) car) car) for a library name.
 function specTarget(spec) {
-    return ['only', 'except', 'rename', 'prefix'].includes(spec[0])
-        ? spec[1] : spec;
+    let s = spec;
+    while (Array.isArray(s) && s.length > 1
+           && ['only', 'except', 'rename', 'prefix'].includes(s[0])) {
+        s = s[1];
+    }
+    return s;
 }
 // The compiler emits a rename's aliases now, from the clause it reads.
 // Emitting them here put them at top level where nothing said they came
