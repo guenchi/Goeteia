@@ -153,7 +153,10 @@ MRT output), `(const T name expr)`, and
 `(define (name param ...) RET stmt ...)`, where a parameter is `(T arg)`
 or, qualified, `(in T arg)`, `(out T arg)` or `(inout T arg)`.
 Statements include `local`, `set!`, `return`, `if` / `if-else`, `for`,
-`discard`, and the loop exits `(break)` and `(continue)`. In expressions, symbols pass through verbatim (`p`,
+`discard`, the loop exits `(break)` and `(continue)`, and the call statement
+`(call f arg ...)`, which renders `f(arg, ...);` — a function called for
+its effect, a `void` one or one whose `out` and `inout` arguments are the
+point. In expressions, symbols pass through verbatim (`p`,
 `gl_Position`, `v.xy`); exact integers are themselves; `(fl W [F [width]])`
 is a float literal with the digits after the point as written (`(fl 2)` →
 `"2.0"`, `(fl 0 50)` → `"0.5"`, `(fl 0 5 2)` → `"0.05"`, the third operand
@@ -181,8 +184,9 @@ call away from `glsl300-vs->string`. *References* to built-ins
 (`gl_Position`, `gl_FragColor`, `gl_FrontFacing`) are untouched — the
 check is about declarations. The same check refuses what the GLSL
 compiler would: a `(break)` or `(continue)` that is not inside a `for` of
-the same function, a loop exit with anything after it, and a parameter
-qualifier other than `in`, `out` and `inout`. `glsl-check` runs it alone,
+the same function, a loop exit with anything after it, a loop exit in an
+expression (`(set! x (break))`), a `(call)` with no function name, and a
+parameter qualifier other than `in`, `out` and `inout`. `glsl-check` runs it alone,
 without rendering.
 
 `glsl-attributes`, `glsl-uniforms`, `glsl-varyings` and
@@ -211,8 +215,8 @@ texture binding pair (matching `gpu-texgroup!` on the other side).
 attribute declarations. Two spelling rules WGSL forces: constructors do
 not truncate (go through a `local` and swizzle instead of
 `(vec3 some-vec4)`), and order uniform members mat4 / vec4 / vec3+pad /
-f32 for the std140-like alignment. `(break)`, `(continue)` and an `in`
-parameter travel; a top-level `(const ...)` and an `out` or `inout`
+f32 for the std140-like alignment. `(break)`, `(continue)`, the call
+statement `(call f arg ...)` and an `in` parameter travel; a top-level `(const ...)` and an `out` or `inout`
 parameter do not (WGSL could express the last two only through a
 pointer), and `wgsl-check` refuses them rather than leaving them out of
 the module, as it refuses a loop exit outside a `for`.

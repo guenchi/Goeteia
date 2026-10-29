@@ -271,6 +271,21 @@
        (list (list "qualifiers-const-loop-exits" 'es100 glsl-forms-vs glsl-forms-fs)
              (list "qualifiers-const-loop-exits" 'es300 glsl-forms-vs glsl-forms-fs)))
 
+;; A call statement: a void function whose effect is its inout argument,
+;; called with (call ...), in both dialects -- the compiler checks that the
+;; argument is an l-value of the parameter's type.  The same forms as
+;; test/glsl-call-statement.ss reads as text.
+(define glsl-call-fs
+  '((precision mediump float)
+    (define (bump (inout vec3 a) (in float k)) void (set! a (* a k)))
+    (define (main) void
+      (local vec3 v (vec3 (fl 1)))
+      (call bump v (fl 2))
+      (set! gl_FragColor (vec4 v (fl 1))))))
+(emit! "glsl-forms"
+       (list (list "call-statement" 'es100 glsl-forms-vs glsl-call-fs)
+             (list "call-statement" 'es300 glsl-forms-vs glsl-call-fs)))
+
 ;; the control: a vertex shader a real compiler must refuse
 (display "=== control/known-bad es100") (newline)
 (display "--- vertex ---") (newline)

@@ -27,10 +27,11 @@
 ;; The subset that travels: attribute/uniform/varying declarations,
 ;; define'd helper functions (a parameter (T a), or (in T a), which
 ;; WGSL spells as a plain one), main, local/set!/if/if-else/for/
-;; return/discard/break/continue, the infix arithmetic and the common
-;; intrinsics.  A sampler2D uniform becomes a sampler + texture binding
-;; pair after the struct (declaration order; gpu-texgroup! matches),
-;; and (texture2D u_tex uv) respells as textureSample.  What does not
+;; return/discard/break/continue, the call statement (call f arg ...),
+;; the infix arithmetic and the common intrinsics.  A sampler2D
+;; uniform becomes a sampler + texture binding pair after the struct
+;; (declaration order; gpu-texgroup! matches), and (texture2D u_tex
+;; uv) respells as textureSample.  What does not
 ;; travel (yet): cube textures, arrays, uniform blocks, top-level
 ;; (const ...) forms, and out and inout parameters, which WGSL could
 ;; only express through a pointer.  The last two are refused by
@@ -97,11 +98,24 @@
           (string->symbol (string-append (cdr hit) (cdr ht)))
           sym)))
 
+  ;; Every symbol in the forms that names a uniform or a varying is
+  ;; respelled -- except a list's head.  In these forms the head of a
+  ;; list is always syntax: a keyword (local, call, fl, at, ...), a
+  ;; type, or the name of a function or an operator, and never a
+  ;; reference to a uniform or a varying.  Respelling it broke the form
+  ;; whenever a uniform or varying shared its name: beside a uniform
+  ;; named call, (call tick) became (u.call tick), a bad statement, and
+  ;; beside one named fl, (fl 2) became a call of u.fl.  A head that is
+  ;; itself a list is walked as any node is; a dotted tail is kept.
   (define ($wgsl-subst x alist)
     (cond
      ((symbol? x) ($wgsl-rename x alist))
-     ((pair? x) (cons ($wgsl-subst (car x) alist)
-                      ($wgsl-subst (cdr x) alist)))
+     ((pair? x)
+      (cons (if (symbol? (car x)) (car x) ($wgsl-subst (car x) alist))
+            (let elements ((l (cdr x)))
+              (if (pair? l)
+                  (cons ($wgsl-subst (car l) alist) (elements (cdr l)))
+                  l))))
      (else x)))
 
   ;; ---- expressions: the glsl grammar, WGSL spellings ----
@@ -151,12 +165,16 @@
                            ($wgsl-expr (caddr e)) ")")))
          ((eq? op 'textureCube)
           (error 'wgsl "cube textures are not in the WGSL subset yet" e))
-         (else
-          (let ((hit (assq op $wgsl-calls)))
-            (string-append (if hit (cdr hit) (symbol->string op)) "("
-                           ($wgsl-join (map $wgsl-expr (cdr e)) ", ")
-                           ")"))))))
+         (else ($wgsl-call op (cdr e))))))
      (else (error 'wgsl "bad expression" e))))
+
+  ;; f(arg, ...), with an intrinsic respelled: a call expression, and
+  ;; with "; " after it, the call statement -- one spelling for both
+  (define ($wgsl-call op args)
+    (let ((hit (assq op $wgsl-calls)))
+      (string-append (if hit (cdr hit) (symbol->string op)) "("
+                     ($wgsl-join (map $wgsl-expr args) ", ")
+                     ")")))
 
   ;; ---- statements ----
   (define ($wgsl-stmt s)
@@ -175,6 +193,9 @@
       ((discard) "discard; ")
       ((break) "break; ")
       ((continue) "continue; ")
+      ;; spelt out, as in (gfx glsl): a misspelt keyword is still a bad
+      ;; statement, not a call
+      ((call) (string-append ($wgsl-call (cadr s) (cddr s)) "; "))
       ((if)
        (string-append "if (" ($wgsl-expr (cadr s)) ") { "
                       (apply string-append (map $wgsl-stmt (cddr s)))
@@ -341,19 +362,52 @@
                  (loop (cdr xs)))
           #t)))
 
+  ;; a loop exit is a statement, and is refused in an expression part
+  ;; of any statement, inside a for or not, as in (gfx glsl)
+  (define ($wgsl-check-no-exit e)
+    (when (pair? e)
+      (when (memq (car e) '(break continue))
+        (error 'wgsl
+               (string-append (symbol->string (car e))
+                              " is a statement, not an expression")
+               e))
+      (let loop ((y e))
+        (when (pair? y)
+          ($wgsl-check-no-exit (car y))
+          (loop (cdr y))))))
+
+  (define ($wgsl-check-no-exits es)
+    (let loop ((es es))
+      (when (pair? es)
+        ($wgsl-check-no-exit (car es))
+        (loop (cdr es)))))
+
   ;; in-for? is passed down, as in (gfx glsl): an argument cannot be
   ;; left set by a refusal raised inside the loop it describes
   (define ($wgsl-check-stmt s in-for?)
     (if (pair? s)
         (case (car s)
-          ((local) ($wgsl-check-name "local variable" ($wgsl-nth s 2)))
-          ((if) ($wgsl-check-stmts ($wgsl-drop s 2) in-for?))
+          ((local)
+           (begin ($wgsl-check-name "local variable" ($wgsl-nth s 2))
+                  ($wgsl-check-no-exit ($wgsl-nth s 3))))
+          ((set!) ($wgsl-check-no-exits ($wgsl-drop s 1)))
+          ((return) ($wgsl-check-no-exit ($wgsl-nth s 1)))
+          ((call)
+           (if (and (pair? (cdr s)) (symbol? (cadr s)))
+               ($wgsl-check-no-exits ($wgsl-drop s 2))
+               (error 'wgsl "a call names its function: (call f arg ...)"
+                      s)))
+          ((if)
+           (begin ($wgsl-check-no-exit ($wgsl-nth s 1))
+                  ($wgsl-check-stmts ($wgsl-drop s 2) in-for?)))
           ((if-else)
-           (begin ($wgsl-check-stmts ($wgsl-nth s 2) in-for?)
+           (begin ($wgsl-check-no-exit ($wgsl-nth s 1))
+                  ($wgsl-check-stmts ($wgsl-nth s 2) in-for?)
                   ($wgsl-check-stmts ($wgsl-nth s 3) in-for?)))
           ((for)
            (begin ($wgsl-check-name "loop index"
                                     ($wgsl-nth ($wgsl-nth s 1) 1))
+                  ($wgsl-check-no-exits ($wgsl-drop ($wgsl-nth s 1) 2))
                   ($wgsl-check-stmts ($wgsl-drop s 2) #t)))
           ((break continue)
            (cond

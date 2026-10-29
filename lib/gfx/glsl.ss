@@ -47,7 +47,12 @@
 ;;                            += / -= as ESSL 1.00 loops require)
 ;;   (discard)
 ;;   (break) (continue)    -- only inside a (for ...) of the same
-;;                            function, as GLSL requires
+;;                            function, as GLSL requires, and only
+;;                            as statements
+;;   (call f arg ...)      -> "f(arg, ...);" -- a function called for
+;;                            its effect: a void function, or one
+;;                            whose out or inout arguments are the
+;;                            point
 ;; Expressions:
 ;;   symbols pass through verbatim (p, gl_Position, v.xy);
 ;;   exact integers as themselves; (fl W F [width]) is a float literal
@@ -67,9 +72,10 @@
 ;; ES reserved words (glsl-check runs it alone), so an identifier the
 ;; driver would reject is an error here instead of a shader that
 ;; silently fails to compile and draws nothing.  The same check refuses
-;; a loop exit outside a for, a loop exit with operands, and a
-;; parameter qualifier other than in, out and inout -- all of them
-;; shaders the driver would refuse, said here at the form instead.
+;; a loop exit outside a for, a loop exit with operands or in an
+;; expression, a call with no function name, and a parameter qualifier
+;; other than in, out and inout -- all of them shaders the driver would
+;; refuse, said here at the form instead.
 ;;
 (library (gfx glsl)
   (export glsl->string glsl-attributes glsl-uniforms glsl-varyings
@@ -183,10 +189,14 @@
                          " ? " (expr->glsl (caddr e))
                          " : " (expr->glsl (cadddr e)) ")"))
          ;; a call: vec4(...), sin(...), dot(...), user functions
-         (else
-          (string-append (symbol->string h) "("
-                         (join (map expr->glsl (cdr e)) ", ") ")")))))
+         (else ($glsl-call h (cdr e))))))
      (else (error 'glsl "bad expression" e))))
+
+  ;; f(arg, ...): a call expression, and with "; " after it, the call
+  ;; statement -- one spelling for both
+  (define ($glsl-call f args)
+    (string-append (symbol->string f) "("
+                   (join (map expr->glsl args) ", ") ")"))
 
   (define (stmt->glsl s)
     (let ((h (car s)))
@@ -204,6 +214,10 @@
         ((discard) "discard; ")
         ((break) "break; ")
         ((continue) "continue; ")
+        ;; (call f arg ...): spelt out, not read off any head the
+        ;; statements do not know, so a misspelt keyword is still a bad
+        ;; statement rather than a call to a function of that name
+        ((call) (string-append ($glsl-call (cadr s) (cddr s)) "; "))
         ((if)
          (string-append "if (" (expr->glsl (cadr s)) ") { "
                         (apply string-append (map stmt->glsl (cddr s)))
@@ -416,6 +430,29 @@
                  (loop (cdr xs)))
           #t)))
 
+  ;; A loop exit is a statement.  In an expression the printer took it
+  ;; for a call, and (set! x (break)) rendered "x = break();", which the
+  ;; GLSL compiler refuses.  So the expression parts of every statement
+  ;; are walked for one, inside a for or not.  Only elements are nodes,
+  ;; as in $glsl-check-literals.
+  (define ($glsl-check-no-exit e)
+    (when (pair? e)
+      (when (memq (car e) '(break continue))
+        (error 'glsl
+               (string-append (symbol->string (car e))
+                              " is a statement, not an expression")
+               e))
+      (let loop ((y e))
+        (when (pair? y)
+          ($glsl-check-no-exit (car y))
+          (loop (cdr y))))))
+
+  (define ($glsl-check-no-exits es)
+    (let loop ((es es))
+      (when (pair? es)
+        ($glsl-check-no-exit (car es))
+        (loop (cdr es)))))
+
   ;; in-for? says whether the statement sits inside a (for ...) of
   ;; the function being checked.  It is an argument, passed down, and
   ;; not a variable the walk sets and clears: a refusal raised inside a
@@ -424,14 +461,27 @@
   (define ($glsl-check-stmt s in-for?)
     (if (pair? s)
         (case (car s)
-          ((local) ($glsl-check-name "local variable" ($glsl-nth s 2)))
-          ((if) ($glsl-check-stmts ($glsl-drop s 2) in-for?))
+          ((local)
+           (begin ($glsl-check-name "local variable" ($glsl-nth s 2))
+                  ($glsl-check-no-exit ($glsl-nth s 3))))
+          ((set!) ($glsl-check-no-exits ($glsl-drop s 1)))
+          ((return) ($glsl-check-no-exit ($glsl-nth s 1)))
+          ((call)
+           (if (and (pair? (cdr s)) (symbol? (cadr s)))
+               ($glsl-check-no-exits ($glsl-drop s 2))
+               (error 'glsl "a call names its function: (call f arg ...)"
+                      s)))
+          ((if)
+           (begin ($glsl-check-no-exit ($glsl-nth s 1))
+                  ($glsl-check-stmts ($glsl-drop s 2) in-for?)))
           ((if-else)
-           (begin ($glsl-check-stmts ($glsl-nth s 2) in-for?)
+           (begin ($glsl-check-no-exit ($glsl-nth s 1))
+                  ($glsl-check-stmts ($glsl-nth s 2) in-for?)
                   ($glsl-check-stmts ($glsl-nth s 3) in-for?)))
           ((for)
            (begin ($glsl-check-name "loop index"
                                     ($glsl-nth ($glsl-nth s 1) 1))
+                  ($glsl-check-no-exits ($glsl-drop ($glsl-nth s 1) 2))
                   ($glsl-check-stmts ($glsl-drop s 2) #t)))
           ((break continue)
            (cond
@@ -529,9 +579,11 @@
            (begin ($glsl-check-name "uniform block" ($glsl-nth f 1))
                   ($glsl-check-each "uniform block member"
                                     ($glsl-drop f 2) 1)))
-          ;; (const T name expr)
+          ;; (const T name expr): its initializer is an expression, so
+          ;; a loop exit there is refused as in a statement's
           ((const)
-           ($glsl-check-name "constant" ($glsl-nth f 2)))
+           (begin ($glsl-check-name "constant" ($glsl-nth f 2))
+                  ($glsl-check-no-exit ($glsl-nth f 3))))
           ;; (define (name param ...) RET stmt ...)
           ((define)
            (let ((head ($glsl-nth f 1)))
