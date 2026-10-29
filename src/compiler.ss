@@ -2843,7 +2843,11 @@
    ((symbol? e) (compile-ref e locals cell))
    ((pair? e)
     (case (resolve-tag (car e))
-      ((quote) (compile-datum (strip-marks (cadr e))))
+      ((quote)
+       (let ((d (cadr e)))
+         (if (literal-token? d)
+             (global-get (literal-slot d))
+             (compile-datum (strip-marks d)))))
       ((if) (compile-if e locals cell tail?))
       ((let) (compile-let e locals cell tail?))
       ((%loop) (compile-%loop e locals cell tail?))
@@ -3228,12 +3232,32 @@
    ((symbol? d) (global-get (intern! 'sym d)))
    ((null? d) (global-get G-NULL))
    ((vector? d)
+    ;; array.new_fixed takes at most 10,000 operands in the engines that
+    ;; run this output (V8 refuses 10,001), so a longer vector literal
+    ;; is refused here, at its source, instead of failing when the
+    ;; module is instantiated
+    (when (> (vector-length d) 10000)
+      (errorf 'goeteia
+              "a vector literal over 10000 elements, more than a wasm constant builds:"
+              (vector-length d)))
     (let ((els (map-in-order compile-datum (vector->list d))))
       (list els (gc-op #x08 (uleb TY-VECTOR) (uleb (length els))))))
    ((pair? d)
-    (let* ((head (compile-datum (car d)))
-           (tail (compile-datum (cdr d))))
-      (list head tail (struct-new TY-PAIR))))
+    ;; Along the cdr spine by iteration, recurring only into the cars:
+    ;; a list literal is as long as the program makes it, and one frame
+    ;; per element ran the self-hosted compiler out of stack on a list
+    ;; of 20,000.  The bytes are those of the recursive form -- every
+    ;; element in order, the tail, then one struct.new per pair -- and
+    ;; the elements are still compiled in order, so what they intern is
+    ;; interned in the same order.
+    (let ((pair-new (struct-new TY-PAIR)))
+      (let spine ((x d) (heads '()) (n 0))
+        (if (pair? x)
+            (spine (cdr x) (cons (compile-datum (car x)) heads) (+ n 1))
+            (list (reverse heads)
+                  (compile-datum x)
+                  (let news ((i 0) (acc '()))
+                    (if (= i n) acc (news (+ i 1) (cons pair-new acc)))))))))
    (else (errorf 'goeteia "unsupported datum:" d))))
 
 (define (compile-if e locals cell tail?)
@@ -6368,10 +6392,220 @@
         ((null? l) '())
         (else l)))
 
+;;;; ------------------------------------------------------------------
+;;;; compound literals: one object per quote
+
+;; A quote evaluates to the datum its text represents, one object
+;; (R6RS 11.4.1), so a quoted pair or vector is built once, before the
+;; program starts, and every evaluation of that quote yields it.  Built
+;; where the quote was compiled, it was rebuilt each time the
+;; expression ran: (eq? (f) (f)) was #f for (define (f) '(1 2)), and
+;; every top-level literal's construction sat in the module's main
+;; function, which a hot top-level loop then made the engine optimise
+;; whole.
+;;
+;; The identity is fixed by OCCURRENCE, before anything can copy an
+;; expression: number-literals runs after lower-intrinsics and before
+;; inline-forms, and replaces the datum of each compound quote with a
+;; token.  The inliner copies a body to every call site, and both back
+;; ends strip marks at a quote, which rebuilds the pair tree; a literal
+;; identified later, by its datum or by the visit that compiles it,
+;; would be one object per copy.  A token is opaque to every pass (none
+;; walks into a quote, and strip-marks passes a vector through), so all
+;; the copies carry the same one, and the back ends map it to one
+;; global (wasm) or one module const (JS).
+;;
+;; One literal per occurrence: two quotes of equal data are two objects
+;; (R6RS allows either), and two expansions of one macro template are
+;; two occurrences.  Equal literals are not coalesced, which would need
+;; an equal? search over every literal.  A quasiquote is not a literal:
+;; it rebuilds its pairs and vectors each time it runs and quotes only
+;; atoms.  The pass rebuilds the spine around a replaced quote and
+;; never writes into the forms it is given, which may share structure
+;; with a macro's template.
+;;
+;; Only the literals still referenced after DCE are emitted, in
+;; occurrence order.  The state is per compilation: it is reset at the
+;; top of prepare-program, which each embed sub-compilation runs for
+;; itself, before the host's begins.
+;; the tokens, newest first, and how many there are
+(define *literals* '())
+(define *literal-n* 0)
+;; the tokens' mark: a fresh object per compilation, so no datum a
+;; program writes can carry it
+(define *literal-tag* (list 'literal))
+;; occurrence index -> the back end's handle for a live literal (a
+;; global index, or a JS name); #f for one DCE removed
+(define *literal-slots* (make-vector 0 #f))
+;; wasm: (global-index type code) per live literal, in index order
+(define *literal-globals* '())
+
+(define (reset-literals!)
+  (set! *literals* '())
+  (set! *literal-n* 0)
+  (set! *literal-tag* (list 'literal))
+  (set! *literal-slots* (make-vector 0 #f))
+  (set! *literal-globals* '()))
+
+;; a token is #(tag index datum), the datum with its marks stripped
+(define (literal-token? x)
+  (and (vector? x)
+       (= (vector-length x) 3)
+       (eq? (vector-ref x 0) *literal-tag*)))
+(define (literal-index t) (vector-ref t 1))
+(define (literal-datum t) (vector-ref t 2))
+(define (literal-slot t)
+  (or (vector-ref *literal-slots* (literal-index t))
+      (errorf 'goeteia
+              "a literal reached code generation that the live scan did not find:"
+              (literal-datum t))))
+
+(define (new-literal! d)
+  (let ((t (vector *literal-tag* *literal-n* d)))
+    (set! *literal-n* (+ *literal-n* 1))
+    (set! *literals* (cons t *literals*))
+    t))
+
+;; Only a quote in EXPRESSION position is a literal.  The walk takes
+;; positions as form-refs does: the car of a form is an expression and
+;; its cdr a list tail, never itself an expression, and let, %loop and
+;; lambda enter only their inits and bodies, not their binders or
+;; formals.  A pair headed by quote in any other position is not a
+;; quote but a program's variable of that name: the tail of
+;; (choose quote (cons 7 8)) is (quote (cons 7 8)), and so is the
+;; binding in (let ((quote (cons 7 8))) ...).  A quote is recognised as
+;; code generation recognises one, by resolve-tag.  Elements are taken
+;; in order, so the indices are the same on every host, and a list is
+;; walked by iteration, so a long one costs no stack.
+(define (number-literals e)
+  (cond
+   ((not (pair? e)) e)
+   ((and (symbol? (car e))
+         (eq? (resolve-tag (car e)) 'quote)
+         (pair? (cdr e)))
+    (let ((d (strip-marks (cadr e))))
+      (if (or (pair? d) (vector? d))
+          (list (car e) (new-literal! d))
+          e)))
+   ((and (symbol? (car e)) (eq? (resolve-tag (car e)) 'let)
+         (pair? (cdr e)))
+    (if (symbol? (cadr e))
+        (if (pair? (cddr e))
+            (rebuild-list e (list (car e) (cadr e)
+                                  (number-bindings (caddr e)))
+                          (cdddr e))
+            e)
+        (rebuild-list e (list (car e) (number-bindings (cadr e)))
+                      (cddr e))))
+   ((and (symbol? (car e)) (eq? (resolve-tag (car e)) '%loop)
+         (pair? (cdr e)) (pair? (cddr e)) (pair? (cdddr e)))
+    (rebuild-list e (list (car e) (cadr e) (caddr e)
+                          (number-each (cadddr e)))
+                  (cdr (cdddr e))))
+   ((and (symbol? (car e)) (eq? (resolve-tag (car e)) 'lambda)
+         (pair? (cdr e)))
+    (rebuild-list e (list (car e) (cadr e)) (cddr e)))
+   (else (number-each e))))
+
+;; each element of a list is an expression; the tail is kept
+(define (number-each l)
+  (let loop ((x l) (acc '()) (changed? #f))
+    (if (pair? x)
+        (let ((a (number-literals (car x))))
+          (loop (cdr x) (cons a acc) (or changed? (not (eq? a (car x))))))
+        (if changed? (append-reverse acc x) l))))
+
+;; a let's bindings: only the init of each is an expression
+(define (number-bindings bs)
+  (let loop ((x bs) (acc '()) (changed? #f))
+    (if (pair? x)
+        (let* ((b (car x))
+               (nb (if (and (pair? b) (pair? (cdr b)))
+                       (let ((i (number-literals (cadr b))))
+                         (if (eq? i (cadr b))
+                             b
+                             (cons (car b) (cons i (cddr b)))))
+                       b)))
+          (loop (cdr x) (cons nb acc) (or changed? (not (eq? nb b)))))
+        (if changed? (append-reverse acc x) bs))))
+
+;; e rebuilt from its new head parts (in order) followed by its body
+;; forms numbered as expressions, or e itself when nothing changed
+(define (rebuild-list e head body)
+  (let ((nb (number-each body)))
+    (let same? ((h head) (o e))
+      (cond
+       ((null? h)
+        (if (eq? nb body) e (append head nb)))
+       ((eq? (car h) (car o)) (same? (cdr h) (cdr o)))
+       (else (append head nb))))))
+
+(define (append-reverse rev tail)
+  (if (null? rev) tail (append-reverse (cdr rev) (cons (car rev) tail))))
+
+;; The live set is scanned from the forms that will be compiled, and
+;; not through form-refs, whose quote arm stops at the datum: here the
+;; token IS the datum.  The live tokens come back in occurrence order.
+(define (live-literals forms)
+  (let ((live (make-vector *literal-n* #f)))
+    (let walk ((x forms))
+      (cond
+       ((pair? x) (walk (car x)) (walk (cdr x)))
+       ((literal-token? x) (vector-set! live (literal-index x) #t))))
+    (filter (lambda (t) (vector-ref live (literal-index t)))
+            (reverse *literals*))))
+
+;; Wasm: one immutable global per live literal, whose initializer
+;; builds the datum.  compile-datum emits only constant instructions
+;; (i32.const, ref.i31, f64.const, struct.new, array.new_fixed, and
+;; global.get of the singletons and of interned strings and symbols),
+;; so the engine builds the datum at instantiation, in no function.  A
+;; global.get in an initializer must name an earlier global, so every
+;; literal is compiled first -- interning the strings and symbols it
+;; holds -- and the literal globals are then allocated as one block
+;; after those, before code generation interns anything else.
+(define (allocate-literal-globals! live)
+  (set! *literal-slots* (make-vector *literal-n* #f))
+  (let* ((codes (map-in-order (lambda (t) (compile-datum (literal-datum t)))
+                              live))
+         (first *next-global*))
+    (set! *next-global* (+ first (length live)))
+    (set! *literal-globals*
+          (let number ((ts live) (cs codes) (g first) (acc '()))
+            (if (null? ts)
+                (reverse acc)
+                (begin
+                  (vector-set! *literal-slots* (literal-index (car ts)) g)
+                  (number (cdr ts) (cdr cs) (+ g 1)
+                          (cons (list g
+                                      (if (pair? (literal-datum (car ts)))
+                                          TY-PAIR
+                                          TY-VECTOR)
+                                      (car cs))
+                                acc))))))))
+
+;; The global section's entries after the variables: the interned
+;; globals and the literal block, in index order.  Nothing is interned
+;; between the literals' own strings and symbols and the block, so
+;; every interned index falls on one side of it.
+(define (constant-globals)
+  (let ((interned (sort-by cdr *interned*)))
+    (if (null? *literal-globals*)
+        (map emit-interned interned)
+        (let ((first (car (car *literal-globals*))))
+          (append
+           (map emit-interned
+                (filter (lambda (e) (< (cdr e) first)) interned))
+           (map (lambda (l) (list #x64 (sleb (cadr l)) #x00 (caddr l) #x0B))
+                *literal-globals*)
+           (map emit-interned
+                (filter (lambda (e) (>= (cdr e) first)) interned)))))))
+
 ;; the target-independent front half -- expansion, assignment
 ;; conversion, inlining, DCE -- shared by every backend; returns
 ;; (export-names forms fn-defs var-defs main-steps)
 (define (prepare-program forms locs)
+  (reset-literals!)
   (set! *marks* '())
   (set! *renames* '())
   (set! *macros* '())
@@ -6542,13 +6776,23 @@
                                        (record-loc! nf (form-loc f)))
                                      nf))
                                  checked))
+         ;; compound literals get their identity here, before inlining
+         ;; can copy them; see number-literals
+         (numbered (map-in-order (lambda (f)
+                                   (if (macro-def? f)
+                                       f
+                                       (let ((nf (number-literals f)))
+                                         (unless (eq? nf f)
+                                           (record-loc! nf (form-loc f)))
+                                         nf)))
+                                 resolved))
          (forms (prune-dead
                  (map-in-order (lambda (f)
                                  (let ((nf (convert-assignments f)))
                                    (unless (eq? nf f)
                                      (record-loc! nf (form-loc f)))
                                    nf))
-                     (inline-forms resolved))
+                     (inline-forms numbered))
                  export-names))
          (fn-defs (filter fn-define? forms))
          (var-defs (filter var-define? forms))
@@ -7050,6 +7294,9 @@
         (set! *vars* (cons (cons (cadr (car ds)) g) *vars*))
         (number (cdr ds) (+ g 1))))
     (set! *next-global* (+ G-FIRST-VAR (length var-defs)))
+    ;; the literal globals come first among the constants; see
+    ;; allocate-literal-globals!
+    (allocate-literal-globals! (live-literals forms))
     ;; which top-level functions take f64 parameters
     (if (> *opt-level* 0)
         (compute-fn-specs! fn-defs main-steps)
@@ -7349,7 +7596,8 @@
     (section 5 (counted (list (list #x00 (uleb 1)))))
     ;; tag section: the escape-continuation tag
     (section 13 (counted (list (list #x00 (uleb TY-KTAG)))))
-    ;; global section: singletons, variables, interned literals
+    ;; global section: singletons, variables, interned constants and
+    ;; the compound literals
     (section 6 (counted
                 (append
                  (map (lambda (tag)
@@ -7363,8 +7611,7 @@
                               #xD0 T-EQREF ; ref.null eq
                               #x0B))
                       (nums-below n-vars))
-                 (map emit-interned
-                      (sort-by cdr *interned*)))))
+                 (constant-globals))))
     ;; export section
     (section 7 (counted
                 (append

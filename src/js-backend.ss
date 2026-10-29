@@ -379,7 +379,11 @@
    ((symbol? e) (jref e env))
    ((pair? e)
     (case (resolve-tag (car e))
-      ((quote) (jd (strip-marks (cadr e))))
+      ((quote)
+       (let ((d (cadr e)))
+         (if (literal-token? d)
+             (literal-slot d)
+             (jd (strip-marks d)))))
       ((if)
        (let* ((t (jb (cadr e) env lctx))
               (c (jx (caddr e) env lctx))
@@ -1397,10 +1401,19 @@
          (export-names (car prep))
          (fn-defs (caddr prep))
          (var-defs (cadddr prep))
-         (main-steps (cadr (cdddr prep))))
+         (main-steps (cadr (cdddr prep)))
+         (live (live-literals (cadr prep))))
     (set! *fns* '())
     (set! *vars* '())
     (set! *fn-specs* '())
+    ;; a compound literal is one module const, Q<occurrence>, built
+    ;; once when the module loads (see number-literals); the names are
+    ;; known before any code is emitted, the consts are built below
+    (set! *literal-slots* (make-vector *literal-n* #f))
+    (for-each (lambda (t)
+                (vector-set! *literal-slots* (literal-index t)
+                             (string-append "Q" (jb28 (literal-index t)))))
+              live)
     (set! *jn* 0)
     (set! *jconsts* '())
     (set! *jconst-n* 0)
@@ -1436,6 +1449,18 @@
                                 acc)))))
            (main-text (jt-body (if (null? main-steps) '((begin)) main-steps)
                                '() '()))
+           ;; The literals' consts, built before the snapshot of the
+           ;; interned constants just below: the strings and symbols a
+           ;; literal holds are interned as its text is made, and the
+           ;; kernels it builds with are requested before jkernel-lines
+           ;; runs.  They are emitted after those constants, which they
+           ;; name.
+           (literal-texts
+            (map-in-order
+             (lambda (t)
+               (list "const " (literal-slot t) "="
+                     (jd (literal-datum t)) ";\n"))
+             live))
            ;; interned constants, in interning order
            (const-texts
             (map-in-order
@@ -1541,6 +1566,7 @@
         var-decl
         fn-texts
         const-texts
+        literal-texts
         glue-texts
         rsyms-text
         ;; `global' is this module instance's proxy -- the seam a host

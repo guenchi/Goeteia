@@ -634,6 +634,10 @@ run_mjs test/import-sets-nest.mjs
 # The lets the expander generates for let* and letrec bodies are not
 # captured by a program's own let macro where they were not before.
 run_mjs test/generated-let-is-not-captured.mjs
+# A quoted literal is built once, outside every function: a large one
+# leaves main and the code section small, dead ones are not built, and
+# one reachable only through an export is, on both targets.
+run_mjs test/large-literal-stays-out-of-main.mjs
 # The first check that judges a shader by what it PUTS ON THE SCREEN
 # rather than by whether it compiles.  Stands down loudly without a
 # browser, like the one above.
