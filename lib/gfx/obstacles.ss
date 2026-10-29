@@ -84,19 +84,34 @@
                (and t (let* ((at (v3-add a (v3-scale d t)))
                             (nearest (vector 0.0 ($obs-clamp (vector-ref at 1) (vector-ref shape 1) (vector-ref shape 2)) 0.0))
                             (delta (v3-sub at nearest)))
-                 (cons t (if (> (v3-dot delta delta) 0.000000001) (v3-normalize delta) (v3-normalize (v3-scale d -1.0))))))))))
+                 ;; A start exactly on the core segment has nothing to
+                 ;; enter: every motion from there leaves the axis or
+                 ;; stays on it, so this obstacle gives no hit.  Only an
+                 ;; exact zero counts; any other start, however near the
+                 ;; axis, is judged by its real direction.  The normal
+                 ;; this replaced, the reverse of the motion, always
+                 ;; passed the entering test below.
+                 ;;
+                 ;; The zero test reads the largest component, never the
+                 ;; squared length: a delta of 1e-200 squares to 0.0, and
+                 ;; one of 2e-162 to a subnormal whose root is not its
+                 ;; length.  At or below 1e-150 the delta is divided by
+                 ;; that component before it is normalized; above it the
+                 ;; squared length is a normal float and the delta is
+                 ;; normalized as it stands, so every ordinary normal
+                 ;; keeps the bits it had.
+                 (let ((m (max (abs (vector-ref delta 0))
+                               (abs (vector-ref delta 1))
+                               (abs (vector-ref delta 2)))))
+                   (and (> m 0.0)
+                        (cons t (v3-normalize
+                                 (if (> m 1e-150)
+                                     delta
+                                     (vector (/ (vector-ref delta 0) m)
+                                             (/ (vector-ref delta 1) m)
+                                             (/ (vector-ref delta 2) m)))))))))))))
       ;; Only contacts ENTERING along the normal are reported.
       ;; Leaving, grazing and resting produce no new blocker.
-      ;;
-      ;; ONE CASE ESCAPES THAT RULE.  A query starting exactly on a
-      ;; capsule's axis has no direction to take a normal from, so the
-      ;; fallback just above is the reverse of the motion -- which this
-      ;; test then always accepts.  Such a sweep reports a contact at
-      ;; fraction zero while it is moving OUT: measured on all three
-      ;; stages, a sweep from #(0.0 1.0 0.0) to #(2.0 1.0 0.0) with
-      ;; radius 0.1 against a capsule on the y axis answers fraction 0.0
-      ;; with normal #(-1.0 -0.0 -0.0).  Starting off the axis, inside or
-      ;; outside, behaves as stated.
       (and hit (< (v3-dot d (cdr hit)) -0.000000001)
         (let* ((n ($obs-rotate o (cdr hit) #f)) (center (v3-add p (v3-scale (v3-sub q p) (car hit)))))
           (vector (car hit) (v3-sub center (v3-scale n radius)) n o)))))
