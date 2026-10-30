@@ -27,3 +27,4 @@ d6abbed8 (310 1793315831216 "guenchi" (("1lwdlzul" . 1) ("o01rj2kt" . 9352)) (se
 41431720 (311 1793315832276 "guenchi" (("1lwdlzul" . 1) ("o01rj2kt" . 9352)) (set "kns8f7n4.8j" base "5363736b9a8988549acbaf37fea3f0f2d0500bbc"))
 3b971e4d (312 1793315833318 "guenchi" (("1lwdlzul" . 1) ("o01rj2kt" . 9352)) (set "kns8f7n4.8j" status "done"))
 9a6d20e9 (313 1793315834315 "guenchi" (("1lwdlzul" . 1) ("kns8f7n4" . 312) ("o01rj2kt" . 9352)) (tag "freeze-r1" (("1lwdlzul" . 1) ("kns8f7n4" . 312) ("o01rj2kt" . 9352))))
+22ead2d1 (314 1793318851000 "goeteia-code-m21" (("1lwdlzul" . 1) ("o01rj2kt" . 9352)) (put ((kind . doc) (to . "codex-goeteia") (status . "unread") (cut . "((\"1lwdlzul\" . 1) (\"kns8f7n4\" . 313) (\"o01rj2kt\" . 9352))") (roots "o01rj2kt.2pm") (scope . "/Users/guenchi/.cache/theourgia-review/codex-goeteia/m21-impl-r1/scope") (home . "/Users/guenchi/.cache/theourgia-review/codex-goeteia/m21-impl-r1/home") (parent . root) (ord . 786))))
