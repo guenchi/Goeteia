@@ -5484,6 +5484,7 @@
 ;; Every spelling defined in more than one scope.  Those are the only
 ;; ones that need keys: a name only one scope defines means one thing
 ;; already, and moving it would churn every reference for nothing.
+;; The answer is a table, asked only whether it holds a name.
 (define (colliding-names attributed)
   (let* ((defs (fold-left
                 (lambda (acc p)
@@ -5492,20 +5493,25 @@
                              (expanded-defined-names (list (car p)))))
                 '()
                 attributed))
-         (dup (let loop ((ds defs) (acc '()))
-                (cond
-                 ((not (pair? ds)) acc)
-                 ((or (memq (car (car ds)) acc)
-                      (internal-name? (car (car ds))))
-                  (loop (cdr ds) acc))
-                 ((let scan ((r defs))
-                    (and (pair? r)
-                         (or (and (eq? (car (car r)) (car (car ds)))
-                                  (not (equal? (cdr (car r)) (cdr (car ds)))))
-                             (scan (cdr r)))))
-                  (loop (cdr ds) (cons (car (car ds)) acc)))
-                 (else (loop (cdr ds) acc))))))
-    dup))
+         ;; A spelling collides when some definition of it is in a
+         ;; scope other than the first one met.  That used to be asked
+         ;; of every definition by scanning all of them, and the answer
+         ;; was a list that every later question scanned again, so a
+         ;; program of N top-level definitions -- or two libraries
+         ;; defining the same N names -- was N-squared here.  One pass
+         ;; records each spelling's first scope and the spellings met
+         ;; in another; the $- and %-names stay out, as they did.
+         (first (make-eq-hashtable))
+         (collides (make-eq-hashtable)))
+    (for-each (lambda (d)
+                (let ((s0 (hashtable-ref first (car d) first)))
+                  (cond
+                   ((eq? s0 first) (hashtable-set! first (car d) (cdr d)))
+                   ((and (not (equal? s0 (cdr d)))
+                         (not (internal-name? (car d))))
+                    (hashtable-set! collides (car d) #t)))))
+              defs)
+    collides))
 
 ;; What a name means in a scope: the scope's own key if it defines it,
 ;; else the key of whatever its clause says it is.  This is the ONE
@@ -5517,15 +5523,18 @@
 ;; the written name left every renamed reference unresolved.
 (define (resolved-key scope name dup own-defs)
   (cond
-   ((memq name own-defs)
-    (and (memq name dup) (scope-key (scope-prefix scope) name)))
+   ;; own-defs is the scope's table of the names it defines (see
+   ;; canonicalise-prelude): a list here was searched once per
+   ;; reference, N-squared in a scope of N definitions
+   ((hashtable-contains? own-defs name)
+    (and (hashtable-contains? dup name) (scope-key (scope-prefix scope) name)))
    (else
     (let ((b (assq name (scope-map-of scope))))
       (and b (pair? (cdr b))
            (let ((lib (car (cdr b))) (there (cdr (cdr b))))
              (cond
               ;; the origin was keyed: reach the key
-              ((memq there dup)
+              ((hashtable-contains? dup there)
                (scope-key (if (string=? lib "rnrs") "%prelude" lib) there))
               ;; A rename or a prefix reaches a binding that did NOT
               ;; collide, so nothing was keyed -- but the written
@@ -5550,19 +5559,28 @@
     ;; rename or a prefix makes a REFERENCE move with no collision
     ;; anywhere, and short-circuiting on an empty dup left every such
     ;; reference pointing at a spelling nothing defines.
-    (let ()
+    ;;
+    ;; What each scope defines is collected once, as one table per
+    ;; scope, before the forms are walked.  It used to be gathered again
+    ;; for every form, by folding over every form of the program, so a
+    ;; program of N top-level forms paid N times N here -- 16 of the 17
+    ;; seconds a begin of 10,000 assignments took to compile.  Scopes
+    ;; are few (the prelude, the program, each library) and are told
+    ;; apart with equal?, as before.
+    (let ((by-scope
+           (fold-left
+            (lambda (acc q)
+              (let* ((e (assoc (cdr q) acc))
+                     (t (if e (cdr e) (make-eq-hashtable))))
+                (for-each (lambda (nm) (hashtable-set! t nm #t))
+                          (expanded-defined-names (list (car q))))
+                (if e acc (cons (cons (cdr q) t) acc))))
+            '()
+            attributed)))
         (map (lambda (p)
                (let* ((scope (cdr p))
                       (own (expanded-defined-names (list (car p))))
-                      (defs (fold-left
-                             (lambda (a q)
-                               (if (equal? (cdr q) scope)
-                                   (append (expanded-defined-names
-                                            (list (car q)))
-                                           a)
-                                   a))
-                             '()
-                             attributed))
+                      (defs (cdr (assoc scope by-scope)))
                       (out (walk-refs-too
                             (car p) '()
                             (lambda (n bnd)
@@ -5570,7 +5588,7 @@
                                    (let ((ic (intro-context n)))
                                      (if ic
                                          (and (introduced-means-prelude? ic)
-                                              (memq (car ic) dup)
+                                              (hashtable-contains? dup (car ic))
                                               (scope-key "%prelude" (car ic)))
                                          (resolved-key scope (unmark n)
                                                        dup defs))))))))
@@ -5578,7 +5596,7 @@
                  ;; binder, not a reference
                  (if (and (pair? out) (symbol? (car out))
                           (eq? (unmark (car out)) 'define) (pair? (cdr out))
-                          (pair? own) (memq (car own) dup))
+                          (pair? own) (hashtable-contains? dup (car own)))
                      (let* ((t (cadr out))
                             (key (scope-key (scope-prefix scope) (car own))))
                        (cons (car out)
