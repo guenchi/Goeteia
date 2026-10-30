@@ -13,12 +13,17 @@
 // spelt one way where it is defined and another where it is referenced
 // (test/defect-inline-library-export-crashes-the-compiler.mjs).
 //
-// What this cell does NOT judge: a name exported although the library's
-// imports do not provide it, but another scope defines it -- exporting f
-// from (only (a) h), from (except (a) f), or from (rename (a) (f g)) --
-// is accepted today and stays accepted; that is a ledger item of its
-// own.  The CONTROL at the end pins only that a name defined nowhere is
-// still refused.
+// A name the library neither defines itself nor receives from its own
+// imports is refused, even when another scope defines it: exporting f
+// from (only (a) h), from (except (a) f), or from (rename (a) (f g)).
+// The check used to ask whether ANY scope defined the name, so all
+// three compiled and the export was a name the library did not have.
+// It now asks whether this library defines it, or its clauses trace it
+// to another binding.  A name defined nowhere is refused as before.
+//
+// What this cell does NOT judge: a macro exported by a library that
+// neither defines nor imports it is still found in one table for every
+// scope; no row pins that either way.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
@@ -156,6 +161,21 @@ const rows = [
 
 for (const [label, src, want] of rows)
     test(label, () => runs('(import (rnrs))\n' + src, want));
+
+test("an export that the only clause of the library leaves out is refused", () => {
+    refused('(import (rnrs))\n' + "(library (a) (export f h) (import (rnrs)) (define (f) 7) (define (h) 0))\n(library (b) (export f) (import (only (a) h)))\n(import (b))\n(display 7)",
+            'library exports a name nothing defines: f');
+});
+
+test("an export that the except clause of the library removes is refused", () => {
+    refused('(import (rnrs))\n' + "(library (a) (export f h) (import (rnrs)) (define (f) 7) (define (h) 0))\n(library (b) (export f) (import (except (a) f)))\n(import (b))\n(display 7)",
+            'library exports a name nothing defines: f');
+});
+
+test("an export under the name a rename clause of the library renamed away is refused", () => {
+    refused('(import (rnrs))\n' + "(library (a) (export f) (import (rnrs)) (define (f) 7))\n(library (b) (export f) (import (rename (a) (f g))))\n(import (b))\n(display 7)",
+            'library exports a name nothing defines: f');
+});
 
 test('CONTROL a name nothing defines or imports is still refused', () => {
     refused('(import (rnrs))\n' + "(library (b) (export zz) (import (rnrs)))\n(import (b))\n(display 7)",

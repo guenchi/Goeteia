@@ -5400,20 +5400,43 @@
 ;; binding-origin, the same trace references resolve through, whether
 ;; the library's clause carries the name to another library.  A name
 ;; the clause does not provide traces to the library itself and is
-;; still refused.  The first arm stays as wide as it was: it reads
-;; every scope's definitions, not this library's alone.
+;; still refused.
+;;
+;; The first arm counts only this library's OWN definitions.  It read
+;; every scope's, so a library could export a name its clause had left
+;; out -- (only (a) h), (except (a) f), (rename (a) (f g)) -- as long
+;; as some other scope happened to define it, and the export then named
+;; that other scope's binding.  Which scope wrote each final top-level
+;; form is recorded at the splice, in *form-scope*, and a library's
+;; scope is its name, so each library gets the table of what it
+;; defines, keyed by its printed name as *lib-exports* is.
+;;
+;; The table is built by walking *form-scope* once.  Asking form-scope
+;; for each definition searched that list per definition, N-squared in
+;; a program of N definitions with or without a library.  A form object
+;; recorded twice under two scopes would count under both here, where
+;; form-scope answered with the later one; that form would be one
+;; definition written twice at top level, which check-duplicate-defines!
+;; refuses after this check.
 (define (check-library-exports! forms)
-  (let ((defined (fold-left (lambda (acc f)
-                              (if (define-form? f)
-                                  (cons (def-name f) acc)
-                                  acc))
-                            '()
-                            forms)))
+  (let ((defined (make-hashtable string-hash string=?)))
+    (for-each (lambda (e)
+                (let ((f (car e)) (sc (cdr e)))
+                  (when (and (pair? sc) (define-form? f))
+                    (let* ((k (lib-name-string sc))
+                           (t (or (hashtable-ref defined k #f)
+                                  (let ((t (make-eq-hashtable)))
+                                    (hashtable-set! defined k t)
+                                    t))))
+                      (hashtable-set! t (def-name f) #t)))))
+              *form-scope*)
     (for-each
      (lambda (lib)
        (for-each
         (lambda (n)
-          (unless (or (memq n defined) (assq n *macros*)
+          (unless (or (let ((t (hashtable-ref defined (car lib) #f)))
+                        (and t (hashtable-contains? t n)))
+                      (assq n *macros*)
                       (not (equal? (binding-origin (car lib) n)
                                    (cons (car lib) n))))
             (errorf 'goeteia "library exports a name nothing defines:"
