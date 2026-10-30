@@ -650,6 +650,9 @@ run_mjs test/long-code-is-compiled.mjs
 # Twenty thousand top-level forms -- a begin, defines, expressions --
 # compile in seconds, on both compilers, not in time quadratic in them.
 run_mjs test/top-level-forms-compile-in-linear-time.mjs
+# Tens of thousands of definitions -- values, procedures, chains of
+# either -- compile in seconds, not in time quadratic in them.
+run_mjs test/many-definitions-compile-in-linear-time.mjs
 # An only, except or rename naming what its import set does not
 # provide is refused, in a program's import and a library's.
 run_mjs test/import-sets-name-only-what-is-there.mjs

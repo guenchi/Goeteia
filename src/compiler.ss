@@ -2694,7 +2694,8 @@
 (define (bound-in-scope? n map defined)
   (or (memq n $core-syntax)
       (assq n map)
-      (memq n defined)
+      ;; defined is the scope's table of the names it defines
+      (hashtable-contains? defined n)
       (and (memq n primitives) (not (memq n $rnrs-exports)))
       (and (scope-binds? *prelude-scope* n)
            (not (memq n $rnrs-exports)))))
@@ -2830,8 +2831,17 @@
 (define (judge-scopes!)
   ;; every scope's map, so a token introduced by one scope's macro can
   ;; be judged in that scope while another scope's forms are being read
+  ;;
+  ;; What a scope defines is one table per scope, built here once and
+  ;; shared by every form the scope judges.  The list of names used to
+  ;; be rebuilt for each form and then searched for each reference,
+  ;; N-squared in a scope of N definitions.
   (set! *scope-maps*
-        (map (lambda (u) (list (cadddr u) (car u) (map car (cadr u))))
+        (map (lambda (u)
+               (let ((defined (make-eq-hashtable)))
+                 (for-each (lambda (d) (hashtable-set! defined (car d) #t))
+                           (cadr u))
+                 (list (cadddr u) (car u) defined)))
              *judgement-units*))
   (for-each (lambda (u)
               (refuse-imported-definitions! (car u) (cadr u))
@@ -2845,10 +2855,10 @@
               ;; that touches every reference in the tree; seven
               ;; hand-written programs said it was fine when 179 cells
               ;; said otherwise.
-              (for-each (lambda (f)
-                          (judge-one-form! f (car u) (map car (cadr u))
-                                           (cadddr u)))
-                        (reverse (caddr u))))
+              (let ((defined (caddr (assq (cadddr u) *scope-maps*))))
+                (for-each (lambda (f)
+                            (judge-one-form! f (car u) defined (cadddr u)))
+                          (reverse (caddr u)))))
             (reverse *judgement-units*)))
 (define (merge-import-bindings specs)
   (fold-left
@@ -4779,8 +4789,8 @@
 ;; collect operator-position calls (name inner-binders . arglist) in e;
 ;; a name that appears anywhere else (a value use) is added to escaped
 (define (spec-scan e cand escaped calls bound0)
-  ;; cand: names that are specialization candidates; mutating the
-  ;; escaped hashtable and returning the call list
+  ;; cand: the table of names that are specialization candidates;
+  ;; mutating the escaped hashtable and returning the call list
   ;;
   ;; Each stack entry is (form . bound): the form to walk, and the
   ;; names lexically bound around it.  A name in that set is a local,
@@ -4822,7 +4832,7 @@
            ((not (pair? x))
             (when (and (symbol? x)
                        (not (memq x bound))
-                       (memq (unmark x) cand))
+                       (hashtable-contains? cand (unmark x)))
               (hashtable-set! escaped (unmark x) #t))
             (walk rest calls))
            ((and (symbol? (car x)) (eq? (resolve-tag (car x)) 'quote))
@@ -4880,7 +4890,8 @@
             (let* ((h (car x))
                    (rop (and (symbol? h) (unmark h)))
                    (local? (and (symbol? h) (memq h bound) #t))
-                   (called (and rop (not local?) (memq rop cand) rop)))
+                   (called (and rop (not local?)
+                                (hashtable-contains? cand rop) rop)))
               ;; the operator, when a call to a candidate, is not a
               ;; value use; a candidate name in any other position is
               ;; an escape.  A locally bound name is neither.  Push car
@@ -4890,7 +4901,7 @@
                 (when (pair? es)
                   (when (and (symbol? (car es))
                              (not (memq (car es) bound))
-                             (memq (unmark (car es)) cand))
+                             (hashtable-contains? cand (unmark (car es))))
                     (hashtable-set! escaped (unmark (car es)) #t))
                   (mark (cdr es))))
               ;; flatten x's elements onto the stack as individual
@@ -4951,12 +4962,29 @@
                         acc)))
                 '() fn-defs))
          (escaped (make-eq-hashtable))
+         ;; Tables for what was searched as a list on every visit: the
+         ;; candidates, asked at each definition and at each call
+         ;; spec-scan meets, and the definition of each caller, which
+         ;; the fixed-point loop below found by a linear search for
+         ;; every context -- N-squared in N functions even when none
+         ;; is a candidate.  def-of keeps the first definition of a
+         ;; name, as that search found it.
+         (cand-set (let ((t (make-eq-hashtable)))
+                     (for-each (lambda (n) (hashtable-set! t n #t)) cand)
+                     t))
+         (def-of (let ((t (make-eq-hashtable)))
+                   (for-each (lambda (d)
+                               (let ((n (unmark (def-name d))))
+                                 (unless (hashtable-contains? t n)
+                                   (hashtable-set! t n d))))
+                             fn-defs)
+                   t))
          (spec (make-eq-hashtable)))     ; name -> vector of booleans
     ;; seed every candidate optimistic: all params f64
     (for-each
      (lambda (d)
        (let ((name (unmark (def-name d))))
-         (when (memq name cand)
+         (when (hashtable-contains? cand-set name)
            (let* ((fs (cdadr d))
                   (body (cddr d))
                   (assigned (assigned-vars (cons 'begin body) '()))
@@ -4983,7 +5011,7 @@
                      ;; candidate is that parameter, not a call to the
                      ;; top-level function of the same name
                      (calls (spec-scan (cons 'begin (cddr d))
-                                       cand escaped '() params)))
+                                       cand-set escaped '() params)))
                 ;; The enclosing function's NAME, whether or not it is a
                 ;; specialisation candidate.  It used to be recorded only
                 ;; for candidates, which left hparams empty for every
@@ -4996,7 +5024,7 @@
                 ;; them exactly as before; only the scope is recovered.
                 (cons (cons name calls) acc)))
             (list (cons #f (spec-scan (cons 'begin main-steps)
-                                      cand escaped '() '())))
+                                      cand-set escaped '() '())))
             fn-defs)))
       ;; a function with NO source-level call site proves nothing --
       ;; the arithmetic helpers and the call/cc internals are reached
@@ -5032,7 +5060,7 @@
                     (hv (and home (hashtable-ref spec home #f)))
                     (hparams (if home
                                  (formals-names
-                                  (cdadr (find-def fn-defs home)))
+                                  (cdadr (hashtable-ref def-of home #f)))
                                  '()))
                     (f64names
                      (if hv
@@ -5092,10 +5120,6 @@
                    (cons (cons name (vector->list v)) *fn-specs*)))))
        cand))))
 
-(define (find-def defs name)
-  (cond ((null? defs) (error 'goeteia "spec: missing def" name))
-        ((eq? (unmark (def-name (car defs))) name) (car defs))
-        (else (find-def (cdr defs) name))))
 
 (define (fn-define? f)
   (and (define-form? f) (pair? (cadr f))))
@@ -5226,14 +5250,19 @@
 ;; compile wraps in $with-loc so an error names its source.  Locs
 ;; feed error messages only -- never the emitted bytes.
 
-(define *form-locs* '())   ; expanded form (by identity) -> "file:line"
+;; expanded form (by identity) -> "file:line".  A table: every pass
+;; that rewrites a form asks where it came from, and an assq over a
+;; list with an entry per form made each such pass N-squared in a
+;; program of N forms.
+(define *form-locs* (make-eq-hashtable))
 
 (define (record-loc! f loc)
   (when (and loc (pair? f))
-    (set! *form-locs* (cons (cons f loc) *form-locs*))))
+    ;; a later record for the same form replaces the earlier one, as the
+    ;; most recent entry won the assq
+    (hashtable-set! *form-locs* f loc)))
 (define (form-loc f)
-  (let ((e (assq f *form-locs*)))
-    (and e (cdr e))))
+  (hashtable-ref *form-locs* f #f))
 (define ($with-loc loc thunk)
   (if loc
       (guard (e (#t (display "at ") (display loc) (newline) (raise e)))
@@ -5641,19 +5670,25 @@
                    (and e (cdr e)))))))))
 
 (define (check-duplicate-defines! forms)
-  (let loop ((fs forms) (seen '()))
-    (cond
-     ((null? fs) forms)
-     ((define-form? (car fs))
-      (let* ((n (def-name (car fs)))
-             (p (assq n seen)))
-        (when p
-          (errorf 'goeteia "top-level name defined twice:"
-                  (unmark n)
-                  (origin-string (cdr p))
-                  (origin-string (form-loc (car fs)))))
-        (loop (cdr fs) (cons (cons n (form-loc (car fs))) seen))))
-     (else (loop (cdr fs) seen)))))
+  ;; seen maps each name defined so far to where it was defined.  It was
+  ;; a list searched once per definition, N-squared in N definitions;
+  ;; the first definition of a name is the one the message reports, as
+  ;; it was.
+  (let ((seen (make-eq-hashtable)))
+    (let loop ((fs forms))
+      (cond
+       ((null? fs) forms)
+       ((define-form? (car fs))
+        (let* ((n (def-name (car fs)))
+               (p (hashtable-ref seen n seen)))
+          (unless (eq? p seen)
+            (errorf 'goeteia "top-level name defined twice:"
+                    (unmark n)
+                    (origin-string p)
+                    (origin-string (form-loc (car fs)))))
+          (hashtable-set! seen n (form-loc (car fs)))
+          (loop (cdr fs))))
+       (else (loop (cdr fs)))))))
 
 ;; ---- dead code elimination ----
 ;; The prelude is compiled into every module; keep only definitions
@@ -5680,7 +5715,13 @@
   ;; of (vector quote foo) is (quote foo), which that arm skipped
   ;; whole, so foo's definition was pruned while foo still referred
   ;; to it.
-  (let walk ((stack (list (cons e #t))) (acc acc))
+  ;;
+  ;; seen answers "is it in acc already" without searching acc, which
+  ;; one form referring to N distinct names made N-squared; it starts
+  ;; with what the caller's acc holds, and acc is built as before.
+  (let ((seen (make-eq-hashtable)))
+   (for-each (lambda (n) (hashtable-set! seen n #t)) acc)
+   (let walk ((stack (list (cons e #t))) (acc acc))
     (if (null? stack)
         acc
         (let* ((entry (car stack))
@@ -5697,7 +5738,10 @@
             ;; own expansion, and would be pruned out from under it.
             ;; assq-marked walks from the mark to the origin at the
             ;; lookup instead, which reaches both.
-            (walk rest (if (memq x acc) acc (cons x acc))))
+            (walk rest (if (hashtable-contains? seen x)
+                           acc
+                           (begin (hashtable-set! seen x #t)
+                                  (cons x acc)))))
            ;; An intrinsic head names its operation directly, and the
            ;; seed table below keys on the bare symbol: (cons '< '(begin
            ;; $lt2)) keeps the generic helper alive only while something
@@ -5707,7 +5751,10 @@
            ;; So an intrinsic contributes its operation's name.
            ((intrinsic? x)
             (let ((u (intrinsic-op x)))
-              (walk rest (if (memq u acc) acc (cons u acc)))))
+              (walk rest (if (hashtable-contains? seen u)
+                             acc
+                             (begin (hashtable-set! seen u #t)
+                                    (cons u acc))))))
            ((not (pair? x)) (walk rest acc))
            ((and expression? (eq? (resolve-tag (car x)) 'quote))
             (walk rest acc))
@@ -5745,7 +5792,7 @@
             ;; the car of a form is an expression; its cdr is a tail
             (walk (cons (cons (car x) #t)
                         (cons (cons (cdr x) #f) rest))
-                  acc)))))))
+                  acc))))))))
 
 ;; The init expression of each binding in a let's binding list.  A
 ;; binder with no init contributes nothing: only its name would be
@@ -5786,15 +5833,21 @@
                                         (pure-init? (cadr b) known)))
                        (cadr e))
             (let ((body-known
-                   (append (map-in-order
-                            (lambda (b) (unmark (car b)))
-                            (cadr e))
-                           known)))
+                   (cons (append (map-in-order
+                                  (lambda (b) (unmark (car b)))
+                                  (cadr e))
+                                 (car known))
+                         (cdr known))))
               (all-true? (lambda (x) (pure-init? x body-known))
                          (cddr e)))))
       (else #f)))
    ((symbol? e)
-    (or (memq (unmark e) known) (memq (unmark e) primitives)))
+    ;; known is (locals . table): a let's names, then the top level's
+    ;; table (see prune-dead); a list of every top-level name was
+    ;; searched for each reference
+    (or (memq (unmark e) (car known))
+        (hashtable-contains? (cdr known) (unmark e))
+        (memq (unmark e) primitives)))
    (else #t)))
 ;; Names whose use pulls in machinery the program never mentions:
 ;; call/cc reaches the escape pair, and arithmetic reaches the generic
@@ -5824,18 +5877,43 @@
                           ;; arithmetic reaches the generic helpers
                           $behind-the-scenes
                           forms)))
-    (let ((known (map-in-order (lambda (e) (unmark (car e))) table)))
-      (let grow ((live '())
+    ;; Every lookup here is a table, built once.  The definition table,
+    ;; the live set and the names pure-init? may assume were lists
+    ;; searched once per reference, N-squared in a program of N
+    ;; definitions that refer to one another.
+    ;;
+    ;; by-name keeps the FIRST entry for a key: the program's own
+    ;; definitions come before $behind-the-scenes in table, so they still
+    ;; shadow it, as they won the assq before.  known is (locals . table)
+    ;; for pure-init?, which adds a let's names to the locals.
+    (let ((known (cons '()
+                       (let ((t (make-eq-hashtable)))
+                         (for-each (lambda (e)
+                                     (hashtable-set! t (unmark (car e)) #t))
+                                   table)
+                         t)))
+          (by-name (make-eq-hashtable)))
+      (for-each (lambda (e)
+                  (unless (hashtable-contains? by-name (car e))
+                    (hashtable-set! by-name (car e) (cdr e))))
+                table)
+      ;; form-refs collects each form's references into a fresh list:
+      ;; given the queue as its accumulator it searched the whole queue
+      ;; for every reference it added.  A name may now sit in the queue
+      ;; more than once, which is harmless -- live is checked before a
+      ;; definition is followed, so none is followed twice.
+      (let grow ((live (make-eq-hashtable))
                ;; roots: program expressions, exported names, plus the
                ;; initializers of top-level variables kept for their
                ;; side effects
                (queue (fold-left (lambda (acc f)
                                    (cond
-                                    ((not (define-form? f)) (form-refs f acc))
+                                    ((not (define-form? f))
+                                     (append (form-refs f '()) acc))
                                     ((and (var-define? f)
                                           (pair? (cddr f))
                                           (not (pure-init? (caddr f) known)))
-                                     (form-refs (caddr f) acc))
+                                     (append (form-refs (caddr f) '()) acc))
                                     (else acc)))
                                  extra-roots
                                  forms)))
@@ -5843,7 +5921,7 @@
        ((null? queue)
         (filter (lambda (f)
                   (or (not (define-form? f))
-                      (memq (def-name f) live)
+                      (hashtable-contains? live (def-name f))
                       ;; keep variables whose initializer has effects
                       (and (var-define? f)
                            (pair? (cddr f))
@@ -5876,15 +5954,22 @@
         (let* ((name (car queue))
                (behind (assq (unmark name) $behind-the-scenes))
                (rest (if behind
-                         (form-refs (cdr behind) (cdr queue))
+                         (append (form-refs (cdr behind) '()) (cdr queue))
                          (cdr queue)))
-               (entry (assq-marked name table)))
+               ;; assq-marked's search, through the table: the name as
+               ;; written, then each origin its marks lead to
+               (entry (let try ((x name))
+                        (let ((f (hashtable-ref by-name x #f)))
+                          (if f
+                              (cons x f)
+                              (let ((o (marked-origin x)))
+                                (and o (try o))))))))
           (cond
            ((not entry) (grow live rest))
-           ((memq (car entry) live) (grow live rest))
+           ((hashtable-contains? live (car entry)) (grow live rest))
            (else
-            (grow (cons (car entry) live)
-                  (form-refs (cdr entry) rest)))))))))))
+            (hashtable-set! live (car entry) #t)
+            (grow live (append (form-refs (cdr entry) '()) rest)))))))))))
 
 ;; ---- a conservative inliner ----
 ;; A small, once-defined, fixed-arity top-level function whose body
@@ -5956,16 +6041,22 @@
      (else (walk (cdr stack) n)))))
 
 ;; name -> (name formals body frees)
+;;
+;; How often each name is defined, and which names are assigned, are
+;; tables keyed by the name as written.  They were an alist and a list
+;; searched once per definition, N-squared in a program of N
+;; definitions before a single call site was looked at.
 (define (inline-candidates forms)
-  (let ((set-names (collect-set-names forms))
-        (counts '()))
+  (let ((set-names (let ((t (make-eq-hashtable)))
+                     (for-each (lambda (n) (hashtable-set! t n #t))
+                               (collect-set-names forms))
+                     t))
+        (counts (make-eq-hashtable)))
     (for-each (lambda (f)
                 (when (define-form? f)
-                  (let* ((n (def-name f))
-                         (e (assq n counts)))
-                    (if e
-                        (set-cdr! e (+ (cdr e) 1))
-                        (set! counts (cons (cons n 1) counts))))))
+                  (let ((n (def-name f)))
+                    (hashtable-set! counts n
+                                    (+ (hashtable-ref counts n 0) 1)))))
               forms)
     (let scan ((fs forms) (acc '()))
       (if (null? fs)
@@ -5974,8 +6065,8 @@
             (if (and (fn-define? f)
                      (fixed-formals? (cdadr f))
                      (pair? (cddr f)) (null? (cdddr f))
-                     (= 1 (cdr (assq (def-name f) counts)))
-                     (not (memq (def-name f) set-names))
+                     (= 1 (hashtable-ref counts (def-name f) 0))
+                     (not (hashtable-contains? set-names (def-name f)))
                      (inlinable-body? (caddr f))
                      (not (memq (def-name f) (raw-refs (caddr f) '()))))
                 (let* ((formals (cdadr f))
@@ -6018,7 +6109,8 @@
          (nh (if (pair? head) (inline-sites head scope cands) head))
          (e2 (if (and (eq? args (cdr e)) (eq? nh head)) e (cons nh args))))
     (if (and (symbol? head) (not (memq head scope)))
-        (let ((c (assq head cands)))
+        ;; cands is a table (see inline-forms)
+        (let ((c (hashtable-ref cands head #f)))
           (if (and c
                    (= (length args) (length (cadr c)))
                    (let overlap ((fs (cadddr c)))
@@ -6098,8 +6190,19 @@
               (else ($inline-app e scope cands)))))))
 
 (define (inline-forms forms)
-  (let ((cands (inline-candidates forms)))
-    (if (null? cands)
+  ;; The candidates are a table keyed by name, built once: a list here
+  ;; was searched at every call site, N-squared in a program of N small
+  ;; functions that call one another.  The first candidate of a name is
+  ;; kept, as the assq found it.
+  (let ((cands (let ((l (inline-candidates forms)))
+                 (and (pair? l)
+                      (let ((t (make-eq-hashtable)))
+                        (for-each (lambda (c)
+                                    (unless (hashtable-contains? t (car c))
+                                      (hashtable-set! t (car c) c)))
+                                  l)
+                        t)))))
+    (if (not cands)
         forms
         (map-in-order
          (lambda (f)
@@ -6738,7 +6841,7 @@
   (set! *scope-defines* '())
   (set! *defining-scope* #f)
   (set! *collecting-scope* #f)
-  (set! *form-locs* '())
+  (set! *form-locs* (make-eq-hashtable))
   (set! *lib-exports* '())
   (set! *lib-provenance* '())
   (set! *provenance-seen* '())
