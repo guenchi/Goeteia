@@ -83,7 +83,9 @@
     (let ((g (js-get owner "goeteiaFxGeneration")))
       (if (js-truthy? g) (js->number g) 0)))
 
-  ;; the VAO cache: (program, buffer, instance buffer) -> vao slot
+  ;; the VAO cache: (program, buffer, instance buffer) -> a bucket of
+  ;; (stride vao-slot . stamp), the stamp from (cmd-stamp) after the
+  ;; setup's words
   (define $fx-vaos (make-eqv-hashtable))
 
   ;; An optional owner scopes loop retirement, for a page running two
@@ -210,6 +212,8 @@
             ;; out once, and the width that laid them out is the one the
             ;; draw has to name.
             (immutable u32 $fx-mesh-u32?)
+            ;; the stamp of the upload, (cmd-stamp) taken after its
+            ;; words; #f until the first one
             (mutable up $fx-mesh-up $fx-mesh-up!)))
 
   (define (fx-mesh! m)
@@ -223,12 +227,12 @@
   (define (fx-mesh-use! prog h)
     (fx-use! prog ($fx-mesh-vbuf h))
     (cmd-bind-index! ($fx-mesh-ibuf h))
-    (unless ($fx-mesh-up h)
+    (unless (cmd-stamp-holds? ($fx-mesh-up h))
       (cmd-buffer-data! ($fx-mesh-vbase h) ($fx-mesh-vbytes h))
       (if ($fx-mesh-u32? h)
           (cmd-index-data32! ($fx-mesh-ibase h) ($fx-mesh-ibytes h))
           (cmd-index-data! ($fx-mesh-ibase h) ($fx-mesh-ibytes h)))
-      ($fx-mesh-up! h #t)))
+      ($fx-mesh-up! h (cmd-stamp))))
   (define (fx-mesh-draw! h)
     (if ($fx-mesh-u32? h)
         (cmd-draw-elements32! GL-TRIANGLES (fx-mesh-count h))
@@ -526,73 +530,104 @@
   ;; pair: the same program drawing the same buffer at two strides
   ;; needs two of them.  Each instance-buffer entry holds a short
   ;; stride alist, length 1 for callers that use the default stride.
+  ;;
+  ;; An entry is believed only while its stamp holds.  Otherwise -- a
+  ;; new entry, or one whose stamp no longer holds (its setup words
+  ;; were dropped or cut off, or a flush from a moved base has run
+  ;; since) -- the whole setup is encoded again on the entry's own VAO
+  ;; and stamped after it.  The stamp is cleared before the words: a
+  ;; full region inside them must leave an entry that is set up again,
+  ;; not one that looks set up with part of its attributes.
   (define ($fx-use-vao! prog buf-slot inst-slot stride)
     (cmd-use-program! (fx-program-slot prog))
     (let* ((cache ($fx-vao-table
                    ($fx-vao-table $fx-vaos (fx-program-slot prog)) buf-slot))
            (bucket (hashtable-ref cache inst-slot '()))
            (hit (assv stride bucket)))
-      (if hit
+      (if (and hit (cmd-stamp-holds? (cddr hit)))
           (begin
-            (cmd-bind-vao! (cdr hit))
+            (cmd-bind-vao! (cadr hit))
             (cmd-bind-buffer! buf-slot))
-          (let ((v (fx-slot!)))
-            (gl-vao! v)
-            (hashtable-set! cache inst-slot (cons (cons stride v) bucket))
-            (cmd-bind-vao! v)
-            (cmd-bind-buffer! buf-slot)
-            (for-each (lambda (a)
-                        (cmd-vertex-attrib! (car a) (cadr a)
-                                            stride
-                                            (caddr a)))
-                      ($fx-program-attribs prog))
-            (when (>= inst-slot 0)
-              (cmd-bind-buffer! inst-slot)
-              (for-each (lambda (a)
-                          (cmd-vertex-attrib! (car a) (cadr a)
-                                              (fx-program-istride prog)
-                                              (caddr a))
-                          (cmd-attrib-divisor! (car a) 1))
-                        ($fx-program-iattribs prog)))))))
+          (let ((e (or (and hit (cdr hit))
+                       (let* ((v (fx-slot!))
+                              (e (cons v #f)))
+                         (gl-vao! v)
+                         (hashtable-set! cache inst-slot
+                                         (cons (cons stride e) bucket))
+                         e))))
+            (set-cdr! e #f)
+            ($fx-vao-setup! prog (car e) buf-slot inst-slot stride)
+            (set-cdr! e (cmd-stamp))))))
 
-  ;; scalar/vector cache: #t = unchanged since last send.  The cell
-  ;; vector is reused, so a steady uniform allocates once, ever.
+  ;; everything the library keeps in a VAO: the program's attributes
+  ;; (each cmd-vertex-attrib! also resets its divisor) and, instanced,
+  ;; the instance buffer's attributes and their divisors.  The element
+  ;; binding is not part of it: every caller binds its index buffer
+  ;; after fx-use!
+  (define ($fx-vao-setup! prog v buf-slot inst-slot stride)
+    (cmd-bind-vao! v)
+    (cmd-bind-buffer! buf-slot)
+    (for-each (lambda (a)
+                (cmd-vertex-attrib! (car a) (cadr a) stride (caddr a)))
+              ($fx-program-attribs prog))
+    (when (>= inst-slot 0)
+      (cmd-bind-buffer! inst-slot)
+      (for-each (lambda (a)
+                  (cmd-vertex-attrib! (car a) (cadr a)
+                                      (fx-program-istride prog)
+                                      (caddr a))
+                  (cmd-attrib-divisor! (car a) 1))
+                ($fx-program-iattribs prog))))
+
+  ;; The scalar/vector cache: per program, one vector per uniform name,
+  ;; #(v0 v1 v2 v3 stamp) -- the values last encoded and the stamp taken
+  ;; after them.  The vector is reused, so a steady uniform allocates
+  ;; once, ever.
   ;;
-  ;; A name whose entry is $fx-replayed, not a vector, has had its
-  ;; value supplied at replay by fx-uniform-viewport-height! or -size!.
-  ;; What the GPU holds for it is not known here, so it is never
-  ;; "unchanged": every write is sent, and the mark stays, since
-  ;; replacing it with this value would make the next write of the
-  ;; same value look like a repeat of something the GPU may not hold.
-  (define $fx-replayed 'replayed)
+  ;; A set is skipped only as a repeat inside one stream: the stamp is in
+  ;; the current stream (cmd-stamp-in-stream?) and the values are equal.
+  ;; Every replay of a stream runs its words from the start, so a value
+  ;; the stream itself set before is set again before the skipped call,
+  ;; at every replay; a value from an earlier stream is not (a flush can
+  ;; replay this stream again after a later one changed it), and is sent.
+  ;; The stamp is stored only when the stream has used this program
+  ;; before the set: GL applies a uniform call only while its program is
+  ;; current, and before a cmd-use-program! in this stream the current
+  ;; program is whatever the last replay or the host left.  Otherwise #f
+  ;; is stored, and the next set is sent.
   (define ($fx-same? cache name n v0 v1 v2 v3)
     (let ((prev (hashtable-ref cache name #f)))
+      (and prev
+           (cmd-stamp-in-stream? (vector-ref prev 4))
+           (fl=? (vector-ref prev 0) v0)
+           (or (< n 2) (fl=? (vector-ref prev 1) v1))
+           (or (< n 3) (fl=? (vector-ref prev 2) v2))
+           (or (< n 4) (fl=? (vector-ref prev 3) v3)))))
+  ;; after the set's words: the values, and the stamp under the gate
+  (define ($fx-sent! prog cache name v0 v1 v2 v3)
+    (let ((stamp (and (eqv? (cmd-stream-program) (fx-program-slot prog))
+                      (cmd-stamp)))
+          (prev (hashtable-ref cache name #f)))
       (if prev
-          (if (not (vector? prev))
-              #f
-              (if (and (fl=? (vector-ref prev 0) v0)
-                       (or (< n 2) (fl=? (vector-ref prev 1) v1))
-                       (or (< n 3) (fl=? (vector-ref prev 2) v2))
-                       (or (< n 4) (fl=? (vector-ref prev 3) v3)))
-                  #t
-                  (begin (vector-set! prev 0 v0) (vector-set! prev 1 v1)
-                         (vector-set! prev 2 v2) (vector-set! prev 3 v3)
-                         #f)))
-          (begin (hashtable-set! cache name (vector v0 v1 v2 v3))
-                 #f))))
+          (begin (vector-set! prev 0 v0) (vector-set! prev 1 v1)
+                 (vector-set! prev 2 v2) (vector-set! prev 3 v3)
+                 (vector-set! prev 4 stamp))
+          (hashtable-set! cache name (vector v0 v1 v2 v3 stamp)))))
 
   ;; A uniform set to the viewport in force when the draw is replayed:
   ;; its height into a float, or its width and height into a vec2.  For
   ;; sizes in pixels of whatever target is being drawn into, which the
-  ;; canvas size is not once an offscreen target is bound.  The name is
-  ;; marked in the program's cache first, so fx-uniform! on it always
-  ;; sends from then on (see $fx-same?).
+  ;; canvas size is not once an offscreen target is bound.  The name's
+  ;; stamp is cleared first, so the next fx-uniform! on it is sent (see
+  ;; $fx-same?): what the GPU holds for it is decided at replay.
   (define ($fx-uniform-replayed! who prog name type encode!)
     (let ((u (hashtable-ref ($fx-program-uniforms prog) name #f)))
       (unless u (error who "undeclared uniform" name))
       (unless (eq? (cdr u) type)
         (error who "the uniform is not of the type this sets" name (cdr u) type))
-      (hashtable-set! ($fx-program-ucache prog) name $fx-replayed)
+      (let ((prev (hashtable-ref ($fx-program-ucache prog) name #f)))
+        (when prev
+          (vector-set! prev 4 #f)))
       (encode! (car u))))
   (define (fx-uniform-viewport-height! prog name)
     ($fx-uniform-replayed! 'fx-uniform-viewport-height! prog name 'float
@@ -602,8 +637,9 @@
                            cmd-uniform-viewport-size!))
 
   ;; dispatch on the declared type; sampler values are texture units.
-  ;; Scalar and vector uniforms remember their last value and skip
-  ;; the re-send (matrices change every frame; they don't bother).
+  ;; Scalar and vector uniforms skip a repeat of the value this stream
+  ;; already set for the program (matrices change every frame; they
+  ;; don't bother).
   ;; Don't mix raw cmd-uniform*! writes with fx-uniform! on the same
   ;; uniform -- the cache cannot see them
   ;; does the program declare this uniform?  Lets a renderer bind
@@ -627,25 +663,30 @@
           ((float)
            (let ((x ($fx-fl (car vs))))
              (unless ($fx-same? cache name 1 x 0.0 0.0 0.0)
-               (cmd-uniform1f! slot x))))
+               (cmd-uniform1f! slot x)
+               ($fx-sent! prog cache name x 0.0 0.0 0.0))))
           ((vec2)
            (let ((x ($fx-fl (car vs))) (y ($fx-fl (cadr vs))))
              (unless ($fx-same? cache name 2 x y 0.0 0.0)
-               (cmd-uniform2f! slot x y))))
+               (cmd-uniform2f! slot x y)
+               ($fx-sent! prog cache name x y 0.0 0.0))))
           ((vec3)
            (let ((x ($fx-fl (car vs))) (y ($fx-fl (cadr vs)))
                  (z ($fx-fl (caddr vs))))
              (unless ($fx-same? cache name 3 x y z 0.0)
-               (cmd-uniform3f! slot x y z))))
+               (cmd-uniform3f! slot x y z)
+               ($fx-sent! prog cache name x y z 0.0))))
           ((vec4)
            (let ((x ($fx-fl (car vs))) (y ($fx-fl (cadr vs)))
                  (z ($fx-fl (caddr vs))) (w ($fx-fl (cadddr vs))))
              (unless ($fx-same? cache name 4 x y z w)
-               (cmd-uniform4f! slot x y z w))))
+               (cmd-uniform4f! slot x y z w)
+               ($fx-sent! prog cache name x y z w))))
           ((sampler2D samplerCube sampler2DArray int)
            (let ((x (fixnum->flonum (car vs))))
              (unless ($fx-same? cache name 1 x 0.0 0.0 0.0)
-               (cmd-uniform1i! slot (car vs)))))
+               (cmd-uniform1i! slot (car vs))
+               ($fx-sent! prog cache name x 0.0 0.0 0.0))))
           ((mat4)                       ; a (gfx mat) m4 vector, or an
            (if (fixnum? (car vs))       ; m4s staging address
                (cmd-uniform-matrix4s! slot (car vs))

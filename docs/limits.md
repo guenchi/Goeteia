@@ -821,6 +821,100 @@ the cost is a synchronous call to the GPU process (no trace was taken),
 and any implementation other than ANGLE.  The library sets no budget
 for it; whether it matters is the application's frame time to decide.
 
+## Cached GPU state and dropped commands
+
+The graphics stack keeps records about what the GPU holds, so that it
+does not send the same thing twice: the last value of each scalar and
+vector uniform `fx-uniform!` set, the attribute setup of each vertex
+array `fx-use!` made, and whether the buffers of a mesh
+(`fx-mesh-use!`), a scene geometry, an instance group, a glTF primitive
+(and its morphed vertices) and a particle pool hold their data.  Each
+record is written when the command that makes it true is ENCODED, but
+the command takes effect only when `cmd-flush!` REPLAYS it.  So each
+record carries a stamp from `(gfx gl)`, `(cmd-stamp)`, taken right after
+its words, and is believed only while the stamp says those words run
+before what relies on them: they are earlier in the current segment, and
+so run first at every replay of it, or a completed flush ran them.  A
+stamp that holds does not say a flush has happened.
+
+What drops or cuts off words, and what it costs.  `cmd-begin!` drops
+every word not yet flushed -- including setup encoded before the loop's
+first frame, and whatever `ibl-prefilter!` and `ibl-brdf-lut!` find
+unflushed, since each opens with its own `cmd-begin!`.  `cmd-region!`,
+a command that does not fit the region, and `gl-attach!` cut the stream
+off until the next `cmd-begin!`; a replay that raises stops part way.
+After any of these, each subject whose last write was among the words
+that never ran is established again where it is next used, once -- one
+extra setup or upload each -- and nothing else is.  A record covers its
+site's whole sequence (a mesh's vertex and index uploads, every
+attribute of a vertex array), so a stop inside the sequence establishes
+all of it again.  The one exception: a `cmd-flush!` after `cmd-region!`
+moved the command base without a `cmd-begin!` can start inside a
+command, and after it every subject is established again.  Switching
+regions the usual way -- `cmd-region!`, then `cmd-begin!` -- costs
+nothing.
+
+Uniforms are deduplicated within a stream only.  A set of the value the
+same stream already set for that program is skipped; the first set of
+each uniform in each stream is sent, even when it has not changed since
+the last frame, because a stream can be replayed again and its replay
+must set it again.  A set is remembered only after the stream has used
+the program (`fx-use!` or `cmd-use-program!`): GL applies a uniform call
+only while its program is current, and before that the current program
+is whatever the last replay or the host left.  A value set ONLY before
+the loop, and never again, is lost, as it always was: the loop's first
+`cmd-begin!` drops it.  Flush such setup between its own `cmd-begin!`
+and `cmd-flush!`.
+
+Capacity.  The frame after a drop carries its own commands plus, once
+each, the setup or upload commands of the subjects it uses whose last
+write was dropped -- the same commands the dropped words carried for
+them.  That is not bounded by any frame the program encoded before:
+when the dropped words were the first use of many subjects, the next
+frame carries those first uses on top of its own.  Flush rather than
+drop.
+
+A full region.  A command that does not fit raises, and the stream is
+left at the end of its last whole command: `(cmd-pos)` after the error
+is where that command began, and a flush after it replays the whole
+commands before it and none of it.  The records those commands
+completed are not established again.  A frame that does not fit, caught
+and flushed every frame, progresses only if its own commands and each
+outstanding establishment fit where they are encoded; a region smaller
+than one record's sequence makes no progress.  There is no general
+guarantee.
+
+Staging and replay.  Uniform values are set again by every replay of a
+stream.  An upload reads its staging bytes when it is REPLAYED, not when
+it is encoded.  Change an instance group, a morph's weights or a
+particle pool only while no draw of it waits for a replay -- after the
+flush that replays its draws, and not between two flushes of one stream
+-- or a draw encoded before the change can show the later bytes, as the
+library always has.  A subject established again reads its staging
+again, so a handle whose staging was released (`fx-release!`) is dead,
+and after a drop that touched it that shows.
+
+What the records assume.  Only the library writes the uniforms,
+vertex arrays and buffers it keeps records about: host code, another
+replayer or a raw `(gfx gl)` call must not set a library-owned uniform,
+configure a library-owned vertex array or write a library-owned buffer.
+Host code may change bindings and the current program between replays.
+A flush replays its words in order, and nothing outside the replayer
+changes GL state while it runs.  Within one attachment no slot is
+reassigned and no object deleted; handles made before a `gl-attach!`
+(or an `fx-init!`, which calls it) are dead.  After a context loss and
+restore, call `fx-init!` again: every object is gone, and a restored
+context is not covered.
+
+Keeping a record of your own over `(gfx gl)`.  Store `(cmd-stamp)` with
+it, taken right after the words it describes, whatever it is (#f while
+the encoder is stale).  Believe it while `(cmd-stamp-holds? s)` for an
+object's contents or setup, or while `(cmd-stamp-in-stream? s)` for a
+value a later replay of the stream must set again; re-stamp it, or
+store #f, on every write.  A site that changes its record, or the state
+its check reads, before its words are encoded stores #f first, so that
+a full region in between cannot leave the new record under an old stamp.
+
 ## Compiler diagnostics are terse
 
 Runtime traps surface as `unreachable` or `illegal cast` with no

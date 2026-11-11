@@ -1126,8 +1126,16 @@ fullscreen effect is a handful of lines:
 through `fx-program!` / `fx-buffer!` / `fx-texture!` / `fx-alloc!`, not
 hand-numbered `gl-*!` calls. Attribute setup rides VAOs automatically
 (the first `fx-use!` of a program/buffer pair records the pointers, each
-later one is a single-word rebind), and scalar/vector uniforms remember
-their last value per program and skip the re-send. `fx-program3!` targets
+later one is a single-word rebind), and scalar/vector uniforms skip a
+re-send of the value the same stream (one `cmd-begin!` to the next)
+already set for that program, once the stream has used the program; the
+first set in each stream is sent. Records like these -- uploads, VAO
+setups, uniform values -- are believed only while the words that made
+them are known to come before the commands that rely on them: earlier in
+the same stream, so every replay runs them first, or already run by a
+completed flush (a uniform value only the first way); see "Cached GPU
+state and dropped
+commands" in `docs/limits.md`. `fx-program3!` targets
 ESSL 3.00, `fx-tf-program!` transform feedback, `fx-ubo!` a uniform
 block. `fx-loop!` frames commands around a t/dt callback; `fx-loop-fixed!`
 splits physics (fixed cadence) from render (once per frame with a blend

@@ -50,6 +50,7 @@
           cmd-bind-target! cmd-bind-canvas! cmd-resolve! cmd-resolve-mrt!
           cmd-read-pixels!
           cmd-region! cmd-begin! cmd-flush! cmd-pos cmd-draws
+          cmd-stamp cmd-stamp-holds? cmd-stamp-in-stream? cmd-stream-program
           cmd-clear! cmd-use-program! cmd-bind-buffer! cmd-buffer-data!
           cmd-vertex-attrib! cmd-vertex-attrib-h!
           cmd-uniform1f! cmd-uniform4f!
@@ -661,7 +662,11 @@
   (define $gl #f)                       ; the replayer handle
   (define $replay #f)
 
+  ;; a new replayer, whose slot numbers name other objects: the stream
+  ;; is stale until the next cmd-begin!, and nothing it holds is marked
   (define (gl-attach! canvas)
+    (set! $seg #f)
+    (set! $cut #f)
     (js-eval replayer-src)
     (set! $gl (js-call (js-get (js-global) "__goeteia_gl") (js-undefined)
                        canvas (js-get (js-global) "__goeteia_mem")))
@@ -817,22 +822,124 @@
   (define $p 0)
   (define $limit #f)
   (define $draw-count 0)                ; draws encoded this frame
+
+  ;; ---- the stream's own history ----
+  ;; A library that keeps a record about what the GPU holds -- a
+  ;; uniform's value, a vertex array's setup, a buffer's contents --
+  ;; writes it when it ENCODES the command that makes it so, but the
+  ;; command takes effect only when cmd-flush! REPLAYS it.  Words can be
+  ;; encoded and never replayed (cmd-begin! drops what was not flushed;
+  ;; cmd-region!, a full region and gl-attach! cut the stream off; a
+  ;; replay can raise part way), and a stream can be replayed more than
+  ;; once.  So a record carries a stamp, (cmd-stamp), taken right after
+  ;; its words, and is believed only while the stamp says those words
+  ;; run before what relies on them: they are earlier in the current
+  ;; segment, so every replay that reaches this point runs them first,
+  ;; or a completed flush ran them.  A stamp that holds does not say a
+  ;; flush has happened.
+  ;;
+  ;; A STREAM runs from one cmd-begin! to the next.  A SEGMENT runs from
+  ;; the cmd-begin!, or from a completed flush, to the next completed
+  ;; flush, cmd-begin! or stale event; each segment has its own cell,
+  ;; and the cell is the stamp.  The encoder is STALE from a
+  ;; cmd-region!, a full region, a gl-attach! or a replay that raises,
+  ;; until the next cmd-begin!; while it is stale there is no current
+  ;; cell and (cmd-stamp) is #f, so nothing written then is believed.
+  ;;
+  ;; A cell is marked replayed by a completed flush that ran it: as the
+  ;; current cell, or, by a flush while stale, as the cell the stale
+  ;; event cut off ($cut) -- whole commands from the stream's own start,
+  ;; since a command that does not fit is rolled back (op!, $word!).
+  ;; The one flush that cannot vouch for anything is one from a base
+  ;; that cmd-region! moved without a cmd-begin!: it may start inside a
+  ;; command, so it begins a new era, and no cell made before it holds.
+  ;;
+  ;; These variables change only as the transitions below say:
+  ;;   $op           where the command being written starts
+  ;;   $seg          the current segment's cell, or #f while stale
+  ;;   $cut          the cell a stale event cut off, until the next
+  ;;                 cmd-begin! or gl-attach!
+  ;;   $era          replaced only by a flush from a moved base
+  ;;   $moved        cmd-region! changed $base since the last cmd-begin!
+  ;;   $stream-prog  the program slot of the last cmd-use-program!
+  ;;                 encoded since the last cmd-begin!
+  (define-record-type ($cmd-cell $make-cmd-cell $cmd-cell?)
+    (fields (mutable replayed $cmd-cell-replayed? $cmd-cell-replayed!)
+            (immutable stream $cmd-cell-stream)
+            (immutable era $cmd-cell-era)))
+  (define $op 0)
+  (define $seg #f)
+  (define $cut #f)
+  (define $era (list 'era))
+  (define $moved #f)
+  (define $stream-prog #f)
+  (define ($new-cell stream) ($make-cmd-cell #f stream $era))
+  ;; the one stale transition of cmd-region! and a full region: cut the
+  ;; current cell off.  gl-attach! clears both instead (it does not cut:
+  ;; a flush after it replays on another replayer)
+  (define ($stale!)
+    (when $seg
+      (set! $cut $seg)
+      (set! $seg #f)))
+
+  ;; A record stores (cmd-stamp) taken after its words, whatever it is
+  ;; (#f while stale).  A record about a GPU OBJECT -- a buffer's
+  ;; contents, a vertex array's setup -- is believed while
+  ;; cmd-stamp-holds?; one about a VALUE the stream sets, which a later
+  ;; replay of the same words must set again -- a uniform -- only while
+  ;; cmd-stamp-in-stream?.  A site that changes its record, or the state
+  ;; its check reads, before its words are encoded stores #f first.
+  (define (cmd-stamp) $seg)
+  (define (cmd-stamp-holds? s)
+    (and ($cmd-cell? s)
+         (eq? ($cmd-cell-era s) $era)
+         (or (eq? s $seg) ($cmd-cell-replayed? s))))
+  (define (cmd-stamp-in-stream? s)
+    (and ($cmd-cell? s)
+         $seg
+         (eq? ($cmd-cell-stream s) ($cmd-cell-stream $seg))))
+  (define (cmd-stream-program) $stream-prog)
+
   (define (cmd-region! base . limit)
+    ($stale!)
+    (unless (eqv? base $base)
+      (set! $moved #t))
     (set! $base base)
     (set! $limit (and (pair? limit) (car limit)))
     (when (and $limit (< $limit $base))
       (error 'cmd-region! "limit precedes command base" $limit)))
-  (define (cmd-begin!) (set! $p $base) (set! $draw-count 0))
+  (define (cmd-begin!)
+    (set! $p $base)
+    (set! $draw-count 0)
+    (set! $seg ($new-cell (list 'stream)))
+    (set! $cut #f)
+    (set! $moved #f)
+    (set! $stream-prog #f))
   (define ($draw!) (set! $draw-count (+ $draw-count 1)))
+  ;; A word that does not fit puts the cursor back where its command
+  ;; began, so the stream never holds part of a command: a flush after
+  ;; the error replays whole commands only, and none of the one that
+  ;; did not fit.  The error names where that word would have gone, as
+  ;; it always has.
   (define ($word!)
     (when (and $limit (> (+ $p 4) $limit))
-      (error 'cmd-region! "command region overflow" $p)))
+      (let ((at $p))
+        (set! $p $op)
+        ($stale!)
+        (error 'cmd-region! "command region overflow" at))))
   (define (u! v) ($word!) (%mem-i32-set! $p v) (set! $p (+ $p 4)))
   (define (f! v) ($word!) (%mem-f32-set! $p v) (set! $p (+ $p 4)))
+  ;; every command's first word: the command starts here, recorded
+  ;; BEFORE the word is written, so a first word that does not fit
+  ;; rolls back to its own start and not to the previous command's
+  (define (op! v) (set! $op $p) (u! v))
 
-  (define (cmd-clear! r g b a) (u! 1) (f! r) (f! g) (f! b) (f! a))
-  (define (cmd-use-program! slot) (u! 2) (u! slot))
-  (define (cmd-bind-buffer! slot) (u! 3) (u! slot))
+  (define (cmd-clear! r g b a) (op! 1) (f! r) (f! g) (f! b) (f! a))
+  (define (cmd-use-program! slot)
+    (op! 2)
+    (u! slot)
+    (set! $stream-prog slot))
+  (define (cmd-bind-buffer! slot) (op! 3) (u! slot))
   ;; The count is in BYTES.  The replayer views the range as float32s
   ;; and takes `bytes >> 2` of them, so a count that is not a multiple
   ;; of four would upload SHORT and silently: 2 bytes would upload
@@ -855,42 +962,42 @@
       (error 'cmd-buffer-data!
              "byte count must be a multiple of 4 (the upload is float32)"
              bytes))
-    (u! 4) (u! offset) (u! bytes))
+    (op! 4) (u! offset) (u! bytes))
   (define (cmd-vertex-attrib! loc size stride offset)
-    (u! 5) (u! loc) (u! size) (u! stride) (u! offset))
+    (op! 5) (u! loc) (u! size) (u! stride) (u! offset))
   ;; the HALF_FLOAT spelling: same wiring, two bytes a component --
   ;; vertex data written by mesh-write-f16! draws at half the
   ;; bandwidth and the GPU converts on fetch
   (define (cmd-vertex-attrib-h! loc size stride offset)
-    (u! 40) (u! loc) (u! size) (u! stride) (u! offset))
-  (define (cmd-uniform1f! slot x) (u! 6) (u! slot) (f! x))
+    (op! 40) (u! loc) (u! size) (u! stride) (u! offset))
+  (define (cmd-uniform1f! slot x) (op! 6) (u! slot) (f! x))
   (define (cmd-uniform4f! slot x y z w)
-    (u! 7) (u! slot) (f! x) (f! y) (f! z) (f! w))
+    (op! 7) (u! slot) (f! x) (f! y) (f! z) (f! w))
   (define (cmd-draw-arrays! mode first count)
-    ($draw!) (u! 8) (u! mode) (u! first) (u! count))
-  (define (cmd-bind-texture! unit slot) (u! 11) (u! unit) (u! slot))
-  (define (cmd-bind-cubemap! unit slot) (u! 25) (u! unit) (u! slot))
-  (define (cmd-bind-texture-array! unit slot) (u! 41) (u! unit) (u! slot))
+    (op! 8) (u! mode) (u! first) (u! count) ($draw!))
+  (define (cmd-bind-texture! unit slot) (op! 11) (u! unit) (u! slot))
+  (define (cmd-bind-cubemap! unit slot) (op! 25) (u! unit) (u! slot))
+  (define (cmd-bind-texture-array! unit slot) (op! 41) (u! unit) (u! slot))
   ;; unbind before rendering into a cube target's faces: a cube map
   ;; both attached and bound for sampling is a feedback loop, and
   ;; ANGLE (Chrome) rejects every draw of it
-  (define (cmd-unbind-cubemap! unit) (u! 29) (u! unit))
+  (define (cmd-unbind-cubemap! unit) (op! 29) (u! unit))
   ;; the 2D twin: post chains sample a target one frame and render
   ;; into it the next -- unbind its unit first, or strict validators
   ;; (WebKit) see the same feedback loop
-  (define (cmd-unbind-texture! unit) (u! 30) (u! unit))
-  (define (cmd-bind-vao! slot) (u! 27) (u! slot))
-  (define (cmd-unbind-vao!) (u! 28))
-  (define (cmd-bind-ubo! binding slot) (u! 31) (u! binding) (u! slot))
+  (define (cmd-unbind-texture! unit) (op! 30) (u! unit))
+  (define (cmd-bind-vao! slot) (op! 27) (u! slot))
+  (define (cmd-unbind-vao!) (op! 28))
+  (define (cmd-bind-ubo! binding slot) (op! 31) (u! binding) (u! slot))
   (define (cmd-ubo-data! slot base bytes)  ; staging -> uniform buffer
-    (u! 32) (u! slot) (u! base) (u! bytes))
+    (op! 32) (u! slot) (u! base) (u! bytes))
   ;; transform feedback: aim the capture at a buffer, then bracket
   ;; the update draw (rasterizer discard on/off rides along)
-  (define (cmd-tf-buffer! slot) (u! 33) (u! slot))
-  (define (cmd-tf-begin!) (u! 34))
-  (define (cmd-tf-end!) (u! 35))
-  (define (cmd-uniform1i! slot v) (u! 12) (u! slot) (u! v))
-  (define (cmd-uniform2f! slot x y) (u! 13) (u! slot) (f! x) (f! y))
+  (define (cmd-tf-buffer! slot) (op! 33) (u! slot))
+  (define (cmd-tf-begin!) (op! 34))
+  (define (cmd-tf-end!) (op! 35))
+  (define (cmd-uniform1i! slot v) (op! 12) (u! slot) (u! v))
+  (define (cmd-uniform2f! slot x y) (op! 13) (u! slot) (f! x) (f! y))
   ;; A uniform whose value is the viewport in force when the command is
   ;; REPLAYED: its height (a float), or its width and height (a vec2).
   ;; The value is not known when the command is written -- a draw can
@@ -901,13 +1008,13 @@
   ;; nothing is kept from one replay to the next, because another
   ;; replayer or the host may set the viewport between them.  If the
   ;; context is lost the query answers null and the upload is skipped.
-  (define (cmd-uniform-viewport-height! slot) (u! 45) (u! slot))
-  (define (cmd-uniform-viewport-size! slot) (u! 46) (u! slot))
+  (define (cmd-uniform-viewport-height! slot) (op! 45) (u! slot))
+  (define (cmd-uniform-viewport-size! slot) (op! 46) (u! slot))
   (define (cmd-uniform3f! slot x y z)
-    (u! 19) (u! slot) (f! x) (f! y) (f! z))
+    (op! 19) (u! slot) (f! x) (f! y) (f! z))
   ;; m: a 16-element flonum vector, column-major ((gfx mat) makes them)
   (define (cmd-uniform-matrix4! slot m)
-    (u! 14) (u! slot)
+    (op! 14) (u! slot)
     (let loop ((i 0))
       (when (< i 16)
         (f! (vector-ref m i))
@@ -916,12 +1023,12 @@
   ;; the command carries its ADDRESS and the replayer reads the
   ;; sixteen floats in place -- three words instead of eighteen
   (define (cmd-uniform-matrix4s! slot at)
-    (u! 38) (u! slot) (u! at))
-  (define (cmd-depth! on?) (u! 15) (u! (if on? 1 0)))
+    (op! 38) (u! slot) (u! at))
+  (define (cmd-depth! on?) (op! 15) (u! (if on? 1 0)))
   ;; the depth WRITE mask, independent of the test: translucent
   ;; passes keep the test (occluded by opaque) but stop writing (so
   ;; blended fragments don't occlude each other)
-  (define (cmd-depth-write! on?) (u! 42) (u! (if on? 1 0)))
+  (define (cmd-depth-write! on?) (op! 42) (u! (if on? 1 0)))
 
   ;; ---- rasterizer state, in the stream ----
   ;; The depth comparison, the polygon offset, the colour write mask
@@ -948,7 +1055,7 @@
                (string-append "not a depth function: never less equal lequal"
                               " greater notequal gequal always")
                f))
-      (u! 47) (u! code)))
+      (op! 47) (u! code)))
 
   ;; The operands are stored by f!, as f32 words, so what has to hold is
   ;; that the number survives that store: a real that equals itself (NaN
@@ -970,7 +1077,7 @@
       (error 'cmd-polygon-offset!
              "the units are not a finite real number within f32 range"
              units))
-    (u! 48)
+    (op! 48)
     (u! (if (and (zero? factor) (zero? units)) 0 1))
     (f! (inexact factor))
     (f! (inexact units)))
@@ -978,7 +1085,7 @@
   ;; each channel is a Scheme truth value, as cmd-depth! reads its
   ;; argument: only #f masks a channel off
   (define (cmd-color-mask! r g b a)
-    (u! 49) (u! (if r 1 0)) (u! (if g 1 0)) (u! (if b 1 0)) (u! (if a 1 0)))
+    (op! 49) (u! (if r 1 0)) (u! (if g 1 0)) (u! (if b 1 0)) (u! (if a 1 0)))
 
   ;; off is a name like the others, not a truth value: #f is refused
   (define ($cull-face-code m)
@@ -989,19 +1096,19 @@
     (let ((code ($cull-face-code m)))
       (unless code
         (error 'cmd-cull-face! "not a face: off back front front-and-back" m))
-      (u! 50) (u! code)))
+      (op! 50) (u! code)))
   ;; indexed meshes: a buffer slot bound as the element array, u16
   ;; indices uploaded from the staging memory, one drawElements
-  (define (cmd-bind-index! slot) (u! 16) (u! slot))
+  (define (cmd-bind-index! slot) (op! 16) (u! slot))
   ;; 32-bit indices (webgl2): meshes past 65536 vertices
-  (define (cmd-index-data32! base bytes) (u! 36) (u! base) (u! bytes))
+  (define (cmd-index-data32! base bytes) (op! 36) (u! base) (u! bytes))
   (define (cmd-draw-elements32! mode count)
-    ($draw!) (u! 37) (u! mode) (u! count))
-  (define (cmd-index-data! offset bytes) (u! 17) (u! offset) (u! bytes))
+    (op! 37) (u! mode) (u! count) ($draw!))
+  (define (cmd-index-data! offset bytes) (op! 17) (u! offset) (u! bytes))
   (define (cmd-draw-elements! mode count)
-    ($draw!) (u! 18) (u! mode) (u! count))
+    (op! 18) (u! mode) (u! count) ($draw!))
   ;; render into an offscreen target, or back to the canvas
-  (define (cmd-bind-target! slot) (u! 20) (u! slot))
+  (define (cmd-bind-target! slot) (op! 20) (u! slot))
   ;; resolve a gl-target-mrt-msaa! target, in one command so nothing
   ;; can fall between its parts.  For each attachment i: readBuffer
   ;; COLOR_ATTACHMENTi, drawBuffers with that attachment at position i and
@@ -1012,10 +1119,10 @@
   ;; bound, and the canvas is bound last, as cmd-resolve! leaves it.  The
   ;; viewport is not touched, and scissoring is assumed off.
   (define (cmd-resolve-mrt! slot rslot n w h)
-    (u! 51) (u! slot) (u! rslot) (u! n) (u! w) (u! h))
+    (op! 51) (u! slot) (u! rslot) (u! n) (u! w) (u! h))
   (define (cmd-resolve! slot rslot w h)  ; blit msaa -> its resolve fb
-    (u! 26) (u! slot) (u! rslot) (u! w) (u! h))
-  (define (cmd-bind-canvas!) (u! 21))
+    (op! 26) (u! slot) (u! rslot) (u! w) (u! h))
+  (define (cmd-bind-canvas!) (op! 21))
   ;; pixels back out of the GPU, into the staging memory: the w*h
   ;; RGBA8 texels of the rectangle at (x, y) land as w*h*4 bytes at
   ;; `base`, readable with %mem-u8-ref once cmd-flush! returns (the
@@ -1031,23 +1138,23 @@
   ;;
   ;; The cost is a full pipeline stall -- see docs/limits.md.
   (define (cmd-read-pixels! x y w h base)
-    (u! 43) (u! x) (u! y) (u! w) (u! h) (u! base))
+    (op! 43) (u! x) (u! y) (u! w) (u! h) (u! base))
   ;; instancing (webgl2): per-instance attributes advance once per
   ;; instance; one draw carries them all
-  (define (cmd-attrib-divisor! loc div) (u! 22) (u! loc) (u! div))
+  (define (cmd-attrib-divisor! loc div) (op! 22) (u! loc) (u! div))
   (define (cmd-draw-elements-instanced! mode count n)
-    ($draw!) (u! 23) (u! mode) (u! count) (u! n))
+    (op! 23) (u! mode) (u! count) (u! n) ($draw!))
   ;; ...and the u32-index form of it.  The non-instanced pair has had a
   ;; 32-bit variant since the glTF path needed one (36/37); the
   ;; instanced draw did not, so instanced geometry was u16-only however
   ;; wide its index buffer was.  Additive: opcode 44, nothing existing
   ;; changes meaning.
   (define (cmd-draw-elements-instanced32! mode count n)
-    ($draw!) (u! 44) (u! mode) (u! count) (u! n))
+    (op! 44) (u! mode) (u! count) (u! n) ($draw!))
   ;; ms: a vector of m4s (16-element flonum vectors) -- one upload
   ;; carries a whole skeleton's joint matrices
   (define (cmd-uniform-matrices! slot ms)
-    (u! 24) (u! slot) (u! (vector-length ms))
+    (op! 24) (u! slot) (u! (vector-length ms))
     (let each ((k 0))
       (when (< k (vector-length ms))
         (let ((m (vector-ref ms k)))
@@ -1059,21 +1166,43 @@
   ;; the staging-resident flavor: n matrices already lying at `at`
   ;; upload in three words -- the replayer reads them in place
   (define (cmd-uniform-matrices4s! slot at n)
-    (u! 39) (u! slot) (u! at) (u! n))
+    (op! 39) (u! slot) (u! at) (u! n))
   (define (cmd-pos) $p)                 ; for overflow checks by callers
   (define (cmd-draws) $draw-count)      ; and HUDs counting the frame
-  (define (cmd-viewport! x y w h) (u! 9) (u! x) (u! y) (u! w) (u! h))
+  (define (cmd-viewport! x y w h) (op! 9) (u! x) (u! y) (u! w) (u! h))
   ;; blending for translucent draws: (cmd-blend! 'alpha) src-over,
   ;; (cmd-blend! 'add) additive glow, (cmd-blend! 'premul) src-over
   ;; for premultiplied textures, (cmd-blend! 'off) opaque
   (define (cmd-blend! mode)
-    (u! 10)
+    (op! 10)
     (case mode
       ((add)    (u! 1) (u! 1))
       ((alpha)  (u! 1) (u! 0))
       ((premul) (u! 1) (u! 2))
       (else     (u! 0) (u! 0))))
 
-  ;; one bridge call replays the whole frame
+  ;; One bridge call replays the whole frame, from the base: a second
+  ;; flush replays it again.  The current cell is cut off for the
+  ;; duration of the call and marked replayed only once the call
+  ;; returns; a replay that raises unwinds past the marking and leaves
+  ;; the encoder stale.
   (define (cmd-flush!)
-    (js-call $replay $gl $base $p)))
+    (let ((c $seg))
+      (cond
+       (c
+        (set! $seg #f)
+        (set! $cut c)
+        (let ((r (js-call $replay $gl $base $p)))
+          ($cmd-cell-replayed! c #t)
+          (set! $cut #f)
+          (set! $seg ($new-cell ($cmd-cell-stream c)))
+          r))
+       ($moved
+        (set! $era (list 'era))
+        (set! $cut #f)
+        (js-call $replay $gl $base $p))
+       (else
+        (let ((r (js-call $replay $gl $base $p)))
+          (when $cut
+            ($cmd-cell-replayed! $cut #t))
+          r))))))

@@ -10,17 +10,20 @@
 ;; (particles-size-follows-the-viewport.ss).  The design and its review
 ;; are in archive/goeteia-t4-viewport-design-2026-09-25.md.
 ;;
-;; ALWAYS SENT.  fx-uniform! skips a uniform whose value has not changed
-;; since it last encoded one, and it decides that at ENCODE time.  A
-;; value resolved at replay cannot take part in that comparison, so a
-;; uniform written through a viewport helper is marked and never skipped
-;; afterwards -- whether the next write is the helper again or a literal
-;; fx-uniform!.  Two rows pin that: one where a literal value was
-;; remembered BEFORE the helper wrote (deleting the entry once would
-;; pass it, never remembering again is what it asks), and one where a
-;; literal upload after the helper is encoded and discarded by
-;; cmd-begin! (deleting once fails it: the discarded upload refills the
-;; memory and the next, real one is skipped).
+;; NEVER TAKEN FOR A REPEAT.  fx-uniform! skips a set whose value equals
+;; one set earlier in the same stream, after a use of the program in
+;; that stream (R40: archive/goeteia-r40-design-2026-11-09.md, 3.3 U).
+;; A value resolved at replay cannot take part in that comparison, so a
+;; helper write makes the next literal in its stream be sent; nothing is
+;; remembered across a cmd-begin!.  Two rows pin that: one where a
+;; literal value was recorded BEFORE the helper wrote (a helper that
+;; left the record would have the literal after it skipped), and one
+;; where a literal upload after the helper is encoded and discarded by
+;; cmd-begin! (the discarded upload must not suppress the next, real
+;; one).  Row 1, its vec2 twin and the CONTROL use the program in their
+;; stream first: a set made before any use of the program is never
+;; remembered, so without the use they would pass, or fail, by that rule
+;; and not by the helper.
 ;;
 ;; ON THE TREE BEFORE THE CHANGE this cell does not compile: the helpers
 ;; do not exist there.  That is red, but it reads nothing.  What it
@@ -91,6 +94,7 @@ globalThis.__mkcanvas = (w, h) => {
   (want "dedup 1: literal, helper, literal all reach GL"
         (try (lambda ()
                (clear-log!) (cmd-begin!) (V 320 150)
+               (cmd-use-program! (fx-program-slot p))
                (fx-uniform! p 'u_height 480.0)
                (fx-uniform-viewport-height! p 'u_height)
                (fx-uniform! p 'u_height 480.0)
@@ -121,6 +125,7 @@ globalThis.__mkcanvas = (w, h) => {
   (want "dedup 1 for a vec2: literal, helper, literal all reach GL"
         (try (lambda ()
                (clear-log!) (cmd-begin!) (V 320 150)
+               (cmd-use-program! (fx-program-slot p))
                (fx-uniform! p 'u_resolution 640.0 480.0)
                (fx-uniform-viewport-size! p 'u_resolution)
                (fx-uniform! p 'u_resolution 640.0 480.0)
@@ -133,6 +138,7 @@ globalThis.__mkcanvas = (w, h) => {
 (let ((p (fresh-program)))
   (want "CONTROL an unmarked uniform sent twice with one value is uploaded once"
         (begin (clear-log!) (cmd-begin!)
+               (cmd-use-program! (fx-program-slot p))
                (fx-uniform! p 'u_size_max 96.0) (fx-uniform! p 'u_size_max 96.0)
                (cmd-flush!)
                (uploads "uniform1f:U:u_size_max:"))

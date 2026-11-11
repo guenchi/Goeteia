@@ -300,7 +300,12 @@
             (mutable otex gprim-otex $gprim-otex!)
             (mutable mrtex gprim-mrtex $gprim-mrtex!)
             (mutable vbuf $gprim-vbuf $gprim-vbuf!)
-            (mutable ibuf $gprim-ibuf $gprim-ibuf!)))
+            (mutable ibuf $gprim-ibuf $gprim-ibuf!)
+            ;; the stamp of the last upload into the buffers, (cmd-stamp)
+            ;; taken after its words -- the base upload or a morph's
+            ;; vertices; #f until the first one.  That the buffers exist
+            ;; says nothing about what they hold.
+            (mutable up $gprim-up $gprim-up!)))
 
   ;; The image-index accessors that predate the references.  They
   ;; are projections now, not fields: an asset naming an image in
@@ -2832,7 +2837,7 @@
                                 ;; target carried any
                                 (vector b ds w #t nidx bw
                                         (some nds) (some tds))))))
-                     #f #f #f #f #f #f #f))))
+                     #f #f #f #f #f #f #f #f))))
 
   ;; ---- the GLB container, then the scene walk ----
   (define (gltf-parse base len)
@@ -3285,17 +3290,28 @@
            (let ((e (gprim-emissive p)))
              (fx-uniform! prog 'u_emissive (vector-ref e 0)
                           (vector-ref e 1) (vector-ref e 2))))
-         ;; a dirty morph rewrites the staging stream before upload
-         (let ((mo (gprim-morph p)))
-           (when (and mo (vector-ref mo 3))
-             ($morph-apply! p mo)
-             (unless fresh
-               (cmd-buffer-data! (gprim-vbase p) (gprim-vbytes p)))))
-         (when fresh
-           (cmd-buffer-data! (gprim-vbase p) (gprim-vbytes p))
-           (if (gprim-index-u32? p)
-               (cmd-index-data32! (gprim-ibase p) (gprim-ibytes p))
-               (cmd-index-data! (gprim-ibase p) (gprim-ibytes p))))
+         ;; A dirty morph rewrites the staging stream before upload.
+         ;; Applying it clears the dirty flag before the upload's words,
+         ;; so the stamp is cleared first: a full region in between must
+         ;; leave a primitive that uploads again, not one whose stamp
+         ;; vouches for the vertices before the morph.  Either upload
+         ;; stamps after its words.
+         (let* ((held (cmd-stamp-holds? ($gprim-up p)))
+                (mo (gprim-morph p))
+                (morphed (and mo (vector-ref mo 3) #t)))
+           (when morphed
+             ($gprim-up! p #f)
+             ($morph-apply! p mo))
+           (cond
+            ((not held)
+             (cmd-buffer-data! (gprim-vbase p) (gprim-vbytes p))
+             (if (gprim-index-u32? p)
+                 (cmd-index-data32! (gprim-ibase p) (gprim-ibytes p))
+                 (cmd-index-data! (gprim-ibase p) (gprim-ibytes p)))
+             ($gprim-up! p (cmd-stamp)))
+            (morphed
+             (cmd-buffer-data! (gprim-vbase p) (gprim-vbytes p))
+             ($gprim-up! p (cmd-stamp)))))
          (let ((c (gprim-color p)))
            (if ($gprim-skin p)
                ;; skinned: the resident palette carries the pose --

@@ -192,15 +192,18 @@
   ;; memory of a u16 one, which is why the width is per-geometry rather
   ;; than a global.
   (define ($sgl-geo-u32? g) (vector-ref g 9))
-  (define ($sgl-geo-upload! g)          ; geometry ships on first use
-    (unless (vector-ref g 7)
+  ;; geometry ships on first use, and again only when the stamp of its
+  ;; last upload no longer holds -- those words were dropped or cut off,
+  ;; or a flush from a moved base has run since: slot 7 is that stamp
+  (define ($sgl-geo-upload! g)
+    (unless (cmd-stamp-holds? (vector-ref g 7))
       (cmd-bind-buffer! ($sgl-geo-vbuf g))
       (cmd-buffer-data! (vector-ref g 2) (vector-ref g 4))
       (cmd-bind-index! ($sgl-geo-ibuf g))
       (if ($sgl-geo-u32? g)
           (cmd-index-data32! (vector-ref g 3) (vector-ref g 5))
           (cmd-index-data! (vector-ref g 3) (vector-ref g 5)))
-      (vector-set! g 7 #t)))
+      (vector-set! g 7 (cmd-stamp))))
 
   (define-record-type ($sgl-node $make-sgl-node $sgl-node?)
     (fields (immutable geo $sgl-nd-geo)
@@ -519,10 +522,10 @@
                                (mesh-bounds geom)
                                ;; slot 9: the INDEX WIDTH, decided once
                                ;; at construction.  Slot 7 is the
-                               ;; "already uploaded" flag and cannot
-                               ;; carry this -- the two have different
-                               ;; lifetimes, one flipping after the
-                               ;; first frame and one fixed for the
+                               ;; upload's stamp and cannot carry
+                               ;; this -- the two have different
+                               ;; lifetimes, one changing with each
+                               ;; upload and one fixed for the
                                ;; geometry's life.  mesh-index-bytes
                                ;; above already sizes by the same rule.
                                (mesh-index-u32? geom))))
@@ -1103,10 +1106,13 @@
                        ;; redraws without re-culling or re-uploading.
                        ;; Slot 8 retains packed node identity: a changed
                        ;; camera can still produce identical resident bytes.
+                       ;; Slot 9 is the stamp of the last instance upload:
+                       ;; slots 5-8 describe the buffer only while it holds.
                        (cons (vector g mine (fx-buffer!)
                                      (fx-alloc! (* (length mine) 80))
                                      (length mine) -1.0 -1 -1
-                                     (make-vector (length mine) #f))
+                                     (make-vector (length mine) #f)
+                                     #f)
                              groups)
                        singles)))))))))
 
@@ -1291,20 +1297,32 @@
                                              ($sgl-node-cgen nd)
                                              ($sgl-node-lgen nd)))
                            0 (vector-ref ig 1)))
+           ;; the last upload's stamp: slots 5-8 describe the GPU's
+           ;; buffer only while it holds
+           (saved (vector-ref ig 9))
            (reusable (and (= gen (vector-ref ig 6))
-                          (>= (vector-ref ig 7) 0)))
+                          (>= (vector-ref ig 7) 0)
+                          (cmd-stamp-holds? saved)))
            ;; Recomputing visibility need not change the uploaded bytes.
            ;; Node identity plus an unchanged content generation is enough
            ;; to retain a packed record, including its transform and colour.
+           ;;
+           ;; A draw that uploads nothing puts the saved stamp back: the
+           ;; refill cleared it, and the buffer still holds what it
+           ;; vouched for.  An upload is stamped after its words.
            (draw!
             (lambda (n up?)
+              (unless (and up? (> n 0))
+                (vector-set! ig 9 saved))
               (when up? (vector-set! ig 7 n))
               (when (> n 0)
                 (fx-use-instanced! prog ($sgl-geo-vbuf geo) ibuf)
                 ($sgl-geo-upload! geo)
                 (cmd-bind-index! ($sgl-geo-ibuf geo))
                 (cmd-bind-buffer! ibuf)
-                (when up? (cmd-buffer-data! ibase (* n 80)))
+                (when up?
+                  (cmd-buffer-data! ibase (* n 80))
+                  (vector-set! ig 9 (cmd-stamp)))
                 (if ($sgl-geo-u32? geo)
                     (cmd-draw-elements-instanced32!
                      GL-TRIANGLES ($sgl-geo-icount geo) n)
@@ -1312,10 +1330,16 @@
                      GL-TRIANGLES ($sgl-geo-icount geo) n))))))
       (if (and ($sgl-camera-key=? (vector-ref ig 5) cam aspect)
                (= gen (vector-ref ig 6))
-               (>= (vector-ref ig 7) 0))
+               (>= (vector-ref ig 7) 0)
+               (cmd-stamp-holds? saved))
           ;; nothing moved and the frustum held: redraw the cached set
           (draw! (vector-ref ig 7) #f)
           (begin
+            ;; the refill changes the record (key, generation, staging,
+            ;; count) before the upload is encoded, so the stamp goes
+            ;; first: a full region in between must not leave the new
+            ;; record under the old stamp
+            (vector-set! ig 9 #f)
             (vector-set! ig 5 ($sgl-camera-key cam aspect))
             (vector-set! ig 6 gen)
             (%sgl-igroup-fill! ig planes scratch soa ctr ones res reusable draw!))))

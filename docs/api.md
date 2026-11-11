@@ -341,7 +341,7 @@ Both points are damped at one rate, and that is what holds the heading steady: t
 - `fx-program-blocks` — the uniform BLOCK names the shaders declare, in order; block members never reach the uniform table, so this is the question to ask about a name that lives in a block, and it and fx-uniform? stay mutually exclusive
 - `fx-use!` — binds a program and a vertex buffer, wiring the attributes at the program's own stride unless another is given
 - `fx-use-instanced!` — binds a program with per-vertex data from one buffer and i_ attributes from another at divisor 1; draw it with cmd-draw-elements-instanced!
-- `fx-uniform!` — sets a uniform by name, encoding by its declared type; the same value twice sends no command, since GL uniform state is per-program and persistent. A name that `fx-uniform-viewport-height!` or `fx-uniform-viewport-size!` has set is sent every time from then on, since what the GPU holds for it is decided at replay
+- `fx-uniform!` — sets a uniform by name, encoding by its declared type. A scalar or vector set to the value the same stream (since the last `cmd-begin!`) already set for this program sends no command; the first set of each name in each stream is sent, since a replay of the stream must set it again. Only a set made after the stream has used the program (`fx-use!`, or `cmd-use-program!`) is remembered -- GL applies a uniform call only while its program is current -- so use the program before setting its uniforms, or every set is sent. After `fx-uniform-viewport-height!` or `fx-uniform-viewport-size!` on a name, the next set of it is sent. Matrices are always sent
 - `fx-uniform-viewport-height!` — sets a float uniform by name to the height of the viewport in force when this upload is replayed, through `cmd-uniform-viewport-height!`; set the viewport (bind the target) before calling it. For sizes in pixels of whatever is being drawn into. The uniform must be declared, and declared float
 - `fx-uniform-viewport-size!` — the same for a vec2 uniform, set to the viewport's width and height
 - `fx-uniform?` — whether a program actually declares a uniform, so a renderer can bind optional resources only when the shader asks for them
@@ -390,10 +390,14 @@ Both points are damped at one rate, and that is what holds the heading steady: t
 - `cmd-resolve-mrt!` — resolve a gl-target-mrt-msaa! target in one command: each colour attachment in turn, then the depth, then the canvas is bound again
 - `cmd-read-pixels!` — read a `w` by `h` rectangle back into staging memory as `w*h*4` bytes at `base`, readable with `%mem-u8-ref` once `cmd-flush!` returns. This stalls the frame -- the GPU has to finish first
 - `cmd-region!` — point the command encoder at a staging region, with an optional byte limit; everything encoded afterwards is written there
-- `cmd-begin!` — start a frame: reset the write cursor and the draw counter
-- `cmd-flush!` — replay the whole frame in one bridge call
+- `cmd-begin!` — start a frame: reset the write cursor and the draw counter. Words encoded since the last `cmd-flush!` are dropped; what the library recorded about them (an upload, a VAO's setup, a uniform's value) stops holding, and each of those is established again where it is next used
+- `cmd-flush!` — replay the whole frame in one bridge call. Flushing again replays the frame again, from its start
 - `cmd-pos` — the write cursor, in bytes -- what a caller checks against its region size to catch an overflow
 - `cmd-draws` — how many draws have been encoded this frame; the HUD reads it
+- `cmd-stamp` — where the encoder is in its own history, or #f while it is stale (after `cmd-region!`, a full region, `gl-attach!` or a replay that raised, until the next `cmd-begin!`). A library keeping its own record about GPU state stores it with the record, taken right after the record's words; it has no side effect
+- `cmd-stamp-holds?` — whether a record made with this stamp can be relied on at this point in the stream: the words before the stamp are earlier in the current segment, so every replay that reaches this point runs them first, or a completed flush ran them; and no flush has run since from a base that `cmd-region!` moved without a `cmd-begin!`. It does not say a flush has happened: in the current segment those words are still waiting for one. For a record about a GPU object -- a buffer's contents, a VAO's setup. #f for #f
+- `cmd-stamp-in-stream?` — whether the encoder is not stale and a stamp was taken in the current stream (since the last `cmd-begin!`). For a record about a value the stream sets, which a later replay of the same words must set again -- a uniform. #f for #f
+- `cmd-stream-program` — the program slot of the last `cmd-use-program!` encoded since the last `cmd-begin!`, or #f
 - `cmd-clear!` — clear the bound target to a colour
 - `cmd-use-program!` — use a linked program for the draws that follow
 - `cmd-bind-buffer!` — bind a buffer as the array buffer

@@ -82,16 +82,27 @@
   (check-from base-c2
               '("useProgram:P1" "bindVAO:V1" "bindBuffer:B1")))
 
-;; ---- the uniform cache: a steady value costs one send, ever ----
+;; ---- the uniform cache: a repeat within a stream costs nothing ----
+;; The first set of each uniform in a stream is sent even when it is
+;; the value last sent: nothing is trusted across a cmd-begin! (a stream
+;; replayed again must carry its own values), and only a set made after
+;; a use of the program in the same stream is remembered (R40).
 (define base-u (log-len))
 (cmd-begin!)
-(fx-uniform! p 'u_glow 2)               ; same value as the last send
-(fx-uniform! p 'u_res 640 480)          ; same again
-(fx-uniform! p 'u_glow 3)               ; changed: this one encodes
-(fx-uniform! p 'u_glow 3)               ; and settles again
+(fx-use! p buf)
+;; the values the last stream sent: sent again, in a new stream
+(fx-uniform! p 'u_glow 2)
+(fx-uniform! p 'u_res 640 480)
+;; changed: sent
+(fx-uniform! p 'u_glow 3)
+;; a repeat within the stream: skipped
+(fx-uniform! p 'u_glow 3)
 (cmd-flush!)
 (define ucache-ok
-  (check-from base-u '("uniform1f:U:u_glow:3.00")))
+  (check-from base-u '("useProgram:P1" "bindVAO:V1" "bindBuffer:B1"
+                       "uniform1f:U:u_glow:2.00"
+                       "uniform2f:U:u_res:640.00:480.00"
+                       "uniform1f:U:u_glow:3.00")))
 
 ;; ---- the timing pump: t/dt in seconds, no GL ----
 (define ticks '())

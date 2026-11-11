@@ -147,6 +147,9 @@
             (mutable next $p-next $p-next!)         ; where the next burst goes
             (mutable used $p-used $p-used!)         ; ambient particles placed
             (mutable dirty $p-dirty $p-dirty!)
+            ;; the stamp of the last upload, (cmd-stamp) taken after its
+            ;; words; #f until the first one
+            (mutable up $p-up $p-up!)
             (mutable clock $p-clock $p-clock!)
             (mutable emitted particles-emitted $p-emitted!)))
 
@@ -178,7 +181,7 @@
             (%mem-f32-set! (+ base (* i 4)) 0.0)
             (clear (+ i 1))))
         ($make-particles program (fx-buffer!) base capacity reserve size-max
-                         (make-rng 7789) reserve 0 #t 0.0 0))))
+                         (make-rng 7789) reserve 0 #t #f 0.0 0))))
 
   (define (particles-clock! f t) ($p-clock! f ($p-fl t)))
 
@@ -247,10 +250,14 @@
   (define (particles-draw! f vp)
     (let ((program ($p-program f)))
       (fx-use! program ($p-buffer f))
-      (when ($p-dirty f)
+      ;; upload when the pool changed, or when the stamp of the last
+      ;; upload no longer holds -- its words were dropped or cut off, or
+      ;; a flush from a moved base has run since
+      (when (or ($p-dirty f) (not (cmd-stamp-holds? ($p-up f))))
         (cmd-bind-buffer! ($p-buffer f))
         (cmd-buffer-data! ($p-base f) (* $p-stride (particles-capacity f)))
-        ($p-dirty! f #f))
+        ($p-dirty! f #f)
+        ($p-up! f (cmd-stamp)))
       (fx-uniform! program 'u_viewproj vp)
       (fx-uniform! program 'u_time ($p-clock f))
       ;; Point sizes are in pixels of the target being drawn into, so
