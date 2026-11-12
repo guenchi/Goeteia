@@ -194,44 +194,86 @@
 ;; inner pair already delimits one primary expression.  Cascades
 ;; bottom-up: `(((x)))` collapses through the same last-closed check.
 ;; String literals (both quote kinds, backslash escapes) are opaque.
+;;
+;; A call's argument list is the one pair whose removal is not a no-op:
+;; the pair inside it then becomes the argument list, and a comma at
+;; that pair's own level splits one argument into several.  The check
+;; below looks at the pair directly inside, but after a cascade that
+;; pair is gone and the one that would take the argument list's place
+;; is further in: f(((a),(b))), one argument that is a sequence, lost
+;; its middle pair and then its argument list and became f((a),(b)),
+;; two arguments.  So each closed pair also hands outward whether the
+;; pair standing in its place has a comma at its own level -- its own
+;; when it stays, the one handed up from inside when it is deleted --
+;; and a call's pair stays when that is true.
+;;
+;; That second flag counts only commas whose nearest enclosing bracket
+;; is the pair itself; a comma inside an object or array literal splits
+;; nothing.  The first flag keeps its old, wider reading (the nearest
+;; enclosing PAREN, braces and brackets ignored), so every pair the pass
+;; removed before it still removes and only the cascades that would
+;; expose such a comma change.
 (define (jsquash bytes)
   (let* ((v (list->vector bytes))
          (n (vector-length v))
          (del (make-vector n #f)))
-    ;; stack entries are (open-pos . top-level-comma-seen); the last
-    ;; closed pair carries its comma flag so an argument-list outer
-    ;; pair still collapses around a comma-free inner expression
-    (let scan ((i 0) (q 0) (stack '()) (lo -2) (lc -2) (lcm #f))
+    ;; A paren entry on the stack is #(open-pos any-comma own-comma):
+    ;; any-comma is set by a comma whose nearest enclosing PAREN this
+    ;; is, own-comma by one whose nearest enclosing bracket of any kind
+    ;; this is.  `{' and `[' push the symbol other, so a comma can tell
+    ;; the two apart, and their closers pop it.  lca and lco are the
+    ;; last closed pair's any-comma and the own-comma handed up through
+    ;; any cascade it ended.
+    (let scan ((i 0) (q 0) (stack '()) (lo -2) (lc -2) (lca #f) (lco #f))
       (if (< i n)
           (let ((c (vector-ref v i)))
             (cond
-             ((> q 0)                     ; inside a string literal
+             ;; inside a string literal
+             ((> q 0)
               (cond
-               ((= c 92) (scan (+ i 2) q stack lo lc lcm))
-               ((= c q) (scan (+ i 1) 0 stack lo lc lcm))
-               (else (scan (+ i 1) q stack lo lc lcm))))
-             ((or (= c 34) (= c 39)) (scan (+ i 1) c stack lo lc lcm))
-             ((= c 40) (scan (+ i 1) 0 (cons (cons i #f) stack) lo lc lcm))
+               ((= c 92) (scan (+ i 2) q stack lo lc lca lco))
+               ((= c q) (scan (+ i 1) 0 stack lo lc lca lco))
+               (else (scan (+ i 1) q stack lo lc lca lco))))
+             ((or (= c 34) (= c 39)) (scan (+ i 1) c stack lo lc lca lco))
+             ((= c 40)
+              (scan (+ i 1) 0 (cons (vector i #f #f) stack) lo lc lca lco))
+             ((or (= c 123) (= c 91))
+              (scan (+ i 1) 0 (cons 'other stack) lo lc lca lco))
+             ((or (= c 125) (= c 93))
+              (scan (+ i 1) 0
+                    (if (and (pair? stack) (eq? (car stack) 'other))
+                        (cdr stack)
+                        stack)
+                    lo lc lca lco))
              ((= c 44)
-              (unless (null? stack) (set-cdr! (car stack) #t))
-              (scan (+ i 1) 0 stack lo lc lcm))
+              (when (and (pair? stack) (vector? (car stack)))
+                (vector-set! (car stack) 2 #t))
+              (let paren ((s stack))
+                (when (pair? s)
+                  (if (vector? (car s))
+                      (vector-set! (car s) 1 #t)
+                      (paren (cdr s)))))
+              (scan (+ i 1) 0 stack lo lc lca lco))
              ((= c 41)
               ;; a '(' preceded by a name, ')' or ']' opens a call's
               ;; argument list: collapsing it around a comma-carrying
               ;; inner pair would split one argument into several, so
               ;; those collapse only when the inner pair is comma-free
-              (let* ((p (car (car stack)))
+              (let* ((e (car stack))
+                     (p (vector-ref e 0))
                      (b (if (> p 0) (vector-ref v (- p 1)) 32))
                      (callee? (or (and (<= 48 b) (<= b 57))
                                   (and (<= 65 b) (<= b 90))
                                   (and (<= 97 b) (<= b 122))
-                                  (= b 95) (= b 36) (= b 41) (= b 93))))
-                (when (and (= lo (+ p 1)) (= lc (- i 1))
-                           (not (and callee? lcm)))
+                                  (= b 95) (= b 36) (= b 41) (= b 93)))
+                     (collapse? (and (= lo (+ p 1)) (= lc (- i 1))
+                                     (not (and callee? (or lca lco))))))
+                (when collapse?
                   (vector-set! del p #t)
                   (vector-set! del i #t))
-                (scan (+ i 1) 0 (cdr stack) p i (cdr (car stack)))))
-             (else (scan (+ i 1) 0 stack lo lc lcm))))
+                (scan (+ i 1) 0 (cdr stack) p i (vector-ref e 1)
+                      (if collapse? lco (vector-ref e 2)))))
+             (else (scan (+ i 1) 0 stack lo lc lca lco))))
           #f))
     ;; second pass: parens around one identifier atom drop unless
     ;; they are an argument list (callee-ish byte before).  Digit-only
