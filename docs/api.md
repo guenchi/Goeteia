@@ -591,8 +591,10 @@ Both points are damped at one rate, and that is what holds the heading steady: t
 - `gpu-texgroup!` — the textured bind group, in the order `(gfx wgsl)` declares its bindings: uniforms at 0 (pass `-1` when the shader has no scalar uniforms), then the sampler, then the texture view
 - `gpu-compute!` — a compute pipeline from one WGSL module (entry point `cs`)
 - `gpu-compute-group!` — its bind group: a storage buffer at binding 0 and uniforms at binding 1
-- `gpu-begin!` — start encoding a frame -- resets the command cursor
-- `gpu-flush!` — submit everything encoded since `gpu-begin!`
+- `gpu-region!` — point the command encoder at a staging region: words are written from `base`, with an optional byte limit; a limit below the base is refused. Without a call the base is 0 and there is no limit; `sgpu-init!` sets `[0, 64 KiB)`. A command that does not fit raises `command region overflow` and leaves the cursor where that command began, so a flush after the error replays only whole commands
+- `gpu-pos` — the write cursor, in bytes
+- `gpu-begin!` — start encoding a frame -- puts the command cursor at the region's base
+- `gpu-flush!` — submit everything encoded since `gpu-begin!`: the replayer reads the words from the region's base
 - `gpu-clear!` — the clear colour for the frame's render pass
 - `gpu-use-pipeline!` — bind a render pipeline for the draws that follow
 - `gpu-bind-vbuf!` — bind a vertex buffer at slot 0
@@ -604,7 +606,7 @@ Both points are damped at one rate, and that is what holds the heading steady: t
 - `gpu-draw-indexed!` — draw `count` indices
 - `gpu-draw-instanced!` — draw `verts` vertices `insts` times, reading the per-instance stream from slot 1
 - `gpu-dispatch!` — one compute step in its own pass. Encode dispatches BEFORE the frame's draws: a render pass cannot be interrupted
-- `gpu-bundle!` — freeze the draws and state encoded since `gpu-begin!` into a render bundle. Recorded once, a static scene replays inside the browser with no decoding per frame
+- `gpu-bundle!` — freeze the draws and state encoded since `gpu-begin!` into a render bundle, read from the region's base, then start encoding again at the base. Recorded once, a static scene replays inside the browser with no decoding per frame
 - `gpu-execute!` — replay a recorded bundle
 - `gpu-gpu-timer!` — ask for GPU frame timing, AFTER `gpu-attach!`; answers `#f` where the timestamp-query feature is absent
 - `gpu-gpu-ms` — the last GPU frame time in milliseconds, resolving a few frames behind, or `#f` when no result has arrived yet
