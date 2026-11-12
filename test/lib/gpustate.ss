@@ -25,9 +25,19 @@
 ;;   ANY ARGUMENT SHAPE: a slot that was never made reaches the mock as
 ;;     undefined and is logged as such; nothing here dereferences an
 ;;     argument, so a replay of any word sequence runs to its end.
+;;   A FAILURE ON DEMAND (R40g): gpustate-fail-write! arms the n-th
+;;     queue.writeBuffer from now to throw instead of reading; it fires
+;;     once and disarms.  The throw unwinds the replay and whatever
+;;     called it, as a device error would; gpustate-attempt catches it.
+;;   A WORD ON DEMAND (R40g): gpustate-watch-u32! bytes off makes every
+;;     writeBuffer of that many bytes also log queue.u32(<value>), the
+;;     little-endian u32 at offset off of what it read -- a value a cell
+;;     must know, not only compare (an env block's occlusion mode).  Off
+;;     until set; (gpustate-watch-u32! #f 0) turns it off.
 ;; The adapter offers no optional feature: the timer stays off.
 (library (gpustate)
-  (export gpustate-canvas gpustate-reset! gpustate-calls gpustate-attempt)
+  (export gpustate-canvas gpustate-reset! gpustate-calls gpustate-attempt
+          gpustate-fail-write! gpustate-watch-u32!)
   (import (rnrs) (web js))
 
   (define $src "globalThis.__gpustate = (() => {
@@ -56,7 +66,12 @@
   const view = () => ({ tag: 'V' });
   const queue = logged('queue', {
     writeBuffer(buf, off, ab, base, bytes) {
-      st.calls.push('queue.read(' + bytes + '#' + fnv(new Uint8Array(ab, base, bytes)) + ')'); },
+      if (st.failIn > 0 && --st.failIn === 0) {
+        st.calls.push('queue.FAILED(' + bytes + ')');
+        throw new Error('gpustate: injected writeBuffer failure'); }
+      st.calls.push('queue.read(' + bytes + '#' + fnv(new Uint8Array(ab, base, bytes)) + ')');
+      if (st.watchBytes === bytes)
+        st.calls.push('queue.u32(' + new DataView(ab).getUint32(base + st.watchOff, true) + ')'); },
     submit() {} });
   const device = logged('dev', {
     createShaderModule() { return { tag: tag('M') }; },
@@ -84,6 +99,10 @@
     value: { gpu: { requestAdapter() { return { then(f) { return f(adapter); } }; },
                     getPreferredCanvasFormat() { return 'bgra8unorm'; } } } });
   st.attempt = (fn) => { try { fn(); return 'ok'; } catch (e) { return 'raised:' + (e && e.name); } };
+  st.failIn = 0;
+  st.watchBytes = null; st.watchOff = 0;
+  st.watch = (b, o) => { st.watchBytes = (b === false ? null : b); st.watchOff = o; };
+  st.failWrite = (n) => { st.failIn = n; };
   st.reset = () => { st.calls = []; };
   st.make = (w, h) => ({ tag: 'canvas', width: w, height: h, addEventListener() {},
     getContext() { return { tag: 'ctx', configure() {}, getCurrentTexture() { return { tag: 'tex', createView: view }; } }; } });
@@ -102,5 +121,10 @@
   ;; every call since the last reset, with its arguments
   (define (gpustate-calls) ($list (js-get $st "calls") js->string))
   ;; run thunk under a JS try: "ok", or "raised:<error name>"
+  ;; the n-th queue.writeBuffer from now throws (n = 1: the next one);
+  ;; once, then disarmed.  It is logged as queue.FAILED(<bytes>)
+  (define (gpustate-fail-write! n) (js-call (js-get $st "failWrite") $st n))
+  ;; uploads of `bytes' bytes also log queue.u32(<the u32 at off>); #f: off
+  (define (gpustate-watch-u32! bytes off) (js-call (js-get $st "watch") $st bytes off))
   (define (gpustate-attempt thunk)
     (js->string (js-call (js-get $st "attempt") $st thunk))))

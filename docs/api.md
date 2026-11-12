@@ -569,7 +569,7 @@ Both points are damped at one rate, and that is what holds the heading steady: t
 
 ## `(gfx gpu)`
 
-- `gpu-attach!` — acquire the WebGPU device and configure the canvas; `k` runs when resources may be created, because the handshake is asynchronous
+- `gpu-attach!` — acquire the WebGPU device and configure the canvas; `k` runs when resources may be created, because the handshake is asynchronous. The new device holds nothing a record was made for: no stamp taken before the attach holds (`gpu-stamp-holds?`) or counts as replayed after it, and the encoder is stale until the next `gpu-begin!`
 - `gpu-pipeline!` — a render pipeline from one WGSL module (entry points `vs`/`fs`) over one interleaved vertex buffer: `stride` in bytes, `fmts` a comma-joined GPUVertexFormat list bound to locations 0, 1, ...
 - `gpu-pipeline2!` — the same with two vertex buffers: slot 0 steps per vertex, slot 1 per instance, and locations number straight through both
 - `gpu-pipeline2-blend!` — the same again with src-over alpha blending and depth writes off -- the translucent pass
@@ -594,7 +594,10 @@ Both points are damped at one rate, and that is what holds the heading steady: t
 - `gpu-compute-group!` — its bind group: a storage buffer at binding 0 and uniforms at binding 1
 - `gpu-region!` — point the command encoder at a staging region: words are written from `base`, with an optional byte limit; a limit below the base is refused. Without a call the base is 0 and there is no limit; `sgpu-init!` sets `[0, 64 KiB)`. A command that does not fit raises `command region overflow` and leaves the cursor where that command began, so a flush after the error replays only whole commands
 - `gpu-pos` — the write cursor, in bytes
-- `gpu-begin!` — start encoding a frame -- puts the command cursor at the region's base
+- `gpu-stamp` — a stamp for a record kept about what the GPU holds, taken right after the words that establish it: the current segment of the stream (from a `gpu-begin!` or a completed flush to the next completed flush, `gpu-begin!`, `gpu-bundle!`, `gpu-region!`, full region or `gpu-attach!`), or `#f` while the encoder is stale. Store it whatever it is. A site that changes its record, or the state its check reads, before its words are encoded stores `#f` first
+- `gpu-stamp-holds?` — whether a stamp's words run before whatever is encoded now: it is the current segment's, or a completed flush replayed it, in the current era (a flush from a base `gpu-region!` moved without a `gpu-begin!`, and `gpu-attach!`, start a new one). `#f` for `#f` and anything that is not a stamp, not an error. A replay makes every queue write (`gpu-buffer-data!`) at once and submits every pass after them, so this answers for what a queue write put in a buffer, and ONLY under a single-source condition: every upload into that buffer reads one staging range, and only the record's own site writes that range; the buffer then holds the bytes last staged there. A buffer written from more than one staging range has no safe record with either predicate: neither predicate gives a pass its own snapshot of a buffer; where different passes need different contents, use distinct GPU resources (or bindings), or flush the earlier consuming work before encoding the later conflicting upload
+- `gpu-stamp-replayed?` — whether a completed flush replayed the stamp's segment, in the current era; `#f` for the current segment's stamp, for `#f` and for anything that is not a stamp. For a record about what a PASS produced (a reduction, a compute result), which nothing encoded in the same flush can rely on, since every queue write of a flush lands before every pass of it
+- `gpu-begin!` — start encoding a frame -- puts the command cursor at the region's base, and starts a new stream. Words encoded since the last flush are dropped and never run, so a stamp taken among them does not hold afterwards; a stamp a completed flush replayed still does
 - `gpu-flush!` — submit everything encoded since `gpu-begin!`: the replayer reads the words from the region's base
 - `gpu-clear!` — the clear colour for the frame's render pass
 - `gpu-use-pipeline!` — bind a render pipeline for the draws that follow
@@ -607,7 +610,7 @@ Both points are damped at one rate, and that is what holds the heading steady: t
 - `gpu-draw-indexed!` — draw `count` indices
 - `gpu-draw-instanced!` — draw `verts` vertices `insts` times, reading the per-instance stream from slot 1
 - `gpu-dispatch!` — one compute step in its own pass. Encode dispatches BEFORE the frame's draws: a render pass cannot be interrupted
-- `gpu-bundle!` — freeze the draws and state encoded since `gpu-begin!` into a render bundle, read from the region's base, then start encoding again at the base. Recorded once, a static scene replays inside the browser with no decoding per frame
+- `gpu-bundle!` — freeze the draws and state encoded since `gpu-begin!` into a render bundle, read from the region's base, then start encoding again at the base (a `gpu-begin!`). Recorded once, a static scene replays inside the browser with no decoding per frame. The bundled words are never replayed by a flush, so a stamp taken among them never holds afterwards
 - `gpu-execute!` — replay a recorded bundle
 - `gpu-gpu-timer!` — ask for GPU frame timing, AFTER `gpu-attach!`; answers `#f` where the timestamp-query feature is absent
 - `gpu-gpu-ms` — the last GPU frame time in milliseconds, resolving a few frames behind, or `#f` when no result has arrived yet
@@ -969,7 +972,7 @@ This library answers how much of the target to draw; it does not build the mirro
 
 - `sgl-gpu` — the WebGPU scene macro: the same declarative shape as `sgl`, emitted for the GPU backend
 - `$sgpu-build` — what `sgl-gpu` expands into. Not called directly
-- `sgpu-init!` — acquire the device, build the pipelines and bind groups for a scene on a canvas -- async, and everything else waits on it
+- `sgpu-init!` — acquire the device, build the pipelines and bind groups for a scene on a canvas -- async, and everything else waits on it. Called again on a scene (to move it to the device a new `gpu-attach!` made, or on the same device), it makes the scene's buffers anew and the next frame uploads its instances again. A call that raises part way leaves the scene drawing nothing until an `sgpu-init!` of it completes. It opens a `gpu-begin!` ... `gpu-flush!` of its own for the geometry, so call it outside a frame: words encoded before it and not flushed are dropped
 - `sgpu-draw!` — draw the scene for this frame, re-reading the signals its holes named
 - `sgpu-scene?` — whether a value is a scene built by `sgl-gpu`
 - `sgpu-occlusion!` — turn the occlusion-query pass on or off for scenes drawn afterwards

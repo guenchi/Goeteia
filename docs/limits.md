@@ -956,6 +956,39 @@ store #f, on every write.  A site that changes its record, or the state
 its check reads, before its words are encoded stores #f first, so that
 a full region in between cannot leave the new record under an old stamp.
 
+The WebGPU encoder.  `(gfx gpu)` keeps the same history: streams from
+one `gpu-begin!` to the next, segments ended by a completed flush, and an
+encoder that is stale after `gpu-region!`, a full region, `gpu-attach!`
+or a replay that raises, until the next `gpu-begin!`.  `(gpu-stamp)`,
+`gpu-stamp-holds?` and `gpu-stamp-replayed?` are its stamp and its
+predicates.  Two things differ from `(gfx gl)`.  `gpu-attach!` starts a
+new era -- the new device holds nothing a record was made for, and a
+scene is moved to it by calling `sgpu-init!` again on the same scene --
+and `gpu-bundle!` is a drop: the bundled words are never replayed by a
+flush.  And one replay is not one ordered sequence: every queue write of
+a flush (`gpu-buffer-data!`) lands before every pass of it, which is why
+there are two predicates.  `gpu-stamp-holds?` vouches for what a queue
+write put in a buffer, and only when one staging range, written only by
+the record's own site, fills that buffer; `gpu-stamp-replayed?` vouches
+that a completed flush ran a pass.  Neither predicate gives a pass its own
+snapshot of a buffer; where different passes need different contents, use
+distinct GPU resources (or bindings), or flush the earlier consuming work
+before encoding the later conflicting upload.
+
+`(gfx sgpu)` keeps three records this way.  Each group's instance upload
+is skipped while the group's generation is unchanged AND its stamp holds,
+so a scene whose frame was dropped (an overflow caught, a frame
+restarted), or that `sgpu-init!` set up again, uploads its instances once
+more in the next frame, and a steady scene still uploads nothing.  The
+occlusion test is on only once a flush has run a reduction into the
+pyramid since the scene's `sgpu-init!`: a first frame, frames encoded
+before the first flush, and frames after an `sgpu-init!` or a
+`gpu-attach!` cull without it, and a dropped frame does not turn it off
+when an earlier reduction ran.  A scene is ready to draw only after an
+`sgpu-init!` of it completes: one that raises part way leaves it drawing
+nothing.  `sgpu-init!` opens a frame of its own for the geometry, so call
+it outside a frame: words encoded before it and not flushed are dropped.
+
 ## Compiler diagnostics are terse
 
 Runtime traps surface as `unreachable` or `illegal cast` with no

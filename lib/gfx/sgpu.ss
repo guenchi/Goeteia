@@ -262,7 +262,9 @@
                                 nodes)
                       ;; +texture slot (13), +tex render group (14),
                       ;; +translucent? (15): any node's alpha below 1
-                      ;; sends the whole group to the blended pass
+                      ;; sends the whole group to the blended pass;
+                      ;; +instance stamp (16): (gpu-stamp) after the
+                      ;; last instance upload, #f until there is one
                       (vector m nodes 0 0 0 0 0 0
                               (mesh-index-count m)
                               (length nodes)
@@ -273,7 +275,8 @@
                                                 (vector-ref (car ns) 0)
                                                 10)
                                                1.0)
-                                         (any (cdr ns))))))))
+                                         (any (cdr ns)))))
+                              #f)))
                   (reverse groups))
              0 1.333 #f)))))
 
@@ -523,8 +526,8 @@
 
   ;; hi-Z occlusion state (module-level, like $sgpu-scratch): one depth
   ;; pyramid shared by the active scene.  Cull runs a frame behind the
-  ;; pyramid -- mode stays 0 until the first gpu-hzb!, and while a
-  ;; camera/scene is static last frame's pyramid is exact, so the
+  ;; pyramid -- mode stays 0 until a flush has run a gpu-hzb!, and
+  ;; while a camera/scene is static last frame's pyramid is exact, so the
   ;; occluded set matches (occlusion that changes the picture is a bug).
   ;; Set by $sgpu-reserve! from the group count before anything uses
   ;; them, so the number is derived from the same two constants the
@@ -538,7 +541,21 @@
       (set! $sgpu-sortcull-slot (+ top 1))))
   (define $sgpu-hzb-w 0.0)
   (define $sgpu-hzb-h 0.0)
-  (define $sgpu-hzb-built #f)
+  ;; Whether a reduction has been run into the pyramid: existence, not
+  ;; content.  A reduction is a pass, and a pass runs after every queue
+  ;; write of its flush -- the env block that carries the mode among
+  ;; them -- so only a reduction a COMPLETED flush ran counts
+  ;; (gpu-stamp-replayed?), never one in the current segment.
+  ;; $sgpu-hzb-stamp is the stamp taken right after the newest
+  ;; gpu-hzb!; $sgpu-hzb-done the newest one known to be replayed, kept
+  ;; so that a dropped or cut-off reduction does not turn occlusion off
+  ;; when an earlier one ran.  Both are #f from the entry of sgpu-init!,
+  ;; which makes the pyramid anew.
+  (define $sgpu-hzb-stamp #f)
+  (define $sgpu-hzb-done #f)
+  (define ($sgpu-hzb-ready?)
+    (or (gpu-stamp-replayed? $sgpu-hzb-stamp)
+        (gpu-stamp-replayed? $sgpu-hzb-done)))
   (define $sgpu-occlusion #t)
   (define (sgpu-occlusion! on?) (set! $sgpu-occlusion (and on? #t)))
 
@@ -547,11 +564,23 @@
   ;; out what lies above it.  A frame that does not fit raises before it
   ;; writes past the limit, instead of writing its words over staged
   ;; data (or trapping, when nothing has grown the memory yet).
+  ;;
+  ;; Every record about the scene's resources is cleared FIRST, before
+  ;; any call that replaces a resource or may raise: the ready flag
+  ;; (the scene's setup completed), the two hi-Z records and each
+  ;; group's instance stamp.  A setup that raises part way then leaves
+  ;; a scene that draws nothing, not one that draws with half-replaced
+  ;; resources; ready comes back only after the last group's geometry
+  ;; flush has returned.  Again on a scene (a re-init, or a move to the
+  ;; device a gpu-attach! made), the new buffers are written again.
   (define (sgpu-init! sc canvas)
+    ($sg-ready! sc #f)
+    (set! $sgpu-hzb-stamp #f)
+    (set! $sgpu-hzb-done #f)
+    (for-each (lambda (g) (vector-set! g 16 #f)) ($sg-groups sc))
     (gpu-region! 0 65536)
     (set! $sgpu-hzb-w ($sgpu-fl (js->number (js-get canvas "width"))))
     (set! $sgpu-hzb-h ($sgpu-fl (js->number (js-get canvas "height"))))
-    (set! $sgpu-hzb-built #f)
     ($sg-aspect! sc (fl/ $sgpu-hzb-w $sgpu-hzb-h))
     ($sgpu-reserve! (length ($sg-groups sc)))
     (gpu-uniforms! 0 224)
@@ -745,15 +774,22 @@
         (%mem-f32-set! (+ ea 204) $sgpu-hzb-h)           ; sh
         (%mem-f32-set! (+ ea 208) (vector-ref proj 10))  ; pA
         (%mem-i32-set! (+ ea 212)
-                       (if (and $sgpu-occlusion $sgpu-hzb-built) 1 0))
+                       (if (and $sgpu-occlusion ($sgpu-hzb-ready?)) 1 0))
         (%mem-i32-set! (+ ea 216) 0)
         (%mem-i32-set! (+ ea 220) 0)
         (gpu-buffer-data! 0 ea 224)
         ;; refresh dirty groups, reset args, dispatch culls
         (for-each
          (lambda (g)
+           ;; skipped only while the generation is the one uploaded AND
+           ;; the upload's stamp holds; otherwise the stamp is cleared
+           ;; before the generation and the staging change (a full region
+           ;; in the upload's words then leaves a group that uploads
+           ;; again), and taken again right after the upload's words
            (let ((gen ($sgpu-gen (vector-ref g 1))))
-             (unless (= gen (vector-ref g 10))
+             (unless (and (= gen (vector-ref g 10))
+                          (gpu-stamp-holds? (vector-ref g 16)))
+               (vector-set! g 16 #f)
                (vector-set! g 10 gen)
                (let comp ((ns (vector-ref g 1)) (k 0))
                  (when (pair? ns)
@@ -762,7 +798,8 @@
                                 $sgpu-scratch)
                    (comp (cdr ns) (+ k 1))))
                (gpu-buffer-data! (vector-ref g 4) (vector-ref g 11)
-                                 (* (vector-ref g 9) 128))))
+                                 (* (vector-ref g 9) 128))
+               (vector-set! g 16 (gpu-stamp))))
            ;; the group's own argument reset (writeBuffer reads
            ;; staging at flush, so each group keeps its own words)
            (gpu-buffer-data! (vector-ref g 6) (vector-ref g 12) 20)
@@ -796,8 +833,13 @@
           (for-each (lambda (g)
                       (when (vector-ref g 15) (draw g 6 7 8)))
                     ($sg-groups sc))
-          ;; reduce this frame's depth into the hi-Z pyramid; next
-          ;; frame's cull occludes against it (mode is 0 until it exists)
+          ;; reduce this frame's depth into the hi-Z pyramid; a later
+          ;; frame's cull occludes against it once a flush has run it.
+          ;; The previous reduction's stamp is kept as done first if it
+          ;; was replayed, so a reduction that is then dropped does not
+          ;; hide the one that ran.
           (gpu-end-pass!)
+          (when (gpu-stamp-replayed? $sgpu-hzb-stamp)
+            (set! $sgpu-hzb-done $sgpu-hzb-stamp))
           (gpu-hzb!)
-          (set! $sgpu-hzb-built #t))))))
+          (set! $sgpu-hzb-stamp (gpu-stamp)))))))

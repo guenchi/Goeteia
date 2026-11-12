@@ -76,6 +76,7 @@
           gpu-bindgroup! gpu-texgroup!
           gpu-compute! gpu-compute-group!
           gpu-begin! gpu-flush! gpu-region! gpu-pos
+          gpu-stamp gpu-stamp-holds? gpu-stamp-replayed?
           gpu-clear! gpu-use-pipeline! gpu-bind-vbuf! gpu-bind-vbuf2!
           gpu-bind-ibuf! gpu-set-group! gpu-buffer-data!
           gpu-draw! gpu-draw-indexed! gpu-draw-instanced!
@@ -429,7 +430,13 @@
 
   ;; the device handshake is asynchronous: k runs when the canvas is
   ;; configured and resources may be created
+  ;;
+  ;; A new device holds nothing a record was made for: the attach ends
+  ;; the stream and starts a new era, so no stamp taken before it holds.
   (define (gpu-attach! canvas k)
+    (set! $gpu-seg #f)
+    (set! $gpu-cut #f)
+    (set! $gpu-era (list 'era))
     (js-eval $gpu-src)
     (set! $gpu (js-call (js-get (js-global) "__goeteia_gpu") (js-undefined)
                         canvas (js-get (js-global) "__goeteia_mem")))
@@ -503,17 +510,104 @@
   (define $gpu-p 0)
   (define $gpu-limit #f)
   (define $gpu-op 0)
+
+  ;; ---- the stream's own history ----
+  ;; A library that keeps a record about what the GPU holds -- what an
+  ;; instance buffer was filled with, whether a pyramid was reduced --
+  ;; writes it when it ENCODES the command that makes it so, but the
+  ;; command takes effect only when gpu-flush! REPLAYS it.  Words can be
+  ;; encoded and never replayed (gpu-begin! drops what was not flushed,
+  ;; gpu-bundle! turns them into a bundle, gpu-region!, a full region
+  ;; and gpu-attach! cut the stream off, a replay can raise part way),
+  ;; and a stream can be replayed more than once.  So a record carries
+  ;; a stamp, (gpu-stamp), taken right after its words, the scheme
+  ;; (gfx gl) uses, and is believed only while the stamp says so.
+  ;;
+  ;; A STREAM runs from one gpu-begin! to the next.  A SEGMENT runs from
+  ;; the gpu-begin!, or from a completed flush, to the next completed
+  ;; flush, gpu-begin! (gpu-bundle! ends with one) or stale event; each
+  ;; segment has its own cell, and the cell is the stamp.  The encoder
+  ;; is STALE from a gpu-region!, a full region, a gpu-attach! or a
+  ;; replay that raises, until the next gpu-begin!, and before the
+  ;; first one; while it is stale there is no current cell and
+  ;; (gpu-stamp) is #f, so nothing written then is believed.
+  ;;
+  ;; A cell is marked replayed by a completed flush that ran it: as the
+  ;; current cell, or, by a flush while stale, as the cell the stale
+  ;; event cut off ($gpu-cut) -- whole commands from the stream's own
+  ;; start, since a command that does not fit is rolled back ($gpu-op!,
+  ;; $gpu-word!).  A flush from a base that gpu-region! moved without a
+  ;; gpu-begin! may start inside a command, so it begins a new era, and
+  ;; no cell made before it holds; so does gpu-attach!, which makes a
+  ;; new device that holds nothing a record was made for.  Bundled words
+  ;; are never replayed by a flush, so their cell is never marked.
+  ;;
+  ;; Two kinds of operation come out of one replay, and they are not
+  ;; ordered as the stream is: an upload is a queue write made at once,
+  ;; while the passes are recorded and submitted together after the
+  ;; loop, so every queue write of a flush lands before every pass of
+  ;; it.  Hence two predicates.  gpu-stamp-holds? -- the current
+  ;; segment or a replayed one -- is for what a queue write put in a
+  ;; buffer that only one staging range, written only by the record's
+  ;; own site, ever fills.  gpu-stamp-replayed? -- a completed flush ran
+  ;; it -- is for what a pass produced, which nothing may rely on until
+  ;; a flush has run the pass.
+  ;;
+  ;; These variables change only as the transitions below say:
+  ;;   $gpu-seg    the current segment's cell, or #f while stale
+  ;;   $gpu-cut    the cell a stale event cut off, until the next
+  ;;               gpu-begin! or gpu-attach!
+  ;;   $gpu-era    replaced by a flush from a moved base and by
+  ;;               gpu-attach!
+  ;;   $gpu-moved  gpu-region! changed $gpu-base since the last
+  ;;               gpu-begin!
+  ;; A site that changes its record, or the state its check reads,
+  ;; before its words are encoded stores #f in the record first.
+  (define-record-type ($gpu-cell $make-gpu-cell $gpu-cell?)
+    (fields (mutable replayed $gpu-cell-replayed? $gpu-cell-replayed!)
+            (immutable stream $gpu-cell-stream)
+            (immutable era $gpu-cell-era)))
+  (define $gpu-seg #f)
+  (define $gpu-cut #f)
+  (define $gpu-era (list 'era))
+  (define $gpu-moved #f)
+  (define ($gpu-new-cell stream) ($make-gpu-cell #f stream $gpu-era))
+  ;; the one stale transition of gpu-region! and a full region: cut the
+  ;; current cell off.  gpu-attach! clears both instead (it does not
+  ;; cut: a flush after it replays on another device)
+  (define ($gpu-stale!)
+    (when $gpu-seg
+      (set! $gpu-cut $gpu-seg)
+      (set! $gpu-seg #f)))
+  (define (gpu-stamp) $gpu-seg)
+  (define (gpu-stamp-holds? s)
+    (and ($gpu-cell? s)
+         (eq? ($gpu-cell-era s) $gpu-era)
+         (or (eq? s $gpu-seg) ($gpu-cell-replayed? s))))
+  (define (gpu-stamp-replayed? s)
+    (and ($gpu-cell? s)
+         (eq? ($gpu-cell-era s) $gpu-era)
+         ($gpu-cell-replayed? s)))
+
   (define (gpu-region! base . limit)
+    ($gpu-stale!)
+    (unless (eqv? base $gpu-base)
+      (set! $gpu-moved #t))
     (set! $gpu-base base)
     (set! $gpu-limit (and (pair? limit) (car limit)))
     (when (and $gpu-limit (< $gpu-limit $gpu-base))
       (error 'gpu-region! "limit precedes command base" $gpu-limit)))
-  (define (gpu-begin!) (set! $gpu-p $gpu-base))
+  (define (gpu-begin!)
+    (set! $gpu-p $gpu-base)
+    (set! $gpu-seg ($gpu-new-cell (list 'stream)))
+    (set! $gpu-cut #f)
+    (set! $gpu-moved #f))
   (define (gpu-pos) $gpu-p)
   (define ($gpu-word!)
     (when (and $gpu-limit (> (+ $gpu-p 4) $gpu-limit))
       (let ((at $gpu-p))
         (set! $gpu-p $gpu-op)
+        ($gpu-stale!)
         (error 'gpu-region! "command region overflow" at))))
   (define ($gpu-u! v)
     ($gpu-word!)
@@ -573,10 +667,38 @@
   ;; bundle -- draws and their state only.  Recorded once, a whole
   ;; static scene replays from inside the browser with no decode at
   ;; all: the frame becomes clear + uniforms + gpu-execute!
+  ;; For the records it is a drop: the bundled words are never replayed
+  ;; by a flush, and the gpu-begin! after it ends their stream.  A
+  ;; bundle call that raises leaves the encoder as it was.
   (define (gpu-bundle! slot)
     (js-method $gpu "bundle" slot $gpu-base ($gpu-count))
     (gpu-begin!))
   (define (gpu-execute! slot) ($gpu-op! 12) ($gpu-u! slot))
 
+  ;; The transitions of a flush.  With a current cell c: c stops being
+  ;; current before the bridge call and is the cut-off cell while it
+  ;; runs, so a replay that raises leaves the encoder stale with c cut
+  ;; off; after it returns, c is marked replayed and a new segment of the
+  ;; same stream begins.  While stale: from a moved base, a new era (the
+  ;; words may start inside a command); otherwise the cut-off cell is
+  ;; marked once the replay returns.
   (define (gpu-flush!)
-    (js-method $gpu "replay" $gpu-base ($gpu-count))))
+    (let ((c $gpu-seg))
+      (cond
+       (c
+        (set! $gpu-seg #f)
+        (set! $gpu-cut c)
+        (let ((r (js-method $gpu "replay" $gpu-base ($gpu-count))))
+          ($gpu-cell-replayed! c #t)
+          (set! $gpu-cut #f)
+          (set! $gpu-seg ($gpu-new-cell ($gpu-cell-stream c)))
+          r))
+       ($gpu-moved
+        (set! $gpu-era (list 'era))
+        (set! $gpu-cut #f)
+        (js-method $gpu "replay" $gpu-base ($gpu-count)))
+       (else
+        (let ((r (js-method $gpu "replay" $gpu-base ($gpu-count))))
+          (when $gpu-cut
+            ($gpu-cell-replayed! $gpu-cut #t))
+          r))))))

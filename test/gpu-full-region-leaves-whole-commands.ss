@@ -128,7 +128,8 @@
     gpu-compute-group*! gpu-hzb-init! gpu-compute-groupx!
     gpu-texture! gpu-texture-data! gpu-sampler! gpu-bindgroup! gpu-texgroup!
     gpu-compute! gpu-compute-group! gpu-begin! gpu-flush! gpu-bundle!
-    gpu-gpu-timer! gpu-gpu-ms gpu-region! gpu-pos))
+    gpu-gpu-timer! gpu-gpu-ms gpu-region! gpu-pos
+    gpu-stamp gpu-stamp-holds? gpu-stamp-replayed?))
 (define (prefix? p s)
   (and (>= (string-length s) (string-length p))
        (string=? (substring s 0 (string-length p)) p)))
