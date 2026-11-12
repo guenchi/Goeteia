@@ -888,6 +888,16 @@ the loop, and never again, is lost, as it always was: the loop's first
 `cmd-begin!` drops it.  Flush such setup between its own `cmd-begin!`
 and `cmd-flush!`.
 
+The viewport is a value of the stream in the same way.  `sgl-draw!`
+builds its projection, at encode time, with the aspect of the last
+`cmd-viewport!` of the current stream (`cmd-stream-viewport`), and that
+record is believed only within the stream that set it: a viewport set
+in a stream that `cmd-begin!` dropped is not the next stream's.  After a
+`cmd-region!` inside a stream (the encoder is stale until the next
+`cmd-begin!`), and in a frame of your own that sets no viewport, there is
+none, and `sgl-draw!` uses the canvas's aspect unless you give it one,
+`(sgl-draw! sc aspect)`.
+
 Capacity.  The frame after a drop carries its own commands plus, once
 each, the setup or upload commands of the subjects it uses whose last
 write was dropped -- the same commands the dropped words carried for

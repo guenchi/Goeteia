@@ -1423,10 +1423,36 @@
                                 (pack (+ k 1) (+ n2 1)))
                               (pack (+ k 1) n2)))))))))))
 
-  (define (sgl-draw! sc)
+  ;; The aspect the projection is built with, in order: the caller's,
+  ;; when given; else the last viewport this stream set, when its sides
+  ;; are positive -- fx-bind-target!, fx-bind-canvas! and the frame
+  ;; loops set one, so a scene drawn into a target or a part of the
+  ;; canvas is not stretched to the canvas's shape; else the canvas.
+  ;; The matrices are computed here, at encode time, so the viewport in
+  ;; force at replay cannot be read instead.
+  ;;
+  ;; A given aspect is judged by the flonum the projection will use, not
+  ;; by its exact value: an exact number too large for a finite flonum,
+  ;; or so small its flonum is 0.0, is refused as +inf.0 and 0.0 are.
+  ;; f - f is 0.0 for a finite f and NaN for an infinity or a NaN.
+  (define ($sgl-aspect opt)
+    (if (pair? opt)
+        (let* ((a (car opt))
+               (f (and (real? a) ($sgl-fl a))))
+          (unless (null? (cdr opt))
+            (error 'sgl-draw! "takes at most one aspect" opt))
+          (unless (and f (fl<? 0.0 f) (fl=? (fl- f f) 0.0))
+            (error 'sgl-draw! "aspect must be a positive number" a))
+          f)
+        (let ((vp (cmd-stream-viewport)))
+          (if (and vp (> (caddr vp) 0) (> (cadddr vp) 0))
+              (fl/ ($sgl-fl (caddr vp)) ($sgl-fl (cadddr vp)))
+              (fl/ ($sgl-fl (fx-width)) ($sgl-fl (fx-height)))))))
+
+  (define (sgl-draw! sc . aspect)
     (let* ((cam ($sgl-cam sc))
            (light ($sgl-light sc))
-           (aspect (fl/ ($sgl-fl (fx-width)) ($sgl-fl (fx-height))))
+           (aspect ($sgl-aspect aspect))
            (eye (v3 (vector-ref cam 3) (vector-ref cam 4)
                     (vector-ref cam 5)))
            ;; where the camera looks, unit length.  Two readers: the

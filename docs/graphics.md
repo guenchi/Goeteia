@@ -306,6 +306,14 @@ swings a whole assembly), `lod`, and `mesh`. Geometry specs are the
 mesh. `$sgl-build` and `sgl-scene?` round out the exports; `sgl-draw!`
 renders a frame.
 
+The projection takes its aspect from the viewport the frame set last
+(`cmd-stream-viewport`): `fx-bind-target!`, `fx-bind-canvas!` and the
+frame loops each set one, so a scene drawn into an offscreen target, or
+into a part of the canvas through `cmd-viewport!` (a split screen), keeps
+its proportions rather than taking the canvas's. Where no viewport was
+set in the stream, the canvas's aspect is used, as before; and
+`(sgl-draw! sc aspect)` gives the aspect outright.
+
 What the scene does with those declarations:
 
 - **Materials** are declarative per mesh: the default is

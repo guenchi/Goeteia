@@ -398,6 +398,7 @@ Both points are damped at one rate, and that is what holds the heading steady: t
 - `cmd-stamp-holds?` — whether a record made with this stamp can be relied on at this point in the stream: the words before the stamp are earlier in the current segment, so every replay that reaches this point runs them first, or a completed flush ran them; and no flush has run since from a base that `cmd-region!` moved without a `cmd-begin!`. It does not say a flush has happened: in the current segment those words are still waiting for one. For a record about a GPU object -- a buffer's contents, a VAO's setup. #f for #f
 - `cmd-stamp-in-stream?` — whether the encoder is not stale and a stamp was taken in the current stream (since the last `cmd-begin!`). For a record about a value the stream sets, which a later replay of the same words must set again -- a uniform. #f for #f
 - `cmd-stream-program` — the program slot of the last `cmd-use-program!` encoded since the last `cmd-begin!`, or #f
+- `cmd-stream-viewport` — `(x y w h)` of the last `cmd-viewport!` of the current stream, or #f: none was set since the last `cmd-begin!`, or the encoder is stale (after a `cmd-region!` or a full region, until the next `cmd-begin!`)
 - `cmd-clear!` — clear the bound target to a colour
 - `cmd-use-program!` — use a linked program for the draws that follow
 - `cmd-bind-buffer!` — bind a buffer as the array buffer
@@ -957,7 +958,7 @@ This library answers how much of the target to draw; it does not build the mirro
 - `sgl` — the scene macro: a declarative camera, lights and meshes, with `,(signal-ref x)` holes that re-render when the signal changes
 - `$sgl-build` — what `sgl` expands into; needs `fx-init!` first. Not called directly
 - `sgl-scene?` — whether a value is a scene built by `sgl`
-- `sgl-draw!` — draw the scene for this frame, re-reading whatever signals its holes named
+- `sgl-draw!` — draw the scene for this frame, re-reading whatever signals its holes named. `(sgl-draw! sc aspect)` projects with the given aspect (width over height: a real whose flonum is finite and positive; anything else, or a second aspect, raises); without one the aspect is the stream's last viewport (`cmd-stream-viewport`) when its width and height are positive, else the canvas's
 - `scene-shaders` — the four programs `sgl` builds, as `(name dialect vertex-forms fragment-forms)`, all `es300`, dialect second because it decides how to render the forms. Three are `(gfx mesh)`'s shaders and share their sRGB contract; `sgl-instanced` is the exception, using each instance's color as it comes, neither decoded nor encoded. They are the envified forms, not the source constants: `$sgl-envify` replaces four loose uniforms with a std140 block, which is why they are 3.00 and why listing the raw constants would check a shader this library never compiles. Four rather than two because a scene picks a material per mesh -- lit, textured or pbr -- and adds an instanced program for repeated geometry; the lit, textured and pbr forms come from `(gfx mesh)` and exist in this combination only here
 
 ## `(gfx sdf)`

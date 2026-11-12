@@ -131,7 +131,8 @@
 ;; (or is one of the procedures that encode no command)
 (define not-encoders
   '(cmd-region! cmd-begin! cmd-flush! cmd-pos cmd-draws
-    cmd-stamp cmd-stamp-holds? cmd-stamp-in-stream? cmd-stream-program))
+    cmd-stamp cmd-stamp-holds? cmd-stamp-in-stream? cmd-stream-program
+    cmd-stream-viewport))
 (define (prefix? p s)
   (and (>= (string-length s) (string-length p))
        (string=? (substring s 0 (string-length p)) p)))

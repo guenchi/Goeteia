@@ -51,6 +51,7 @@
           cmd-read-pixels!
           cmd-region! cmd-begin! cmd-flush! cmd-pos cmd-draws
           cmd-stamp cmd-stamp-holds? cmd-stamp-in-stream? cmd-stream-program
+          cmd-stream-viewport
           cmd-clear! cmd-use-program! cmd-bind-buffer! cmd-buffer-data!
           cmd-vertex-attrib! cmd-vertex-attrib-h!
           cmd-uniform1f! cmd-uniform4f!
@@ -899,6 +900,17 @@
          $seg
          (eq? ($cmd-cell-stream s) ($cmd-cell-stream $seg))))
   (define (cmd-stream-program) $stream-prog)
+  ;; the last viewport the stream set, for a caller that derives
+  ;; something from its shape at encode time (sgl-draw!'s aspect).  It
+  ;; is a VALUE the stream sets, so it is believed only while the stamp
+  ;; cmd-viewport! took after its words is in the current stream: one
+  ;; set by a dropped stream, or answered while the encoder is stale, is
+  ;; not this stream's.  One vector, #(x y w h stamp), reused.
+  (define $stream-vp (vector 0 0 0 0 #f))
+  (define (cmd-stream-viewport)
+    (and (cmd-stamp-in-stream? (vector-ref $stream-vp 4))
+         (list (vector-ref $stream-vp 0) (vector-ref $stream-vp 1)
+               (vector-ref $stream-vp 2) (vector-ref $stream-vp 3))))
 
   (define (cmd-region! base . limit)
     ($stale!)
@@ -1169,7 +1181,13 @@
     (op! 39) (u! slot) (u! at) (u! n))
   (define (cmd-pos) $p)                 ; for overflow checks by callers
   (define (cmd-draws) $draw-count)      ; and HUDs counting the frame
-  (define (cmd-viewport! x y w h) (op! 9) (u! x) (u! y) (u! w) (u! h))
+  ;; the record cmd-stream-viewport reads is written after the words,
+  ;; with the stamp taken after them
+  (define (cmd-viewport! x y w h)
+    (op! 9) (u! x) (u! y) (u! w) (u! h)
+    (vector-set! $stream-vp 0 x) (vector-set! $stream-vp 1 y)
+    (vector-set! $stream-vp 2 w) (vector-set! $stream-vp 3 h)
+    (vector-set! $stream-vp 4 (cmd-stamp)))
   ;; blending for translucent draws: (cmd-blend! 'alpha) src-over,
   ;; (cmd-blend! 'add) additive glow, (cmd-blend! 'premul) src-over
   ;; for premultiplied textures, (cmd-blend! 'off) opaque
