@@ -542,7 +542,13 @@
   (define $sgpu-occlusion #t)
   (define (sgpu-occlusion! on?) (set! $sgpu-occlusion (and on? #t)))
 
+  ;; The command words go in [0, 64 KiB), the region fx-init! gives
+  ;; (gfx gl): fx-alloc!, which every staging byte here comes from, hands
+  ;; out what lies above it.  A frame that does not fit raises before it
+  ;; writes past the limit, instead of writing its words over staged
+  ;; data (or trapping, when nothing has grown the memory yet).
   (define (sgpu-init! sc canvas)
+    (gpu-region! 0 65536)
     (set! $sgpu-hzb-w ($sgpu-fl (js->number (js-get canvas "width"))))
     (set! $sgpu-hzb-h ($sgpu-fl (js->number (js-get canvas "height"))))
     (set! $sgpu-hzb-built #f)

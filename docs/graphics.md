@@ -110,6 +110,15 @@ canvas comes up with it.
 (gpu-flush!)                             ; one submit
 ```
 
+The words go into a region of the staging memory, as in `(gfx gl)`:
+`(gpu-region! base limit)` sets where they start and the first byte they
+may not reach, and `(gpu-pos)` reads the cursor. `(gfx gpu)` sets no
+limit of its own -- place your staging data above the words, or set a
+region -- while `sgpu-init!` sets `[0, 64 KiB)`, below everything
+`fx-alloc!` hands out. A command that does not fit raises before any of
+its words is written past the limit; see "Capacity limits in the graphics
+stack" in `docs/limits.md`.
+
 WebGPU has no per-name uniforms, so the shader's entire uniform struct
 is one buffer written by a single `gpu-buffer-data!` and bound at
 `@group(0) @binding(0)`. Additional capabilities: textures and samplers

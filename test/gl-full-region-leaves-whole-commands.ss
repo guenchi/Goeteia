@@ -19,25 +19,35 @@
 ;; RB.  Every command encoder of lib/gfx/gl.ss, read from the file's
 ;; export list: an exported cmd- name that is not in the table below (nor
 ;; one of the procedures that encode no command) fails the row, so a new
-;; encoder cannot be left out, however it is defined.  Each call is encoded right after one
-;; complete preceding command, so it never starts where the previous
-;; command started (an encoder that wrote its opcode without recording
-;; its start, or recorded it after the first word, would roll back to
-;; the preceding command).  For EVERY i in 0..n-1, n being the call's
-;; word count, the limit leaves room for i of its words:
-;;   (a) the error is raised; the write position is where the call
-;;       began, the draw count is unchanged, and a flush replays the
-;;       preceding command whole and nothing else;
+;; encoder cannot be left out, however it is defined; and each must write
+;; at least one word.  Each call is encoded right after one complete
+;; preceding command, so it never starts where the previous command
+;; started (an encoder that wrote its opcode without recording its start,
+;; or recorded it after the first word, would roll back to the preceding
+;; command).  For EVERY i in 0..n-1, n being the call's word count, and
+;; for r in 0..3, the limit leaves room for i of its words and r more
+;; bytes:
+;;   (a) the overflow error is raised -- who cmd-region!, the message
+;;       "command region overflow", the irritant where the word that did
+;;       not fit would have gone; the write position is where the call
+;;       began; no byte at or past the limit was written; the draw count
+;;       is unchanged; and a flush replays the preceding command whole
+;;       and nothing else;
 ;;   (b) the limit widened, the same call again, a flush: it replays
 ;;       the preceding command and the call, exactly once each, call
 ;;       for call as a control that never stopped.
-;; (c) The control: a limit with room for all n words, exactly.
+;; (c) The control: a limit with room for all n words, exactly, and up to
+;;     three bytes more.
 ;; The one-word encoders only have i = 0.  cmd-uniform-matrices! is
 ;; called with two matrices, and cmd-blend! in each of its branches.
 ;;
 ;; S4b.  A stream of ordinary commands, then cmd-uniform4f! (six words)
 ;; with room for two: the position after the error is its position
 ;; before the call, and the flush makes no uniform4f call at all.
+;;
+;; BASE.  (cmd-region! 0), a base alone, after a region with a limit of
+;; 4096, removes that limit: 80,000 bytes of commands encode (last in
+;; the file: they write over the staging above 64 KiB).
 ;;
 ;; ON THE TREE BEFORE THE CHANGE this cell is red by behaviour: the half
 ;; command stays, a draw is counted before its words, and the flush runs
@@ -153,8 +163,14 @@
   (glstate-reset!)
   (let ((r (glstate-attempt (lambda () (cmd-flush!)))))
     (cons r (glstate-calls))))
+;; 'returned, or what was raised: (who message irritants)
 (define (try-call thunk)
-  (guard (e (#t 'raised)) (thunk) 'returned))
+  (guard (e (#t (if (error? e)
+                     (list (condition-who e) (condition-message e) (condition-irritants e))
+                     (list 'not-an-error e))))
+    (thunk)
+    'returned))
+(define (overflow-at a) (list 'cmd-region! "command region overflow" (list a)))
 
 ;; the preceding command alone, replayed: what (a) must replay
 (define ref-preceding
@@ -174,38 +190,55 @@
               (ref (flush-log)))
          (unless (equal? (car ref) "ok")
            (fail! name 'control "the control's replay raised" (car ref)))
-         ;; (c) room for exactly n words
-         (cmd-region! 0 (+ s (* 4 n)))
-         (cmd-begin!)
-         (preceding!)
-         (let ((r (try-call call)))
-           (unless (and (eq? r 'returned) (= (cmd-pos) (+ s (* 4 n))))
-             (fail! name 'c "a limit with room for all its words refused it" r (cmd-pos)))
-           (unless (equal? (flush-log) ref)
-             (fail! name 'c "the exact-fit replay differs from the control")))
-         ;; (a) and (b) for every i in 0..n-1
-         (let each ((i 0))
-           (when (< i n)
-             (cmd-region! 0 (+ s (* 4 i)))
+         (when (< n 1)
+           (fail! name 'control "the encoder wrote no word"))
+         ;; (c) room for exactly n words, and up to three bytes more
+         (let fits ((r 0))
+           (when (< r 4)
+             (cmd-region! 0 (+ s (* 4 n) r))
              (cmd-begin!)
              (preceding!)
-             (let ((r (try-call call)))
-               (unless (eq? r 'raised)
-                 (fail! name i "the call did not raise with room for i words"))
-               (unless (= (cmd-pos) s)
-                 (fail! name i "the position after the error is not where the call began"
-                        (cmd-pos) s))
-               (unless (= (cmd-draws) 0)
-                 (fail! name i "a draw rolled back was counted" (cmd-draws)))
-               (unless (equal? (flush-log) ref-preceding)
-                 (fail! name i "the flush after the error is not the preceding command alone"))
-               (cmd-region! 0 wide)
-               (call)
-               (unless (= (cmd-draws) draws)
-                 (fail! name i "the draw count after the call again differs from the control"
-                        (cmd-draws) draws))
+             (let ((x (try-call call)))
+               (unless (and (eq? x 'returned) (= (cmd-pos) (+ s (* 4 n))))
+                 (fail! name 'c r "a limit with room for all its words refused it" x (cmd-pos)))
                (unless (equal? (flush-log) ref)
-                 (fail! name i "the replay after the call again differs from the control")))
+                 (fail! name 'c r "the exact-fit replay differs from the control")))
+             (fits (+ r 1))))
+         ;; (a) and (b) for every i in 0..n-1 and r in 0..3
+         (let each ((i 0))
+           (when (< i n)
+             (let bytes ((r 0))
+               (when (< r 4)
+                 (let ((word (+ s (* 4 i))))
+                   (cmd-region! 0 (+ word r))
+                   (cmd-begin!)
+                   (preceding!)
+                   ;; the word that will not fit, and what lies past the limit
+                   (let mark ((b 0))
+                     (when (< b 4) (%mem-u8-set! (+ word b) 165) (mark (+ b 1))))
+                   (let ((x (try-call call)))
+                     (unless (equal? x (overflow-at word))
+                       (fail! name i r "not the overflow error for the word that did not fit" x))
+                     (unless (= (cmd-pos) s)
+                       (fail! name i r "the position after the error is not where the call began"
+                              (cmd-pos) s))
+                     (let past ((b r))
+                       (when (< b 4)
+                         (unless (= (%mem-u8-ref (+ word b)) 165)
+                           (fail! name i r "a byte at or past the limit was written" (+ word b)))
+                         (past (+ b 1))))
+                     (unless (= (cmd-draws) 0)
+                       (fail! name i r "a draw rolled back was counted" (cmd-draws)))
+                     (unless (equal? (flush-log) ref-preceding)
+                       (fail! name i r "the flush after the error is not the preceding command alone"))
+                     (cmd-region! 0 wide)
+                     (call)
+                     (unless (= (cmd-draws) draws)
+                       (fail! name i r "the draw count after the call again differs from the control"
+                              (cmd-draws) draws))
+                     (unless (equal? (flush-log) ref)
+                       (fail! name i r "the replay after the call again differs from the control"))))
+                 (bytes (+ r 1))))
              (each (+ i 1))))))))
  table)
 
@@ -234,7 +267,8 @@
   (unless (= before s4b-start)
     (fail! 'S4b "the stream before the call is not where it was measured" before s4b-start))
   (let ((r (try-call (lambda () (fx-uniform! q 'u_c 1.0 2.0 3.0 4.0)))))
-    (unless (eq? r 'raised) (fail! 'S4b "the call did not raise"))
+    (unless (equal? r (overflow-at (+ s4b-start 8)))
+      (fail! 'S4b "not the overflow error for the word that did not fit" r))
     (unless (= (cmd-pos) before)
       (fail! 'S4b "the position after the error is not its value before the call"
              (cmd-pos) before))
@@ -243,6 +277,24 @@
     (let ((u4 (filter (lambda (s) (prefix? "4f:" s)) (glstate-uniform-log))))
       (unless (equal? u4 '("4f:u_c:0.5,0.5,0.5,1"))
         (fail! 'S4b "the flush made a uniform4f call beyond the whole commands" u4)))))
+(cmd-region! 0 wide)
+
+;; ---- BASE: a base alone removes the limit ----
+(define (clears! k) (let loop ((j 0)) (when (< j k) (cmd-clear! 0.0 0.0 0.0 1.0) (loop (+ j 1)))))
+;; memory the unlimited stream writes over, so it cannot trap
+(define scratch (fx-alloc! 262144))
+(cmd-region! 0 4096)
+(cmd-begin!)
+;; the clear at 4080 has room for four of its five words: the fifth,
+;; at 4096, does not fit, and the position goes back to 4080
+(unless (equal? (try-call (lambda () (clears! 4000))) (overflow-at 4096))
+  (fail! 'BASE "a limit of 4096 did not stop the commands at the word at 4096"))
+(unless (= (cmd-pos) 4080)
+  (fail! 'BASE "the position after the error is not the start of the clear at 4080" (cmd-pos)))
+(cmd-region! 0)
+(cmd-begin!)
+(unless (eq? (try-call (lambda () (clears! 4000))) 'returned)
+  (fail! 'BASE "a base alone after a limited region kept the limit"))
 (cmd-region! 0 wide)
 
 (display (if (= nfails 0) #t (list nfails 'failures (reverse fails))))

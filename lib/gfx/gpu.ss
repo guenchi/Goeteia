@@ -59,8 +59,12 @@
 ;;   still missing          -> textures + samplers, multiple bind
 ;;                             groups per pipeline
 ;;
-;; The command region is the same staging words (gfx gl) uses; a page
-;; drives one backend or the other, not both at once.
+;; The command words go into a region of the staging memory: from a
+;; base (0 unless gpu-region! moves it), with an optional byte limit,
+;; as (gfx gl)'s cmd-region!.  (gfx gpu) sets no limit itself;
+;; sgpu-init! sets [0, 64 KiB), the same region fx-init! gives (gfx gl),
+;; whose allocator hands out the bytes above it.  A page drives one
+;; backend or the other, not both at once.
 ;;
 (library (gfx gpu)
   (export gpu-attach! gpu-pipeline! gpu-pipeline2! gpu-pipeline2-blend!
@@ -71,7 +75,7 @@
           gpu-texture! gpu-texture-data! gpu-sampler!
           gpu-bindgroup! gpu-texgroup!
           gpu-compute! gpu-compute-group!
-          gpu-begin! gpu-flush!
+          gpu-begin! gpu-flush! gpu-region! gpu-pos
           gpu-clear! gpu-use-pipeline! gpu-bind-vbuf! gpu-bind-vbuf2!
           gpu-bind-ibuf! gpu-set-group! gpu-buffer-data!
           gpu-draw! gpu-draw-indexed! gpu-draw-instanced!
@@ -320,9 +324,9 @@
      "    st.tqBusy = false; st.tqMs = -1;"
      "    return 1; },"
      "  gpuMs() { return st.tqMs === undefined ? -1 : st.tqMs; },"
-     "  replay(count) {"
+     "  replay(base, count) {"
      "    const dv = new DataView(memory.buffer);"
-     "    let p = 0;"
+     "    let p = base;"
      "    const u = () => { const v = dv.getUint32(p, true); p += 4; return v; };"
      "    const f = () => { const v = dv.getFloat32(p, true); p += 4; return v; };"
      "    const enc = st.dev.createCommandEncoder();"
@@ -488,30 +492,61 @@
     (js-method $gpu "bindgroup" slot pslot ubslot))
 
   ;; ---- the encoder: words into the staging memory, gl-style ----
+  ;; The words go from $gpu-base up; $gpu-limit, when set, is the first
+  ;; byte they may not reach.  A word that does not fit puts the cursor
+  ;; back where its command began ($gpu-op, recorded by $gpu-op! before
+  ;; the command's first word) and raises, so the region never holds
+  ;; part of a command: a flush after the error replays whole commands
+  ;; only, and none of the one that did not fit.  The error names where
+  ;; that word would have gone.
+  (define $gpu-base 0)
   (define $gpu-p 0)
-  (define (gpu-begin!) (set! $gpu-p 0))
-  (define ($gpu-u! v) (%mem-i32-set! $gpu-p v) (set! $gpu-p (+ $gpu-p 4)))
+  (define $gpu-limit #f)
+  (define $gpu-op 0)
+  (define (gpu-region! base . limit)
+    (set! $gpu-base base)
+    (set! $gpu-limit (and (pair? limit) (car limit)))
+    (when (and $gpu-limit (< $gpu-limit $gpu-base))
+      (error 'gpu-region! "limit precedes command base" $gpu-limit)))
+  (define (gpu-begin!) (set! $gpu-p $gpu-base))
+  (define (gpu-pos) $gpu-p)
+  (define ($gpu-word!)
+    (when (and $gpu-limit (> (+ $gpu-p 4) $gpu-limit))
+      (let ((at $gpu-p))
+        (set! $gpu-p $gpu-op)
+        (error 'gpu-region! "command region overflow" at))))
+  (define ($gpu-u! v)
+    ($gpu-word!)
+    (%mem-i32-set! $gpu-p v)
+    (set! $gpu-p (+ $gpu-p 4)))
   (define ($gpu-f! v)
+    ($gpu-word!)
     (%mem-f32-set! $gpu-p (if (flonum? v) v (exact->inexact v)))
     (set! $gpu-p (+ $gpu-p 4)))
+  ;; every command's first word: the command starts here, recorded
+  ;; BEFORE the word is written, so a first word that does not fit
+  ;; rolls back to its own start and not to the previous command's
+  (define ($gpu-op! v) (set! $gpu-op $gpu-p) ($gpu-u! v))
+  ;; the words encoded since gpu-begin!, as the replayer counts them
+  (define ($gpu-count) (quotient (- $gpu-p $gpu-base) 4))
 
   (define (gpu-clear! r g b a)
-    ($gpu-u! 1) ($gpu-f! r) ($gpu-f! g) ($gpu-f! b) ($gpu-f! a))
-  (define (gpu-use-pipeline! slot) ($gpu-u! 2) ($gpu-u! slot))
-  (define (gpu-bind-vbuf! slot) ($gpu-u! 3) ($gpu-u! slot))
+    ($gpu-op! 1) ($gpu-f! r) ($gpu-f! g) ($gpu-f! b) ($gpu-f! a))
+  (define (gpu-use-pipeline! slot) ($gpu-op! 2) ($gpu-u! slot))
+  (define (gpu-bind-vbuf! slot) ($gpu-op! 3) ($gpu-u! slot))
   (define (gpu-buffer-data! slot base bytes)
-    ($gpu-u! 4) ($gpu-u! slot) ($gpu-u! base) ($gpu-u! bytes))
-  (define (gpu-draw! verts) ($gpu-u! 5) ($gpu-u! verts))
-  (define (gpu-set-group! slot) ($gpu-u! 6) ($gpu-u! slot))
-  (define (gpu-bind-ibuf! slot) ($gpu-u! 7) ($gpu-u! slot))
-  (define (gpu-draw-indexed! count) ($gpu-u! 8) ($gpu-u! count))
+    ($gpu-op! 4) ($gpu-u! slot) ($gpu-u! base) ($gpu-u! bytes))
+  (define (gpu-draw! verts) ($gpu-op! 5) ($gpu-u! verts))
+  (define (gpu-set-group! slot) ($gpu-op! 6) ($gpu-u! slot))
+  (define (gpu-bind-ibuf! slot) ($gpu-op! 7) ($gpu-u! slot))
+  (define (gpu-draw-indexed! count) ($gpu-op! 8) ($gpu-u! count))
   ;; one compute step, its own pass: encode dispatches BEFORE the
   ;; frame's draws -- a render pass cannot be interrupted
   (define (gpu-dispatch! pslot gslot groups)
-    ($gpu-u! 9) ($gpu-u! pslot) ($gpu-u! gslot) ($gpu-u! groups))
-  (define (gpu-bind-vbuf2! slot) ($gpu-u! 10) ($gpu-u! slot))
+    ($gpu-op! 9) ($gpu-u! pslot) ($gpu-u! gslot) ($gpu-u! groups))
+  (define (gpu-bind-vbuf2! slot) ($gpu-op! 10) ($gpu-u! slot))
   (define (gpu-draw-instanced! verts insts)
-    ($gpu-u! 11) ($gpu-u! verts) ($gpu-u! insts))
+    ($gpu-op! 11) ($gpu-u! verts) ($gpu-u! insts))
   ;; occlusion: gpu-hzb-init! builds the depth pyramid resources
   ;; once; per frame, gpu-end-pass! closes the occluder pass (later
   ;; draws load instead of clear), gpu-hzb! reduces the depth buffer
@@ -519,8 +554,8 @@
   ;; gpu-compute-groupx! with a t-prefixed slot samples it
   (define (gpu-hzb-init! slot w h)
     (js-method $gpu "hzbInit" slot w h))
-  (define (gpu-end-pass!) ($gpu-u! 15))
-  (define (gpu-hzb!) ($gpu-u! 16))
+  (define (gpu-end-pass!) ($gpu-op! 15))
+  (define (gpu-hzb!) ($gpu-op! 16))
   ;; like gpu-compute-group*! but entries may be textures: "3,4,t7"
   ;; binds buffers 3,4 and texture 7's full view
   (define (gpu-compute-groupx! slot pslot spec)
@@ -530,18 +565,18 @@
   ;; [indexCount instanceCount firstIndex baseVertex firstInstance],
   ;; written by a compute pass -- a cull that never touches the CPU
   (define (gpu-draw-indexed-indirect! slot offset)
-    ($gpu-u! 13) ($gpu-u! slot) ($gpu-u! offset))
+    ($gpu-op! 13) ($gpu-u! slot) ($gpu-u! offset))
   (define (gpu-draw-indirect! slot offset)
-    ($gpu-u! 14) ($gpu-u! slot) ($gpu-u! offset))
+    ($gpu-op! 14) ($gpu-u! slot) ($gpu-u! offset))
 
   ;; freeze the commands encoded since gpu-begin! into a render
   ;; bundle -- draws and their state only.  Recorded once, a whole
   ;; static scene replays from inside the browser with no decode at
   ;; all: the frame becomes clear + uniforms + gpu-execute!
   (define (gpu-bundle! slot)
-    (js-method $gpu "bundle" slot 0 (quotient $gpu-p 4))
+    (js-method $gpu "bundle" slot $gpu-base ($gpu-count))
     (gpu-begin!))
-  (define (gpu-execute! slot) ($gpu-u! 12) ($gpu-u! slot))
+  (define (gpu-execute! slot) ($gpu-op! 12) ($gpu-u! slot))
 
   (define (gpu-flush!)
-    (js-method $gpu "replay" (quotient $gpu-p 4))))
+    (js-method $gpu "replay" $gpu-base ($gpu-count))))

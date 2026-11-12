@@ -614,6 +614,28 @@ separately rather than solved by handing callers a sharp edge.
   33 and 256 joints loads, but drawing it with a 32-slot program is
   refused by `gltf-draw!` rather than silently truncated.  A small
   skin is legal on either.
+- **The WebGPU command region.** `(gfx gpu)` writes a frame's command
+  words into a region of the staging memory (`gpu-region!`, as
+  `cmd-region!` for `(gfx gl)`). `sgpu-init!` sets it to `[0, 64 KiB)`,
+  16384 words, the bytes below everything `fx-alloc!` hands out. A
+  `(gfx sgpu)` frame takes 11 + 25 words per group when every group
+  moved (11 + 21 when none did; a group is one geometry and texture
+  pair, whatever its node count), so a scene of about 650 groups fills
+  it. A command that does not fit raises `command region overflow` and
+  leaves the cursor at the end of the last whole command; nothing is
+  written past the limit.
+
+  Raw `(gfx gpu)` sets no limit: without `gpu-region!` the words start
+  at 0 and nothing stops them, so a frame longer than the gap below
+  your own staging data writes its words over that data (an upload
+  encoded before the overrun still reads the overwritten bytes, since
+  uploads read staging when the frame is replayed), and one longer than
+  the memory traps. Place staging data above the longest frame, or set
+  `gpu-region!` below it.
+
+  **Since 2026-11-11.** Before that the WebGPU encoder had no region at
+  all, `(gfx sgpu)` included: a scene past about 655 groups overwrote
+  its own uniform block and instance data, or trapped.
 - **Staging memory is a bump heap with one water mark, no `free`.**
   `fx-alloc!` only ever moves a pointer up.  The one way back is
   the water-mark pair: `(fx-mark)` reads the current level,
