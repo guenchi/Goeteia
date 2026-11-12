@@ -488,6 +488,52 @@ procedures of forty and loads fine; the same 600 at top level do
 not.  Grouping does not help if one procedure still holds them all —
 it is a per-function limit, not a per-module one.
 
+## Calls and procedures of 1000 or more arguments
+
+A WebAssembly function type takes at most 1000 parameters, and the
+engines enforce it when a module is loaded.  On the wasm target a
+procedure of at most **999 fixed parameters**, and a call of at most
+999 arguments, compile as they always did.  From 1000 on (since
+2026-11-12, ledger R50b) the arguments travel as **one list** into the
+procedure's generic entry, the way they do for `apply` and for a
+procedure with a rest parameter:
+
+- a call of 1000 or more arguments conses them into a list, one pair
+  per argument, and calls the callee's generic entry;
+- a `lambda` of 1000 or more fixed parameters unpacks them from that
+  list;
+- a top-level procedure of 1000 or more fixed parameters, with or
+  without a rest, is compiled as a variadic procedure that applies an
+  inner `lambda`, so each call also allocates that closure.  A direct
+  call with the wrong number of arguments is still the compile-time
+  error it is for a small procedure.
+
+Such a procedure has no positional signature, so **exporting** one from
+a wasm module is refused when the module is compiled, naming the
+procedure and its parameter count; the export limit is 999 fixed
+parameters (with or without a rest).  The JavaScript target has no such
+limit and exports it as before.
+
+As for every procedure entered through its generic entry, the number of
+arguments is **not checked** there: too few traps, and surplus ones are
+ignored (ledger R65, for every arity and both targets).
+
+What is bounded:
+
+- `+`, `-` and `*` take two locals per operand, and the engine's memory
+  to compile such a function grows about quadratically with the number
+  of operands: measured, 2,000 operands 0.7 GB, 5,000 4.2 GB, 10,000
+  7.3 GB, 20,000 out of memory (ledger R67).  Sum a long list with
+  `fold-left` instead.
+- The self-hosted compiler, at node's default stack, compiles a call of
+  `list` with 20,000 arguments and an `apply` with 20,000 leading
+  arguments.  Procedures of many thousands of *parameters* are not
+  claimed: several compiler passes recur once per parameter.
+- Below 1000, typed calls of **518 or more** arguments in tail position
+  crash V8 on arm64 while it compiles the module (the process dies; ledger
+  R68).  That is an engine fault in today's convention, not a limit of
+  the program: keep such calls out of tail position, or pass a list.
+
 ## Every hash this implementation computes is a fixnum
 
 `string-hash`, `equal-hash` and the hash an `eq`/`eqv` table uses all

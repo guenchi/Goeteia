@@ -39,8 +39,11 @@
     (if (= i n) '() (cons i (loop (+ i 1))))))
 (define (repeat-n n x)
   (if (zero? n) '() (cons x (repeat-n (- n 1) x))))
+;; a loop: an apply with tens of thousands of leading arguments takes
+;; all but the last of them through here
 (define (first-n ls n)
-  (if (zero? n) '() (cons (car ls) (first-n (cdr ls) (- n 1)))))
+  (let loop ((ls ls) (n n) (acc '()))
+    (if (zero? n) (reverse acc) (loop (cdr ls) (- n 1) (cons (car ls) acc)))))
 (define (all-true? f ls)
   (or (null? ls) (and (f (car ls)) (all-true? f (cdr ls)))))
 (define (map2* f l1 l2)
@@ -3696,7 +3699,15 @@
 ;;; closures
 
 (define (compile-lambda formals body locals cell)
-  (let* ((rest (formals-rest formals))
+  ;; A lambda of more fixed parameters than a function type can carry,
+  ;; and no rest, is lifted as a variadic one is: its body is its own
+  ;; generic entry and unpacks the parameters from the argument list.
+  ;; The rest it is given is a fresh name nothing refers to.  As for
+  ;; every procedure called through its generic entry, the count is not
+  ;; checked.
+  (let* ((rest (or (formals-rest formals)
+                   (and (not (typed-arity? (length (formals-fixed formals))))
+                        (gensym "rest"))))
          (names (formals-names formals))
          (free (filter (lambda (v) (assq v locals))
                        (free-vars-body body names)))
@@ -3851,6 +3862,15 @@
   (let ((idx (car entry))
         (nfixed (cadr entry))
         (variadic? (caddr entry)))
+    ;; a lowered function is variadic now, but a direct call of it is
+    ;; checked against the parameters it was written with
+    (let ((low (assv idx *lowered*)))
+      (when low
+        (if (caddr low)
+            (when (< (length args) (cadr low))
+              (errorf 'goeteia "too few arguments in:" e))
+            (unless (= (length args) (cadr low))
+              (errorf 'goeteia "wrong argument count in:" e)))))
     (if variadic?
         ;; extra arguments are consed into the rest list at the call
         (let ((n (length args)))
@@ -3882,11 +3902,17 @@
                 (uleb idx))))))
 
 (define (arg-chain args tail-code locals cell)
-  (if (null? args)
-      tail-code
-      (let* ((head (compile-exp (car args) locals cell #f))
-             (rest (arg-chain (cdr args) tail-code locals cell)))
-        (list head rest (struct-new TY-PAIR)))))
+  (cons-chain (map-in-order (lambda (a) (compile-exp a locals cell #f)) args)
+              tail-code))
+
+;; Code that conses the values of codes, first to last, onto the list
+;; tail-code leaves: each code runs in order and the pairs are made
+;; innermost first.  Built backwards in a loop, so the length of an
+;; argument list costs no compiler stack.
+(define (cons-chain codes tail-code)
+  (fold-left (lambda (acc code) (list code acc (struct-new TY-PAIR)))
+             tail-code
+             (reverse codes)))
 
 (define (compile-indirect fcode args locals cell tail?)
   (indirect-call-code
@@ -3894,6 +3920,22 @@
    (map-in-order (lambda (a) (compile-exp a locals cell #f)) args)
    cell tail?))
 (define (indirect-call-code fcode argc cell tail?)
+  (if (typed-arity? (length argc))
+      (typed-call-code fcode argc cell tail?)
+      (generic-call-code fcode argc cell tail?)))
+;; A call of more arguments than a function type can carry has no fast
+;; entry to try: the callee first, then the arguments left to right,
+;; consed on the operand stack, into its generic entry -- compile-apply's
+;; code without a final list.
+(define (generic-call-code fcode argc cell tail?)
+  (let ((tmp (fresh-local! cell)))
+    (list fcode (local-set tmp)
+          (local-get tmp) (ref-cast TY-CLOSBASE)
+          (cons-chain argc (global-get G-NULL))
+          (local-get tmp) (ref-cast TY-CLOSBASE) (struct-get TY-CLOSBASE 1)
+          (if tail? #x15 #x14)
+          (uleb TY-FNG))))
+(define (typed-call-code fcode argc cell tail?)
   ;; dual dispatch: the fast arity-typed entry when the callee's
   ;; closure type matches this call's arity, the generic list-taking
   ;; entry otherwise (variadic callee or arity mismatch).  The
@@ -3933,12 +3975,9 @@
            (final (car (list-tail args (- (length args) 1))))
            (tmp (fresh-local! cell))
            (fc (compile-exp f locals cell #f))
-           (chain (let build ((as leading))
-                    (if (null? as)
-                        (compile-exp final locals cell #f)
-                        (let* ((head (compile-exp (car as) locals cell #f))
-                               (rest (build (cdr as))))
-                          (list head rest (struct-new TY-PAIR)))))))
+           (heads (map-in-order (lambda (a) (compile-exp a locals cell #f))
+                                leading))
+           (chain (cons-chain heads (compile-exp final locals cell #f))))
       (list fc (local-set tmp)
             (local-get tmp) (ref-cast TY-CLOSBASE)
             chain
@@ -5174,10 +5213,15 @@
   (if (pair? e)
       (case (car e)
         ((quote) acc)
+        ;; an arity no function type can carry is not recorded -- its
+        ;; lambda and its calls take the generic convention -- but what
+        ;; is inside is still scanned
         ((lambda)
          (scan-arity-list (cddr e)
                           (let ((a (length (formals-fixed (cadr e)))))
-                            (if (memv a acc) acc (cons a acc)))))
+                            (if (or (memv a acc) (not (typed-arity? a)))
+                                acc
+                                (cons a acc)))))
         ((if begin set! define)
          (scan-arity-list (cdr e) acc))
         ((let)
@@ -5186,7 +5230,9 @@
         (else
          (let ((acc (if (list? e)
                         (let ((a (length (cdr e))))
-                          (if (memv a acc) acc (cons a acc)))
+                          (if (or (memv a acc) (not (typed-arity? a)))
+                              acc
+                              (cons a acc)))
                         acc)))
            (scan-arity-list e acc))))
       acc))
@@ -7567,11 +7613,66 @@
      (else (split (cdr fs) (cdr ls)
                   (cons (car fs) pf) (cons (car ls) pl))))))
 
+;; ---- calls and procedures past the function-type limit -------------
+;;
+;; A WebAssembly function type takes at most 1000 parameters, and every
+;; typed entry here takes one more than the arguments it carries (the
+;; closure) or exactly as many (a top-level function).  So a procedure
+;; of at most 999 fixed parameters, and a call of at most 999 arguments,
+;; is TYPED: compiled as it always was.  Past that the arguments travel
+;; as one list into the generic entry, as they do for apply and for a
+;; variadic procedure.  This predicate is the only place the limit is
+;; written; every site that chooses between the two asks it.
+(define (typed-arity? n) (< n 1000))
+
+;; Top-level definitions lowered because their fixed parameters do not
+;; fit a function type: (index written-fixed-count has-rest), filled in
+;; when the function table is numbered, read by compile-direct.
+(define *lowered* '())
+
+;; (define (f a0 ... aN-1 [. r]) body ...) with N untyped becomes
+;;   (define (f . args) (apply (lambda (a0 ... aN-1 [. r]) body ...) args))
+;; an ordinary variadic definition applying a lambda that compile-lambda
+;; lifts generic-only.  It runs after prepare-program, so macro
+;; collection, the import rules, the duplicate check, the export list
+;; and the name section all saw the definition as written, and the name
+;; is kept.  Such a procedure has no positional signature, so exporting
+;; it is refused here, by name.  Answers the new form list and the
+;; (name written-fixed-count has-rest) records.
+(define (lower-wide-definitions forms export-names)
+  (let loop ((fs forms) (acc '()) (recs '()))
+    (if (null? fs)
+        (cons (reverse acc) recs)
+        (let ((f (car fs)))
+          (if (and (fn-define? f)
+                   (not (typed-arity? (length (formals-fixed (cdadr f))))))
+              (let* ((name (car (cadr f)))
+                     (formals (cdadr f))
+                     (n (length (formals-fixed formals)))
+                     (args (gensym "args"))
+                     (inner (cons 'lambda (cons formals (cddr f))))
+                     (new (list (car f) (cons name args)
+                                (list 'apply inner args)))
+                     (loc (form-loc f)))
+                (when (memq name export-names)
+                  (errorf 'goeteia
+                          (string-append "an exported procedure takes at most"
+                                         " 999 fixed parameters:")
+                          name n))
+                (when loc (hashtable-set! *form-locs* new loc))
+                (loop (cdr fs) (cons new acc)
+                      (cons (list name n (and (formals-rest formals) #t))
+                            recs)))
+              (loop (cdr fs) (cons f acc) recs))))))
+
 (define (compile-program-wasm forms locs)
   (let* ((prep (prepare-program forms locs))
          (export-names (car prep))
-         (forms (cadr prep))
-         (fn-defs (caddr prep))
+         (lowered (lower-wide-definitions (cadr prep) export-names))
+         (forms (car lowered))
+         (fn-defs (if (null? (cdr lowered))
+                      (caddr prep)
+                      (filter fn-define? forms)))
          (var-defs (cadddr prep))
          (main-steps (cadr (cdddr prep))))
     (set! *fns* '())
@@ -7586,14 +7687,18 @@
     ;; function index space: imports, top-level functions, main, lifted
     (set! *next-fn* (+ N-IMPORTS (length fn-defs) 1))
     (set! *reg-fn* (alloc-fn!))
+    (set! *lowered* '())
     (let number ((ds fn-defs) (i N-IMPORTS))
       (unless (null? ds)
-        (let ((formals (cdadr (car ds))))
+        (let ((formals (cdadr (car ds)))
+              (low (assq (car (cadr (car ds))) (cdr lowered))))
           (set! *fns* (cons (list (car (cadr (car ds)))
                                   i
                                   (length (formals-fixed formals))
                                   (and (formals-rest formals) #t))
-                            *fns*)))
+                            *fns*))
+          (when low
+            (set! *lowered* (cons (cons i (cdr low)) *lowered*))))
         (number (cdr ds) (+ i 1))))
     (let number ((ds var-defs) (g G-FIRST-VAR))
       (unless (null? ds)
