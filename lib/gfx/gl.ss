@@ -572,7 +572,7 @@
      "              gl.bindTexture(gl.TEXTURE_CUBE_MAP, slots[u[p+1]]);"
      "              p += 2; break;"
      "     case 27: gl.bindVertexArray(slots[u[p]]); p += 1; break;"
-     "     case 28: gl.bindVertexArray(null); break;"
+     "     case 28: if (gl.bindVertexArray) gl.bindVertexArray(null); break;"
      "     case 29: gl.activeTexture(gl.TEXTURE0 + u[p]);"
      "              gl.bindTexture(gl.TEXTURE_CUBE_MAP, null);"
      "              p += 1; break;"

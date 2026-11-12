@@ -219,6 +219,8 @@
                      "divisor:1:1"
                      "enable:2" "attrib:2,3,F,false,24,12"
                      "divisor:2:1"
+                     ;; the vertex buffer, bound again after the setup (R55)
+                     "bindBuffer:B3"
                      "drawInst:TRI:36:1000"))))
 
 ;; ---- offscreen targets: binding sets the matching viewport ----

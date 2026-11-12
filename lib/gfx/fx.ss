@@ -564,6 +564,12 @@
   ;; the instance buffer's attributes and their divisors.  The element
   ;; binding is not part of it: every caller binds its index buffer
   ;; after fx-use!
+  ;;
+  ;; It ends with the vertex buffer bound, as a use that rebinds a set-up
+  ;; VAO does: an instanced setup binds the instance buffer for its
+  ;; attributes and then the vertex buffer again, so an upload right
+  ;; after the use goes to the vertex buffer on the first use as on
+  ;; every later one.
   (define ($fx-vao-setup! prog v buf-slot inst-slot stride)
     (cmd-bind-vao! v)
     (cmd-bind-buffer! buf-slot)
@@ -577,7 +583,8 @@
                                       (fx-program-istride prog)
                                       (caddr a))
                   (cmd-attrib-divisor! (car a) 1))
-                ($fx-program-iattribs prog))))
+                ($fx-program-iattribs prog))
+      (cmd-bind-buffer! buf-slot)))
 
   ;; The scalar/vector cache: per program, one vector per uniform name,
   ;; #(v0 v1 v2 v3 stamp) -- the values last encoded and the stamp taken
@@ -585,7 +592,8 @@
   ;; once, ever.
   ;;
   ;; A set is skipped only as a repeat inside one stream: the stamp is in
-  ;; the current stream (cmd-stamp-in-stream?) and the values are equal.
+  ;; the current stream (cmd-stamp-in-stream?) and the values are equal,
+  ;; a zero only to a zero of the same sign ($fx-fl-same?).
   ;; Every replay of a stream runs its words from the start, so a value
   ;; the stream itself set before is set again before the skipped call,
   ;; at every replay; a value from an earlier stream is not (a flush can
@@ -599,10 +607,19 @@
     (let ((prev (hashtable-ref cache name #f)))
       (and prev
            (cmd-stamp-in-stream? (vector-ref prev 4))
-           (fl=? (vector-ref prev 0) v0)
-           (or (< n 2) (fl=? (vector-ref prev 1) v1))
-           (or (< n 3) (fl=? (vector-ref prev 2) v2))
-           (or (< n 4) (fl=? (vector-ref prev 3) v3)))))
+           ($fx-fl-same? (vector-ref prev 0) v0)
+           (or (< n 2) ($fx-fl-same? (vector-ref prev 1) v1))
+           (or (< n 3) ($fx-fl-same? (vector-ref prev 2) v2))
+           (or (< n 4) ($fx-fl-same? (vector-ref prev 3) v3)))))
+  ;; fl=? takes 0.0 and -0.0 for one value, and a shader can tell them
+  ;; apart (1.0 / x, atan, sign), so a zero repeats only a zero of its
+  ;; own sign; their reciprocals are the two infinities.  Not eqv?: in
+  ;; goeteia it does not tell the two zeros apart either.  NaN is never
+  ;; fl=?, so a NaN is always sent.
+  (define ($fx-fl-same? a b)
+    (and (fl=? a b)
+         (or (not (fl=? a 0.0))
+             (fl=? (fl/ 1.0 a) (fl/ 1.0 b)))))
   ;; after the set's words: the values, and the stamp under the gate
   (define ($fx-sent! prog cache name v0 v1 v2 v3)
     (let ((stamp (and (eqv? (cmd-stream-program) (fx-program-slot prog))
@@ -713,13 +730,17 @@
         (js-method (js-global) "requestAnimationFrame" tick))))
 
   ;; ticks plus the GL frame plumbing: begin, viewport, user commands,
-  ;; overflow check, one flush
+  ;; unbind the vertex array, overflow check, one flush.  The frame ends
+  ;; with no vertex array bound, so host code that sets an attribute
+  ;; between frames without binding a vertex array of its own does not
+  ;; write into the library's last one.
   (define (fx-loop! proc)
     (fx-ticks!
      (lambda (t dt)
        (cmd-begin!)
        (cmd-viewport! 0 0 (fx-width) (fx-height))
        (proc t dt)
+       (cmd-unbind-vao!)
        (when (> (cmd-pos) $fx-cmd-limit)
          (error 'fx-loop! "command region overflow" (cmd-pos)))
        (cmd-flush!))))
@@ -735,7 +756,8 @@
   ;; rule without the frame callback wrote it a third time -- which is
   ;; how three copies of one rule come to disagree.  One rule, one
   ;; place: this function is now the loop and the drawing, nothing
-  ;; more.
+  ;; more.  Its frame ends as fx-loop!'s does, with no vertex array
+  ;; bound.
   (define (fx-loop-fixed! step sim render)
     (let ((clock (make-fixed-step ($fx-fl step) 4)))
       (fx-ticks!
@@ -744,6 +766,7 @@
          (cmd-begin!)
          (cmd-viewport! 0 0 (fx-width) (fx-height))
          (render (fixed-step-alpha clock) t dt)
+         (cmd-unbind-vao!)
          (when (> (cmd-pos) $fx-cmd-limit)
            (error 'fx-loop-fixed! "command region overflow" (cmd-pos)))
          (cmd-flush!)))))

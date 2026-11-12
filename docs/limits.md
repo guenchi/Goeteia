@@ -904,7 +904,10 @@ completed are not established again.  A frame that does not fit, caught
 and flushed every frame, progresses only if its own commands and each
 outstanding establishment fit where they are encoded; a region smaller
 than one record's sequence makes no progress.  There is no general
-guarantee.
+guarantee.  `fx-loop!` and `fx-loop-fixed!` add one word of their own
+to every frame, after the caller's commands (the unbind of the vertex
+array, below), so a frame whose own commands fill the region to its
+last word raises `command region overflow` in the loop.
 
 Staging and replay.  Uniform values are set again by every replay of a
 stream.  An upload reads its staging bytes when it is REPLAYED, not when
@@ -921,6 +924,12 @@ vertex arrays and buffers it keeps records about: host code, another
 replayer or a raw `(gfx gl)` call must not set a library-owned uniform,
 configure a library-owned vertex array or write a library-owned buffer.
 Host code may change bindings and the current program between replays.
+A frame of `fx-loop!` or `fx-loop-fixed!` ends with no vertex array
+bound, so attribute calls made between those frames go to the default
+vertex array, not to the library's last one.  After a frame of your
+own (`cmd-begin!` ... `cmd-flush!`) the library's last vertex array is
+still bound: bind a vertex array of your own (or `cmd-unbind-vao!`)
+before setting attributes.
 A flush replays its words in order, and nothing outside the replayer
 changes GL state while it runs.  Within one attachment no slot is
 reassigned and no object deleted; handles made before a `gl-attach!`
