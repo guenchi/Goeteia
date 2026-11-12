@@ -96,6 +96,7 @@ adds up to.
 - `field-period` — how much time accumulates before the field settles up; zero settles on every step
 - `field-contains?` — whether a point on the ground plane lies in the region. This is a 2D test on x and z; the capsule tests in `(gfx collide)` are 3D and are not another implementation of it
 - `field-step!` — advances the life by an elapsed time and calls the caller's procedure with the field and the amount owed whenever a period has accumulated, and once more at expiry so the last partial period is paid rather than dropped; the elapsed time is clamped to the life remaining, a dead field is quiet, and a negative time is refused. A step that would take the settling accumulator past a finite flonum is refused before the life or the accumulator changes
+- `$field-exact-calls` — internal, for the tests: how many times `field-contains?` has had to settle a point in exact arithmetic, the slow path it takes only for points its error bound cannot decide. Not part of the interface
 
 ## `(gam inventory)`
 

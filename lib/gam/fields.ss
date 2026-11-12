@@ -55,7 +55,8 @@
 (library (gam fields)
   (export make-field field? field-kind field-x field-z field-radius
           field-half-length field-yaw field-life field-rate field-period
-          field-contains? field-step!)
+          field-contains? field-step!
+          $field-exact-calls)
   (import (rnrs))
 
   ;; #(gam-field kind x z radius half-length yaw life rate period acc)
@@ -163,13 +164,152 @@
   (define (field-rate f) ($need-f 'field-rate f) ($rate f))
   (define (field-period f) ($need-f 'field-period f) ($period f))
 
-  ;; The point is turned into the field's own frame, the length of the
-  ;; capsule is subtracted from the distance along its axis, and what is
-  ;; left is compared against the radius.  Squared throughout: the
-  ;; comparison is the same one and there is no square root to pay for.
+  ;; ---- containment, exactly: a filter in flonums, then exact arithmetic ----
   ;;
-  ;; A point past the end of the axis has its overshoot measured from
-  ;; the end cap, which is what makes the ends round rather than square.
+  ;; The constants of the filter's error bound, each built from 1.0 by
+  ;; halving so that its value is exactly the power of two it names (a
+  ;; decimal literal would be one more rounding to trust): u = 2^-53,
+  ;; the unit roundoff; eta = 2^-1074, the smallest subnormal; 2^-1021,
+  ;; below which the spacing of the flonums is eta; and 1 + 2^-51 = 1 + 4u.
+  (define ($halved k)
+    (let loop ((v 1.0) (i 0))
+      (if (= i k) v (loop (fl/ v 2.0) (+ i 1)))))
+  (define $u ($halved 53))
+  (define $two-u (fl* 2.0 $u))
+  (define $eta ($halved 1074))
+  (define $two-eta (fl* 2.0 $eta))
+  (define $up-floor ($halved 1021))
+  (define $up-factor (fl+ 1.0 ($halved 51)))
+  ;; The bound's arithmetic is written as macros, not procedures, so that
+  ;; the fast path is one let* of flonum expressions: on the wasm target
+  ;; a let binding whose value is an fl operation, or an if whose two
+  ;; arms are, lives in an unboxed f64 slot, while every value a
+  ;; procedure RETURNS is a boxed flonum -- an allocation per call, which
+  ;; is what an earlier version of this paid at every step.  Each macro
+  ;; expands into such an expression.  $up-of evaluates its argument
+  ;; twice (the test and one arm), so every macro is given NAMES, bound
+  ;; earlier in the let*: nesting them would repeat the inner arithmetic
+  ;; at every level, which costs nothing much on wasm and an allocation
+  ;; per repeat on the JS target.
+  ;;
+  ;; |w|.  (rnrs) here has no flabs.  -0.0 comes back as itself, which is
+  ;; no matter: every use is a magnitude.
+  (define-syntax $abs-of
+    (syntax-rules ()
+      ((_ w) (if (fl<? w 0.0) (fl- 0.0 w) w))))
+  ;; up(w) >= the real value w is the rounding of, for w >= 0: below
+  ;; 2^-1021 the rounding is off by at most eta/2 and w + 2 eta is exact;
+  ;; above it by at most u w, and w (1 + 4u) rounded still covers that.
+  ;; Every operation that computes an error BOUND is followed by it, so
+  ;; each bound is no smaller than what it bounds.  A NaN or an infinity
+  ;; passes through unchanged.
+  (define-syntax $up-of
+    (syntax-rules ()
+      ((_ w) (if (fl<? w $up-floor) (fl+ w $two-eta) (fl* w $up-factor)))))
+  ;; the error of one rounded operation whose result is w: 2u|w| + eta
+  ;; (u relative in the normal range, eta for a subnormal result)
+  (define-syntax $beta-of
+    (syntax-rules ()
+      ((_ w) ($up-of (fl+ ($up-of (fl* $two-u ($abs-of w))) $eta)))))
+  ;; In the three below, bw is beta(w) -- the local error of the rounded
+  ;; result -- bound to its own name first.
+  ;; the error of a sum or difference w of two values carrying e1, e2:
+  ;; e1 + e2 + beta(w)
+  (define-syntax $sum-error-of
+    (syntax-rules ()
+      ((_ e1 e2 bw) ($up-of (fl+ ($up-of (fl+ e1 e2)) bw)))))
+  ;; the error of a product p = d * k rounded, for a d carrying an error
+  ;; ed and an exact k: |k| ed + beta(p)
+  (define-syntax $product-error-of
+    (syntax-rules ()
+      ((_ k ed bp) ($up-of (fl+ ($up-of (fl* ($abs-of k) ed)) bp)))))
+  ;; the error of z = v * v rounded, for a v carrying an error ev:
+  ;; 2|v| ev + ev^2 + beta(z), given the bound vev = up(|v| ev) by name;
+  ;; doubling a bound is exact, or overflows to +inf.0, which sends the
+  ;; input to the exact path
+  (define-syntax $square-error-of
+    (syntax-rules ()
+      ((_ vev ev bz)
+       ($up-of (fl+ ($up-of (fl+ (fl* 2.0 vev) ($up-of (fl* ev ev)))) bz)))))
+  ;; up(|v| ev), the first term of a square's error, named for the above
+  (define-syntax $scaled-error-of
+    (syntax-rules ()
+      ((_ v ev) ($up-of (fl* ($abs-of v) ev)))))
+  ;; the flonum an input becomes (a flonum is returned as it is, so this
+  ;; allocates only for an exact input), and the error of converting an
+  ;; EXACT input: none when the flonum equals it, else beta of the flonum.
+  ;; field-contains? asks for the second only when the input is exact.
+  (define ($as-flonum v) (if (flonum? v) v (inexact v)))
+  (define ($exact-conversion-error v)
+    (let ((w (inexact v)))
+      (if (= (exact w) v) 0.0 ($beta-of w))))
+  (define ($exactly v) (if (exact? v) v (exact v)))
+
+  ;; The shape itself, on exact values: the inequality the filter stands
+  ;; in for, decided with no rounding at all.  It is slow -- goeteia's
+  ;; bignum ratios cost milliseconds a call -- and is reached only for
+  ;; the inputs the filter cannot decide.  Each entry is counted, so that
+  ;; a test can see which path a call took ($field-exact-calls, an
+  ;; internal export): an ordinary point that reached this path would
+  ;; give the right answer, slowly, and nothing else would show it.
+  (define $exact-calls 0)
+  (define ($field-exact-calls) $exact-calls)
+  (define ($contains-exactly? fx fz r h c s x z)
+    (set! $exact-calls (+ $exact-calls 1))
+    (let* ((dx (- ($exactly x) ($exactly fx)))
+           (dz (- ($exactly z) ($exactly fz)))
+           (ce ($exactly c))
+           (se ($exactly s))
+           (along (+ (* dx ce) (* dz se)))
+           (across (- (* dz ce) (* dx se)))
+           (over (max 0 (- (abs along) ($exactly h))))
+           (re ($exactly r)))
+      (<= (+ (* over over) (* across across)) (* re re))))
+
+  ;; THE SHAPE.  With c = (cos yaw) and s = (sin yaw) as computed -- not
+  ;; normalised: goeteia's trigonometry is approximate, and c^2 + s^2 is
+  ;; off 1 by up to about 1e-11 -- the field holds the real points (x, z)
+  ;; with
+  ;;     max(0, |A| - h)^2 + B^2 <= r^2,
+  ;;     A = (x - fx) c + (z - fz) s,   B = (z - fz) c - (x - fx) s,
+  ;; on the stored values and those two flonums, in exact arithmetic.
+  ;; That is a capsule along (c, s): the point is turned into the field's
+  ;; frame, the half-length is subtracted from the distance along the
+  ;; axis -- a point past an end has its overshoot measured from the end
+  ;; cap, which is what makes the ends round -- and what is left is
+  ;; compared with the radius, squared so that there is no square root.
+  ;; Every value in it is a dyadic rational, so the answer is exact, on
+  ;; the boundary too (a point on it is inside: <=).
+  ;;
+  ;; A yaw so large that the computed c or s is not finite -- the range
+  ;; reduction is lost: at a yaw of 1.070931672115544e40 both are -inf.0
+  ;; -- has no shape under that definition, and holds no point: #f, with
+  ;; no error, for every query.  Long before that, sin and cos stop
+  ;; meaning the angle ((sin 1e20) is 0.0); the answer is then exact for
+  ;; the c and s computed, which is all it promises ("Trigonometric
+  ;; accuracy" in docs/limits.md).
+  ;;
+  ;; THE FILTER.  Exact arithmetic is far too slow for every call, so the
+  ;; same expression is first evaluated in flonums, each input converted
+  ;; with its conversion error, and every rounded step carries a bound on
+  ;; its error, built up step by step (|w - exact| <= 2u|w| + eta for one
+  ;; rounded result w; a product with the exact c or s scales its
+  ;; operand's bound by |c| or |s|; a sum adds; a square of v with bound
+  ;; e has 2|v| e + e^2; max(0, .) and abs keep their argument's), each
+  ;; bound operation followed by $up.  With q the flonum value of the
+  ;; left side, t = r^2 rounded, and E the sum of their bounds:
+  ;;     inside   when up(q + E) < t
+  ;;     outside  when q > up(t + E)
+  ;; Each test proves the exact left side is on that side of the exact
+  ;; r^2.  Everything else -- a point within E of the boundary, any value
+  ;; or bound that overflows or is NaN (a finite E means every rounded
+  ;; value and bound behind it was finite: each feeds its own bound into
+  ;; E, and E only grows), a radius near the subnormal range -- goes to
+  ;; the exact path.  For ordinary inputs the band is of relative width
+  ;; about 1e-15, so the exact path is rare.  On the wasm target the
+  ;; filter allocates nothing for flonum inputs beyond the two flonums
+  ;; cos and sin return; the JS target, by its own design, boxes the
+  ;; result of every flonum operation (src/js-backend.ss).
   (define (field-contains? f x z)
     ($need-f 'field-contains? f)
     ;; $finite? excludes NaN and both infinities, all of which `real?'
@@ -180,51 +320,74 @@
       (error 'field-contains?
              "a position is two reals, finite as flonums"
              x z))
-    ;; Finite inputs can still overflow: two points near opposite ends of
-    ;; the number line are an infinite distance apart, and an infinity
-    ;; times (sin 0.0) -- exactly zero, though inexact -- is NaN.  So the
-    ;; offsets are divided by the radius first and the test is the one
-    ;; comparison (<= ... 1.0), which is true only for a sum that came out
-    ;; a number no greater than one.  Which way a point on the radius
-    ;; itself goes depends on how sin and cos round, not only on <=
-    ;; against <.  Measured 2026-09-25 at yaw 0, where (cos 0.0) is
-    ;; 0.9999999999939766: with a radius of 5e-324, the smallest positive
-    ;; flonum, the product with cos rounded back to the radius, the sum
-    ;; was exactly 1.0, and <= answered inside where < would not; with a
-    ;; radius of 5, points at (5, 0) and (3, 4) from the centre gave a sum
-    ;; of 0.9999999999879532 -- 6e-12 of the radius inside it -- and were
-    ;; inside under <= and < alike.  So a point that close to the radius
-    ;; may be answered either way; at other yaws the margin follows the
-    ;; accuracy of sin and cos.  An infinity or a NaN makes the comparison
-    ;; false, and false is "outside".  That holds for inputs finite as
-    ;; flonums, which the checks here and in make-field ensure.
-    ;; (max 0.0 NaN) answers 0.0 and can hide a NaN in along, but along
-    ;; is NaN only through an
-    ;; infinity times zero or an infinity minus an infinity, and in each
-    ;; such case across is then infinite or NaN as well.  Before the checks
-    ;; read values as flonums, an exact half-length of 2^1024 became
-    ;; +inf.0 in the subtraction, max hid the NaN, and a point far outside
-    ;; was answered inside.  An inside point can still be answered outside
-    ;; when the subtraction overflows; that is the direction chosen.  Yaw
-    ;; is outside this argument: sin and cos lose accuracy as the angle
-    ;; grows ("Trigonometric accuracy" in docs/limits.md), and at a yaw of
-    ;; 1e20 both answered 0.0, measured 2026-09-25, so the answer can be
-    ;; wrong either way.  The former test was (not (< r^2 sum)), and
-    ;; measured 2026-09-23 on all three back ends the `not' turned a false
-    ;; comparison into INSIDE: a NaN sum for a centre at -1.7e308 and a
-    ;; query at +1.7e308, and infinity against infinity for a query at
-    ;; 2e200 with radius 1e200.  Dividing first also keeps that second case
-    ;; finite, so it is answered right.
-    (let* ((dx (- x ($x f)))
-           (dz (- z ($z f)))
-           (a ($yaw f))
-           (along (+ (* dx (cos a)) (* dz (sin a))))
-           (across (- (* dz (cos a)) (* dx (sin a))))
-           (over (max 0.0 (- (abs along) ($half f))))
-           (r ($radius f))
-           (u (/ over r))
-           (v (/ across r)))
-      (<= (+ (* u u) (* v v)) 1.0)))
+    ;; Every binding of the let* below is an fl operation or an if of
+    ;; two, so on the wasm target each lives in an unboxed slot and the
+    ;; filter allocates nothing past the two flonums cos and sin return.
+    ;; An input is taken as (fl* v 1.0), which is v exactly (-0.0 too);
+    ;; a conversion error is the literal 0.0 for a flonum input, and only
+    ;; an exact input makes the call that may allocate.
+    (let* ((a ($yaw f))
+           (c (fl* ($as-flonum (cos a)) 1.0))
+           (s (fl* ($as-flonum (sin a)) 1.0)))
+      (and (fl=? (fl- c c) 0.0)
+           (fl=? (fl- s s) 0.0)
+           (let* ((fx ($x f)) (fz ($z f)) (r ($radius f)) (h ($half f))
+                  (X (fl* ($as-flonum x) 1.0))
+                  (eX (if (flonum? x) 0.0 (fl* ($exact-conversion-error x) 1.0)))
+                  (Z (fl* ($as-flonum z) 1.0))
+                  (eZ (if (flonum? z) 0.0 (fl* ($exact-conversion-error z) 1.0)))
+                  (FX (fl* ($as-flonum fx) 1.0))
+                  (eFX (if (flonum? fx) 0.0 (fl* ($exact-conversion-error fx) 1.0)))
+                  (FZ (fl* ($as-flonum fz) 1.0))
+                  (eFZ (if (flonum? fz) 0.0 (fl* ($exact-conversion-error fz) 1.0)))
+                  (H (fl* ($as-flonum h) 1.0))
+                  (eH (if (flonum? h) 0.0 (fl* ($exact-conversion-error h) 1.0)))
+                  (R (fl* ($as-flonum r) 1.0))
+                  (eR (if (flonum? r) 0.0 (fl* ($exact-conversion-error r) 1.0)))
+                  (dx (fl- X FX)) (b-dx ($beta-of dx))
+                  (edx ($sum-error-of eX eFX b-dx))
+                  (dz (fl- Z FZ)) (b-dz ($beta-of dz))
+                  (edz ($sum-error-of eZ eFZ b-dz))
+                  (p1 (fl* dx c)) (b-p1 ($beta-of p1))
+                  (e1 ($product-error-of c edx b-p1))
+                  (p2 (fl* dz s)) (b-p2 ($beta-of p2))
+                  (e2 ($product-error-of s edz b-p2))
+                  (p3 (fl* dz c)) (b-p3 ($beta-of p3))
+                  (e3 ($product-error-of c edz b-p3))
+                  (p4 (fl* dx s)) (b-p4 ($beta-of p4))
+                  (e4 ($product-error-of s edx b-p4))
+                  (along (fl+ p1 p2)) (b-along ($beta-of along))
+                  (e-along ($sum-error-of e1 e2 b-along))
+                  (across (fl- p3 p4)) (b-across ($beta-of across))
+                  (e-across ($sum-error-of e3 e4 b-across))
+                  (w (fl- ($abs-of along) H)) (b-w ($beta-of w))
+                  (e-over ($sum-error-of e-along eH b-w))
+                  (over (if (fl<? w 0.0) 0.0 w))
+                  (z-over (fl* over over)) (b-z-over ($beta-of z-over))
+                  (s-over ($scaled-error-of over e-over))
+                  (e-z-over ($square-error-of s-over e-over b-z-over))
+                  (z-across (fl* across across))
+                  (b-z-across ($beta-of z-across))
+                  (s-across ($scaled-error-of across e-across))
+                  (e-z-across ($square-error-of s-across e-across b-z-across))
+                  (q (fl+ z-over z-across)) (b-q ($beta-of q))
+                  (eq ($sum-error-of e-z-over e-z-across b-q))
+                  (t (fl* R R)) (b-t ($beta-of t))
+                  (s-r ($scaled-error-of R eR))
+                  (et ($square-error-of s-r eR b-t))
+                  (E-sum (fl+ eq et))
+                  (E ($up-of E-sum))
+                  (q-sum (fl+ q E))
+                  (t-sum (fl+ t E))
+                  (q-high ($up-of q-sum))
+                  (t-high ($up-of t-sum)))
+             (cond
+              ((not (and (fl=? (fl- q q) 0.0) (fl=? (fl- t t) 0.0)
+                         (fl=? (fl- E E) 0.0)))
+               ($contains-exactly? fx fz r h c s x z))
+              ((fl<? q-high t) #t)
+              ((fl<? t-high q) #f)
+              (else ($contains-exactly? fx fz r h c s x z)))))))
 
   ;; Answers nothing.  What comes out of a field comes out through the
   ;; procedure the caller passes, which is called with the field and the

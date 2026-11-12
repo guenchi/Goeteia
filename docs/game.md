@@ -421,15 +421,36 @@ is solved for the one case that can be solved.
 The region is a capsule and its ends are round rather than square: a
 point past the end of the axis is inside when it is within the radius of
 the end cap, so the shape has no corners to fall out of as it turns.
-A point on the radius itself may be answered either way. The answer is
-computed through `sin` and `cos`, and for a radius of 5 at yaw 0 a
-point on the nominal radius came out inside it by about 6e-12 of the
-radius, because `(cos 0.0)` here is `0.9999999999939766`; for a radius
-of `5e-324` the rounding came out exact and the point was inside only
-because the comparison is `<=`. At other yaws the margin follows the
-accuracy of `sin` and `cos` (see "Trigonometric accuracy" in
-`docs/limits.md`). Do not rely on which side of the line an exact
-boundary point falls.
+
+`field-contains?` answers exactly, for the shape it defines. With
+`c = (cos yaw)` and `s = (sin yaw)` as computed, a point `(x, z)` is
+inside when
+
+```
+max(0, |A| - h)^2 + B^2 <= r^2
+A = (x - fx) c + (z - fz) s     B = (z - fz) c - (x - fx) s
+```
+
+holds in exact arithmetic on the field's values and those two numbers.
+No rounding, overflow or underflow can turn the answer: a point on the
+boundary is inside, any point past it, however close, is outside, and centres and
+queries near opposite ends of the number line, or a subnormal radius,
+are answered as exactly as ordinary ones. The answer is found in
+floating point with a proven error bound, and only a point too close to
+the boundary for that bound to decide (or one whose arithmetic
+overflows) is settled in exact arithmetic, which is much slower; for
+ordinary values that band is about 1e-15 of the distance wide.
+
+The shape is the one those computed `c` and `s` describe, and
+`sin`/`cos` here are approximate: `(cos 0.0)` is `0.9999999999939766`,
+so the capsule at yaw 0 is about 6e-12 of its radius larger than the
+nominal one, and a point "on the nominal radius" is inside it. At other
+yaws the difference follows the accuracy of `sin` and `cos` (see
+"Trigonometric accuracy" in `docs/limits.md`). For very large yaws they
+stop meaning the angle at all, and the answer is exact for whatever they
+computed; a yaw so large that either comes out infinite (at
+`1.070931672115544e40` both are `-inf.0`) describes no shape, and every
+point is outside it, with no error.
 Turning it turns the whole region, which is why the yaw is part of the
 field and not part of the question asked of it.
 

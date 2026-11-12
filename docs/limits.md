@@ -202,6 +202,14 @@ precision, because `k*2pi` is rounded once: at `2^29` the measured
 error is about `2.4e-8`.  Nothing warns you; the answer just gets
 less right the further out you go.
 
+**Far enough out, the result is not even a number in range.**  At
+`1e20`, `(sin 1e20)` is `0.0`, which means nothing about the angle; at
+`1.070931672115544e40` both `sin` and `cos` come out `-inf.0`.
+`field-contains?` in `(gam fields)` takes its capsule's direction from
+these two values: it answers exactly for whatever they computed, and a
+yaw whose sine or cosine is not finite describes no shape, so every
+point is outside it -- `#f`, with no error.
+
 **`tan` carries no absolute bound at all.** It is `sin/cos`, and for
 `t = s/c` the first-order error is
 
