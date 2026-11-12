@@ -11,6 +11,7 @@
 
 (define N 100000)
 (define PBYTES (* N 16))                ; vec2 pos + vec2 vel
+(define TBASE 2048)
 (define UBASE 4096)
 (define PBASE 8192)
 (let ((need (- (+ PBASE PBYTES) (* 65536 (%mem-size)))))
@@ -72,6 +73,10 @@
 
 (define ready #f)
 (define uploaded #f)
+;; (gfx gpu) sets no command region of its own: the frame's words go
+;; from 0 up, so stop them below the lowest data address (TBASE), where a
+;; longer frame would otherwise overwrite that data silently
+(gpu-region! 0 TBASE)
 (gpu-attach! (get-element-by-id "c")
              (lambda ()
                ;; slot 0: the unit triangle; 1: the particle storage
@@ -86,7 +91,6 @@
                (set! ready #t)))
 
 ;; the unit triangle the instances stamp
-(define TBASE 2048)
 (let corner ((k 0) (vs '(0.0 1.0  -0.87 -0.5  0.87 -0.5)))
   (unless (null? vs)
     (%mem-f32-set! (+ TBASE (* k 4)) (car vs))

@@ -78,6 +78,10 @@
         (vert (+ v 1))))))
 
 (define ready #f)
+;; (gfx gpu) sets no command region of its own: the frame's words go
+;; from 0 up, so stop them below the lowest data address (VBASE), where a
+;; longer frame would otherwise overwrite that data silently
+(gpu-region! 0 VBASE)
 (gpu-attach! (get-element-by-id "c")
              (lambda ()
                (gpu-pipeline! 0 WGSL 24 "float32x2,float32x4")

@@ -94,6 +94,10 @@
 
 (define ready #f)
 (define uploaded #f)
+;; (gfx gpu) sets no command region of its own: the frame's words go
+;; from 0 up, so stop them below the lowest data address (UBASE), where a
+;; longer frame would otherwise overwrite that data silently
+(gpu-region! 0 UBASE)
 (gpu-attach! (get-element-by-id "c")
              (lambda ()
                (gpu-buffer! 0 (mesh-vertex-bytes box))

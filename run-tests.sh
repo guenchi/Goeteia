@@ -734,6 +734,7 @@ for m in test/macro-toplevel-hygiene.mjs \
          test/defect-exact-of-nan-never-returns.mjs \
          test/defect-nonfinite-numbers-do-not-survive-text.mjs \
          test/examples-all-compile.mjs \
+         test/gpu-examples-set-a-command-region.mjs \
          test/counter-embedded-is-current.mjs \
          test/defect-v01-shader-check-can-vanish-unnoticed.mjs \
          test/c02-product-fn-specs.mjs \

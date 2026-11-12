@@ -54,6 +54,10 @@
 (define proj (m4-perspective 0.9 (/ 800.0 600.0) 0.1 100.0))
 
 (define ready #f)
+;; (gfx gpu) sets no command region of its own: the frame's words go
+;; from 0 up, so stop them below the lowest data address (UBASE), where a
+;; longer frame would otherwise overwrite that data silently
+(gpu-region! 0 UBASE)
 (gpu-attach! (get-element-by-id "c")
              (lambda ()
                (gpu-pipeline! 0 WGSL (car LAYOUT) (cdr LAYOUT))
