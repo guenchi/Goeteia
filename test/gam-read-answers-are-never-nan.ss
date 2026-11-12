@@ -25,7 +25,9 @@
 ;;   negative row afterwards makes it infinite.  So the check is at
 ;;   the read, on the product, naming the attribute and both
 ;;   aggregates.
-(import (rnrs) (gam inventory) (gam modifiers))
+;; nan? below is this file's own: it answers #f for what is not a number, and
+;; (rnrs)'s, which takes a real, is excluded.
+(import (except (rnrs) nan?) (gam inventory) (gam modifiers))
 
 (define fails '())
 (define (want name got expect)

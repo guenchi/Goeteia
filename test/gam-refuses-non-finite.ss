@@ -18,7 +18,9 @@
 ;; weighing +inf.0 makes the total +inf.0, heavier than any capacity.
 ;; Those two keep their earlier checks, which refuse NaN and the
 ;; out-of-range values.  (Ruled 2026-09-23.)
-(import (rnrs) (gam abilities) (gam effects) (gam inventory) (gam recovery)
+;; nan? below is this file's own: it answers #f for what is not a number, and
+;; (rnrs)'s, which takes a real, is excluded.
+(import (except (rnrs) nan?) (gam abilities) (gam effects) (gam inventory) (gam recovery)
         (gam stats) (gam timeline) (gam window))
 (define fails '())
 (define (want name got expect)

@@ -49,22 +49,17 @@
 
   ;; #(gam-effects rows); a row is (name . remaining), newest first,
   ;; reversed when the names are asked for.
-  ;; A real that is still finite once made inexact, which is what it
-  ;; becomes when +, -, * or / combines it with a flonum, or when sin or
-  ;; cos takes it; +, -, * and / on exact operands alone stay exact.  An
-  ;; exact number of any size is finite as an exact number, yet 2^1024
-  ;; becomes +inf.0 and 2^-1100 becomes 0.0 when that happens.  (- y y)
-  ;; is 0 for every finite flonum y and NaN for either infinity and for
-  ;; NaN; 1.7e308 passes, which a bound such as (< y 1e300) would
-  ;; wrongly refuse.  A positive bound is tested on (inexact v) for the
-  ;; same reason, since 2^-1100 is positive and becomes 0.0.  A
-  ;; non-negative bound is tested on v itself, the stricter of the two
-  ;; there, since -2^-1100 becomes -0.0 and (<= 0 -0.0) holds.  Either
-  ;; way the value is kept as given.  All of this measured on the three
-  ;; back ends.  One private copy per (gam ...) library whose checks use
-  ;; it; "Prelude gaps" in docs/limits.md says why, and all eight change
-  ;; together when that entry does.
-  (define ($finite? x) (let ((y (inexact x))) (= 0 (- y y))))
+  ;; A number is checked as (finite? (inexact v)): finite once made
+  ;; inexact, which is what it becomes when +, -, * or / combines it with
+  ;; a flonum, or when sin or cos takes it; +, -, * and / on exact
+  ;; operands alone stay exact.  An exact number of any size is finite as
+  ;; an exact number, yet 2^1024 becomes +inf.0 and 2^-1100 becomes 0.0
+  ;; when that happens, so (finite? v) alone would let 2^1024 through.
+  ;; A positive bound is tested on (inexact v) for the same reason, since
+  ;; 2^-1100 is positive and becomes 0.0.  A non-negative bound is tested
+  ;; on v itself, the stricter of the two there, since -2^-1100 becomes
+  ;; -0.0 and (<= 0 -0.0) holds.  Either way the value is kept as given.
+  ;; All of this measured on the three back ends.
 
   (define ($fx? f)
     (and (vector? f) (= (vector-length f) 2)
@@ -93,7 +88,7 @@
   (define (effect-set! f name duration)
     ($need-fx 'effect-set! f)
     ($need-name 'effect-set! name)
-    (unless (and (real? duration) ($finite? duration)
+    (unless (and (real? duration) (finite? (inexact duration))
                  (< 0 (inexact duration)))
       (error 'effect-set!
              "a duration is a real, positive and finite as a flonum"
@@ -124,7 +119,7 @@
   ;; would make effect-active? true for a state that gates nothing.
   (define (effects-tick! f dt)
     ($need-fx 'effects-tick! f)
-    (unless (and (real? dt) ($finite? dt) (<= 0 dt))
+    (unless (and (real? dt) (finite? (inexact dt)) (<= 0 dt))
       (error 'effects-tick!
              "elapsed time is a non-negative real, finite as a flonum"
              dt))

@@ -60,22 +60,17 @@
   ;; inexact when it is not, so a pool set up in flonums stays in
   ;; flonums all the way down to empty instead of changing kind at the
   ;; one value a caller is most likely to compare against.
-  ;; A real that is still finite once made inexact, which is what it
-  ;; becomes when +, -, * or / combines it with a flonum, or when sin or
-  ;; cos takes it; +, -, * and / on exact operands alone stay exact.  An
-  ;; exact number of any size is finite as an exact number, yet 2^1024
-  ;; becomes +inf.0 and 2^-1100 becomes 0.0 when that happens.  (- y y)
-  ;; is 0 for every finite flonum y and NaN for either infinity and for
-  ;; NaN; 1.7e308 passes, which a bound such as (< y 1e300) would
-  ;; wrongly refuse.  A positive bound is tested on (inexact v) for the
-  ;; same reason, since 2^-1100 is positive and becomes 0.0.  A
-  ;; non-negative bound is tested on v itself, the stricter of the two
-  ;; there, since -2^-1100 becomes -0.0 and (<= 0 -0.0) holds.  Either
-  ;; way the value is kept as given.  All of this measured on the three
-  ;; back ends.  One private copy per (gam ...) library whose checks use
-  ;; it; "Prelude gaps" in docs/limits.md says why, and all eight change
-  ;; together when that entry does.
-  (define ($finite? x) (let ((y (inexact x))) (= 0 (- y y))))
+  ;; A number is checked as (finite? (inexact v)): finite once made
+  ;; inexact, which is what it becomes when +, -, * or / combines it with
+  ;; a flonum, or when sin or cos takes it; +, -, * and / on exact
+  ;; operands alone stay exact.  An exact number of any size is finite as
+  ;; an exact number, yet 2^1024 becomes +inf.0 and 2^-1100 becomes 0.0
+  ;; when that happens, so (finite? v) alone would let 2^1024 through.
+  ;; A positive bound is tested on (inexact v) for the same reason, since
+  ;; 2^-1100 is positive and becomes 0.0.  A non-negative bound is tested
+  ;; on v itself, the stricter of the two there, since -2^-1100 becomes
+  ;; -0.0 and (<= 0 -0.0) holds.  Either way the value is kept as given.
+  ;; All of this measured on the three back ends.
 
   (define ($p-name p) (vector-ref p 0))
   (define ($p-value p) (vector-ref p 1))
@@ -137,11 +132,12 @@
               (let ((name (car row)) (mx (cadr row)) (regen (caddr row)))
                 (unless (symbol? name)
                   (error 'make-stats "a pool name is a symbol" name))
-                (unless (and (real? mx) ($finite? mx) (<= 0 mx))
+                (unless (and (real? mx) (finite? (inexact mx)) (<= 0 mx))
                   (error 'make-stats
                          "a pool maximum is a non-negative real, finite as a flonum"
                          name mx))
-                (unless (and (real? regen) ($finite? regen) (<= 0 regen))
+                (unless (and (real? regen) (finite? (inexact regen))
+                             (<= 0 regen))
                   (error 'make-stats
                          "a regeneration rate is a non-negative real, finite as a flonum"
                          name regen))
@@ -162,7 +158,7 @@
   (define (stat s name) ($p-value ($pool 'stat s name)))
   (define (stat-max s name) ($p-max ($pool 'stat-max s name)))
 
-  ;; $finite? rather than a cutoff: a pool value or a change to one may
+  ;; finite? rather than a cutoff: a pool value or a change to one may
   ;; be any real finite as a flonum, and a cutoff would refuse legitimate
   ;; values.  $clamp would map an infinity to the pool's bounds, and that
   ;; is deterministic -- the reason to refuse it is what it hides.
@@ -179,13 +175,13 @@
   ;; changing.
   (define (stat-set! s name v)
     (let ((p ($pool 'stat-set! s name)))
-      (unless (and (real? v) ($finite? v))
+      (unless (and (real? v) (finite? (inexact v)))
         (error 'stat-set! "a pool value is a real, finite as a flonum" name v))
       ($p-value! p ($clamp p v))))
 
   (define (stat-add! s name d)
     (let ((p ($pool 'stat-add! s name)))
-      (unless (and (real? d) ($finite? d))
+      (unless (and (real? d) (finite? (inexact d)))
         (error 'stat-add!
                "a pool change is a real, finite as a flonum"
                name d))
@@ -196,7 +192,7 @@
   ;; asked to, and the pool is left at a value neither side chose.
   (define (stats-spend! s name amount)
     (let ((p ($pool 'stats-spend! s name)))
-      (unless (and (real? amount) ($finite? amount) (<= 0 amount))
+      (unless (and (real? amount) (finite? (inexact amount)) (<= 0 amount))
         (error 'stats-spend!
                "a cost is a non-negative real, finite as a flonum"
                name amount))
@@ -209,7 +205,7 @@
   ;; number it proposed.
   (define (stats-damage! s name amount)
     (let ((p ($pool 'stats-damage! s name)))
-      (unless (and (real? amount) ($finite? amount) (<= 0 amount))
+      (unless (and (real? amount) (finite? (inexact amount)) (<= 0 amount))
         (error 'stats-damage!
                "damage is a non-negative real, finite as a flonum"
                name amount))
@@ -222,7 +218,7 @@
   ;; actually restored, which stops short at the maximum.
   (define (stats-heal! s name amount)
     (let ((p ($pool 'stats-heal! s name)))
-      (unless (and (real? amount) ($finite? amount) (<= 0 amount))
+      (unless (and (real? amount) (finite? (inexact amount)) (<= 0 amount))
         (error 'stats-heal!
                "healing is a non-negative real, finite as a flonum"
                name amount))
@@ -236,7 +232,7 @@
   ;; negative dt is refused rather than quietly draining every pool.
   (define (stats-regenerate! s dt)
     ($need-stats 'stats-regenerate! s)
-    (unless (and (real? dt) ($finite? dt) (<= 0 dt))
+    (unless (and (real? dt) (finite? (inexact dt)) (<= 0 dt))
       (error 'stats-regenerate!
              "elapsed time is a non-negative real, finite as a flonum"
              dt))
@@ -268,7 +264,7 @@
   ;; error naming the level whose cost was wrong.
   (define (stats-gain-xp! s amount)
     ($need-stats 'stats-gain-xp! s)
-    (unless (and (real? amount) ($finite? amount) (<= 0 amount))
+    (unless (and (real? amount) (finite? (inexact amount)) (<= 0 amount))
       (error 'stats-gain-xp!
              "experience is a non-negative real, finite as a flonum"
              amount))
@@ -277,7 +273,7 @@
     ;; worked out, checked, and only then stored, so a refused gain
     ;; leaves the total as it was.
     (let ((next (+ ($xp s) amount)))
-      (unless ($finite? next)
+      (unless (finite? (inexact next))
         (error 'stats-gain-xp!
                "the experience total would not be finite as a flonum"
                ($xp s) amount))

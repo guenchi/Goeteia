@@ -37,7 +37,9 @@
 ;; NaN, so it is allowed again, and again.  A pool that refuses to pay
 ;; gets reported; one that pays without limit and never goes down does
 ;; not.
-(import (rnrs) (gam stats) (gam fields) (gam modifiers) (gam abilities)
+;; nan? below is this file's own: it answers #f for what is not a number, and
+;; (rnrs)'s, which takes a real, is excluded.
+(import (except (rnrs) nan?) (gam stats) (gam fields) (gam modifiers) (gam abilities)
         (gam window) (gam timeline) (gam effects) (gam recovery))
 (define fails '())
 (define (want name got expect)

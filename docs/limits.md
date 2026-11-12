@@ -95,26 +95,65 @@ as a blank canvas on whichever backend the page picks.
 
 ## Prelude gaps
 
-`flabs`, `flmax`, `flmin`, `flonum->fixnum`, `flexpt`, and the
-R6RS list helper `exists` are not provided.  Compose them locally
-(`(if (fl<? a b) b a)` and friends) or use `exact` plus fixnum
-operations.  Inverse trigonometry (`flasin`/`flacos`/`flatan`/
-`flatan2`) lives in `(gfx mat)`, not in the prelude.
+**Since 2026-11-12** (ledger R20, first batch) `(rnrs)` also binds the
+number predicates and rounding (`positive?` `negative?` `odd?` `even?`
+`round` `ceiling` `finite?` `infinite?` `nan?` and the three `-valued?`
+predicates, `exact-integer-sqrt`, `div-and-mod`, `div0-and-mod0`,
+`boolean=?`, `symbol=?`, `greatest-fixnum`, `least-fixnum`,
+`fixnum-width`); the list helpers (`exists` `for-all` `find` `memp`
+`assp` `remp` `remove` `remv` `partition` `list-sort`) and every three-
+and four-level `c[ad]r`; the case-insensitive character and string
+comparisons with `char-foldcase`, `string-foldcase`, `char-upper-case?`
+and `char-lower-case?`; `vector-sort` and `vector-sort!`; and the
+bytevector copies, fills, list conversions, `s8` and 16-, 32- and
+64-bit integer accessors (with an endianness argument and `-native-`),
+`bytevector-uint-ref` and its three siblings, the four integer list
+conversions, `endianness` and `native-endianness`.
 
-`finite?`, `infinite?` and `nan?` are not provided.  For a real `x`,
-`(= 0 (- x x))` is true exactly when `x` is finite: `x - x` is zero for
-every finite real, exact or inexact, and NaN for both infinities and
-for NaN.  It keeps `1.7e308`, which a cutoff such as `(< x 1e300)`
-wrongly refuses.  The `(gam ...)` libraries whose checks use it each
-carry a private copy of that test, applied to `(inexact x)`: `+`,
-`-`, `*` and `/` turn inexact as soon as a flonum takes part, `sin` and
-`cos` answer inexact for any real argument, and an exact number can be
-finite yet become `+inf.0` (`2^1024`) or `0.0` (`2^-1100`) when that
-happens.  When these
-procedures are provided, a program that defines one of them at top
-level will be refused -- a program may not define a name it imports --
-and will need `(import (except (rnrs) finite?))` or the like; this
-entry goes then, and the private copies become `(finite? (inexact x))`.
+That is a breaking change for a program that defined one of these names
+itself: a program may not define a name it imports, so such a program is
+now refused and needs `(import (except (rnrs) finite?))` or the like, or
+to drop its own definition.
+
+Where these are narrower than R6RS:
+
+- `finite?`, `infinite?` and `nan?` answer for flonums; every exact real
+  is finite.  An exact number can be finite yet become `+inf.0`
+  (`2^1024`) or `0.0` (`2^-1100`) once made inexact, which `+`, `-`, `*`
+  and `/` do as soon as a flonum takes part and `sin` and `cos` always
+  do; the `(gam ...)` libraries therefore check `(finite? (inexact x))`.
+- Case folding covers `A` to `Z`, the range `char-upcase` and
+  `char-downcase` cover.  Every other character folds to itself and is
+  neither upper nor lower case, so `(char-upper-case? #\xC0;)` is `#f`
+  where Chez answers `#t`, and `string-foldcase` does not expand a
+  sharp s.  The `-ci` comparisons fold with `char-foldcase`.
+- `even?` and `odd?` answer `#f` for a flonum that is not a finite
+  integer, where R6RS raises.
+- `div-and-mod` and `div0-and-mod0` take exact integers only, as `div`
+  and its siblings do (below).
+- The bytevector integer setters reduce a value out of range to its low
+  8*size bits, as `bytevector-u8-set!` stores 256 as 0, where R6RS
+  raises.  An endianness other than `big` reads as `little`, the
+  `-native-` forms do not require an aligned index, and the list
+  conversions leave out a partial element at the end instead of raising.
+- `greatest-fixnum` is 2^29-1, `least-fixnum` is -2^29 and
+  `fixnum-width` is 30 on both back ends (Chez: 61 bits).
+- None of these check the types of their arguments beyond what the
+  procedures they are built on check.
+
+Still missing from R6RS, by group, for later batches of R20: the `fx`
+and `fl` families (`flabs`, `flmax`, `flmin`, `flonum->fixnum` and
+`flexpt` among them; compose them locally, `(if (fl<? a b) b a)` and
+friends, or use `exact` plus fixnum operations); `expt`, `exp`, `log`
+and the inverse trigonometric functions (`flasin`/`flacos`/`flatan`/
+`flatan2` live in `(gfx mat)`); `not` as a value, n-ary forms of the
+comparisons that are binary today (`=`, `<`, `char<?`, `string<?` and
+the rest; the new `-ci` comparisons, `boolean=?` and `symbol=?` already
+take two or more arguments), `case-lambda` and `with-exception-handler`;
+the condition types; string and bytevector ports; the remaining
+hashtable and bitwise procedures; the IEEE bytevector accessors;
+enumerations, the procedural record layer, Unicode normalisation and
+title case.
 
 `div`, `mod`, `div0` and `mod0` are present but accept **exact
 integers only** — deliberately narrower than R6RS, which defines them

@@ -54,7 +54,9 @@
 ;; field-contains? now REFUSES a non-finite query point, like its other
 ;; arguments, instead of answering #f: it already refused a NaN one, and
 ;; one entry point should not answer two non-finite numbers two ways.
-(import (rnrs) (gam fields) (gam modifiers) (gam stats))
+;; finite? below is this file's own: it answers #f for what is not a number, and
+;; (rnrs)'s, which takes a real, is excluded.
+(import (except (rnrs) finite?) (gam fields) (gam modifiers) (gam stats))
 (define fails '())
 (define (want name got expect)
   (unless (equal? got expect) (set! fails (cons (list name 'got got 'want expect) fails))))

@@ -39,7 +39,9 @@
 ;; 4A and settles exactly 4A.  An accumulator reset to zero would not
 ;; settle on the second step; one left larger would settle on the
 ;; first.
-(import (rnrs) (gam stats) (gam timeline) (gam fields))
+;; finite? below is this file's own: it answers #f for what is not a number, and
+;; (rnrs)'s, which takes a real, is excluded.
+(import (except (rnrs) finite?) (gam stats) (gam timeline) (gam fields))
 
 (define fails '())
 (define (want name got expect)

@@ -42,7 +42,9 @@
 ;; near-miss spellings right for free: +nan.00, +inf and inf.0 are NOT
 ;; numbers to a conforming reader, so the writer takes them, so the
 ;; reader must keep them as symbols.  Measured: all four agree.
-(import (rnrs) (web sexpr))
+;; nan? below is this file's own: it answers #f for what is not a number, and
+;; (rnrs)'s, which takes a real, is excluded.
+(import (except (rnrs) nan?) (web sexpr))
 (define fails '())
 (define (want name got expect)
   (unless (equal? got expect)

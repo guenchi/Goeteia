@@ -65,22 +65,17 @@
   ;; passed to make-field is where it starts and is not kept, because a
   ;; field that reported both would invite a caller to compute progress
   ;; from two numbers this library never promised to keep in step.
-  ;; A real that is still finite once made inexact, which is what it
-  ;; becomes when +, -, * or / combines it with a flonum, or when sin or
-  ;; cos takes it; +, -, * and / on exact operands alone stay exact.  An
-  ;; exact number of any size is finite as an exact number, yet 2^1024
-  ;; becomes +inf.0 and 2^-1100 becomes 0.0 when that happens.  (- y y)
-  ;; is 0 for every finite flonum y and NaN for either infinity and for
-  ;; NaN; 1.7e308 passes, which a bound such as (< y 1e300) would
-  ;; wrongly refuse.  A positive bound is tested on (inexact v) for the
-  ;; same reason, since 2^-1100 is positive and becomes 0.0.  A
-  ;; non-negative bound is tested on v itself, the stricter of the two
-  ;; there, since -2^-1100 becomes -0.0 and (<= 0 -0.0) holds.  Either
-  ;; way the value is kept as given.  All of this measured on the three
-  ;; back ends.  One private copy per (gam ...) library whose checks use
-  ;; it; "Prelude gaps" in docs/limits.md says why, and all eight change
-  ;; together when that entry does.
-  (define ($finite? x) (let ((y (inexact x))) (= 0 (- y y))))
+  ;; A number is checked as (finite? (inexact v)): finite once made
+  ;; inexact, which is what it becomes when +, -, * or / combines it with
+  ;; a flonum, or when sin or cos takes it; +, -, * and / on exact
+  ;; operands alone stay exact.  An exact number of any size is finite as
+  ;; an exact number, yet 2^1024 becomes +inf.0 and 2^-1100 becomes 0.0
+  ;; when that happens, so (finite? v) alone would let 2^1024 through.
+  ;; A positive bound is tested on (inexact v) for the same reason, since
+  ;; 2^-1100 is positive and becomes 0.0.  A non-negative bound is tested
+  ;; on v itself, the stricter of the two there, since -2^-1100 becomes
+  ;; -0.0 and (<= 0 -0.0) holds.  Either way the value is kept as given.
+  ;; All of this measured on the three back ends.
 
   (define ($f? f)
     (and (vector? f) (= (vector-length f) 11)
@@ -111,7 +106,7 @@
 
   (define (make-field kind x z radius half-length yaw duration rate . rest)
     (let ((period (if (null? rest) $default-period (car rest))))
-      ;; $finite? rather than a cutoff: these values may legitimately be
+      ;; finite? rather than a cutoff: these values may legitimately be
       ;; negative or very large, and a finite cutoff would refuse
       ;; legitimate values while (= x x) alone admits both infinities.  An
       ;; infinite position is not a far-away one.  Measured 2026-09-23:
@@ -121,31 +116,33 @@
       ;; infinitely far away was INSIDE a circle of radius five.
       ;; The helper stays private: a concept used only in argument checks
       ;; is not a reason for a public name.
-      (unless (and (real? x) ($finite? x) (real? z) ($finite? z))
+      (unless (and (real? x) (finite? (inexact x))
+                   (real? z) (finite? (inexact z)))
         (error 'make-field "a position is two reals, finite as flonums" x z))
-      (unless (and (real? radius) ($finite? radius) (< 0 (inexact radius)))
+      (unless (and (real? radius) (finite? (inexact radius))
+                   (< 0 (inexact radius)))
         (error 'make-field
                "a radius is a real, positive and finite as a flonum"
                radius))
-      (unless (and (real? half-length) ($finite? half-length)
+      (unless (and (real? half-length) (finite? (inexact half-length))
                    (<= 0 half-length))
         (error 'make-field
                "a half-length is a non-negative real, finite as a flonum"
                half-length))
-      (unless (and (real? yaw) ($finite? yaw))
+      (unless (and (real? yaw) (finite? (inexact yaw)))
         (error 'make-field
                "a yaw in radians is a real, finite as a flonum"
                yaw))
-      (unless (and (real? duration) ($finite? duration)
+      (unless (and (real? duration) (finite? (inexact duration))
                    (< 0 (inexact duration)))
         (error 'make-field
                "a duration is a real, positive and finite as a flonum"
                duration))
-      (unless (and (real? rate) ($finite? rate))
+      (unless (and (real? rate) (finite? (inexact rate)))
         (error 'make-field
                "a rate per unit of time is a real, finite as a flonum"
                rate))
-      (unless (and (real? period) ($finite? period) (<= 0 period))
+      (unless (and (real? period) (finite? (inexact period)) (<= 0 period))
         (error 'make-field
                "a settling period is a non-negative real, finite as a flonum"
                period))
@@ -312,11 +309,13 @@
   ;; result of every flonum operation (src/js-backend.ss).
   (define (field-contains? f x z)
     ($need-f 'field-contains? f)
-    ;; $finite? excludes NaN and both infinities, all of which `real?'
-    ;; admits, and an exact number too large to become a finite flonum.
+    ;; (finite? (inexact x)) excludes NaN and both infinities, all of
+    ;; which `real?' admits, and an exact number too large to become a
+    ;; finite flonum.
     ;; An infinite query point is refused like a NaN one, so this entry
     ;; treats every value that is not finite as a flonum the same way.
-    (unless (and (real? x) ($finite? x) (real? z) ($finite? z))
+    (unless (and (real? x) (finite? (inexact x))
+                 (real? z) (finite? (inexact z)))
       (error 'field-contains?
              "a position is two reals, finite as flonums"
              x z))
@@ -399,7 +398,7 @@
   ;; pruned before the next step would make the natural loop wrong.
   (define (field-step! f dt settle)
     ($need-f 'field-step! f)
-    (unless (and (real? dt) ($finite? dt) (<= 0 dt))
+    (unless (and (real? dt) (finite? (inexact dt)) (<= 0 dt))
       (error 'field-step!
              "an elapsed time is a non-negative real, finite as a flonum"
              dt))
@@ -415,7 +414,7 @@
       (let* ((lived (min dt ($life f)))
              (next-life (max 0.0 (- ($life f) dt)))
              (next-acc (+ ($acc f) lived)))
-        (unless ($finite? next-acc)
+        (unless (finite? (inexact next-acc))
           (error 'field-step!
                  "the settling accumulator would not be finite as a flonum"
                  ($acc f) dt))

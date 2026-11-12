@@ -36,7 +36,9 @@
 ;; WHAT THIS CELL CANNOT SEE.  Queued deadlines in a timeline and a
 ;; field's settlement accumulator have no reader; their sums are pinned
 ;; by construction in gam-sums-stay-finite-as-flonums.ss.
-(import (rnrs) (gam stats) (gam timeline) (gam fields) (gam window)
+;; finite? and nan? below are this file's own: they answer for any value, and
+;; (rnrs)'s, which take a real, are excluded.
+(import (except (rnrs) finite? nan?) (gam stats) (gam timeline) (gam fields) (gam window)
         (gam inventory) (gam modifiers) (gam effects) (gam abilities)
         (gam recovery))
 

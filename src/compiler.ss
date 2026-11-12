@@ -2292,7 +2292,38 @@
     utf8->string values vector vector->list vector-fill! vector-for-each
     vector-length vector-map vector-ref vector-set! vector? void
     with-input-from-file with-input-from-string with-output-to-file
-    with-output-to-string write write-char zero?))
+    with-output-to-string write write-char zero?
+    ;; R20a: names written in the prelude over what it already had,
+    ;; grouped as its section is (numbers, lists, characters and
+    ;; strings, vectors, bytevectors).  endianness is syntax and is
+    ;; listed in $rnrs-syntax as well.
+    positive? negative? odd? even? round ceiling finite? infinite? nan?
+    integer-valued? rational-valued? real-valued? exact-integer-sqrt
+    div-and-mod div0-and-mod0 boolean=? symbol=? greatest-fixnum
+    least-fixnum fixnum-width
+    exists for-all find memp assp remp remove remv partition list-sort
+    caaar cdaar cddar caaaar caaadr caadar caaddr cadaar cadadr caddar
+    cdaaar cdaadr cdadar cdaddr cddaar cddadr cdddar cddddr
+    char-ci=? char-ci<? char-ci>? char-ci<=? char-ci>=? string-ci=?
+    string-ci<? string-ci>? string-ci<=? string-ci>=? char-upper-case?
+    char-lower-case? char-foldcase string-foldcase
+    vector-sort vector-sort!
+    bytevector-copy bytevector-copy! bytevector-fill! bytevector->u8-list
+    u8-list->bytevector bytevector-s8-ref bytevector-s8-set!
+    bytevector-u16-ref bytevector-s16-ref bytevector-u16-set!
+    bytevector-s16-set! bytevector-u32-ref bytevector-s32-ref
+    bytevector-u32-set! bytevector-s32-set! bytevector-u64-ref
+    bytevector-s64-ref bytevector-u64-set! bytevector-s64-set!
+    bytevector-u16-native-ref bytevector-s16-native-ref
+    bytevector-u16-native-set! bytevector-s16-native-set!
+    bytevector-u32-native-ref bytevector-s32-native-ref
+    bytevector-u32-native-set! bytevector-s32-native-set!
+    bytevector-u64-native-ref bytevector-s64-native-ref
+    bytevector-u64-native-set! bytevector-s64-native-set!
+    bytevector-uint-ref bytevector-sint-ref bytevector-uint-set!
+    bytevector-sint-set! bytevector->uint-list bytevector->sint-list
+    uint-list->bytevector sint-list->bytevector endianness
+    native-endianness))
 
 ;; ---- the import map ----------------------------------------------
 ;;
@@ -2440,7 +2471,7 @@
   '(=> and assert begin case cond define define-record-type
     define-syntax do else guard if lambda let let* let*-values
     let-values letrec letrec* or parameterize quasiquote quote set!
-    syntax-rules unless unquote unquote-splicing when))
+    syntax-rules unless unquote unquote-splicing when endianness))
 
 (define (identity-keyword? id)
   (let ((lib (car id)) (name (cdr id)))

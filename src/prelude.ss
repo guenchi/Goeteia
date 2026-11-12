@@ -3425,3 +3425,421 @@
     (let ((r ($with-out p thunk)))
       (close-port p)
       r)))
+
+;; ---- R6RS names written over what the prelude already has ----
+;;
+;; Each group below adds standard names that need nothing new from the
+;; compiler or the runtime: every one is a composition of procedures
+;; defined above or of primitives.  Each name is also listed in the
+;; compiler's (rnrs) manifest, which is what makes it importable and
+;; excludable; a definition here without that line would be in scope
+;; everywhere and could not be excluded.  Domains narrower than R6RS's
+;; are stated in docs/limits.md ("Prelude gaps" and the sections it
+;; points to), and arguments are checked only where a sibling already
+;; checks them.
+
+;; ---- numbers ----
+
+(define (positive? x) (< 0 x))
+(define (negative? x) (< x 0))
+
+;; An inexact integer is even or odd too: (even? 4.0) is #t.  A flonum
+;; that is not a finite integer is neither, which is where R6RS raises.
+(define (even? n)
+  (if (flonum? n)
+      (and ($fl-finite? n) (fl=? (flfloor (fl/ n 2.0)) (fl/ n 2.0)))
+      (eqv? 0 (remainder n 2))))
+(define (odd? n)
+  (if (flonum? n)
+      (and ($fl-finite? n)
+           (fl=? (fl- n (fl* 2.0 (flfloor (fl/ n 2.0)))) 1.0))
+      (not (eqv? 0 (remainder n 2)))))
+
+;; ceiling mirrors floor clause for clause.  A flonum is negated by
+;; multiplying by -1.0, which is exact and keeps the sign of a zero:
+;; (ceiling -0.5) is -0.0, as R6RS and Chez answer.  A ratio is never
+;; integral here ($make-rat collapses d = 1), so its ceiling is always
+;; its floor plus one.
+(define (ceiling x)
+  (cond
+   ((flonum? x) (fl* -1.0 (flfloor (fl* -1.0 x))))
+   ((%ratio? x) (+ (floor x) 1))
+   (else x)))
+
+;; round goes to the nearest integer and, on a tie, to the even one.
+;; For a flonum the fraction x - floor(x) is computed exactly (it is
+;; representable whenever x is finite), so the tie test is exact too;
+;; a negative argument is rounded as its magnitude and negated back,
+;; which keeps (round -0.4) at -0.0.  An infinity or a NaN is its own
+;; rounding.
+(define (round x)
+  (cond
+   ((flonum? x)
+    (cond
+     ((not ($fl-finite? x)) x)
+     ((fl<? x 0.0) (fl* -1.0 ($round-magnitude (fl* -1.0 x))))
+     (else ($round-magnitude x))))
+   ((%ratio? x)
+    (let* ((f (floor x)) (twice (* 2 (- x f))))
+      (cond
+       ((< twice 1) f)
+       ((< 1 twice) (+ f 1))
+       ((even? f) f)
+       (else (+ f 1)))))
+   (else x)))
+(define ($round-magnitude x)
+  (let* ((f (flfloor x)) (d (fl- x f)))
+    (cond
+     ((fl<? d 0.5) f)
+     ((fl<? 0.5 d) (fl+ f 1.0))
+     ((even? f) f)
+     (else (fl+ f 1.0)))))
+
+;; Only a flonum can be infinite or a NaN; every exact real is finite.
+(define (finite? x) (if (flonum? x) ($fl-finite? x) #t))
+(define (infinite? x)
+  (and (flonum? x) (fl=? x x) (not ($fl-finite? x))))
+(define (nan? x) (and (flonum? x) (not (fl=? x x))))
+
+;; The -valued? predicates read a complex number whose imaginary part
+;; is zero as its real part: (real-valued? 2.5+0.0i) is #t where
+;; (real? 2.5+0.0i) is #f.  Anything that is not a number answers #f.
+(define (real-valued? x)
+  (or (real? x) (and (%complex? x) (zero? (%cx-im x)))))
+(define ($valued-part x) (if (%complex? x) (%cx-re x) x))
+(define (rational-valued? x)
+  (and (real-valued? x) (rational? ($valued-part x))))
+(define (integer-valued? x)
+  (and (real-valued? x) (integer? ($valued-part x))))
+
+;; The largest s with s*s <= k, and k - s*s.  The start doubles up to a
+;; power of two whose square exceeds k, so it is above the root, and
+;; integer Newton steps then fall monotonically to it; fixnums and
+;; bignums take the same path.  Zero is answered first: its steps would
+;; reach x = 0 and divide by it.
+(define (exact-integer-sqrt k)
+  (if (eqv? k 0)
+      (values 0 0)
+      (let up ((x 1))
+        (if (<= (* x x) k)
+            (up (* x 2))
+            (let down ((x x))
+              (let ((y (quotient (+ x (quotient k x)) 2)))
+                (if (< y x)
+                    (down y)
+                    (values x (- k (* x x))))))))))
+
+(define (div-and-mod n d)
+  ($div-check 'div-and-mod n d)
+  (values ($div n d) ($mod n d)))
+;; the same corrections as div0 and mod0, made once for both answers
+(define (div0-and-mod0 n d)
+  ($div-check 'div0-and-mod0 n d)
+  (let ((q ($div n d)) (r ($mod n d)))
+    (if (< (+ r r) (abs d))
+        (values q r)
+        (values (if (< d 0) (- q 1) (+ q 1)) (- r (abs d))))))
+
+;; Two or more arguments, compared neighbour to neighbour.
+(define ($chain same? a b rest)
+  (and (same? a b)
+       (or (null? rest) ($chain same? b (car rest) (cdr rest)))))
+(define (boolean=? a b . rest) ($chain eq? a b rest))
+(define (symbol=? a b . rest) ($chain eq? a b rest))
+
+;; A fixnum is 30 bits on both back ends: compile-datum's fits-fixnum?
+;; and the runtime's fixnum? agree on -2^29 .. 2^29-1.
+(define (greatest-fixnum) 536870911)
+(define (least-fixnum) -536870912)
+(define (fixnum-width) 30)
+
+;; ---- lists ----
+
+;; exists and for-all make their last call to pred in tail position and
+;; answer its value, as R6RS asks.  Over several lists they stop at the
+;; end of the shortest.
+(define (exists pred ls . more)
+  (if (null? more) ($exists1 pred ls) ($existsn pred (cons ls more))))
+(define ($exists1 pred ls)
+  (cond
+   ((null? ls) #f)
+   ((null? (cdr ls)) (pred (car ls)))
+   (else (or (pred (car ls)) ($exists1 pred (cdr ls))))))
+(define ($existsn pred lists)
+  (cond
+   (($any-null? lists) #f)
+   (($any-null? ($tails lists)) (apply pred ($heads lists)))
+   (else (or (apply pred ($heads lists)) ($existsn pred ($tails lists))))))
+(define (for-all pred ls . more)
+  (if (null? more) ($for-all1 pred ls) ($for-alln pred (cons ls more))))
+(define ($for-all1 pred ls)
+  (cond
+   ((null? ls) #t)
+   ((null? (cdr ls)) (pred (car ls)))
+   (else (and (pred (car ls)) ($for-all1 pred (cdr ls))))))
+(define ($for-alln pred lists)
+  (cond
+   (($any-null? lists) #t)
+   (($any-null? ($tails lists)) (apply pred ($heads lists)))
+   (else (and (apply pred ($heads lists)) ($for-alln pred ($tails lists))))))
+
+(define (find pred ls)
+  (cond
+   ((null? ls) #f)
+   ((pred (car ls)) (car ls))
+   (else (find pred (cdr ls)))))
+(define (memp pred ls)
+  (cond
+   ((null? ls) #f)
+   ((pred (car ls)) ls)
+   (else (memp pred (cdr ls)))))
+(define (assp pred ls)
+  (cond
+   ((null? ls) #f)
+   ((pred (caar ls)) (car ls))
+   (else (assp pred (cdr ls)))))
+(define (remp pred ls) (filter (lambda (x) (not (pred x))) ls))
+(define (remove x ls) (remp (lambda (y) (equal? y x)) ls))
+(define (remv x ls) (remp (lambda (y) (eqv? y x)) ls))
+;; both lists keep the order the elements had
+(define (partition pred ls)
+  (let loop ((ls ls) (in '()) (out '()))
+    (cond
+     ((null? ls) (values (reverse in) (reverse out)))
+     ((pred (car ls)) (loop (cdr ls) (cons (car ls) in) out))
+     (else (loop (cdr ls) in (cons (car ls) out))))))
+
+;; A merge sort, stable as R6RS requires: on a tie the merge takes the
+;; element from the left run, which came first.  The merge accumulates
+;; and reverses, so a long list does not deepen the stack; the split
+;; recursion is only log n deep.
+(define (list-sort less? ls) ($sort-prefix less? ls (length ls)))
+(define ($sort-prefix less? ls n)
+  (cond
+   ((= n 0) '())
+   ((= n 1) (list (car ls)))
+   (else
+    (let ((h (quotient n 2)))
+      ($merge-runs less?
+                   ($sort-prefix less? ls h)
+                   ($sort-prefix less? (list-tail ls h) (- n h)))))))
+(define ($merge-runs less? a b)
+  (let loop ((a a) (b b) (acc '()))
+    (cond
+     ((null? a) ($rev-onto acc b))
+     ((null? b) ($rev-onto acc a))
+     ((less? (car b) (car a)) (loop a (cdr b) (cons (car b) acc)))
+     (else (loop (cdr a) b (cons (car a) acc))))))
+
+;; the three- and four-level accessors the prelude did not have yet
+(define (caaar p) (car (caar p)))
+(define (cdaar p) (cdr (caar p)))
+(define (cddar p) (cdr (cdar p)))
+(define (caaaar p) (car (caaar p)))
+(define (caaadr p) (car (caadr p)))
+(define (caadar p) (car (cadar p)))
+(define (caaddr p) (car (caddr p)))
+(define (cadaar p) (car (cdaar p)))
+(define (cadadr p) (car (cdadr p)))
+(define (caddar p) (car (cddar p)))
+(define (cdaaar p) (cdr (caaar p)))
+(define (cdaadr p) (cdr (caadr p)))
+(define (cdadar p) (cdr (cadar p)))
+(define (cdaddr p) (cdr (caddr p)))
+(define (cddaar p) (cdr (cdaar p)))
+(define (cddadr p) (cdr (cdadr p)))
+(define (cdddar p) (cdr (cddar p)))
+(define (cddddr p) (cdr (cdddr p)))
+
+;; ---- characters and strings, ignoring case ----
+
+;; Folding is char-downcase, so it covers the range char-downcase
+;; covers: A to Z.  Every other character folds to itself, which is
+;; narrower than R6RS (docs/limits.md, "Prelude gaps").
+(define (char-foldcase c) (char-downcase c))
+(define (char-upper-case? c)
+  (let ((n (char->integer c))) (and (< 64 n) (< n 91))))
+(define (char-lower-case? c)
+  (let ((n (char->integer c))) (and (< 96 n) (< n 123))))
+(define (string-foldcase s) (string-map char-foldcase s))
+
+(define (char-ci=? a b . rest)
+  ($chain char=? (char-foldcase a) (char-foldcase b) (map char-foldcase rest)))
+(define (char-ci<? a b . rest)
+  ($chain char<? (char-foldcase a) (char-foldcase b) (map char-foldcase rest)))
+(define (char-ci>? a b . rest)
+  ($chain char>? (char-foldcase a) (char-foldcase b) (map char-foldcase rest)))
+(define (char-ci<=? a b . rest)
+  ($chain char<=? (char-foldcase a) (char-foldcase b) (map char-foldcase rest)))
+(define (char-ci>=? a b . rest)
+  ($chain char>=? (char-foldcase a) (char-foldcase b) (map char-foldcase rest)))
+(define (string-ci=? a b . rest)
+  ($chain string=? (string-foldcase a) (string-foldcase b)
+          (map string-foldcase rest)))
+(define (string-ci<? a b . rest)
+  ($chain string<? (string-foldcase a) (string-foldcase b)
+          (map string-foldcase rest)))
+(define (string-ci>? a b . rest)
+  ($chain string>? (string-foldcase a) (string-foldcase b)
+          (map string-foldcase rest)))
+(define (string-ci<=? a b . rest)
+  ($chain string<=? (string-foldcase a) (string-foldcase b)
+          (map string-foldcase rest)))
+(define (string-ci>=? a b . rest)
+  ($chain string>=? (string-foldcase a) (string-foldcase b)
+          (map string-foldcase rest)))
+
+;; ---- vectors ----
+
+;; vector-sort is list-sort's merge, so it is stable; vector-sort!
+;; writes the same order back in place.
+(define (vector-sort less? v)
+  (list->vector (list-sort less? (vector->list v))))
+(define (vector-sort! less? v)
+  ($vfill! v (list-sort less? (vector->list v)) 0))
+
+;; ---- bytevectors ----
+
+(define (bytevector-copy bv)
+  (let* ((n (bytevector-length bv)) (r (%make-bytevector n 0)))
+    (bytevector-copy! bv 0 r 0 n)
+    r))
+;; The source and the target may be one bytevector with overlapping
+;; ranges; copying from the high end when the target starts later keeps
+;; every byte read before it is overwritten.
+(define (bytevector-copy! src s dst d k)
+  (if (and (eq? src dst) (< s d))
+      (let loop ((i (- k 1)))
+        (when (<= 0 i)
+          (bytevector-u8-set! dst (+ d i) (bytevector-u8-ref src (+ s i)))
+          (loop (- i 1))))
+      (let loop ((i 0))
+        (when (< i k)
+          (bytevector-u8-set! dst (+ d i) (bytevector-u8-ref src (+ s i)))
+          (loop (+ i 1))))))
+;; R6RS takes an octet or a signed byte; a negative fill is stored as
+;; the byte with the same bits.
+(define (bytevector-fill! bv fill)
+  (let ((b (if (< fill 0) (+ fill 256) fill)))
+    (let loop ((i 0))
+      (when (< i (bytevector-length bv))
+        (bytevector-u8-set! bv i b)
+        (loop (+ i 1))))))
+(define (bytevector->u8-list bv)
+  (let loop ((i (- (bytevector-length bv) 1)) (acc '()))
+    (if (< i 0) acc (loop (- i 1) (cons (bytevector-u8-ref bv i) acc)))))
+(define (u8-list->bytevector ls)
+  (let ((bv (%make-bytevector (length ls) 0)))
+    ($bvfill! bv ls 0)
+    bv))
+
+(define (bytevector-s8-ref bv k)
+  (let ((b (bytevector-u8-ref bv k))) (if (< b 128) b (- b 256))))
+(define (bytevector-s8-set! bv k n)
+  (bytevector-u8-set! bv k (if (< n 0) (+ n 256) n)))
+
+;; (endianness big) and (endianness little) are the symbols; any other
+;; name is refused when the form is expanded.
+(define-syntax endianness
+  (syntax-rules (big little)
+    ((_ big) 'big)
+    ((_ little) 'little)))
+;; wasm memory and every JS host this runs on are little-endian
+(define (native-endianness) 'little)
+
+;; The integer accessors of every size are these four.  An endianness
+;; other than big reads as little.  A value is assembled with generic
+;; arithmetic, so a 32- or 64-bit answer past the fixnum range comes
+;; back as a bignum.  A value to store is reduced to its low 8*size bits
+;; without a check, as bytevector-u8-set! reduces a byte.  The list
+;; conversions read whole elements only; a partial one at the end is
+;; left out.
+(define ($byte-span size)
+  (let loop ((i 0) (p 1)) (if (= i size) p (loop (+ i 1) (* p 256)))))
+(define (bytevector-uint-ref bv k e size)
+  (if (eq? e 'big)
+      (let loop ((i 0) (acc 0))
+        (if (= i size)
+            acc
+            (loop (+ i 1) (+ (* acc 256) (bytevector-u8-ref bv (+ k i))))))
+      (let loop ((i (- size 1)) (acc 0))
+        (if (< i 0)
+            acc
+            (loop (- i 1) (+ (* acc 256) (bytevector-u8-ref bv (+ k i))))))))
+(define (bytevector-sint-ref bv k e size)
+  (let ((u (bytevector-uint-ref bv k e size))
+        (top (bytevector-u8-ref bv (if (eq? e 'big) k (+ k (- size 1))))))
+    (if (< top 128) u (- u ($byte-span size)))))
+(define (bytevector-uint-set! bv k n e size)
+  (let loop ((i 0) (v n))
+    (when (< i size)
+      (bytevector-u8-set! bv
+                          (if (eq? e 'big) (+ k (- size 1 i)) (+ k i))
+                          (mod v 256))
+      (loop (+ i 1) (div v 256)))))
+(define (bytevector-sint-set! bv k n e size)
+  (bytevector-uint-set! bv k (if (< n 0) (+ n ($byte-span size)) n) e size))
+
+(define (bytevector-u16-ref bv k e) (bytevector-uint-ref bv k e 2))
+(define (bytevector-s16-ref bv k e) (bytevector-sint-ref bv k e 2))
+(define (bytevector-u32-ref bv k e) (bytevector-uint-ref bv k e 4))
+(define (bytevector-s32-ref bv k e) (bytevector-sint-ref bv k e 4))
+(define (bytevector-u64-ref bv k e) (bytevector-uint-ref bv k e 8))
+(define (bytevector-s64-ref bv k e) (bytevector-sint-ref bv k e 8))
+(define (bytevector-u16-set! bv k n e) (bytevector-uint-set! bv k n e 2))
+(define (bytevector-s16-set! bv k n e) (bytevector-sint-set! bv k n e 2))
+(define (bytevector-u32-set! bv k n e) (bytevector-uint-set! bv k n e 4))
+(define (bytevector-s32-set! bv k n e) (bytevector-sint-set! bv k n e 4))
+(define (bytevector-u64-set! bv k n e) (bytevector-uint-set! bv k n e 8))
+(define (bytevector-s64-set! bv k n e) (bytevector-sint-set! bv k n e 8))
+(define (bytevector-u16-native-ref bv k)
+  (bytevector-uint-ref bv k (native-endianness) 2))
+(define (bytevector-s16-native-ref bv k)
+  (bytevector-sint-ref bv k (native-endianness) 2))
+(define (bytevector-u32-native-ref bv k)
+  (bytevector-uint-ref bv k (native-endianness) 4))
+(define (bytevector-s32-native-ref bv k)
+  (bytevector-sint-ref bv k (native-endianness) 4))
+(define (bytevector-u64-native-ref bv k)
+  (bytevector-uint-ref bv k (native-endianness) 8))
+(define (bytevector-s64-native-ref bv k)
+  (bytevector-sint-ref bv k (native-endianness) 8))
+(define (bytevector-u16-native-set! bv k n)
+  (bytevector-uint-set! bv k n (native-endianness) 2))
+(define (bytevector-s16-native-set! bv k n)
+  (bytevector-sint-set! bv k n (native-endianness) 2))
+(define (bytevector-u32-native-set! bv k n)
+  (bytevector-uint-set! bv k n (native-endianness) 4))
+(define (bytevector-s32-native-set! bv k n)
+  (bytevector-sint-set! bv k n (native-endianness) 4))
+(define (bytevector-u64-native-set! bv k n)
+  (bytevector-uint-set! bv k n (native-endianness) 8))
+(define (bytevector-s64-native-set! bv k n)
+  (bytevector-sint-set! bv k n (native-endianness) 8))
+
+(define (bytevector->uint-list bv e size)
+  (let loop ((k (- (* size (quotient (bytevector-length bv) size)) size))
+             (acc '()))
+    (if (< k 0)
+        acc
+        (loop (- k size) (cons (bytevector-uint-ref bv k e size) acc)))))
+(define (bytevector->sint-list bv e size)
+  (let loop ((k (- (* size (quotient (bytevector-length bv) size)) size))
+             (acc '()))
+    (if (< k 0)
+        acc
+        (loop (- k size) (cons (bytevector-sint-ref bv k e size) acc)))))
+(define (uint-list->bytevector ls e size)
+  (let ((bv (%make-bytevector (* size (length ls)) 0)))
+    (let loop ((ls ls) (k 0))
+      (unless (null? ls)
+        (bytevector-uint-set! bv k (car ls) e size)
+        (loop (cdr ls) (+ k size))))
+    bv))
+(define (sint-list->bytevector ls e size)
+  (let ((bv (%make-bytevector (* size (length ls)) 0)))
+    (let loop ((ls ls) (k 0))
+      (unless (null? ls)
+        (bytevector-sint-set! bv k (car ls) e size)
+        (loop (cdr ls) (+ k size))))
+    bv))
