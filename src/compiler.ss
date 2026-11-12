@@ -486,8 +486,67 @@
 ;; a region of the expansion rather than a call.
 (define *expand-bound* '())
 
+;; The set holds each binder AS IT STANDS in its binding form -- a
+;; symbol the program wrote, or the token a template introduced -- and
+;; membership is identity.  Unmarking here made a template's `if' and a
+;; program's local `if' one name, while the back end matches locals by
+;; exact token, so the two halves of the compiler disagreed about the
+;; same identifier.
 (define (lexically-bound? x)
-  (and (symbol? x) (memq (unmark x) *expand-bound*) #t))
+  (and (symbol? x) (memq x *expand-bound*) #t))
+
+;; ---- spellings the passes after expansion dispatch on --------------
+;;
+;; A pass after expansion reads a head spelled quote, if, let, lambda,
+;; begin, set!, define, %loop, apply, call/cc,
+;; call-with-current-continuation, export or define-syntax as that form,
+;; without first asking whether a local variable has that spelling.  So
+;; a local binder spelled like one of these is bound under a FRESH name
+;; -- an uninterned symbol, as the expander's temporaries are, never
+;; entered in *marks*, so nothing can unmark it back -- and every
+;; reference the expander emits for it uses that name.  After expansion
+;; no registered local binder has one of these spellings, and no
+;; application's head is a local variable spelled like one.  Other
+;; binders keep their names.
+(define $dispatched-spellings
+  '(quote if let lambda begin set! define %loop apply call/cc
+    call-with-current-continuation export define-syntax))
+
+;; (identifier . fresh name) for the binders in scope that were renamed;
+;; empty unless a program binds one of the spellings above.
+(define *expand-renamed* '())
+
+;; The direct definitions of the body being expanded, or #f outside any
+;; body (the top level, a library's).  A define that reaches its arm in
+;; a body and is not one of these is LATE: a macro produced it, or it
+;; sits inside a begin.
+(define *body-binders* #f)
+
+;; Late binders spelled like a dispatched form, in scope: a CALL of one
+;; would reach the later passes under its spelling, so it is refused.
+(define *late-dispatched* '())
+
+;; (id . the name it is emitted as) for each binder of one binding form
+(define (fresh-renames ids)
+  (map-in-order
+   (lambda (id)
+     (cons id
+           (if (memq (unmark id) $dispatched-spellings)
+               (gensym (symbol->string (unmark id)))
+               id)))
+   ids))
+
+(define (renamed-ref x)
+  (if (null? *expand-renamed*)
+      x
+      (let ((r (assq x *expand-renamed*)))
+        (if r (cdr r) x))))
+
+;; formals with each binder replaced by the name it is emitted as
+(define (rename-formals f rn)
+  (cond ((symbol? f) (cdr (assq f rn)))
+        ((pair? f) (cons (cdr (assq (car f) rn)) (rename-formals (cdr f) rn)))
+        (else f)))
 
 ;; A renamed VARIABLE keeps its written spelling and gets a binding.
 ;;
@@ -506,24 +565,72 @@
 
 ;; A body's own internal definitions bind over the whole body, its
 ;; definitions' right-hand sides included, so they join the formals.
+;; The body's direct definitions, in order: (names . forms).  A head is
+;; read as define unless a definition EARLIER in this body bound its
+;; spelling -- (define define f) and then (define 1 2) is a definition
+;; and then a call of f.  The forms found are expanded as definitions
+;; even though their head may be bound by the time they are reached.
 (define (body-define-names body)
-  (let loop ((b body) (acc '()))
+  (let loop ((b body) (names '()) (forms '()))
     (cond
-     ((not (pair? b)) acc)
-     ((and (pair? (car b)) (symbol? (car (car b)))
-           (eq? (unmark (car (car b))) 'define)
+     ((not (pair? b)) (cons names forms))
+     ((and (pair? (car b))
+           (not (memq (car (car b)) names))
+           (definition-head? (car (car b)))
            (pair? (cdr (car b))))
       (let ((t (cadr (car b))))
-        (loop (cdr b) (cons (unmark (if (pair? t) (car t) t)) acc))))
-     (else (loop (cdr b) acc)))))
+        (loop (cdr b) (cons (if (pair? t) (car t) t) names)
+              (cons (car b) forms))))
+     (else (loop (cdr b) names forms)))))
 
-(define (xpand-body* body names)
-  (let ((saved *expand-bound*))
-    (set! *expand-bound*
-          (append (map unmark names) (body-define-names body) saved))
-    (let ((out (xpand* body)))
-      (set! *expand-bound* saved)
-      out)))
+;; A head that defines: one that resolves to define and is not a local
+;; variable, or the expander's own define.
+(define (definition-head? h)
+  (cond ((core-head? h) (eq? (core-head-name h) 'define))
+        ((symbol? h) (and (not (lexically-bound? h))
+                          (eq? (resolve-tag h) 'define)))
+        (else #f)))
+
+;; A body: rn is (identifier . emitted name) for the binders of the form
+;; that owns it (formals, let names).  They are in scope first, so a
+;; formal spelled define makes (define ...) in the body a call; then the
+;; body's direct definitions join them, and are renamed the same way.
+(define (xpand-body* body rn)
+  (let ((saved *expand-bound*)
+        (saved-renamed *expand-renamed*)
+        (saved-binders *body-binders*)
+        (saved-late *late-dispatched*))
+    (set! *expand-bound* (append (map car rn) saved))
+    (let* ((found (body-define-names body))
+           (defs (car found))
+           (def-forms (cdr found))
+           (drn (fresh-renames defs)))
+      (set! *expand-bound* (append defs *expand-bound*))
+      (set! *expand-renamed*
+            (append (filter (lambda (r) (not (eq? (car r) (cdr r))))
+                            (append rn drn))
+                    saved-renamed))
+      ;; A binder this body registers shadows a late binder of the same
+      ;; identifier outside it, so within the body a call of it is a call
+      ;; of this binding and is not refused.  Restored at the exit with
+      ;; the rest.
+      (unless (null? *late-dispatched*)
+        (set! *late-dispatched*
+              (filter (lambda (x) (not (or (memq x defs) (assq x rn))))
+                      *late-dispatched*)))
+      (set! *body-binders* defs)
+      (let ((out (if (null? def-forms)
+                     (xpand* body)
+                     (map-tail (lambda (f)
+                                 (if (memq f def-forms)
+                                     (xpand-define f)
+                                     (xpand f)))
+                               body))))
+        (set! *expand-bound* saved)
+        (set! *expand-renamed* saved-renamed)
+        (set! *body-binders* saved-binders)
+        (set! *late-dispatched* saved-late)
+        out))))
 
 ;; Which macro a spelling means, when two libraries export one.
 ;;
@@ -557,12 +664,39 @@
                    (else (scan (cdr ms))))))))))
 
 (define (xpand e)
-  (if (pair? e)
-      (let ((macro (macro-for (car e))))
-        (if macro
-            (xpand (apply-macro (cdr macro) e))
-            (xpand-core e)))
-      e))
+  (cond
+   ((pair? e)
+    ;; a form the expander built itself goes to its arm by the name it
+    ;; carries: no macro, no local binding and no alias can take it
+    (if (core-head? (car e))
+        (xpand-tagged (core-head-name (car e)) e)
+        (let ((macro (macro-for (car e))))
+          (if macro
+              (xpand (apply-macro (cdr macro) e))
+              (xpand-core e)))))
+   ((symbol? e) (renamed-ref e))
+   (else e)))
+
+;; ---- the expander's own forms carry generated heads ----------------
+;;
+;; A form the expander builds and hands back to itself (when's if, do's
+;; named let, case's tests, ...) is headed by one of these instead of a
+;; plain symbol, so a program's local binding, its macro, or an import
+;; alias of that spelling cannot take it.  One instance per name, as
+;; for intrinsics, and a separate type: an intrinsic head means a
+;; primitive operation to the back end, and these never reach it -- the
+;; arm a generated head is dispatched to emits the plain head and
+;; expands only the operands.
+(define-record-type (core-head make-core-head core-head?)
+  (fields (immutable name core-head-name)))
+(define *core-heads* '())
+(define (generated-head name)
+  (let ((e (assq name *core-heads*)))
+    (if e
+        (cdr e)
+        (let ((h (make-core-head name)))
+          (set! *core-heads* (cons (cons name h) *core-heads*))
+          h))))
 
 ;; The macro, if any, that a form with this head is handed to.  xpand
 ;; asks it of every form; the letrec arm also asks it of a head it is
@@ -580,26 +714,44 @@
   (if (lexically-bound? (car e))
       ;; a bound name in head position is a call to that binding, not
       ;; the special form its spelling happens to name
-      (xpand* e)
-      (xpand-core-form (rename-head e))))
+      (begin
+        (when (memq (car e) *late-dispatched*)
+          (errorf 'goeteia
+                  (string-append
+                   (symbol->string (unmark (car e)))
+                   " names a core form and is defined in this body by a"
+                   " macro or inside a begin; calling it is not supported"
+                   " -- write the definition directly in the body:")
+                  (strip-marks e)))
+        (xpand* e))
+      (xpand-core-form e)))
 
 ;; A renamed keyword has to reach the LATER passes under the name they
-;; know, not merely be dispatched on here.  Most core forms are not
-;; arms of the case below -- `if' is one only to check its shape, and
-;; then does what the application branch does -- and that branch copies
-;; the head through verbatim; a form left spelled `when-else' then
-;; arrives at code generation as a call
-;; to something nothing defines.  Dispatching correctly and emitting
-;; the original spelling are two different jobs and this is the second.
-(define (rename-head e)
-  (if (symbol? (car e))
-      (let ((en (expand-entry (unmark (car e)))))
-        (if (and en
-                 (eq? (entry-kind en) 'keyword)
-                 (not (eq? (entry-origin en) (unmark (car e)))))
-            (cons (entry-origin en) (cdr e))
-            e))
-      e))
+;; know, not merely be dispatched on here: a form left spelled
+;; `when-else' arrives at code generation as a call to something
+;; nothing defines.  The head is resolved ONCE, here, and the arm is
+;; chosen by that tag; each arm emits the plain head for it.  Resolving
+;; the origin's spelling a second time read it through the alias table
+;; again, so a swap of two keywords could not be written.
+(define (xpand-core-form e)
+  (xpand-tagged (resolve-tag (car e)) e))
+
+;; A keyword written under an alias: its origin is what is emitted.
+(define (keyword-alias? h)
+  (and (symbol? h)
+       (let ((en (expand-entry (unmark h))))
+         (and en
+              (eq? (entry-kind en) 'keyword)
+              (not (eq? (entry-origin en) (unmark h)))))))
+
+;; The head an arm emits for a form it was dispatched with tag: the
+;; plain tag for a generated head or an alias, the head as written
+;; otherwise.
+(define (head-out tag h)
+  (cond ((core-head? h) tag)
+        ((keyword-alias? h) tag)
+        ((symbol? h) h)
+        (else (xpand h))))
 
 ;; An if is a test and one or two branches, and nothing else is.  The
 ;; readers of an if after expansion take its parts by position --
@@ -620,11 +772,10 @@
 ;;     accessors send theirs back through xpand, so those are checked
 ;;     here like any other.)
 ;;   - a head that is lexically bound is a call and never reaches this
-;;     check, and lexically-bound? compares spellings, so a macro's if
-;;     that lands under a local binding spelled if is taken for a call
-;;     and passes through unchecked to a back end that dispatches on
-;;     the spelling.  That is a defect in how keywords are shadowed,
-;;     not in this check.
+;;     check.  lexically-bound? compares identifiers, so a macro's if
+;;     under a local binding spelled if is still the keyword and is
+;;     checked; the local binding is emitted under a fresh name, so the
+;;     call reaches no back end under the spelling.
 ;;   - a transformer is checked only where it runs, so an if in a
 ;;     branch it never takes, or in a macro never used, is not.
 ;;
@@ -642,18 +793,26 @@
                    "malformed if: it takes a test and one or two branches:"
                    (strip-marks e))))))
 
-(define (xpand-core-form e)
-  (case (resolve-tag (car e))
-        ((quote define-syntax) e)
-        ((if) (check-if-form e) (xpand* e))
+(define (xpand-tagged tag e)
+  (case tag
+        ((quote define-syntax)
+         (if (or (core-head? (car e)) (keyword-alias? (car e)))
+             (cons tag (cdr e))
+             e))
+        ((if) (check-if-form e)
+         (cons (head-out tag (car e)) (xpand* (cdr e))))
         ((lambda)
-         `(lambda ,(cadr e)
-            . ,(xpand-body* (cddr e) (binder-names (cadr e)))))
+         (let ((rn (fresh-renames (binder-names (cadr e)))))
+           `(lambda ,(rename-formals (cadr e) rn)
+              . ,(xpand-body* (cddr e) rn))))
+        ((define) (xpand-define e))
         ((and)
          (cond
           ((null? (cdr e)) #t)
           ((null? (cddr e)) (xpand (cadr e)))
-          (else `(if ,(xpand (cadr e)) ,(xpand `(and . ,(cddr e))) #f))))
+          (else `(if ,(xpand (cadr e))
+                     ,(xpand (cons (generated-head 'and) (cddr e)))
+                     #f))))
         ((or)
          (cond
           ((null? (cdr e)) #f)
@@ -661,10 +820,16 @@
           (else
            (let ((t (gensym "t")))
              `(let ((,t ,(xpand (cadr e))))
-                (if ,t ,t ,(xpand `(or . ,(cddr e)))))))))
+                (if ,t ,t ,(xpand (cons (generated-head 'or) (cddr e)))))))))
         ((not) `(if ,(xpand (cadr e)) #f #t))
-        ((when) (xpand `(if ,(cadr e) (begin . ,(cddr e)) (begin))))
-        ((unless) (xpand `(if ,(cadr e) (begin) (begin . ,(cddr e)))))
+        ((when)
+         (xpand (list (generated-head 'if) (cadr e)
+                      (cons (generated-head 'begin) (cddr e))
+                      (list (generated-head 'begin)))))
+        ((unless)
+         (xpand (list (generated-head 'if) (cadr e)
+                      (list (generated-head 'begin))
+                      (cons (generated-head 'begin) (cddr e)))))
         ((%target-case)
          ;; (%target-case (js form...) (wasm form...)): the branch
          ;; matching the compiling backend splices as a begin, the
@@ -672,9 +837,9 @@
          ;; other backend does not know
          (let pick ((cs (cdr e)))
            (cond
-            ((null? cs) (xpand '(begin)))
+            ((null? cs) (xpand (list (generated-head 'begin))))
             ((eq? (resolve-tag (car (car cs))) *target*)
-             (xpand `(begin . ,(cdr (car cs)))))
+             (xpand (cons (generated-head 'begin) (cdr (car cs)))))
             (else (pick (cdr cs))))))
         ((cond) (xpand-cond (cdr e)))
         ;; A let* body is an R6RS <body>: it may open with definitions,
@@ -684,31 +849,32 @@
         ;; the body was reported unbound.  The outer levels stay one
         ;; binding each, which is what keeps let*'s sequential scope.
         ;;
-        ;; That let is the compiler's, not the program's, so it goes to
-        ;; xpand-core-form and not to xpand: xpand looks a macro up by
-        ;; spelling first, and a program that excludes let and defines a
-        ;; let macro of its own would otherwise capture a let it never
-        ;; wrote.  The begin this replaces could not be captured that way,
-        ;; so going through xpand made (let* () 7) answer the macro's
-        ;; value.  The other lets the expander writes (the outer let*
-        ;; levels, letrec's, a named let, do) are still looked up by
-        ;; spelling; that predates this and is not changed here.
+        ;; Every let and let* here is the compiler's, not the program's,
+        ;; so each carries a generated head: a program that excludes let
+        ;; and defines a let macro of its own, or binds let locally, does
+        ;; not capture a let it never wrote.
         ((let*)
          (let ((bs (cadr e)))
            (if (null? bs)
-               (xpand-core-form `(let () . ,(cddr e)))
-               (xpand `(let (,(car bs)) (let* ,(cdr bs) . ,(cddr e)))))))
+               (xpand (cons* (generated-head 'let) '() (cddr e)))
+               (xpand (list (generated-head 'let) (list (car bs))
+                            (cons* (generated-head 'let*) (cdr bs)
+                                   (cddr e)))))))
         ((let)
          (if (symbol? (cadr e))
              ;; a named let whose name only ever recurs as a
              ;; correct-arity tail call lowers to %loop -- a wasm
              ;; loop block, no closure, no call per iteration.
-             ;; Anything else keeps the letrec spelling
-             (let* ((name (cadr e)) (bs (caddr e))
-                    (params (map car bs))
+             ;; Anything else keeps the letrec spelling.  The name and
+             ;; the parameters are emitted as bound, which is what
+             ;; loop-ok? and the %loop it builds read.
+             (let* ((bs (caddr e))
                     (xinits (map-in-order (lambda (b) (xpand (cadr b)))
                                           bs))
-                    (xbody (xpand-body* (cdddr e) (cons name params))))
+                    (rn (fresh-renames (cons (cadr e) (map car bs))))
+                    (name (cdr (car rn)))
+                    (params (map cdr (cdr rn)))
+                    (xbody (xpand-body* (cdddr e) rn)))
                (if (and (> *opt-level* 0)
                         (loop-ok? name (length params) params xbody))
                    `(%loop ,name ,params ,xinits . ,xbody)
@@ -716,44 +882,50 @@
                        (set! ,name (lambda ,params . ,xbody))
                        ,name)
                      . ,xinits)))
-             `(let ,(map (lambda (b) (list (car b) (xpand (cadr b))))
-                         (cadr e))
-                . ,(xpand-body* (cddr e) (map car (cadr e))))))
+             (let* ((xbs (map (lambda (b) (list (car b) (xpand (cadr b))))
+                              (cadr e)))
+                    (rn (fresh-renames (map car (cadr e)))))
+               `(let ,(map (lambda (b r) (cons (cdr r) (cdr b))) xbs rn)
+                  . ,(xpand-body* (cddr e) rn)))))
         ;; The body follows the assignments that initialise the bindings,
         ;; so it is wrapped in a let of its own: placed straight after
         ;; the set!s, its definitions came after expressions and were not
-        ;; collected as the body's definitions.
-        ;;
-        ;; Both lets are the compiler's, and both are expanded through
-        ;; xpand, so a program that defines a let macro of its own gets
-        ;; both.  The outer one it got before this wrapper existed; the
-        ;; inner one would be new, and a macro that passes a let with
-        ;; bindings through but rewrites one without them would change
-        ;; the body's value.  So the wrapper is added only where no macro
-        ;; takes a let, and there the inner let meets the same selection
-        ;; the outer one did, so no let macro takes it either.  Where one
-        ;; does, the body is placed as it was before, definitions in it
-        ;; are not collected, and the result is what it was.
+        ;; collected as the body's definitions.  Both lets, the set!s and
+        ;; the (begin) placeholders are the compiler's, with generated
+        ;; heads, so no let macro of the program's takes either let.
         ((letrec letrec*)
          (let ((bs (cadr e)))
-           (xpand `(let ,(map (lambda (b) `(,(car b) (begin))) bs)
-                     ,@(map (lambda (b) `(set! ,(car b) ,(cadr b))) bs)
-                     . ,(if (macro-for 'let)
-                            (cddr e)
-                            `((let () . ,(cddr e))))))))
+           (xpand
+            (cons* (generated-head 'let)
+                   (map (lambda (b)
+                          (list (car b) (list (generated-head 'begin))))
+                        bs)
+                   (append
+                    (map (lambda (b)
+                           (list (generated-head 'set!) (car b) (cadr b)))
+                         bs)
+                    (list (cons* (generated-head 'let) '() (cddr e))))))))
         ((do)
          (let ((bs (cadr e)) (tc (caddr e)) (cmds (cdddr e))
                (loop (gensym "loop")))
            (xpand
-            `(let ,loop ,(map (lambda (b) (list (car b) (cadr b))) bs)
-               (if ,(car tc)
-                   (begin . ,(if (null? (cdr tc)) '((begin)) (cdr tc)))
-                   (begin ,@cmds
-                          (,loop . ,(map (lambda (b)
-                                           (if (pair? (cddr b))
-                                               (caddr b)
-                                               (car b)))
-                                         bs))))))))
+            (list (generated-head 'let) loop
+                  (map (lambda (b) (list (car b) (cadr b))) bs)
+                  (list (generated-head 'if) (car tc)
+                        (cons (generated-head 'begin)
+                              (if (null? (cdr tc))
+                                  (list (list (generated-head 'begin)))
+                                  (cdr tc)))
+                        (cons (generated-head 'begin)
+                              (append
+                               cmds
+                               (list
+                                (cons loop
+                                      (map (lambda (b)
+                                             (if (pair? (cddr b))
+                                                 (caddr b)
+                                                 (car b)))
+                                           bs))))))))))
         ((quasiquote) (xpand-qq (cadr e) 0))
         ((define-record-type) (xpand-record e))
         ((import)
@@ -807,9 +979,91 @@
          ;; (case E ((d ...) body ...) ... (else body ...))
          (let ((t (gensym "t")))
            (xpand
-            (list 'let (list (list t (cadr e)))
+            (list (generated-head 'let) (list (list t (cadr e)))
                   (build-case t (cddr e))))))
-        (else (xpand* e))))
+        ;; every other form keeps its shape: the head (the plain tag for a
+        ;; generated head or an alias) and its operands expanded
+        (else (cons (head-out tag (car e)) (xpand* (cdr e))))))
+
+;; ---- definitions ----------------------------------------------------
+;;
+;; A procedure header is never expanded as a form: its formals are
+;; binders over the body, and the body is a body.  The definition keeps
+;; its shape -- the later passes tell (define (f x) ...) from
+;; (define f (lambda ...)).
+;;
+;; At the top level or in a library the name is neither registered nor
+;; renamed.  In a body, a direct definition was registered when the
+;; body began and is emitted under its bound name.  Any other define in
+;; a body is LATE -- a macro produced it, or it sits inside a begin --
+;; and binds from here to the end of the body, its right-hand side
+;; included, but is not renamed: uses before it were already emitted
+;; under its spelling.  So if its spelling is one the later passes
+;; dispatch on, a later call of it is refused (xpand-core).
+(define (xpand-define e)
+  (let* ((target (cadr e))
+         (name (if (pair? target) (car target) target))
+         (name-out (define-name! name)))
+    (if (pair? target)
+        (let ((rn (fresh-renames (binder-names (cdr target)))))
+          (cons* 'define
+                 (cons name-out (rename-formals (cdr target) rn))
+                 (xpand-body* (cddr e) rn)))
+        (cons* 'define name-out (xpand* (cddr e))))))
+
+;; Spellings a top-level or library definition cannot make its own:
+;; the forms the expander dispatches on by name, the auxiliaries it
+;; recognises by spelling, apply (which the later passes take as the
+;; form whatever is defined), and the prelude's macros of (rnrs).  Such
+;; a definition is refused where it is written when the import table
+;; does not have the name -- excluded, or never imported -- because a
+;; use of the spelling would still mean the form and the definition
+;; would be silently ignored.  (While the table has the name, the
+;; import rule refuses the definition, as before.)  Names a top-level
+;; definition does take over are not here: call/cc,
+;; call-with-current-continuation, parameterize, export, syntax-rules,
+;; syntax-case, with-syntax, syntax, list, cons, vector, and
+;; define-syntax, which a program may define as its own macro.
+(define $undefinable-at-top-level
+  '(quote quasiquote unquote unquote-splicing if let let* letrec letrec*
+    lambda begin set! define do case cond and or not when unless else =>
+    define-record-type import library apply assert guard let-values
+    let*-values endianness))
+
+;; set while the prelude is expanded, which has no clause and defines
+;; what it likes
+(define *expanding-prelude?* #f)
+
+(define (define-name! name)
+  (cond
+   ((not *body-binders*)
+    (when (and (not *expanding-prelude?*)
+               (memq (unmark name) $undefinable-at-top-level)
+               (not (expand-entry (unmark name))))
+      (errorf 'goeteia
+              (string-append "this names a core form, which a program cannot"
+                             " yet define for itself; choose another name:")
+              (unmark name)))
+    name)
+   ((memq name *body-binders*) (renamed-ref name))
+   ;; A late definition of an identifier an enclosing binder renamed:
+   ;; the references before it were emitted under the outer binder's
+   ;; fresh name, and this one is not renamed, so the two cannot be told
+   ;; apart afterwards.  Refused, as a call of a late core-form name is.
+   ((not (eq? (renamed-ref name) name))
+    (errorf 'goeteia
+            (string-append
+             (symbol->string (unmark name))
+             " names a core form and is defined in this body by a"
+             " macro or inside a begin, under a local binding of the"
+             " same name; this is not supported"
+             " -- write the definition directly in the body:")
+            (unmark name)))
+   (else
+    (set! *expand-bound* (cons name *expand-bound*))
+    (when (memq (unmark name) $dispatched-spellings)
+      (set! *late-dispatched* (cons name *late-dispatched*)))
+    name)))
 ;; (define-record-type <spec> (fields <field> ...)) with
 ;; <spec> = name | (name constructor predicate) and
 ;; <field> = name | (immutable name [acc]) | (mutable name [acc [mut]]).
@@ -840,12 +1094,19 @@
           (map xpand
                ;; the descriptor's pair is the compiler's own, not a call the
                ;; program wrote -- a program that excludes cons still gets a
-               ;; record type, exactly as quasiquote's append works
-               (cons `(define ,rtd (,(compiler-introduced 'cons)
-                                    ',(unmark name) '()))
-                     (cons `(define (,ctor . ,fnames)
+               ;; record type, exactly as quasiquote's append works.  The
+               ;; definitions, tests and quotes are the compiler's too, so
+               ;; they carry generated heads, and the accessors' error is
+               ;; introduced like cons: a program that defines its own
+               ;; error does not have it called by a record accessor.
+               (cons `(,(generated-head 'define) ,rtd
+                       (,(compiler-introduced 'cons)
+                        (,(generated-head 'quote) ,(unmark name))
+                        (,(generated-head 'quote) ())))
+                     (cons `(,(generated-head 'define) (,ctor . ,fnames)
                               (%record ,rtd . ,fnames))
-                           (cons `(define (,pred x) (%record? x ,rtd))
+                           (cons `(,(generated-head 'define) (,pred x)
+                                   (%record? x ,rtd))
                                  (let accs ((fs fields) (i 0))
                                    (if (null? fs)
                                        '()
@@ -884,11 +1145,16 @@
                                           ;; because the next edit that
                                           ;; lengthens either body crosses
                                           ;; the same line silently.
-                                          `(define (,(caddr f) r)
-                                             (if (%record? r ,rtd)
-                                                 (%record-ref r ,nf ,i)
-                                                 (error ',(unmark (caddr f))
-                                                        "not a record of this type" r)))
+                                          `(,(generated-head 'define)
+                                            (,(caddr f) r)
+                                            (,(generated-head 'if)
+                                             (%record? r ,rtd)
+                                             (%record-ref r ,nf ,i)
+                                             (,(compiler-introduced 'error)
+                                              (,(generated-head 'quote)
+                                               ,(unmark (caddr f)))
+                                              "not a record of this type"
+                                              r)))
                                           (append
                                            (if (cadr f)
                                                (list
@@ -902,11 +1168,16 @@
                                                 ;; accessor's is under it --
                                                 ;; see the note there before
                                                 ;; making either one longer.
-                                                `(define (,(cadddr f) r v)
-                                                   (if (%record? r ,rtd)
-                                                       (%record-set! r ,nf ,i v)
-                                                       (error ',(unmark (cadddr f))
-                                                              "not a record of this type" r))))
+                                                `(,(generated-head 'define)
+                                                  (,(cadddr f) r v)
+                                                  (,(generated-head 'if)
+                                                   (%record? r ,rtd)
+                                                   (%record-set! r ,nf ,i v)
+                                                   (,(compiler-introduced 'error)
+                                                    (,(generated-head 'quote)
+                                                     ,(unmark (cadddr f)))
+                                                    "not a record of this type"
+                                                    r))))
                                                '())
                                            (accs (cdr fs) (+ i 1))))))))))))))
 (define (parse-field fs rec-name)
@@ -949,20 +1220,31 @@
 
 (define (build-case t clauses)
   (if (null? clauses)
-      '(begin)
+      (list (generated-head 'begin))
       (let ((c (car clauses)))
-        (if (eq? (resolve-tag (car c)) 'else)
-            (cons 'begin (cdr c))
-            ;; the head is an intrinsic or an introduced identifier, so
-            ;; neither spelling is one the program can capture
+        (if (auxiliary? (car c) 'else)
+            (cons (generated-head 'begin) (cdr c))
+            ;; the comparison is an intrinsic or an introduced identifier,
+            ;; and the tests, quotes and sequences carry generated heads,
+            ;; so no spelling here is one the program can capture
             (let ((cmp (if (all-true? eq-exact-datum? (car c))
                            (intrinsic-for 'eq?)
                            (compiler-introduced 'eqv?))))
-              (list 'if
-                    (cons 'or (map (lambda (d) (list cmp t (list 'quote d)))
-                                   (car c)))
-                    (cons 'begin (cdr c))
+              (list (generated-head 'if)
+                    (cons (generated-head 'or)
+                          (map (lambda (d)
+                                 (list cmp t (list (generated-head 'quote) d)))
+                               (car c)))
+                    (cons (generated-head 'begin) (cdr c))
                     (build-case t (cdr clauses))))))))
+
+;; An auxiliary keyword (else, =>) is one only where no local binding
+;; of its spelling is in scope: (let ((else #f)) (cond (else 1) ...))
+;; tests the variable.
+(define (auxiliary? x name)
+  (and (symbol? x)
+       (not (lexically-bound? x))
+       (eq? (resolve-tag x) name)))
 ;; quasiquote, with unquote-splicing via append
 ;; The quasiquote rule, written once.  Both the expander that emits code
 ;; (xpand-qq) and the interpreter that builds values inside a transformer
@@ -981,6 +1263,12 @@
 (define (qq-append ops) (list-ref ops 2))
 (define (qq-vector ops) (list-ref ops 3))
 (define (qq-literal ops) (list-ref ops 4))
+;; whether an identifier is bound where the template is, so that
+;; unquote, unquote-splicing and quasiquote spelled by it are list
+;; structure and not the auxiliary keywords
+(define (qq-bound? ops) (list-ref ops 5))
+(define (qq-tag x ops)
+  (if (and (symbol? x) ((qq-bound? ops) x)) #f (resolve-tag x)))
 
 ;; DATUM-OK? says whether the datum forms may be recognised at T itself.
 ;; A list's spine can end in a dotted (unquote e), so they are recognised
@@ -995,8 +1283,8 @@
       (if (vector? t)
           ((qq-vector ops) (qq-walk (vector->list t) level #f ops))
           ((qq-literal ops) t))
-      (let ((tag (resolve-tag (car t)))
-            (head-tag (and (pair? (car t)) (resolve-tag (caar t)))))
+      (let ((tag (qq-tag (car t) ops))
+            (head-tag (and (pair? (car t)) (qq-tag (caar t) ops))))
         (cond
          ((and datum-ok? (eq? tag 'unquote) (= level 0)
                (pair? (cdr t)) (null? (cddr t)))
@@ -1049,7 +1337,8 @@
                  (lambda (a b) (list (compiler-introduced 'cons) a b))
                  (lambda (a b) (list (compiler-introduced 'append) a b))
                  (lambda (ls) (list (compiler-introduced 'list->vector) ls))
-                 (lambda (d) (list 'quote d)))))
+                 (lambda (d) (list 'quote d))
+                 lexically-bound?)))
 (define (xpand* es)
   ;; first to last, iterating: a list of 20,000 forms is one level
   (let loop ((es es) (acc '()))
@@ -1061,18 +1350,19 @@
       '(begin)
       (let ((c (car clauses)))
         (cond
-         ((eq? (resolve-tag (car c)) 'else) (xpand `(begin . ,(cdr c))))
+         ((auxiliary? (car c) 'else)
+          (xpand (cons (generated-head 'begin) (cdr c))))
          ((null? (cdr c))
           (let ((t (gensym "t")))
             `(let ((,t ,(xpand (car c))))
                (if ,t ,t ,(xpand-cond (cdr clauses))))))
-         ((and (pair? (cdr c)) (eq? (resolve-tag (cadr c)) '=>))
+         ((and (pair? (cdr c)) (auxiliary? (cadr c) '=>))
           (let ((t (gensym "t")))
             `(let ((,t ,(xpand (car c))))
                (if ,t (,(xpand (caddr c)) ,t)
                    ,(xpand-cond (cdr clauses))))))
          (else `(if ,(xpand (car c))
-                    ,(xpand `(begin . ,(cdr c)))
+                    ,(xpand (cons (generated-head 'begin) (cdr c)))
                     ,(xpand-cond (cdr clauses))))))))
 
 ;;;; ------------------------------------------------------------------
@@ -1407,6 +1697,12 @@
 (define (meta-eval e env)
   (cond
    ((symbol? e) (meta-ref e env))
+   ;; a head the environment binds to a value is a variable, whatever
+   ;; its spelling; a pattern variable is not a value here, since it
+   ;; cannot be applied and desugar-rules builds (syntax ...) under one
+   ((and (pair? e) (meta-value-bound? (car e) env))
+    (meta-apply (meta-eval (car e) env)
+                (map (lambda (a) (meta-eval a env)) (cdr e))))
    ((pair? e)
     (let ((tag (resolve-tag (car e))))
       (case tag
@@ -1459,6 +1755,11 @@
                           (map (lambda (a) (meta-eval a env)) (cdr e)))))))
    (else e)))
 
+(define (meta-value-bound? x env)
+  (and (symbol? x)
+       (let ((slot (assq x env)))
+         (and slot (not (mv? mv-pvar (cdr slot)))))))
+
 (define (meta-ref name env)
   (let ((slot (assq name env)))
     (if slot
@@ -1492,7 +1793,8 @@
   (if (null? clauses)
       (void)
       (let ((c (car clauses)))
-        (if (eq? (resolve-tag (car c)) 'else)
+        (if (and (not (meta-value-bound? (car c) env))
+                 (eq? (resolve-tag (car c)) 'else))
             (meta-seq (cdr c) env)
             (let ((t (meta-eval (car c) env)))
               (cond
@@ -1510,7 +1812,8 @@
                  (lambda (a b) (cons a b))
                  (lambda (a b) (append a b))
                  (lambda (ls) (list->vector ls))
-                 (lambda (d) d))))
+                 (lambda (d) d)
+                 (lambda (x) (meta-value-bound? x env)))))
 
 (define (meta-apply f args)
   (cond
@@ -1550,6 +1853,22 @@
   (let scan ((xs args))
     (or (null? xs) (null? (cdr xs))
         (and (ok? (car xs) (cadr xs)) (scan (cdr xs))))))
+
+;; One of the fresh tokens of the application now running (a value of
+;; its rename table, not a key).  apply-macro installs the table for
+;; exactly the extent of the transformer's run.
+(define (introduced-by-this-application? x)
+  (and (symbol? x)
+       (let scan ((rs *renames*))
+         (and (pair? rs)
+              (or (eq? (cdr (car rs)) x) (scan (cdr rs)))))))
+;; every symbol of d, in lists and vectors, as the identifier the
+;; template would have introduced had it written that spelling
+(define (rename-datum d)
+  (cond ((symbol? d) (rename-introduced d))
+        ((pair? d) (cons (rename-datum (car d)) (rename-datum (cdr d))))
+        ((vector? d) (list->vector (map rename-datum (vector->list d))))
+        (else d)))
 
 (define (meta-prim-apply name args)
   ;; Too few arguments used to reach the host as (car '()), which
@@ -1618,7 +1937,12 @@
     ((free-identifier=?) (eq? (unmark (a)) (unmark (b))))
     ((bound-identifier=?) (eq? (a) (b)))
     ((syntax->datum) (strip-marks (a)))
-    ((datum->syntax) (b))
+    ;; a context the current application introduced names that
+    ;; application's identifiers; any other context leaves d bare
+    ((datum->syntax)
+     (if (introduced-by-this-application? (a))
+         (rename-datum (b))
+         (b)))
     ((generate-temporaries) (map-in-order (lambda (x) (gensym "t")) (a)))
     ((void) (void))
     (else (errorf 'goeteia "unhandled transformer primitive:" name))))
@@ -2504,11 +2828,33 @@
       (loop (cdr fs) (loop (cdr (car fs)) acc)))
      (else (loop (cdr fs) acc)))))
 
+;; A VARIABLE cannot be imported under a spelling a top-level
+;; definition cannot take ($undefinable-at-top-level), apply excepted:
+;; it is the same rule's second entry.  Wherever such a spelling is
+;; recognised -- a head after expansion, a cond clause's else or =>, a
+;; quasiquote's unquote -- it is read as the form or the auxiliary and
+;; not as the variable, so the import is refused where it is written,
+;; by name.  Judged per entry of the table, so a rename, a prefix or any
+;; other clause that produces such a spelling counts.  apply, call/cc
+;; and call-with-current-continuation reach the variable in every
+;; position and are accepted.  A keyword imported under another
+;; keyword's name (a swap) is not a variable and is not affected; a
+;; spelling imported both ways is the import conflict rule's.
+(define (unimportable-as-variable? spelling)
+  (and (memq spelling $undefinable-at-top-level)
+       (not (eq? spelling 'apply))))
+
 (define (build-expand-table specs)
   (map (lambda (b)
          (let* ((spelling (car b))
                 (id (cdr b))
                 (kw (identity-keyword? id)))
+           (when (and (not kw) (unimportable-as-variable? spelling))
+             (errorf 'goeteia
+                     (string-append "this names a core form, and a variable"
+                                    " cannot be imported under it;"
+                                    " choose another name:")
+                     spelling))
            (list spelling (if kw 'keyword 'variable) (cdr id) id)))
        (merge-import-bindings specs)))
 
@@ -5912,6 +6258,10 @@
 ;; Calls to anything else stay impure.
 (define (pure-init? e known)
   (cond
+   ;; a head the initialiser's own let binds is a call of that local,
+   ;; whatever constructor its spelling names
+   ((and (pair? e) (symbol? (car e)) (memq (unmark (car e)) (car known)))
+    #f)
    ((pair? e)
     (case (resolve-tag (car e))
       ((quote lambda) #t)
@@ -6691,6 +7041,17 @@
                                            bound)
                                        visit refs?))
                                     (cddr f))))))
+         ;; After expansion an if, begin or set! head is that form and
+         ;; nothing else -- a local binder so spelled was renamed, and a
+         ;; variable cannot be imported under these spellings
+         ;; (unimportable-as-variable?) -- so it is not a reference to
+         ;; visit.
+         ;; Visiting it let canonicalisation read the expander's plain
+         ;; `if' through the program's import map a second time: under
+         ;; (rename (rnrs) (when if) (if when)) it became `when'.
+         ((and (symbol? h) (memq (unmark h) '(if begin set!)))
+          (cons h (map-tail (lambda (a) (walk-heads* a bound visit refs?))
+                            (cdr f))))
          (else
           (let ((head (if (symbol? h) (or (visit h bound) h) h)))
             (cons (if (pair? h) (walk-heads* h bound visit refs?) head)
@@ -6950,6 +7311,10 @@
   (set! *program-form?* #f)
   (set! *program-clause?* #f)
   (set! *expand-bound* '())
+  (set! *expand-renamed* '())
+  (set! *body-binders* #f)
+  (set! *late-dispatched* '())
+  (set! *expanding-prelude?* #f)
   (set! *expand-table* '())
   (set! *program-defines* '())
   (set! *program-forms* '())
@@ -6990,12 +7355,14 @@
          ;; a written head in it must not resolve against the USER's
          ;; renames, the same hazard the prefix split exists for
          (%table-off (set! *expand-table* '()))
+         (%prelude-on (set! *expanding-prelude?* #t))
          (expanded-prefix (if (> pre-n 0)
                               (close-scope *prelude-scope*
                                            (expand-forms (first-n forms pre-n)
                                                          (first-n locs pre-n))
                                            '())
                               '()))
+         (%prelude-off (set! *expanding-prelude?* #f))
          (%program-form-on (set! *program-form?* #t))
          ;; the program's own scope for the expander, built from the
          ;; clause the program wrote, after collect-macros! has

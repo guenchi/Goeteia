@@ -197,37 +197,107 @@ remedy is the safe side of that trade.
 ## A program cannot yet define its own core keyword
 
 A name excluded from `(rnrs)` with `except` may be defined by the
-program, and its calls are meant to reach that definition. For
-procedures that works. For the **core syntactic keywords** (`if`,
-`when`, `and`, `let`, `quote` and the rest) it is not implemented: the
-compiler recognises them by their spelling, not by what the program's
-clause binds, so a program-defined one does not reliably mean the
-program's definition, and nothing says when it does not.
+program, and its uses then reach that definition.  For procedures that
+works.  For the names the compiler recognises by **spelling** it does
+not: a use of the spelling still means the form, whatever the program
+defined.  So since 2026-11-12 (ledger R43) a top-level or library
+definition of one of these names is **refused where it is written**,
+when the import clause does not bring the name in (it was excluded, or
+is not exported at all):
 
-For `if`, what happens depends on where the definition and the calls
-are, measured with `(import (except (rnrs) if))`:
+```
+Exception in goeteia: this names a core form, which a program cannot yet define for itself; choose another name: when
+```
 
-- a two-part call to a top-level `(define (if a b) ...)`, and a call to
-  an internal definition, reached the program's definition;
-- a three-part call to a top-level definition, or one inside a
-  procedure defined before the `if` was, stopped at run time with
-  `illegal cast`;
-- an `if` the program never defined compiled as the keyword;
-- a definition or call with other than two or three parts -- a
-  four-parameter `(define (if a b c d) ...)`, a rest-argument
-  `(define (if . xs) ...)` -- is refused as `malformed if`, because the
-  check on the keyword's shape cannot tell the program's `if` from the
-  keyword.
+The names: `quote` `quasiquote` `unquote` `unquote-splicing` `if` `let`
+`let*` `letrec` `letrec*` `lambda` `begin` `set!` `define` `do` `case`
+`cond` `and` `or` `not` `when` `unless` `else` `=>`
+`define-record-type` `import` `library` `apply` `assert` `guard`
+`let-values` `let*-values` `endianness`.  Before, some of these definitions were
+refused by accident with a message naming the wrong keyword, some
+crashed the compiler, and the rest compiled and were silently ignored.
 
-The other keywords fail in their own ways. Excluding and then defining
-`when` or `and` is refused with a message about the wrong name
-(`imported name may not be defined ... if`, because the definition's
-own header was expanded as an expression); `let` stops the compiler
-with an internal error; and a program-defined `quote` is ignored, the
-keyword answering instead.
+A library's private definition of such a name is not refused: library
+privates are given the library's namespace before expansion, so the
+library's own uses reach it.  An exported one is refused like a
+top-level one.
 
-Until the keywords are resolved by scope, do not exclude one to define
-your own; choose another name.
+A *variable* cannot be imported under one of these spellings either,
+`apply` excepted: `(rename (only (rnrs) list) (list begin))` is
+refused where it is written, with the same advice, and so is any
+other clause that produces such a name (a `prefix` that yields `if`,
+say).  Wherever the compiler recognises one of these spellings -- a
+head after expansion, a `cond` clause's `else` or `=>`, a quasiquote's
+`unquote` -- it reads the form, not the variable.  Under `apply`,
+`call/cc` and `call-with-current-continuation` the imported variable
+is reached everywhere, and the import is accepted.  Importing a
+keyword under another keyword's name (a swap) is not affected.
+Making a variable usable under these names is ledger R43c.
+
+While the import clause still brings the name in, defining it is the
+import rule's refusal (`imported name may not be defined; exclude it
+with except`), as for any imported name.
+
+A top-level definition of `call/cc`, `call-with-current-continuation`,
+`parameterize`, `export`, `syntax-rules`, `syntax-case`, `with-syntax`,
+`syntax`, `list`, `cons` or `vector` does take effect, and a program that excludes `define-syntax` may
+define its own; none of these is refused.
+
+Choose another name.  A **local** binding of any of these spellings is
+a different matter: it shadows the keyword (next section).
+
+## A local binding shadows a keyword
+
+Since 2026-11-12 (ledger R43) whether a head names a keyword or a
+variable follows its binding, not its spelling.  A name bound by
+`lambda` (fixed, rest or improper formals), `let`, named `let`, `do`,
+`letrec`, a procedure definition's formals, or a definition written
+directly in a body, is a variable in its scope, whatever form its
+spelling names: `(let ((if f)) (if 1 2 3 4))` calls `f`.  The
+expander's own forms (what `when`, `do`, `case`, a record type and the
+rest expand to) are not taken by such a binding, nor by a program's
+macro of the same name.  `else` and `=>` in `cond` and `case`, and
+`unquote`, `unquote-splicing` and `quasiquote` in a quasiquote, are the
+auxiliary keywords only where no local binding of that spelling is in
+scope.  An import that renames one keyword to another's name is
+resolved once, so a swap can be written.
+
+What is not done yet (ledger R43d, and R43b where named):
+
+- A definition a macro produces in a body, or one inside a `begin` in a
+  body, binds from where it stands, not over the whole body.  If its
+  name is a core form's (`if`, `let`, `quote`, `apply` ...), a later
+  *call* of it is refused: `... names a core form and is defined in
+  this body by a macro or inside a begin; calling it is not supported
+  -- write the definition directly in the body`.  A use of the spelling
+  as syntax earlier in the body keeps that reading even when it runs
+  after the definition.  A definition inside a `begin` in a body is not
+  visible after expansion at all (unbound variable), and a late binder
+  spelled `quote` or `set!` used as a value is fragile.
+- Local `define-record-type` and local `define-syntax` are not
+  supported.
+- A program's macro named like a core or derived form is taken by the
+  prelude's own templates (R43b): with a user `let` macro, the
+  prelude's uses of `let` expand through it.
+- `datum->syntax` whose context another macro application introduced,
+  or a generated temporary, returns the datum bare; with a local binder
+  of that spelling in reach it can answer wrongly, and nothing detects
+  it.  A context the same application introduced names that
+  application's identifiers.
+- `free-identifier=?` in a transformer compares spellings: under a
+  local `else` it says two identifiers are the same keyword.
+- Symbols a procedural transformer builds from quoted data carry no
+  mark, so a local binding at the use site captures them
+  (`lib/web/sx.ss` emits `lambda`, `quote` and `list` this way).
+- A pass that runs before expansion over library bodies reads `quote`,
+  `quasiquote`, `define-syntax`, `define-record-type` and `case` by
+  spelling: a local binding of one of them around a library-private
+  name does not compile.
+- Hygiene of ordinary variables (a template's free `x` against a
+  user's local `x`) is decided by the back end's exact-token rule, not
+  by the expander.
+- The clause keywords of `define-record-type` and the target tags of
+  `%target-case` under a local binding.
 
 ## Trigonometric accuracy
 
@@ -529,10 +599,13 @@ What is bounded:
   `list` with 20,000 arguments and an `apply` with 20,000 leading
   arguments.  Procedures of many thousands of *parameters* are not
   claimed: several compiler passes recur once per parameter.
-- Below 1000, typed calls of **518 or more** arguments in tail position
-  crash V8 on arm64 while it compiles the module (the process dies; ledger
-  R68).  That is an engine fault in today's convention, not a limit of
-  the program: keep such calls out of tail position, or pass a list.
+- Below 1000, a tail call of **518 or more** arguments through a
+  closure, or directly to a top-level procedure with a rest parameter,
+  crashes V8 on arm64 while it compiles the module (the process dies;
+  ledger R68).  A direct tail call of a top-level procedure with only
+  fixed parameters does not, up to 999.  That is an engine fault in
+  today's convention, not a limit of the program: keep such calls out
+  of tail position, or pass a list.
 
 ## Every hash this implementation computes is a fixnum
 
