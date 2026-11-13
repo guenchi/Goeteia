@@ -368,7 +368,7 @@ Both points are damped at one rate, and that is what holds the heading steady: t
 
 ## `(gfx gl)`
 
-- `gl-attach!` — take the WebGL2 context on a canvas and set up the slot tables; everything else here needs it first
+- `gl-attach!` — take the WebGL2 context on a canvas and set up the slot tables; everything else here needs it first. Each call, on the same canvas too, makes a new replayer with empty slot tables and leaves the command buffer alone: words encoded and not yet flushed are replayed by the next `cmd-flush!` on the new replayer, where slot numbers name its objects, so call `cmd-begin!` before encoding unless those words are meant for the new context
 - `gl-program!` — link a program from `(gfx glsl)` forms into a slot. The optional fourth argument is a comma-joined attribute-name string bound to locations 0, 1, ... before linking -- drivers do not otherwise guarantee declaration order
 - `gl-buffer!` — create a buffer object in a slot
 - `gl-uniform!` — look up a uniform's location in a program once and park it in a slot, so the per-frame command carries a number
@@ -391,8 +391,8 @@ Both points are damped at one rate, and that is what holds the heading steady: t
 - `cmd-resolve-mrt!` — resolve a gl-target-mrt-msaa! target in one command: each colour attachment in turn, then the depth, then the canvas is bound again
 - `cmd-read-pixels!` — read a `w` by `h` rectangle back into staging memory as `w*h*4` bytes at `base`, readable with `%mem-u8-ref` once `cmd-flush!` returns. This stalls the frame -- the GPU has to finish first
 - `cmd-region!` — point the command encoder at a staging region, with an optional byte limit; everything encoded afterwards is written there
-- `cmd-begin!` — start a frame: reset the write cursor and the draw counter. Words encoded since the last `cmd-flush!` are dropped; what the library recorded about them (an upload, a VAO's setup, a uniform's value) stops holding, and each of those is established again where it is next used
-- `cmd-flush!` — replay the whole frame in one bridge call. Flushing again replays the frame again, from its start
+- `cmd-begin!` — start a frame: reset the write cursor and the draw counter. Words encoded since the last `cmd-flush!` are dropped, neither replayed nor refused, which is how a frame that raised half-way is abandoned: start the next one; what the library recorded about them (an upload, a VAO's setup, a uniform's value) stops holding, and each of those is established again where it is next used
+- `cmd-flush!` — replay the whole frame in one bridge call. Flushing again replays the frame again, from its start, not only the words added since the last flush
 - `cmd-pos` — the write cursor, in bytes -- what a caller checks against its region size to catch an overflow
 - `cmd-draws` — how many draws have been encoded this frame; the HUD reads it
 - `cmd-stamp` — where the encoder is in its own history, or #f while it is stale (after `cmd-region!`, a full region, `gl-attach!` or a replay that raised, until the next `cmd-begin!`). A library keeping its own record about GPU state stores it with the record, taken right after the record's words; it has no side effect
