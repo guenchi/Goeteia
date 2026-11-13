@@ -456,6 +456,9 @@ async function runCompiler(input, compilerWasm) {
         // compile errors print through the output channel before trapping
         const err = new Error(`compile failed: ${e.message}`);
         err.output = Buffer.from(out).toString('latin1');
+        // the trap itself, for a caller that has to tell the compiler's
+        // deliberate stop from an internal fault
+        err.trap = e.message;
         throw err;
     }
     return Buffer.from(out);
@@ -590,8 +593,24 @@ async function main() {
                           { ...(compilerWasm ? { compilerWasm } : {}), script,
                             ...(js ? { target: 'js' } : {}) });
     } catch (e) {
+        // The compiler reports an error by printing "unhandled exception:"
+        // and its message ($unhandled in the prelude) and then stopping on
+        // purpose, an unreachable trap (%abort, called from there only).
+        // That stop's name read like a crash of the compiler, so when both
+        // are seen -- the trap is unreachable and the output carries that
+        // line -- the last line points at the message instead.  Any other
+        // trap (a stack overflow, an illegal cast), or an unreachable with
+        // no such line, is an internal fault and keeps its name: the output
+        // channel also carries the module's bytes and anything else the
+        // compiler wrote, so output alone says nothing.  compileSource and
+        // compileToBytes still throw the same Error.
         if (e.output) process.stderr.write(e.output);
-        console.error(`\n${e.message}`);
+        if (e.trap === 'unreachable' && e.output
+            && /(^|\n)unhandled exception: /.test(e.output)) {
+            console.error('\ncompile failed -- the compiler\'s message is above');
+        } else {
+            console.error(`\n${e.message}`);
+        }
         process.exit(1);
     }
 }
