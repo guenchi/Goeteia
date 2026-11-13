@@ -36,7 +36,9 @@ are zero-copy.
 
 The context is WebGL 2 with a WebGL 1 fallback. The `gl-*!` procedures
 create resources; the `cmd-*!` procedures encode a frame between
-`cmd-begin!` and `cmd-flush!` (the one bridge call).
+`cmd-begin!` and `cmd-flush!` (the one bridge call). The replayer skips
+nothing it is given: a uniform set the stream carries is applied every
+time the frame is replayed.
 
 ```scheme
 (gl-attach! canvas)                      ; once
