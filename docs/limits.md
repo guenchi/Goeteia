@@ -136,6 +136,10 @@ procedures `hashtable-copy` `hashtable-mutable?` `hashtable-clear!`
 `hashtable-entries` `hashtable-equivalence-function`
 `hashtable-hash-function` `symbol-hash` and `string-ci-hash`.
 
+**Since 2026-11-13** (fourth batch) it also binds the enumerations
+(`make-enumeration`, `define-enumeration` and the twelve `enum-set-`
+procedures) and `rationalize`.
+
 That is a breaking change for a program that defined one of these names
 itself: a program may not define a name it imports, so such a program is
 now refused and needs `(import (except (rnrs) finite?))` or the like, or
@@ -196,6 +200,18 @@ Where these are narrower than R6RS:
   table.
 - A `case-lambda` call no clause accepts raises, naming `case-lambda`
   and the number of arguments.
+- Each `make-enumeration` makes a new enumeration type, so two calls
+  over the same symbols make two types, and `enum-set-union`,
+  `enum-set-intersection` and `enum-set-difference` refuse sets of two
+  types.  `define-enumeration` refuses a symbol outside the set when
+  the use is expanded (`no matching syntax-case clause`), not when it
+  runs; the constructor procedure from `enum-set-constructor` refuses
+  one when it is called.  `define-enumeration` defines two macros, so
+  like any `define-syntax` it is supported at the top level and in a
+  library, not in a body.
+- `rationalize` answers exactly when both arguments are exact and
+  inexactly when either is; an inexact pair is searched with its exact
+  values, so it finds the same simplest rational as the exact search.
 - The `bitwise-` procedures above take exact integers of any size, but
   `bitwise-and`, `bitwise-ior` and `bitwise-xor` still take fixnums
   only (see "Bitwise operations and big operands").
@@ -220,7 +236,7 @@ and `put-bytevector` procedures, `open-bytevector-input-port`,
 and its siblings, transcoders, codecs, buffer modes, port positions and
 custom ports; `bitwise-and`, `bitwise-ior` and `bitwise-xor` on
 bignums; the IEEE bytevector accessors;
-enumerations, the procedural record layer, Unicode normalisation and
+the procedural record layer, Unicode normalisation and
 title case.
 
 `div`, `mod`, `div0` and `mod0` are present but accept **exact

@@ -4306,3 +4306,151 @@
   (if (eq? ($ht-hash ht) $eqv-hash) #f ($ht-hash ht)))
 (define (symbol-hash s) (string-hash (symbol->string s)))
 (define (string-ci-hash s) (string-hash (string-foldcase s)))
+
+;; ---- R6RS names, fourth batch: enumerations and rationalize ----
+
+;; ---- enumerations ----
+;;
+;; Each make-enumeration makes a new TYPE: its symbols, in order, with
+;; duplicates dropped.  Two calls over the same symbols are two types,
+;; told apart by identity, and the operations that need one type refuse
+;; sets of two.  A set is its type and the sorted indices of its members.
+(define-record-type ($enum-type $make-enum-type $enum-type?)
+  (fields (immutable symbols $enum-symbols)))
+(define-record-type ($enum-set $make-enum-set $enum-set?)
+  (fields (immutable type $enum-set-type)
+          (immutable indices $enum-set-indices)))
+
+(define ($enum-index type sym)
+  (let loop ((ss ($enum-symbols type)) (i 0))
+    (cond ((null? ss) #f)
+          ((eq? (car ss) sym) i)
+          (else (loop (cdr ss) (+ i 1))))))
+(define ($enum-all type)
+  (let loop ((i (- (length ($enum-symbols type)) 1)) (acc '()))
+    (if (< i 0) acc (loop (- i 1) (cons i acc)))))
+;; the sorted, duplicate-free index list of a list of indices
+(define ($enum-sort is)
+  (let loop ((is (list-sort < is)) (acc '()))
+    (cond ((null? is) (reverse acc))
+          ((and (pair? acc) (= (car acc) (car is))) (loop (cdr is) acc))
+          (else (loop (cdr is) (cons (car is) acc))))))
+
+(define (make-enumeration syms)
+  (let loop ((ss syms) (acc '()))
+    (if (null? ss)
+        (let ((type ($make-enum-type (reverse acc))))
+          ($make-enum-set type ($enum-all type)))
+        (loop (cdr ss) (if (memq (car ss) acc) acc (cons (car ss) acc))))))
+(define (enum-set-universe s)
+  (let ((type ($enum-set-type s))) ($make-enum-set type ($enum-all type))))
+(define (enum-set-indexer s)
+  (let ((type ($enum-set-type s)))
+    (lambda (sym) ($enum-index type sym))))
+(define (enum-set-constructor s)
+  (let ((type ($enum-set-type s)))
+    (lambda (syms)
+      ($make-enum-set
+       type
+       ($enum-sort
+        (map (lambda (sym)
+               (or ($enum-index type sym)
+                   (error 'enum-set-constructor
+                          "not a symbol of the enumeration" sym)))
+             syms))))))
+(define (enum-set->list s)
+  (let ((syms ($enum-symbols ($enum-set-type s))))
+    (map (lambda (i) (list-ref syms i)) ($enum-set-indices s))))
+(define (enum-set-member? sym s)
+  (let ((i ($enum-index ($enum-set-type s) sym)))
+    (and i (memv i ($enum-set-indices s)) #t)))
+;; R6RS compares two sets by their symbols, across types: s1's universe
+;; within s2's and s1's members within s2's
+(define (enum-set-subset? s1 s2)
+  (and (for-all (lambda (sym) ($enum-index ($enum-set-type s2) sym))
+                ($enum-symbols ($enum-set-type s1)))
+       (for-all (lambda (sym) (enum-set-member? sym s2))
+                (enum-set->list s1))))
+(define (enum-set=? s1 s2)
+  (and (enum-set-subset? s1 s2) (enum-set-subset? s2 s1)))
+(define ($enum-same-type who s1 s2)
+  (unless (eq? ($enum-set-type s1) ($enum-set-type s2))
+    (error who "the enum-sets are not of the same enumeration type" s1 s2))
+  ($enum-set-type s1))
+(define (enum-set-union s1 s2)
+  (let ((type ($enum-same-type 'enum-set-union s1 s2)))
+    ($make-enum-set type ($enum-sort (append ($enum-set-indices s1)
+                                             ($enum-set-indices s2))))))
+(define (enum-set-intersection s1 s2)
+  (let ((type ($enum-same-type 'enum-set-intersection s1 s2)))
+    ($make-enum-set type (filter (lambda (i) (memv i ($enum-set-indices s2)))
+                                 ($enum-set-indices s1)))))
+(define (enum-set-difference s1 s2)
+  (let ((type ($enum-same-type 'enum-set-difference s1 s2)))
+    ($make-enum-set type (remp (lambda (i) (memv i ($enum-set-indices s2)))
+                               ($enum-set-indices s1)))))
+(define (enum-set-complement s)
+  (let ((type ($enum-set-type s)))
+    ($make-enum-set type (remp (lambda (i) (memv i ($enum-set-indices s)))
+                               ($enum-all type)))))
+;; s1's members that s2's universe has, as a set of s2's type
+(define (enum-set-projection s1 s2)
+  (let ((type ($enum-set-type s2)))
+    ($make-enum-set
+     type
+     ($enum-sort (filter (lambda (i) i)
+                         (map (lambda (sym) ($enum-index type sym))
+                              (enum-set->list s1)))))))
+
+;; (define-enumeration type-name (symbol ...) constructor-syntax)
+;;
+;; type-name is a macro with one clause per symbol, so (type-name x) for
+;; an x outside the set matches no clause and is refused when it is
+;; expanded.  constructor-syntax takes its symbols through type-name, so
+;; it refuses the same way, and builds the set with the constructor of
+;; one enumeration made once, at the definition.
+(define-syntax define-enumeration
+  (syntax-rules ()
+    ((_ type-name (sym ...) constructor-syntax)
+     (begin
+       (define universe (make-enumeration '(sym ...)))
+       (define-syntax type-name
+         (syntax-rules (sym ...)
+           ((_ sym) 'sym) ...))
+       (define-syntax constructor-syntax
+         (syntax-rules ()
+           ((_ s (... ...))
+            ((enum-set-constructor universe)
+             (list (type-name s) (... ...))))))))))
+
+;; ---- rationalize ----
+;;
+;; The simplest rational within y of x: of the rationals in the closed
+;; interval, the one with the smallest denominator, then numerator.
+;; Exact when both arguments are exact; when either is inexact the
+;; search runs on exact values and the answer is made inexact.  An
+;; infinite tolerance answers 0.0 for a finite x; an infinite x is its
+;; own answer; a NaN anywhere, or both infinite, is a NaN.
+(define (rationalize x y)
+  (if (or (inexact? x) (inexact? y))
+      (let ((fx (inexact x)) (fy (inexact y)))
+        (cond ((or (not (fl=? fx fx)) (not (fl=? fy fy))) +nan.0)
+              ((not ($fl-finite? fy)) (if ($fl-finite? fx) 0.0 +nan.0))
+              ((not ($fl-finite? fx)) fx)
+              (else (inexact ($rationalize (exact fx) (exact fy))))))
+      ($rationalize x y)))
+(define ($rationalize x y)
+  (let ((y (abs y)))
+    ($simplest-between (- x y) (+ x y))))
+(define ($simplest-between lo hi)
+  (cond ((= lo hi) lo)
+        ((< 0 lo) ($simplest-positive lo hi))
+        ((< hi 0) (- 0 ($simplest-positive (- 0 hi) (- 0 lo))))
+        (else 0)))
+;; 0 < lo < hi
+(define ($simplest-positive lo hi)
+  (let ((fl (floor lo)))
+    (cond ((= fl lo) fl)
+          ((< fl (floor hi)) (+ fl 1))
+          (else (+ fl (/ 1 ($simplest-positive (/ 1 (- hi fl))
+                                               (/ 1 (- lo fl)))))))))

@@ -1028,7 +1028,7 @@
   '(quote quasiquote unquote unquote-splicing if let let* letrec letrec*
     lambda begin set! define do case cond and or not when unless else =>
     define-record-type import library apply assert guard let-values
-    let*-values endianness case-lambda))
+    let*-values endianness case-lambda define-enumeration))
 
 ;; set while the prelude is expanded, which has no clause and defines
 ;; what it likes
@@ -2676,7 +2676,14 @@
     flush-output-port port-eof? textual-port? binary-port?
     call-with-port hashtable-copy hashtable-mutable? hashtable-clear!
     hashtable-entries hashtable-equivalence-function
-    hashtable-hash-function symbol-hash string-ci-hash))
+    hashtable-hash-function symbol-hash string-ci-hash
+    ;; R20d: the enumerations (define-enumeration is syntax, also in
+    ;; $rnrs-syntax) and rationalize
+    make-enumeration enum-set-universe enum-set-indexer
+    enum-set-constructor enum-set->list enum-set-member?
+    enum-set-subset? enum-set=? enum-set-union enum-set-intersection
+    enum-set-difference enum-set-complement enum-set-projection
+    define-enumeration rationalize))
 
 ;; ---- the import map ----------------------------------------------
 ;;
@@ -2825,7 +2832,7 @@
     define-syntax do else guard if lambda let let* let*-values
     let-values letrec letrec* or parameterize quasiquote quote set!
     syntax-rules unless unquote unquote-splicing when endianness
-    case-lambda))
+    case-lambda define-enumeration))
 
 (define (identity-keyword? id)
   (let ((lib (car id)) (name (cdr id)))
