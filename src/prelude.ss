@@ -2140,12 +2140,22 @@
 
 (define (eqv? a b)
   (or (eq? a b)
-      (and (flonum? a) (flonum? b) (fl=? a b))
+      (and (flonum? a) (flonum? b) ($fl-eqv? a b))
       (and (%bignum? a) (%bignum? b) ($eq2 a b))
       (and (%ratio? a) (%ratio? b) ($eq2 a b))
       (and (%complex? a) (%complex? b)
            (eqv? (%cx-re a) (%cx-re b))
            (eqv? (%cx-im a) (%cx-im b)))))
+;; Two flonums are eqv? when they are the same number with the same
+;; sign: 0.0 and -0.0 are fl=? and are not eqv? (R6RS 11.5), which the
+;; sign of the reciprocal tells; and every NaN is eqv? to every NaN, as
+;; on Chez (R6RS leaves it open).  $eqv-hash hashes every flonum to 0, so
+;; it already agrees with this.
+(define ($fl-eqv? a b)
+  (if (fl=? a b)
+      (or (not (fl=? a 0.0))
+          (eq? (fl<? (fl/ 1.0 a) 0.0) (fl<? (fl/ 1.0 b) 0.0)))
+      (and (not (fl=? a a)) (not (fl=? b b)))))
 (define (number? x)
   (or (fixnum? x) (flonum? x) (%bignum? x) (%ratio? x) (%complex? x)))
 ;; x - x is 0.0 for every finite flonum, and NaN for an infinity or a

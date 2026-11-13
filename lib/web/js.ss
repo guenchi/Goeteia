@@ -53,9 +53,13 @@
       ;; travelled.  Stated as refusals of what is OUTSIDE, so the
       ;; endpoints are in by construction rather than by an off-by-one
       ;; that has to be read twice.
+      ;;
+      ;; A JavaScript -0 is integral and in range too, but the exact 0
+      ;; would lose its sign, so it stays the flonum -0.0.
       (if (and (integer? f)
                (not (fl<? f (fixnum->flonum -536870912)))
-               (not (fl<? (fixnum->flonum 536870911) f)))
+               (not (fl<? (fixnum->flonum 536870911) f))
+               (not (and (fl=? f 0.0) (fl<? (fl/ 1.0 f) 0.0))))
           (%fl->fx f)
           f)))
 

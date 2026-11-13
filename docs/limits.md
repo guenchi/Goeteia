@@ -16,7 +16,8 @@ until a slider hits an integral position.
 
 **Cause**: `js->number` returns a *fixnum* whenever the JS value is
 integral (`0`, `1`, a slider at an exact stop), and a flonum
-otherwise.  The `fl+ fl- fl* fl/ fl<? fl=?` family traps on fixnum
+otherwise -- except a JavaScript `-0`, which comes back as the flonum
+`-0.0` so that its sign is kept.  The `fl+ fl- fl* fl/ fl<? fl=?` family traps on fixnum
 operands — they do not coerce.
 
 **Workaround**: normalize at the boundary, once:
