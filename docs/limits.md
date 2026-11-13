@@ -127,6 +127,15 @@ unboxed flonum and fixnum paths: they answer as those would, slower.
 `(gfx mat)` still exports `flsin`, `flcos` and `fltan`, now the
 prelude's.
 
+**Since 2026-11-13** (third batch) it also binds `case-lambda`; the
+textual port procedures `get-char` `lookahead-char` `get-line`
+`get-string-n` `get-string-n!` `get-string-all` `get-datum` `put-char`
+`put-string` `put-datum` `flush-output-port` `port-eof?`
+`textual-port?` `binary-port?` and `call-with-port`; and the hashtable
+procedures `hashtable-copy` `hashtable-mutable?` `hashtable-clear!`
+`hashtable-entries` `hashtable-equivalence-function`
+`hashtable-hash-function` `symbol-hash` and `string-ci-hash`.
+
 That is a breaking change for a program that defined one of these names
 itself: a program may not define a name it imports, so such a program is
 now refused and needs `(import (except (rnrs) finite?))` or the like, or
@@ -171,6 +180,22 @@ Where these are narrower than R6RS:
   bit-field procedures are not refused on their own: one past the
   width is refused only when the result leaves the fixnum range, where
   Chez refuses the index or count itself.
+- Every port here is textual and reads one byte per character, so
+  `get-char`, `get-line` and the `get-string-` procedures answer what
+  `read-char` would: input outside ASCII arrives as one character per
+  UTF-8 byte, where Chez decodes it.  `binary-port?` is `#f` for every
+  port.  `flush-output-port` has nothing to do: a string port keeps its
+  text until it is read, and the console and a file port write each
+  byte through as it is put.  On a file port the new procedures do what
+  `read-char`, `peek-char` and `write-char` do with one;
+  `call-with-port` closes it.
+- `hashtable-copy` makes an immutable copy unless asked otherwise, and
+  `hashtable-set!`, `hashtable-delete!`, `hashtable-update!` and
+  `hashtable-clear!` refuse an immutable table ("the hashtable is
+  immutable").  `hashtable-hash-function` is `#f` for an `eq` or `eqv`
+  table.
+- A `case-lambda` call no clause accepts raises, naming `case-lambda`
+  and the number of arguments.
 - The `bitwise-` procedures above take exact integers of any size, but
   `bitwise-and`, `bitwise-ior` and `bitwise-xor` still take fixnums
   only (see "Bitwise operations and big operands").
@@ -186,9 +211,14 @@ Still missing from R6RS, by group, for later batches of R20:
 value, n-ary forms of the
 comparisons that are binary today (`=`, `<`, `char<?`, `string<?` and
 the rest; the new `-ci` comparisons, `boolean=?` and `symbol=?` already
-take two or more arguments), `case-lambda` and `with-exception-handler`;
-the condition types; bytevector ports; the remaining hashtable
-procedures, and `bitwise-and`, `bitwise-ior` and `bitwise-xor` on
+take two or more arguments), and `with-exception-handler`; the
+condition types, the `&i/o` conditions among them; the binary and
+bytevector port procedures (`get-u8`, `put-u8`, the `get-bytevector-`
+and `put-bytevector` procedures, `open-bytevector-input-port`,
+`open-bytevector-output-port`, `call-with-bytevector-output-port`);
+`current-error-port` and the `standard-` ports; `open-file-input-port`
+and its siblings, transcoders, codecs, buffer modes, port positions and
+custom ports; `bitwise-and`, `bitwise-ior` and `bitwise-xor` on
 bignums; the IEEE bytevector accessors;
 enumerations, the procedural record layer, Unicode normalisation and
 title case.

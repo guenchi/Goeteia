@@ -1028,7 +1028,7 @@
   '(quote quasiquote unquote unquote-splicing if let let* letrec letrec*
     lambda begin set! define do case cond and or not when unless else =>
     define-record-type import library apply assert guard let-values
-    let*-values endianness))
+    let*-values endianness case-lambda))
 
 ;; set while the prelude is expanded, which has no clause and defines
 ;; what it likes
@@ -2668,7 +2668,15 @@
     bitwise-bit-set? bitwise-if bitwise-copy-bit bitwise-bit-field
     bitwise-copy-bit-field bitwise-rotate-bit-field
     bitwise-reverse-bit-field open-string-output-port
-    call-with-string-output-port open-string-input-port))
+    call-with-string-output-port open-string-input-port
+    ;; R20c: case-lambda (syntax, also in $rnrs-syntax), the textual
+    ;; port procedures and the hashtable extras
+    case-lambda get-char lookahead-char get-line get-string-n
+    get-string-n! get-string-all get-datum put-char put-string put-datum
+    flush-output-port port-eof? textual-port? binary-port?
+    call-with-port hashtable-copy hashtable-mutable? hashtable-clear!
+    hashtable-entries hashtable-equivalence-function
+    hashtable-hash-function symbol-hash string-ci-hash))
 
 ;; ---- the import map ----------------------------------------------
 ;;
@@ -2816,7 +2824,8 @@
   '(=> and assert begin case cond define define-record-type
     define-syntax do else guard if lambda let let* let*-values
     let-values letrec letrec* or parameterize quasiquote quote set!
-    syntax-rules unless unquote unquote-splicing when endianness))
+    syntax-rules unless unquote unquote-splicing when endianness
+    case-lambda))
 
 (define (identity-keyword? id)
   (let ((lib (car id)) (name (cdr id)))

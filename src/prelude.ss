@@ -2303,16 +2303,23 @@
 
 ;; ---- hashtables (buckets of alists over vectors) ----
 
+;; mutable? is #f only for a copy hashtable-copy made immutable; every
+;; table the constructors make is mutable, so the procedures that change
+;; a table refuse only a table nothing could make before that copy.
 (define-record-type (hashtable $make-ht hashtable?)
   (fields (immutable hash $ht-hash)
           (immutable equiv $ht-equiv)
           (mutable size $ht-size $ht-size-set!)
-          (mutable buckets $ht-buckets $ht-buckets-set!)))
+          (mutable buckets $ht-buckets $ht-buckets-set!)
+          (immutable mutable? $ht-mutable?)))
 
 (define (make-eq-hashtable . _) ($new-ht $eqv-hash eq?))
 (define (make-eqv-hashtable . _) ($new-ht $eqv-hash eqv?))
 (define (make-hashtable hash equiv . _) ($new-ht hash equiv))
-(define ($new-ht h e) ($make-ht h e 0 (make-vector 8 '())))
+(define ($new-ht h e) ($make-ht h e 0 (make-vector 8 '()) #t))
+(define ($ht-writable! who ht)
+  (unless ($ht-mutable? ht)
+    (error who "the hashtable is immutable" ht)))
 
 (define (abs n) (if (< n 0) (- 0 n) n))
 (define (string-hash s) ($sh s 0 7))
@@ -2445,6 +2452,9 @@
       #t
       #f))
 (define (hashtable-set! ht k v)
+  ($ht-writable! 'hashtable-set! ht)
+  ($ht-set! ht k v))
+(define ($ht-set! ht k v)
   (let* ((i ($ht-index ht k))
          (bucket (vector-ref ($ht-buckets ht) i))
          (hit ($bucket-find ($ht-equiv ht) k bucket)))
@@ -2456,6 +2466,7 @@
           (when (< (* 2 (vector-length ($ht-buckets ht))) ($ht-size ht))
             ($ht-grow! ht))))))
 (define (hashtable-delete! ht k)
+  ($ht-writable! 'hashtable-delete! ht)
   (let* ((i ($ht-index ht k))
          (bucket (vector-ref ($ht-buckets ht) i)))
     (vector-set! ($ht-buckets ht) i
@@ -2469,7 +2480,8 @@
                ($bucket-remove equiv k (cdr bucket) shrink!)))))
 (define (hashtable-size ht) ($ht-size ht))
 (define (hashtable-update! ht k proc default)
-  (hashtable-set! ht k (proc (hashtable-ref ht k default))))
+  ($ht-writable! 'hashtable-update! ht)
+  ($ht-set! ht k (proc (hashtable-ref ht k default))))
 (define (hashtable-keys ht)
   (list->vector ($ht-fold ht (lambda (k v acc) (cons k acc)) '())))
 (define ($ht-fold ht f acc)
@@ -2490,7 +2502,7 @@
       (when (< i (vector-length old))
         (let scan ((b (vector-ref old i)))
           (unless (null? b)
-            (hashtable-set! ht (caar b) (cdar b))
+            ($ht-set! ht (caar b) (cdar b))
             (scan (cdr b))))
         (loop (+ i 1))))))
 
@@ -4163,3 +4175,134 @@
     (proc p)
     (get-output-string p)))
 (define (open-string-input-port s) (open-input-string s))
+
+;; ---- R6RS names, third batch: case-lambda, textual ports, hashtables
+;;
+;; As the two batches above: prelude definitions over what exists, each
+;; listed in the (rnrs) manifest.
+
+;; ---- case-lambda ----
+;;
+;; One variadic procedure that tries its clauses in order: the first
+;; whose formals accept the number of arguments is applied to them, and
+;; a call no clause accepts raises.  Each clause's procedure is made
+;; once, when the case-lambda is evaluated; its formals are kept quoted
+;; only to read their shape.
+(define-syntax case-lambda
+  (syntax-rules ()
+    ((_ (formals body1 body2 ...) ...)
+     ($case-lambda (list (cons 'formals (lambda formals body1 body2 ...))
+                         ...)))))
+(define ($case-lambda clauses)
+  (lambda args ($case-lambda-apply clauses args (length args))))
+(define ($case-lambda-apply clauses args n)
+  (cond
+   ((null? clauses)
+    (error 'case-lambda "no clause accepts this number of arguments" n))
+   (($formals-accept? (car (car clauses)) n)
+    (apply (cdr (car clauses)) args))
+   (else ($case-lambda-apply (cdr clauses) args n))))
+(define ($formals-accept? f n)
+  (cond ((pair? f) (and (< 0 n) ($formals-accept? (cdr f) (- n 1))))
+        ((null? f) (= n 0))
+        (else #t)))
+
+;; ---- textual ports ----
+;;
+;; Every port here is textual, and reading takes one byte per character
+;; (as read-char does), so these answer what read-char, peek-char and
+;; write-char would.
+
+(define (get-char p) (read-char p))
+(define (lookahead-char p) (peek-char p))
+(define (port-eof? p) (eof-object? (peek-char p)))
+(define (textual-port? x) (port? x))
+(define (binary-port? x) #f)
+
+;; the characters up to the next newline, which is consumed and not
+;; returned; the end of input with nothing read before it answers the
+;; end-of-file object
+(define (get-line p)
+  (let ((c (read-char p)))
+    (if (eof-object? c)
+        c
+        (let loop ((c c) (acc '()))
+          (if (or (eof-object? c) (char=? c #\newline))
+              (list->string (reverse acc))
+              (loop (read-char p) (cons c acc)))))))
+;; up to n characters; the end of input before any answers end-of-file
+(define (get-string-n p n)
+  (let loop ((i 0) (acc '()))
+    (let ((c (if (< i n) (read-char p) #f)))
+      (cond ((not c) (list->string (reverse acc)))
+            ((eof-object? c)
+             (if (null? acc) c (list->string (reverse acc))))
+            (else (loop (+ i 1) (cons c acc)))))))
+;; up to count characters into s from start; the number read, or
+;; end-of-file when the input ended before any
+(define (get-string-n! p s start count)
+  (let loop ((i 0))
+    (let ((c (if (< i count) (read-char p) #f)))
+      (cond ((not c) i)
+            ((eof-object? c) (if (= i 0) c i))
+            (else (string-set! s (+ start i) c) (loop (+ i 1)))))))
+(define (get-string-all p)
+  (let loop ((acc '()))
+    (let ((c (read-char p)))
+      (if (eof-object? c)
+          (if (null? acc) c (list->string (reverse acc)))
+          (loop (cons c acc))))))
+(define (get-datum p) (read p))
+
+(define (put-char p c) (write-char c p))
+;; the whole string, or from start to its end, or count characters
+(define (put-string p s . range)
+  (let* ((start (if (pair? range) (car range) 0))
+         (end (if (and (pair? range) (pair? (cdr range)))
+                  (+ start (cadr range))
+                  (string-length s))))
+    (let loop ((i start))
+      (when (< i end)
+        (write-char (string-ref s i) p)
+        (loop (+ i 1))))))
+(define (put-datum p x) (write x p))
+;; A string port holds what was written until it is read; the console
+;; hands each byte to the host as it is written; a file port writes each
+;; byte through.  So there is nothing to flush.
+(define (flush-output-port p) (void))
+
+;; proc's values, after the port is closed
+(define (call-with-port p proc)
+  (call-with-values (lambda () (proc p))
+    (lambda vals (close-port p) (apply values vals))))
+
+;; ---- hashtables ----
+
+;; A copy with the same hash and equivalence and the same entries,
+;; immutable unless the second argument is true.
+(define (hashtable-copy ht . mutable)
+  (let ((c ($make-ht ($ht-hash ht) ($ht-equiv ht) 0
+                     (make-vector (vector-length ($ht-buckets ht)) '())
+                     #t)))
+    ($ht-fold ht (lambda (k v acc) ($ht-set! c k v) acc) #f)
+    (if (and (pair? mutable) (car mutable))
+        c
+        ($make-ht ($ht-hash c) ($ht-equiv c) ($ht-size c) ($ht-buckets c)
+                  #f))))
+(define (hashtable-mutable? ht) ($ht-mutable? ht))
+;; a size hint is accepted and does not change the result
+(define (hashtable-clear! ht . k)
+  ($ht-writable! 'hashtable-clear! ht)
+  ($ht-buckets-set! ht (make-vector 8 '()))
+  ($ht-size-set! ht 0))
+;; the keys and the values, as two vectors in the same order
+(define (hashtable-entries ht)
+  (let ((pairs ($ht-fold ht (lambda (k v acc) (cons (cons k v) acc)) '())))
+    (values (list->vector (map car pairs))
+            (list->vector (map cdr pairs)))))
+(define (hashtable-equivalence-function ht) ($ht-equiv ht))
+;; #f for an eq or eqv table, whose hash is the implementation's own
+(define (hashtable-hash-function ht)
+  (if (eq? ($ht-hash ht) $eqv-hash) #f ($ht-hash ht)))
+(define (symbol-hash s) (string-hash (symbol->string s)))
+(define (string-ci-hash s) (string-hash (string-foldcase s)))
