@@ -2650,7 +2650,25 @@
     bytevector-uint-ref bytevector-sint-ref bytevector-uint-set!
     bytevector-sint-set! bytevector->uint-list bytevector->sint-list
     uint-list->bytevector sint-list->bytevector endianness
-    native-endianness))
+    native-endianness
+    ;; R20b: the fl and fx families, the bitwise procedures on exact
+    ;; integers of any size, and string ports, also prelude definitions
+    fl<=? fl>=? fl>? flabs flmax flmin flzero? flpositive? flnegative?
+    flodd? fleven? flinteger? flfinite? flinfinite? flnan? flceiling
+    flround fldiv flmod fldiv0 flmod0 fldiv-and-mod fldiv0-and-mod0
+    flnumerator fldenominator flsin flcos fltan real->flonum fx+ fx- fx*
+    fx=? fx<? fx>? fx<=? fx>=? fxzero? fxpositive? fxnegative? fxodd?
+    fxeven? fxmax fxmin fxdiv fxmod fxdiv0 fxmod0 fxdiv-and-mod
+    fxdiv0-and-mod0 fx+/carry fx-/carry fx*/carry fxnot fxand fxior
+    fxxor fxif fxbit-count fxlength fxfirst-bit-set fxbit-set?
+    fxcopy-bit fxbit-field fxcopy-bit-field fxarithmetic-shift
+    fxarithmetic-shift-left fxarithmetic-shift-right fxrotate-bit-field
+    fxreverse-bit-field bitwise-not bitwise-arithmetic-shift
+    bitwise-bit-count bitwise-length bitwise-first-bit-set
+    bitwise-bit-set? bitwise-if bitwise-copy-bit bitwise-bit-field
+    bitwise-copy-bit-field bitwise-rotate-bit-field
+    bitwise-reverse-bit-field open-string-output-port
+    call-with-string-output-port open-string-input-port))
 
 ;; ---- the import map ----------------------------------------------
 ;;

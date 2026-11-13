@@ -62,14 +62,22 @@ for (const dir of ['lib', 'src']) {
     }
 }
 
-// the matrix library binds the prelude's FLONUM layer: the R6RS
-// entries would add a widening step and cost these per-frame callers
-// the f64 parameter specialization
-const mat = fs.readFileSync(path.join(root, 'lib/gfx/mat.ss'), 'utf8');
+// flsin, flcos and fltan are the FLONUM layer: each binds the flonum
+// entry directly, because the generic entries would add a widening step
+// and cost per-frame callers the f64 parameter specialization.  They are
+// (rnrs)'s names, so they are defined once, in the prelude; the matrix
+// library hands them on in its export list and defines none of its own.
 for (const alias of ['(define (flsin x) ($sin-fl (fl* x 1.0)))',
                      '(define (flcos x) ($cos-fl (fl* x 1.0)))',
                      '(define (fltan x) ($tan-fl (fl* x 1.0)))']) {
-    assert.ok(mat.includes(alias), `lib/gfx/mat.ss lacks "${alias}"`);
+    assert.ok(home.includes(alias), `src/prelude.ss lacks "${alias}"`);
+}
+const mat = fs.readFileSync(path.join(root, 'lib/gfx/mat.ss'), 'utf8');
+for (const name of ['flsin', 'flcos', 'fltan']) {
+    assert.ok(!mat.includes(`(define (${name} `),
+        `lib/gfx/mat.ss defines ${name} again -- it must come from the prelude`);
+    assert.ok(new RegExp(`[\\s(]${name}[\\s)]`).test(mat),
+        `lib/gfx/mat.ss no longer exports ${name}`);
 }
 
 console.log('trig single-supply: ok');

@@ -228,50 +228,21 @@
   (define (fl-heading x z)
     (flatan2 ($mat-fl x) (fl- 0.0 ($mat-fl z))))
 
-  ;; ---- trig: the prelude carries the implementation (reduce to
-  ;; [-pi/2, pi/2], one odd polynomial); these names stay so the
-  ;; matrix library's export surface does not move.  They bind the
-  ;; prelude's FLONUM layer rather than the R6RS entries, which would
-  ;; add a widening step on a per-frame path.  The constants stay for
-  ;; the inverse trig below.
-  ;;
-  ;; (fl* x 1.0) is NOT redundant, however much it looks it.  The
-  ;; compiler's f64 parameter specialization is whole-program: it
-  ;; keeps $sin-fl's parameter unboxed only while EVERY call site in
-  ;; the program provably passes a flonum.  A bare symbol can be such
-  ;; a proof -- the pass accepts one that is itself a specialized
-  ;; parameter of the enclosing function -- but these wrappers' own
-  ;; parameters do not qualify, so forwarding x bare from here is not,
-  ;; and one wrapper like that, merely linked in, costs every other
-  ;; caller.  Measured at 40M calls (user time): 0.37 with the
-  ;; explicit expression, 0.45 without.
-  ;;
-  ;; What it buys is conditional on the whole program, not
-  ;; absolute: one that ALSO uses the prelude's generic sin/cos/tan
-  ;; (whose argument passes through $->fl) demotes the layer again and
-  ;; measures 0.46.  Not every indirection costs it -- taking flsin
-  ;; itself as a first-class value still measures 0.36 -- so the rule
-  ;; to carry away is the general one, not a list of shapes: the layer
-  ;; stays fast only while EVERY call site in the program provably
-  ;; passes a flonum.  A graphics page that just calls these gets the
-  ;; fast path.
-  ;;
-  ;; It must stay a MULTIPLICATION: (fl+ x 0.0) looks equally harmless
-  ;; and collapses -0.0 to +0.0, changing (flsin -0.0) -- test/trig.ss
-  ;; pins that with a run-time-built negative zero.
+  ;; ---- trig: flsin, flcos and fltan are (rnrs) names, defined in the
+  ;; prelude over its flonum layer; this library still exports them, so
+  ;; its export surface does not move (a re-export is the same binding,
+  ;; so importing both this library and (rnrs) is not a conflict).  Why
+  ;; they are written as they are is told at their definition.  The
+  ;; constants stay for the inverse trig below.
   (define $mat-pi 3.141592653589793)
   (define $mat-pi/2 1.5707963267948966)
-
-  (define (flsin x) ($sin-fl (fl* x 1.0)))
-  (define (flcos x) ($cos-fl (fl* x 1.0)))
-  (define (fltan x) ($tan-fl (fl* x 1.0)))
 
   ;; ---- inverse trig: reduce to one small interval, one series ----
   ;; wasm has no inverse trigonometry either, so these are built the
   ;; same way as flsin: fold the argument into an interval where one
   ;; series converges fast, sum it, and put the answer back with an
   ;; identity.  Both series stop at the first term whose magnitude is
-  ;; below 1e-18 -- compared squared, the prelude has no flabs -- so
+  ;; below 1e-18 -- compared squared -- so
   ;; what is left is the reductions' few ulps.  Swept against a
   ;; host's Math at 20001 points each, the worst gap was 1.4e-15
   ;; (acos) and under 1e-15 for the other three: the guarantee these

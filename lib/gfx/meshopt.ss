@@ -564,8 +564,6 @@
             (wr 0 x) (wr 1 y) (wr 2 z))
           (each (+ i 1))))))
 
-  (define (flabs x) (if (fl<? x 0.0) (fl- 0.0 x) x))
-
   ;; quaternions: stride 8, max-component reconstruction
   (define (meshopt-filter-quat! dst count stride)
     (let ((scale (fl/ 32767.0 (flsqrt 2.0))))

@@ -110,6 +110,23 @@ bytevector copies, fills, list conversions, `s8` and 16-, 32- and
 `bytevector-uint-ref` and its three siblings, the four integer list
 conversions, `endianness` and `native-endianness`.
 
+**Since 2026-11-13** (second batch) it also binds the `fl` family but
+for `flexp`, `fllog`, `flexpt`, `flasin`, `flacos` and `flatan`
+(`fl<=?` `fl>=?` `fl>?` `flabs` `flmax` `flmin`, the `fl` predicates,
+`flceiling` `flround`, the six `fldiv`/`flmod` procedures,
+`flnumerator` `fldenominator`, `flsin` `flcos` `fltan` and
+`real->flonum`); the whole `fx` family; the bitwise procedures on exact
+integers of any size (`bitwise-not` `bitwise-arithmetic-shift`
+`bitwise-bit-count` `bitwise-length` `bitwise-first-bit-set`
+`bitwise-bit-set?` `bitwise-if` `bitwise-copy-bit` `bitwise-bit-field`
+`bitwise-copy-bit-field` `bitwise-rotate-bit-field`
+`bitwise-reverse-bit-field`); and `open-string-output-port`,
+`call-with-string-output-port` and `open-string-input-port`.  The `fl`
+and `fx` procedures are ordinary procedure calls, not the compiler's
+unboxed flonum and fixnum paths: they answer as those would, slower.
+`(gfx mat)` still exports `flsin`, `flcos` and `fltan`, now the
+prelude's.
+
 That is a breaking change for a program that defined one of these names
 itself: a program may not define a name it imports, so such a program is
 now refused and needs `(import (except (rnrs) finite?))` or the like, or
@@ -133,25 +150,46 @@ Where these are narrower than R6RS:
   and its siblings do (below).
 - The bytevector integer setters reduce a value out of range to its low
   8*size bits, as `bytevector-u8-set!` stores 256 as 0, where R6RS
-  raises.  An endianness other than `big` reads as `little`, the
-  `-native-` forms do not require an aligned index, and the list
-  conversions leave out a partial element at the end instead of raising.
+  raises, and the `-native-` forms do not require an aligned index.  An
+  endianness other than `big` or `little` is refused ("unrecognized
+  endianness"), and so is a list conversion of a bytevector whose
+  length is not a multiple of the size (since 2026-11-13; before, the
+  first read as `little` and the second left the partial element out).
+- The `fl` procedures take flonums.  Given another real, each does what
+  the primitive under it does with one: the comparisons and the
+  arithmetic ones go through `fl<?`, `fl=?`, `fl+` and friends, which
+  take a flonum's representation, so an exact argument is not a
+  supported input; `flceiling`, `flround`, `fleven?` and `flodd?` are
+  `ceiling`, `round`, `even?` and `odd?`, which take any real.
+  `real->flonum` takes any real.  `fleven?` and `flodd?` answer `#f`
+  for a flonum that is not a finite integer, where R6RS raises.
+- An `fx` operation whose exact result is outside the fixnum range
+  raises (`result is not a fixnum`, naming the procedure and its
+  arguments); it never answers a bignum and never wraps.
+  `fx+/carry`, `fx-/carry` and `fx*/carry` answer R6RS's two fixnums
+  for width 30.  The bit positions and shift counts of the `fx`
+  bit-field procedures are not refused on their own: one past the
+  width is refused only when the result leaves the fixnum range, where
+  Chez refuses the index or count itself.
+- The `bitwise-` procedures above take exact integers of any size, but
+  `bitwise-and`, `bitwise-ior` and `bitwise-xor` still take fixnums
+  only (see "Bitwise operations and big operands").
 - `greatest-fixnum` is 2^29-1, `least-fixnum` is -2^29 and
   `fixnum-width` is 30 on both back ends (Chez: 61 bits).
 - None of these check the types of their arguments beyond what the
   procedures they are built on check.
 
-Still missing from R6RS, by group, for later batches of R20: the `fx`
-and `fl` families (`flabs`, `flmax`, `flmin`, `flonum->fixnum` and
-`flexpt` among them; compose them locally, `(if (fl<? a b) b a)` and
-friends, or use `exact` plus fixnum operations); `expt`, `exp`, `log`
-and the inverse trigonometric functions (`flasin`/`flacos`/`flatan`/
-`flatan2` live in `(gfx mat)`); `not` as a value, n-ary forms of the
+Still missing from R6RS, by group, for later batches of R20:
+`flexp`, `fllog`, `flexpt`, `flasin`, `flacos` and `flatan` with
+`expt`, `exp`, `log` and the inverse trigonometric functions
+(`flasin`/`flacos`/`flatan`/`flatan2` live in `(gfx mat)`); `not` as a
+value, n-ary forms of the
 comparisons that are binary today (`=`, `<`, `char<?`, `string<?` and
 the rest; the new `-ci` comparisons, `boolean=?` and `symbol=?` already
 take two or more arguments), `case-lambda` and `with-exception-handler`;
-the condition types; string and bytevector ports; the remaining
-hashtable and bitwise procedures; the IEEE bytevector accessors;
+the condition types; bytevector ports; the remaining hashtable
+procedures, and `bitwise-and`, `bitwise-ior` and `bitwise-xor` on
+bignums; the IEEE bytevector accessors;
 enumerations, the procedural record layer, Unicode normalisation and
 title case.
 

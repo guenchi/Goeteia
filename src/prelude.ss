@@ -3747,16 +3747,29 @@
 ;; wasm memory and every JS host this runs on are little-endian
 (define (native-endianness) 'little)
 
-;; The integer accessors of every size are these four.  An endianness
-;; other than big reads as little.  A value is assembled with generic
-;; arithmetic, so a 32- or 64-bit answer past the fixnum range comes
-;; back as a bignum.  A value to store is reduced to its low 8*size bits
-;; without a check, as bytevector-u8-set! reduces a byte.  The list
-;; conversions read whole elements only; a partial one at the end is
-;; left out.
+;; The integer accessors of every size are these four, each told the
+;; name of the procedure the program called so that a refusal names it.
+;; An endianness other than big or little is refused.  A value is
+;; assembled with generic arithmetic, so a 32- or 64-bit answer past the
+;; fixnum range comes back as a bignum.  A value to store is reduced to
+;; its low 8*size bits without a check, as bytevector-u8-set! reduces a
+;; byte.  The list conversions refuse a bytevector whose length is not a
+;; multiple of the size.
 (define ($byte-span size)
   (let loop ((i 0) (p 1)) (if (= i size) p (loop (+ i 1) (* p 256)))))
+(define ($endianness who e)
+  (unless (or (eq? e 'big) (eq? e 'little))
+    (error who "unrecognized endianness" e)))
 (define (bytevector-uint-ref bv k e size)
+  ($uint-ref 'bytevector-uint-ref bv k e size))
+(define (bytevector-sint-ref bv k e size)
+  ($sint-ref 'bytevector-sint-ref bv k e size))
+(define (bytevector-uint-set! bv k n e size)
+  ($uint-set! 'bytevector-uint-set! bv k n e size))
+(define (bytevector-sint-set! bv k n e size)
+  ($sint-set! 'bytevector-sint-set! bv k n e size))
+(define ($uint-ref who bv k e size)
+  ($endianness who e)
   (if (eq? e 'big)
       (let loop ((i 0) (acc 0))
         (if (= i size)
@@ -3766,32 +3779,45 @@
         (if (< i 0)
             acc
             (loop (- i 1) (+ (* acc 256) (bytevector-u8-ref bv (+ k i))))))))
-(define (bytevector-sint-ref bv k e size)
-  (let ((u (bytevector-uint-ref bv k e size))
+(define ($sint-ref who bv k e size)
+  (let ((u ($uint-ref who bv k e size))
         (top (bytevector-u8-ref bv (if (eq? e 'big) k (+ k (- size 1))))))
     (if (< top 128) u (- u ($byte-span size)))))
-(define (bytevector-uint-set! bv k n e size)
+(define ($uint-set! who bv k n e size)
+  ($endianness who e)
   (let loop ((i 0) (v n))
     (when (< i size)
       (bytevector-u8-set! bv
                           (if (eq? e 'big) (+ k (- size 1 i)) (+ k i))
                           (mod v 256))
       (loop (+ i 1) (div v 256)))))
-(define (bytevector-sint-set! bv k n e size)
-  (bytevector-uint-set! bv k (if (< n 0) (+ n ($byte-span size)) n) e size))
+(define ($sint-set! who bv k n e size)
+  ($uint-set! who bv k (if (< n 0) (+ n ($byte-span size)) n) e size))
 
-(define (bytevector-u16-ref bv k e) (bytevector-uint-ref bv k e 2))
-(define (bytevector-s16-ref bv k e) (bytevector-sint-ref bv k e 2))
-(define (bytevector-u32-ref bv k e) (bytevector-uint-ref bv k e 4))
-(define (bytevector-s32-ref bv k e) (bytevector-sint-ref bv k e 4))
-(define (bytevector-u64-ref bv k e) (bytevector-uint-ref bv k e 8))
-(define (bytevector-s64-ref bv k e) (bytevector-sint-ref bv k e 8))
-(define (bytevector-u16-set! bv k n e) (bytevector-uint-set! bv k n e 2))
-(define (bytevector-s16-set! bv k n e) (bytevector-sint-set! bv k n e 2))
-(define (bytevector-u32-set! bv k n e) (bytevector-uint-set! bv k n e 4))
-(define (bytevector-s32-set! bv k n e) (bytevector-sint-set! bv k n e 4))
-(define (bytevector-u64-set! bv k n e) (bytevector-uint-set! bv k n e 8))
-(define (bytevector-s64-set! bv k n e) (bytevector-sint-set! bv k n e 8))
+(define (bytevector-u16-ref bv k e)
+  ($uint-ref 'bytevector-u16-ref bv k e 2))
+(define (bytevector-s16-ref bv k e)
+  ($sint-ref 'bytevector-s16-ref bv k e 2))
+(define (bytevector-u32-ref bv k e)
+  ($uint-ref 'bytevector-u32-ref bv k e 4))
+(define (bytevector-s32-ref bv k e)
+  ($sint-ref 'bytevector-s32-ref bv k e 4))
+(define (bytevector-u64-ref bv k e)
+  ($uint-ref 'bytevector-u64-ref bv k e 8))
+(define (bytevector-s64-ref bv k e)
+  ($sint-ref 'bytevector-s64-ref bv k e 8))
+(define (bytevector-u16-set! bv k n e)
+  ($uint-set! 'bytevector-u16-set! bv k n e 2))
+(define (bytevector-s16-set! bv k n e)
+  ($sint-set! 'bytevector-s16-set! bv k n e 2))
+(define (bytevector-u32-set! bv k n e)
+  ($uint-set! 'bytevector-u32-set! bv k n e 4))
+(define (bytevector-s32-set! bv k n e)
+  ($sint-set! 'bytevector-s32-set! bv k n e 4))
+(define (bytevector-u64-set! bv k n e)
+  ($uint-set! 'bytevector-u64-set! bv k n e 8))
+(define (bytevector-s64-set! bv k n e)
+  ($sint-set! 'bytevector-s64-set! bv k n e 8))
 (define (bytevector-u16-native-ref bv k)
   (bytevector-uint-ref bv k (native-endianness) 2))
 (define (bytevector-s16-native-ref bv k)
@@ -3817,29 +3843,323 @@
 (define (bytevector-s64-native-set! bv k n)
   (bytevector-sint-set! bv k n (native-endianness) 8))
 
+(define ($whole-elements who bv size)
+  (unless (= 0 (remainder (bytevector-length bv) size))
+    (error who "bytevector length is not a multiple of size"
+           (bytevector-length bv) size)))
 (define (bytevector->uint-list bv e size)
-  (let loop ((k (- (* size (quotient (bytevector-length bv) size)) size))
-             (acc '()))
+  ($endianness 'bytevector->uint-list e)
+  ($whole-elements 'bytevector->uint-list bv size)
+  (let loop ((k (- (bytevector-length bv) size)) (acc '()))
     (if (< k 0)
         acc
-        (loop (- k size) (cons (bytevector-uint-ref bv k e size) acc)))))
+        (loop (- k size)
+              (cons ($uint-ref 'bytevector->uint-list bv k e size) acc)))))
 (define (bytevector->sint-list bv e size)
-  (let loop ((k (- (* size (quotient (bytevector-length bv) size)) size))
-             (acc '()))
+  ($endianness 'bytevector->sint-list e)
+  ($whole-elements 'bytevector->sint-list bv size)
+  (let loop ((k (- (bytevector-length bv) size)) (acc '()))
     (if (< k 0)
         acc
-        (loop (- k size) (cons (bytevector-sint-ref bv k e size) acc)))))
+        (loop (- k size)
+              (cons ($sint-ref 'bytevector->sint-list bv k e size) acc)))))
 (define (uint-list->bytevector ls e size)
+  ($endianness 'uint-list->bytevector e)
   (let ((bv (%make-bytevector (* size (length ls)) 0)))
     (let loop ((ls ls) (k 0))
       (unless (null? ls)
-        (bytevector-uint-set! bv k (car ls) e size)
+        ($uint-set! 'uint-list->bytevector bv k (car ls) e size)
         (loop (cdr ls) (+ k size))))
     bv))
 (define (sint-list->bytevector ls e size)
+  ($endianness 'sint-list->bytevector e)
   (let ((bv (%make-bytevector (* size (length ls)) 0)))
     (let loop ((ls ls) (k 0))
       (unless (null? ls)
-        (bytevector-sint-set! bv k (car ls) e size)
+        ($sint-set! 'sint-list->bytevector bv k (car ls) e size)
         (loop (cdr ls) (+ k size))))
     bv))
+
+;; ---- R6RS names, second batch: flonums, fixnums, bitwise, string ports
+;;
+;; Like the batch above: plain procedures over what exists, each listed
+;; in the (rnrs) manifest.  The fl and fx procedures are ordinary calls
+;; here, not the compiler's unboxed flonum or fixnum paths; they answer
+;; what those would, only slower.
+
+;; ---- flonums ----
+;;
+;; These take flonums.  Given another real, each does what the primitive
+;; under it does with one (docs/limits.md); real->flonum takes any real.
+
+(define ($fl<= x y) (if (fl<? x y) #t (fl=? x y)))
+(define (fl>? a b . rest) ($chain (lambda (x y) (fl<? y x)) a b rest))
+(define (fl<=? a b . rest) ($chain $fl<= a b rest))
+(define (fl>=? a b . rest) ($chain (lambda (x y) ($fl<= y x)) a b rest))
+
+;; -0.0 is not less than 0.0, so a negative zero is told apart by the
+;; sign of its reciprocal; negating by multiplying keeps a NaN a NaN
+(define (flabs x)
+  (if (or (fl<? x 0.0) (and (fl=? x 0.0) (fl<? (fl/ 1.0 x) 0.0)))
+      (fl* -1.0 x)
+      x))
+;; A NaN among the arguments is the answer; of two equal arguments
+;; (a zero of either sign included) the later one is, as on Chez.
+(define (flmax a . rest)
+  (fold-left (lambda (m x)
+               (cond ((not (fl=? m m)) m)
+                     ((not (fl=? x x)) x)
+                     ((fl<? x m) m)
+                     (else x)))
+             a rest))
+(define (flmin a . rest)
+  (fold-left (lambda (m x)
+               (cond ((not (fl=? m m)) m)
+                     ((not (fl=? x x)) x)
+                     ((fl<? m x) m)
+                     (else x)))
+             a rest))
+
+(define (flzero? x) (fl=? x 0.0))
+(define (flpositive? x) (fl<? 0.0 x))
+(define (flnegative? x) (fl<? x 0.0))
+(define (flinteger? x) (and ($fl-finite? x) (fl=? x (flfloor x))))
+(define (flfinite? x) ($fl-finite? x))
+(define (flinfinite? x) (and (fl=? x x) (not ($fl-finite? x))))
+(define (flnan? x) (not (fl=? x x)))
+;; as even? and odd? read a flonum: neither, for one that is not a
+;; finite integer
+(define (fleven? x) (even? x))
+(define (flodd? x) (odd? x))
+(define (flceiling x) (ceiling x))
+(define (flround x) (round x))
+
+;; R6RS's division on reals: x = d * q + m with 0 <= m < |d| for div
+;; and mod, -|d|/2 <= m < |d|/2 for div0 and mod0.  q is floor(x / d)
+;; for a positive d and the negation of floor(x / -d) for a negative one.
+(define ($fldiv x d)
+  (if (fl<? d 0.0)
+      (fl* -1.0 (flfloor (fl/ x (fl* -1.0 d))))
+      (flfloor (fl/ x d))))
+(define (fldiv x d) ($fldiv x d))
+(define (flmod x d) (fl- x (fl* d ($fldiv x d))))
+(define (fldiv-and-mod x d)
+  (let ((q ($fldiv x d)))
+    (values q (fl- x (fl* d q)))))
+(define (fldiv0-and-mod0 x d)
+  (let* ((q ($fldiv x d))
+         (m (fl- x (fl* d q)))
+         (ad (flabs d)))
+    (if (fl<? (fl+ m m) ad)
+        (values q m)
+        (values (if (fl<? d 0.0) (fl- q 1.0) (fl+ q 1.0)) (fl- m ad)))))
+(define (fldiv0 x d)
+  (call-with-values (lambda () (fldiv0-and-mod0 x d)) (lambda (q m) q)))
+(define (flmod0 x d)
+  (call-with-values (lambda () (fldiv0-and-mod0 x d)) (lambda (q m) m)))
+
+;; A zero is its own numerator (keeping its sign), and an infinity's
+;; denominator is 1.0; a NaN answers itself for both.
+(define (flnumerator x)
+  (if (or (fl=? x 0.0) (not ($fl-finite? x)))
+      x
+      (inexact (numerator (exact x)))))
+(define (fldenominator x)
+  (cond ((not (fl=? x x)) x)
+        ((not ($fl-finite? x)) 1.0)
+        ((fl=? x 0.0) 1.0)
+        (else (inexact (denominator (exact x))))))
+
+;; The flonum layer of the trig above, as (gfx mat) has always exported
+;; it.  (fl* x 1.0) is NOT redundant, however much it looks it.  The
+;; compiler's f64 parameter specialization is whole-program: it keeps
+;; $sin-fl's parameter unboxed only while EVERY call site in the
+;; program provably passes a flonum.  A bare symbol can be such a proof
+;; -- the pass accepts one that is itself a specialized parameter of
+;; the enclosing function -- but these wrappers' own parameters do not
+;; qualify, so forwarding x bare from here is not, and one wrapper like
+;; that, merely linked in, costs every other caller.  Measured at 40M
+;; calls (user time): 0.37 with the explicit expression, 0.45 without.
+;;
+;; What it buys is conditional on the whole program, not absolute: one
+;; that ALSO uses the generic sin/cos/tan (whose argument passes
+;; through $->fl) demotes the layer again and measures 0.46.  Not every
+;; indirection costs it -- taking flsin itself as a first-class value
+;; still measures 0.36 -- so the rule to carry away is the general one:
+;; the layer stays fast only while EVERY call site in the program
+;; provably passes a flonum.
+;;
+;; It must stay a MULTIPLICATION: (fl+ x 0.0) looks equally harmless
+;; and collapses -0.0 to +0.0, changing (flsin -0.0) -- test/trig.ss
+;; pins that with a run-time-built negative zero.
+(define (flsin x) ($sin-fl (fl* x 1.0)))
+(define (flcos x) ($cos-fl (fl* x 1.0)))
+(define (fltan x) ($tan-fl (fl* x 1.0)))
+(define (real->flonum x) (inexact x))
+
+;; ---- fixnums ----
+;;
+;; A fixnum is 30 bits here (fixnum-width).  An fx operation computes
+;; its exact result and refuses one outside the fixnum range, naming
+;; itself and its arguments; it never answers a bignum and never wraps.
+
+(define ($fx who r args)
+  (if (fixnum? r) r (apply error who "result is not a fixnum" args)))
+
+(define (fx+ a b) ($fx 'fx+ (+ a b) (list a b)))
+(define (fx- a . b)
+  (if (null? b)
+      ($fx 'fx- (- 0 a) (list a))
+      ($fx 'fx- (- a (car b)) (list a (car b)))))
+(define (fx* a b) ($fx 'fx* (* a b) (list a b)))
+
+(define (fx=? a b . rest) ($chain = a b rest))
+(define (fx<? a b . rest) ($chain < a b rest))
+(define (fx>? a b . rest) ($chain (lambda (x y) (< y x)) a b rest))
+(define (fx<=? a b . rest) ($chain <= a b rest))
+(define (fx>=? a b . rest) ($chain >= a b rest))
+(define (fxzero? a) (eqv? a 0))
+(define (fxpositive? a) (< 0 a))
+(define (fxnegative? a) (< a 0))
+(define (fxodd? a) (odd? a))
+(define (fxeven? a) (even? a))
+(define (fxmax a . rest) (apply max a rest))
+(define (fxmin a . rest) (apply min a rest))
+
+(define (fxdiv a b)
+  ($div-check 'fxdiv a b)
+  ($fx 'fxdiv ($div a b) (list a b)))
+(define (fxmod a b)
+  ($div-check 'fxmod a b)
+  ($mod a b))
+(define (fxdiv-and-mod a b)
+  ($div-check 'fxdiv-and-mod a b)
+  (values ($fx 'fxdiv-and-mod ($div a b) (list a b)) ($mod a b)))
+(define (fxdiv0-and-mod0 a b)
+  ($div-check 'fxdiv0-and-mod0 a b)
+  (call-with-values (lambda () (div0-and-mod0 a b))
+    (lambda (q r) (values ($fx 'fxdiv0-and-mod0 q (list a b)) r))))
+(define (fxdiv0 a b)
+  ($div-check 'fxdiv0 a b)
+  (call-with-values (lambda () (div0-and-mod0 a b))
+    (lambda (q r) ($fx 'fxdiv0 q (list a b)))))
+(define (fxmod0 a b)
+  ($div-check 'fxmod0 a b)
+  (call-with-values (lambda () (div0-and-mod0 a b)) (lambda (q r) r)))
+
+;; R6RS's carrying operations for width w = 30: the low part is the sum
+;; (or difference, or product plus addend) modulo 2^30 centred on zero,
+;; and the high part what is left over, divided by 2^30.  Both are
+;; fixnums for every fixnum argument.
+(define $fx-span 1073741824)
+(define ($fx-carry s)
+  (values (mod0 s $fx-span) (div0 s $fx-span)))
+(define (fx+/carry a b c) ($fx-carry (+ a b c)))
+(define (fx-/carry a b c) ($fx-carry (- a b c)))
+(define (fx*/carry a b c) ($fx-carry (+ (* a b) c)))
+
+(define (fxnot a) (- -1 a))
+(define (fxand . xs) (fold-left (lambda (r x) (bitwise-and r x)) -1 xs))
+(define (fxior . xs) (fold-left (lambda (r x) (bitwise-ior r x)) 0 xs))
+(define (fxxor . xs) (fold-left (lambda (r x) (bitwise-xor r x)) 0 xs))
+(define (fxif a b c) (bitwise-ior (bitwise-and a b) (bitwise-and (fxnot a) c)))
+(define (fxbit-count a) (bitwise-bit-count a))
+(define (fxlength a) (bitwise-length a))
+(define (fxfirst-bit-set a) (bitwise-first-bit-set a))
+(define (fxbit-set? a i) (bitwise-bit-set? a i))
+(define (fxcopy-bit a i b)
+  ($fx 'fxcopy-bit (bitwise-copy-bit a i b) (list a i b)))
+(define (fxbit-field a s e) ($fx 'fxbit-field (bitwise-bit-field a s e) (list a s e)))
+(define (fxcopy-bit-field a s e b)
+  ($fx 'fxcopy-bit-field (bitwise-copy-bit-field a s e b) (list a s e b)))
+(define (fxarithmetic-shift a k)
+  ($fx 'fxarithmetic-shift (bitwise-arithmetic-shift a k) (list a k)))
+(define (fxarithmetic-shift-left a k)
+  ($fx 'fxarithmetic-shift-left (bitwise-arithmetic-shift a k) (list a k)))
+(define (fxarithmetic-shift-right a k)
+  ($fx 'fxarithmetic-shift-right (bitwise-arithmetic-shift a (- 0 k)) (list a k)))
+(define (fxrotate-bit-field a s e c)
+  ($fx 'fxrotate-bit-field (bitwise-rotate-bit-field a s e c) (list a s e c)))
+(define (fxreverse-bit-field a s e)
+  ($fx 'fxreverse-bit-field (bitwise-reverse-bit-field a s e) (list a s e)))
+
+;; ---- bitwise operations on exact integers of any size ----
+;;
+;; bitwise-and, bitwise-ior and bitwise-xor are fixnum primitives; these
+;; are written over generic exact arithmetic instead, so they take
+;; bignums.  An integer is read as an infinite two's complement string:
+;; floor division by 2^k is a right shift and mod 2^k the low k bits, for
+;; negative integers as for positive ones.
+
+(define (bitwise-not n) (- -1 n))
+(define (bitwise-arithmetic-shift n k)
+  (if (< k 0) (div n ($pow2 (- 0 k))) (* n ($pow2 k))))
+;; the ones of a non-negative integer, and for a negative one the
+;; complement of its complement's count, as R6RS defines it
+(define (bitwise-bit-count n)
+  (if (< n 0)
+      (bitwise-not (bitwise-bit-count (bitwise-not n)))
+      (let loop ((n n) (c 0))
+        (if (eqv? n 0) c (loop (div n 2) (+ c (mod n 2)))))))
+(define (bitwise-length n)
+  (if (< n 0)
+      (bitwise-length (bitwise-not n))
+      (let loop ((n n) (c 0))
+        (if (eqv? n 0) c (loop (div n 2) (+ c 1))))))
+(define (bitwise-first-bit-set n)
+  (if (eqv? n 0)
+      -1
+      (let loop ((n n) (i 0))
+        (if (odd? n) i (loop (div n 2) (+ i 1))))))
+(define (bitwise-bit-set? n i) (odd? (bitwise-arithmetic-shift n (- 0 i))))
+(define (bitwise-copy-bit n i b)
+  (let ((set? (bitwise-bit-set? n i)))
+    (cond ((and set? (eqv? b 0)) (- n ($pow2 i)))
+          ((and (not set?) (eqv? b 1)) (+ n ($pow2 i)))
+          (else n))))
+(define (bitwise-bit-field n s e)
+  (mod (bitwise-arithmetic-shift n (- 0 s)) ($pow2 (- e s))))
+;; bits s..e-1 of to replaced by the low e-s bits of from
+(define (bitwise-copy-bit-field to s e from)
+  (let ((p ($pow2 s)))
+    (+ (- to (* (bitwise-bit-field to s e) p))
+       (* (mod from ($pow2 (- e s))) p))))
+(define (bitwise-rotate-bit-field n s e count)
+  (let ((w (- e s)))
+    (if (<= w 0)
+        n
+        (let* ((c (mod count w))
+               (f (bitwise-bit-field n s e))
+               (r (mod (+ (* f ($pow2 c)) (div f ($pow2 (- w c)))) ($pow2 w))))
+          (bitwise-copy-bit-field n s e r)))))
+(define (bitwise-reverse-bit-field n s e)
+  (let loop ((f (bitwise-bit-field n s e)) (i s) (r 0))
+    (if (< i e)
+        (loop (div f 2) (+ i 1) (+ (* r 2) (mod f 2)))
+        (bitwise-copy-bit-field n s e r))))
+;; Bit by bit: where a has a one the bit comes from b, elsewhere from c.
+;; Once all three are 0 or -1 every remaining bit is the same, so the
+;; rest of the answer is that sign, placed above what has been built.
+(define (bitwise-if a b c)
+  (let loop ((a a) (b b) (c c) (p 1) (acc 0))
+    (if (and (memv a '(0 -1)) (memv b '(0 -1)) (memv c '(0 -1)))
+        (+ acc (* (if (eqv? a -1) b c) p))
+        (loop (div a 2) (div b 2) (div c 2) (* p 2)
+              (+ acc (* p (if (eqv? (mod a 2) 1) (mod b 2) (mod c 2))))))))
+
+;; ---- string ports ----
+
+;; The port and a procedure that answers what was written since the last
+;; time it was called, and empties the port.
+(define (open-string-output-port)
+  (let ((p (open-output-string)))
+    (values p
+            (lambda ()
+              (let ((s (get-output-string p)))
+                ($port-a! p '())
+                s)))))
+(define (call-with-string-output-port proc)
+  (let ((p (open-output-string)))
+    (proc p)
+    (get-output-string p)))
+(define (open-string-input-port s) (open-input-string s))
