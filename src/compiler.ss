@@ -1067,8 +1067,9 @@
 ;; (define-record-type <spec> (fields <field> ...)) with
 ;; <spec> = name | (name constructor predicate) and
 ;; <field> = name | (immutable name [acc]) | (mutable name [acc [mut]]).
-;; Records are structs with an identity slot: the rtd is a fresh
-;; pair, the predicate is a subtype test plus rtd comparison.
+;; Records are structs with an identity slot: the rtd is a record of
+;; its own (see the prelude's $rtd-rtd), the predicate is a subtype
+;; test plus rtd comparison.
 (define (sym-cat parts)
   (string->symbol
    (fold-left string-append ""
@@ -1099,10 +1100,21 @@
                ;; they carry generated heads, and the accessors' error is
                ;; introduced like cons: a program that defines its own
                ;; error does not have it called by a record accessor.
+               ;; The descriptor is a record of four fields, its slot 0
+               ;; the prelude's descriptor of descriptors: name, parent,
+               ;; flags, uid.  Every type the prelude defines whose name
+               ;; (rnrs) does not export is sealed and opaque (flags 3):
+               ;; record? is #f for a hashtable or a port.
                (cons `(,(generated-head 'define) ,rtd
-                       (,(compiler-introduced 'cons)
-                        (,(generated-head 'quote) ,(unmark name))
-                        (,(generated-head 'quote) ())))
+                       (%record ,(compiler-introduced '$rtd-rtd)
+                                (,(generated-head 'quote) ,(unmark name))
+                                #f
+                                ,(if (and *expanding-prelude?*
+                                          (not (memq (unmark name)
+                                                     $rnrs-exports)))
+                                     3
+                                     0)
+                                #f))
                      (cons `(,(generated-head 'define) (,ctor . ,fnames)
                               (%record ,rtd . ,fnames))
                            (cons `(,(generated-head 'define) (,pred x)

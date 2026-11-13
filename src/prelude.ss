@@ -50,9 +50,14 @@
         (loop (+ i 1))))
     ($wb 41))
    ((%recbase? x)
-    (%display-string "#<" 0)
-    ($display (car (%record-rtd x)))
-    ($wb 62))
+    ;; a descriptor prints as one; anything else as an instance
+    (let ((r (%record-rtd x)))
+      (%display-string (if (or (not r) (eq? r $rtd-rtd))
+                           "#<record type "
+                           "#<")
+                       0)
+      ($display ($rtd-name (if (or (not r) (eq? r $rtd-rtd)) x r)))
+      ($wb 62)))
    ((procedure? x) (%display-string "#<procedure>" 0))
    (else (%display-string "#<unknown>" 0))))
 
@@ -539,6 +544,26 @@
       sym))
    ((string=? (symbol->string (car tab)) s) (car tab))
    (else (%intern s (cdr tab)))))
+
+;; ---- the descriptor of descriptors ----
+;;
+;; A record type's descriptor is itself a record of four fields --
+;; name, parent (a descriptor or #f), flags (1 sealed, 2 opaque, 4
+;; nongenerative) and uid -- and slot 0 of every descriptor holds this
+;; one object, which has the same shape and #f in its own slot 0.  So
+;; slot 0 of any record struct define-record-type makes holds a
+;; descriptor or #f, and a walk "slot 0, then the parent fields" ends on
+;; every object: at the type's root for an instance, after one step for
+;; a descriptor, at once for this one.  It is made before any record
+;; type, because every descriptor's definition names it.
+(define $rtd-rtd (%record #f 'record-type-descriptor #f 3 #f))
+
+;; the name field of a descriptor; of what x is an instance of for the
+;; printer and the hash, where the descriptor of descriptors stands for
+;; itself
+(define ($rtd-name r) (%record-ref r 4 0))
+(define ($record-type-name-of x)
+  ($rtd-name (or (%record-rtd x) x)))
 
 ;; ---- ports ----
 ;;
@@ -2435,7 +2460,7 @@
    ((string? k) ($len-hash (string-length k) 23))
    ((bytevector? k) ($len-hash (bytevector-length k) 29))
    ((%recbase? k)
-    ($m+ (string-hash (symbol->string (car (%record-rtd k)))) 31))
+    ($m+ (string-hash (symbol->string ($record-type-name-of k))) 31))
    (else 0)))                           ; pairs, procedures: see above
 (define (equal-hash k)
   (cond
