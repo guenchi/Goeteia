@@ -37,6 +37,19 @@
   (protocol (lambda (n) (lambda (x) ((n x) 1)))))
 (define-record-type badp (parent point) (fields c)
   (protocol (lambda (n) (lambda (x y) ((n x y) 1 2)))))
+;; a protocol in a child of a parent that has NO fields and no protocol:
+;; the child's protocol still receives a procedure that takes the parent's
+;; arguments -- none -- and answers one that takes the child's fields
+(define-record-type nothing)
+(define-record-type something (parent nothing) (fields a)
+  (protocol (lambda (n) (lambda (a) ((n) (list 'some a))))))
+(define-record-type nothing-more (parent nothing)
+  (protocol (lambda (n) (lambda () ((n))))))
+(define-record-type still-nothing (parent nothing))
+(define-record-type at-last (parent still-nothing) (fields a b)
+  (protocol (lambda (n) (lambda (a) ((n) a (+ a 1))))))
+(define-record-type badn0 (parent nothing) (fields a)
+  (protocol (lambda (n) (lambda (a) ((n a) a)))))
 
 (define fails '())
 (define (want row got expect)
@@ -103,5 +116,21 @@
       (guard (c (#t 'raised))
         (let ((p (make-point 3 4))) (list (point-x p) (point-y p) (cpoint? p))))
       '(3 4 #f))
+(want 'child-over-a-fieldless-parent
+      (guard (c (#t 'raised))
+        (let ((s (make-something 5))) (list (nothing? s) (something? s) (something-a s))))
+      '(#t #t (some 5)))
+(want 'fieldless-child-over-a-fieldless-parent
+      (guard (c (#t 'raised))
+        (let ((s (make-nothing-more))) (list (nothing? s) (nothing-more? s) (something? s))))
+      '(#t #t #f))
+(want 'fieldless-two-levels-up
+      (guard (c (#t 'raised))
+        (let ((s (make-at-last 7))) (list (nothing? s) (still-nothing? s) (at-last? s) (at-last-a s) (at-last-b s))))
+      '(#t #t #t 7 8))
+(want 'raises-too-many-to-a-fieldless-n
+      (guard (c (#t 'raised))
+        (make-badn0 1))
+      'raised)
 
 (display (if (null? fails) #t (reverse fails)))

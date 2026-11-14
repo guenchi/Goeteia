@@ -33,6 +33,17 @@
   (syntax-rules ()
     ((_ name make pred extra) (define-record-type (name make pred) (parent animal) (fields extra)))))
 (define-animal bird make-bird bird? wings)
+;; a macro that defines a parent under a name of its own and a child of
+;; it: the parent's name is the macro's, not a name the program wrote
+(define-syntax define-over-a-hidden-base
+  (syntax-rules ()
+    ((_ name make pred get-v get-tag)
+     (begin
+       (define-record-type hidden-base (fields tag))
+       (define-record-type (name make pred) (parent hidden-base)
+         (fields (immutable v get-v)))
+       (define (get-tag r) (hidden-base-tag r))))))
+(define-over-a-hidden-base wrapped make-wrapped wrapped? wrapped-value wrapped-tag)
 (define p2 (make-point 1 2))
 (define p3 (make-point3 1 2 3))
 (define p4 (make-point4 1 2 3 4))
@@ -110,5 +121,9 @@
       (guard (c (#t 'raised))
         (list (equal? p3 p3) (equal? p3 (make-point3 1 2 3)) (eqv? p3 p3)))
       '(#t #f #t))
+(want 'parent-and-child-from-one-macro
+      (guard (c (#t 'raised))
+        (let ((w (make-wrapped 't 9))) (list (wrapped? w) (wrapped-tag w) (wrapped-value w) (wrapped? p2) (point? w))))
+      '(#t t 9 #f #f))
 
 (display (if (null? fails) #t (reverse fails)))

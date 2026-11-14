@@ -644,8 +644,9 @@
 ;;
 ;; A type with a protocol has one, made where it is defined, so its
 ;; protocol expression is evaluated once: the parent's descriptor when
-;; the parent has a protocol (else #f, and then m is the parent's
-;; field count), the protocol, and n, the type's own field count.
+;; the parent has a protocol (else #f), the protocol, n, the type's own
+;; field count, and m, the parent's field count -- 0 included -- or #f
+;; when the type has no parent.
 (define-record-type ($cd $make-cd* $cd?)
   (fields (immutable parent $cd-parent)
           (immutable protocol $cd-protocol)
@@ -676,7 +677,7 @@
                       ($field-count! own n)
                       (apply (($cd-step parent finish) (append own rest))
                              pargs))))
-                 ((> m 0)
+                 ((number? m)
                   (lambda pargs
                     ($field-count! pargs m)
                     (lambda own

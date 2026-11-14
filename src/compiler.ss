@@ -1218,15 +1218,19 @@
 ;; resolved once, here.  A written X is looked up in the scope being
 ;; expanded: its own definition, else the import entry its clause gives
 ;; (rename and prefix already resolved).  An X a macro introduced is
-;; looked up in the scope the macro was written in: its own definition,
-;; else what that scope's import clauses give.  Whether an alias
-;; variable exists plays no part.
+;; looked up first as itself, the token with its marks, among the
+;; definitions of the scope being expanded: a record type the same
+;; application of the macro defined is keyed so.  Then in the scope the
+;; macro was written in: its own definition, else what that scope's
+;; import clauses give.  Whether an alias variable exists plays no part.
 (define (record-type-named x)
   (let ((ic (and (symbol? x) (intro-context x))))
     (or (and (symbol? x)
              (if ic
                  (let ((key (record-scope-key (cdr ic))) (n (car ic)))
-                   (or (record-entry-at key n)
+                   (or (record-entry-at (record-scope-key *expanding-scope*)
+                                        x)
+                       (record-entry-at key n)
                        (if (string? key)
                            (let ((o (binding-origin key n)))
                              (record-entry-at (identity-scope-key (car o))
@@ -1481,7 +1485,9 @@
                                      #f)
                                 ,proto
                                 ,nf
-                                ,m))
+                                ;; #f marks a root: a parent of total
+                                ;; 0 still takes the child's shape
+                                ,(and parent m)))
                              `(,(generated-head 'define) ,ctor
                                (,(compiler-introduced '$cd-constructor)
                                 ,cd
