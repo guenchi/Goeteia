@@ -185,11 +185,16 @@ Where these are narrower than R6RS:
   bit-field procedures are not refused on their own: one past the
   width is refused only when the result leaves the fixnum range, where
   Chez refuses the index or count itself.
-- Every port here is textual and reads one byte per character, so
-  `get-char`, `get-line` and the `get-string-` procedures answer what
-  `read-char` would: input outside ASCII arrives as one character per
-  UTF-8 byte, where Chez decodes it.  `binary-port?` is `#f` for every
-  port.  `flush-output-port` has nothing to do: a string port keeps its
+- The console, string and file ports are textual and read one byte per
+  character, so `get-char`, `get-line` and the `get-string-` procedures
+  answer what `read-char` would: input outside ASCII arrives as one
+  character per UTF-8 byte, where Chez decodes it.  The binary ports are
+  the bytevector ports (`open-bytevector-input-port` and
+  `open-bytevector-output-port`): `binary-port?` is `#t` for them and
+  `#f` for every other port, a binary read on a textual port and a
+  textual read on a binary one raise `&assertion`, and passing a
+  transcoder to their constructors raises `&implementation-restriction`,
+  since transcoders are not implemented.  `flush-output-port` has nothing to do: a string port keeps its
   text until it is read, and the console and a file port write each
   byte through as it is put.  On a file port the new procedures do what
   `read-char`, `peek-char` and `write-char` do with one;
@@ -228,10 +233,7 @@ Still missing from R6RS, by group, for later batches of R20:
 value, n-ary forms of the
 comparisons that are binary today (`=`, `<`, `char<?`, `string<?` and
 the rest; the new `-ci` comparisons, `boolean=?` and `symbol=?` already
-take two or more arguments); the binary and bytevector port
-procedures (`get-u8`, `lookahead-u8`, `put-u8`, the `get-bytevector-`
-and `put-bytevector` procedures, `open-bytevector-input-port`,
-`open-bytevector-output-port`, `call-with-bytevector-output-port`);
+take two or more arguments); binary file ports;
 `current-error-port` and the `standard-` ports; `open-file-input-port`
 and its siblings, transcoders (and with them `bytevector->string` and
 `string->bytevector`), codecs, buffer modes, port positions and

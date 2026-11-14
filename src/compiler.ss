@@ -3256,7 +3256,12 @@
     bytevector-ieee-double-ref bytevector-ieee-double-set!
     bytevector-ieee-double-native-ref bytevector-ieee-double-native-set!
     ;; and UTF-16 and UTF-32
-    string->utf16 string->utf32 utf16->string utf32->string))
+    string->utf16 string->utf32 utf16->string utf32->string
+    ;; R20i: binary ports over bytevectors
+    open-bytevector-input-port open-bytevector-output-port
+    call-with-bytevector-output-port get-u8 lookahead-u8 get-bytevector-n
+    get-bytevector-n! get-bytevector-some get-bytevector-all put-u8
+    put-bytevector))
 
 ;; ---- the import map ----------------------------------------------
 ;;

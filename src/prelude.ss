@@ -724,7 +724,10 @@
           (mutable col $port-col $port-col!)))
 ;; kinds: console-in (a = one-byte pushback), console-out,
 ;;        string-in (a = string, b = position),
-;;        string-out (a = reversed char list)
+;;        string-out (a = reversed char list),
+;;        bytevector-in (a = bytevector, b = position, -1 once closed),
+;;        bytevector-out (a = reversed byte list, b = -1 once closed);
+;;        the two bytevector kinds are the binary ports
 
 (define $console-in ($make-port 'console-in -2 0 1 0))
 (define $console-out ($make-port 'console-out 0 0 1 0))
@@ -733,9 +736,13 @@
 (define (current-input-port) $cip)
 (define (current-output-port) $cop)
 (define (input-port? p)
-  (and (port? p) (memq ($port-kind p) '(console-in string-in file-in))))
+  (and (port? p)
+       (memq ($port-kind p) '(console-in string-in file-in bytevector-in))
+       #t))
 (define (output-port? p)
-  (and (port? p) (memq ($port-kind p) '(console-out string-out file-out))))
+  (and (port? p)
+       (memq ($port-kind p) '(console-out string-out file-out bytevector-out))
+       #t))
 
 (define (open-input-string s) ($make-port 'string-in s 0 1 0))
 (define (open-output-string) ($make-port 'string-out '() 0 1 0))
@@ -3969,7 +3976,9 @@
 (define (close-port p)
   (let ((k ($port-kind p)))
     (when (memq k '(file-in file-out))
-      (%fclose ($port-a p)))))
+      (%fclose ($port-a p)))
+    (when (memq k '(bytevector-in bytevector-out))
+      ($port-b! p -1))))
 (define (close-input-port p) (close-port p))
 (define (close-output-port p) (close-port p))
 (define (file-exists? path)
@@ -5022,9 +5031,11 @@
 
 (define (get-char p) (read-char p))
 (define (lookahead-char p) (peek-char p))
-(define (port-eof? p) (eof-object? (peek-char p)))
-(define (textual-port? x) (port? x))
-(define (binary-port? x) #f)
+(define (port-eof? p)
+  (eof-object? (if (binary-port? p) (lookahead-u8 p) (peek-char p))))
+(define (textual-port? x) (and (port? x) (not (binary-port? x))))
+(define (binary-port? x)
+  (and (port? x) (memq ($port-kind x) '(bytevector-in bytevector-out)) #t))
 
 ;; the characters up to the next newline, which is consumed and not
 ;; returned; the end of input with nothing read before it answers the
@@ -5082,6 +5093,125 @@
 (define (call-with-port p proc)
   (call-with-values (lambda () (proc p))
     (lambda vals (close-port p) (apply values vals))))
+
+;; ---- binary ports over bytevectors (R6RS 8.2) ----
+;;
+;; Two kinds of $port: bytevector-in reads a bytevector from position
+;; b, bytevector-out collects the bytes put, newest first.  Only these
+;; are binary.  Transcoders are not implemented, so a call that passes
+;; one is refused as a restriction of this implementation.
+
+(define ($no-transcoder who t)
+  (when (and (pair? t) (car t))
+    ($restriction-error who "transcoders are not implemented" (car t))))
+;; p, if it is an open port of kind; else an &assertion naming who
+(define ($binary-port who p kind)
+  (unless (and (port? p) (eq? ($port-kind p) kind))
+    (assertion-violation who
+                         (if (eq? kind 'bytevector-in)
+                             "not a binary input port"
+                             "not a binary output port")
+                         p))
+  (when (< ($port-b p) 0)
+    (assertion-violation who "the port is closed" p))
+  p)
+(define ($count who n)
+  (unless (and (fixnum? n) (<= 0 n))
+    (assertion-violation who "not a non-negative exact integer" n)))
+;; the bytes of an input port not yet read
+(define ($bin-left p) (- (bytevector-length ($port-a p)) ($port-b p)))
+
+(define (open-bytevector-input-port bv . t)
+  ($no-transcoder 'open-bytevector-input-port t)
+  (unless (bytevector? bv)
+    (assertion-violation 'open-bytevector-input-port "not a bytevector" bv))
+  ($make-port 'bytevector-in bv 0 1 0))
+;; the port and an extractor, which answers the bytes put since it was
+;; last called and empties the port
+(define (open-bytevector-output-port . t)
+  ($no-transcoder 'open-bytevector-output-port t)
+  (let ((p ($make-port 'bytevector-out '() 0 1 0)))
+    (values p
+            (lambda ()
+              (let ((bytes (reverse ($port-a p))))
+                ($port-a! p '())
+                (u8-list->bytevector bytes))))))
+(define (call-with-bytevector-output-port proc . t)
+  ($no-transcoder 'call-with-bytevector-output-port t)
+  (let-values (((p extract) (open-bytevector-output-port)))
+    (proc p)
+    (extract)))
+
+(define (get-u8 p)
+  ($binary-port 'get-u8 p 'bytevector-in)
+  (if (= ($bin-left p) 0)
+      (eof-object)
+      (let ((b (bytevector-u8-ref ($port-a p) ($port-b p))))
+        ($port-b! p (+ ($port-b p) 1))
+        b)))
+(define (lookahead-u8 p)
+  ($binary-port 'lookahead-u8 p 'bytevector-in)
+  (if (= ($bin-left p) 0)
+      (eof-object)
+      (bytevector-u8-ref ($port-a p) ($port-b p))))
+;; up to n bytes; none left and n positive answers the end of file
+(define (get-bytevector-n p n)
+  ($binary-port 'get-bytevector-n p 'bytevector-in)
+  ($count 'get-bytevector-n n)
+  (if (and (> n 0) (= ($bin-left p) 0))
+      (eof-object)
+      (let* ((k (min n ($bin-left p)))
+             (out (make-bytevector k 0)))
+        (bytevector-copy! ($port-a p) ($port-b p) out 0 k)
+        ($port-b! p (+ ($port-b p) k))
+        out)))
+;; up to count bytes into bv from start, answering how many
+(define (get-bytevector-n! p bv start count)
+  ($binary-port 'get-bytevector-n! p 'bytevector-in)
+  ($count 'get-bytevector-n! start)
+  ($count 'get-bytevector-n! count)
+  (unless (and (bytevector? bv) (<= (+ start count) (bytevector-length bv)))
+    (assertion-violation 'get-bytevector-n!
+                         "start and count leave the bytevector" start count))
+  (if (and (> count 0) (= ($bin-left p) 0))
+      (eof-object)
+      (let ((k (min count ($bin-left p))))
+        (bytevector-copy! ($port-a p) ($port-b p) bv start k)
+        ($port-b! p (+ ($port-b p) k))
+        k)))
+(define (get-bytevector-some p)
+  ($binary-port 'get-bytevector-some p 'bytevector-in)
+  (if (= ($bin-left p) 0)
+      (eof-object)
+      (get-bytevector-n p ($bin-left p))))
+(define (get-bytevector-all p)
+  ($binary-port 'get-bytevector-all p 'bytevector-in)
+  (if (= ($bin-left p) 0)
+      (eof-object)
+      (get-bytevector-n p ($bin-left p))))
+
+(define (put-u8 p b)
+  ($binary-port 'put-u8 p 'bytevector-out)
+  (unless (and (fixnum? b) (<= 0 b) (<= b 255))
+    (assertion-violation 'put-u8 "not a byte" b))
+  ($port-a! p (cons b ($port-a p))))
+(define (put-bytevector p bv . range)
+  ($binary-port 'put-bytevector p 'bytevector-out)
+  (unless (bytevector? bv)
+    (assertion-violation 'put-bytevector "not a bytevector" bv))
+  (let* ((n (bytevector-length bv))
+         (start (if (pair? range) (car range) 0))
+         (count (if (and (pair? range) (pair? (cdr range)))
+                    (cadr range)
+                    (- n start))))
+    (unless (and (fixnum? start) (fixnum? count) (<= 0 start) (<= 0 count)
+                 (<= (+ start count) n))
+      (assertion-violation 'put-bytevector
+                           "start and count leave the bytevector" start count))
+    (let loop ((i start))
+      (when (< i (+ start count))
+        ($port-a! p (cons (bytevector-u8-ref bv i) ($port-a p)))
+        (loop (+ i 1))))))
 
 ;; ---- hashtables ----
 
