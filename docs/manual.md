@@ -636,6 +636,26 @@ arguments and raises `&assertion` instead; a failed `assert` raises
 `&assertion` with who `assert`.
 
 ```
+procedure: (error? c)
+
+func -> any -> boolean
+```
+Whether `c` is an `&error` condition, or a compound with an `&error`
+component. The other predicates of R6RS 7.2 work the same way:
+`assertion-violation?`, `violation?`, `serious-condition?`,
+`message-condition?`, `who-condition?`, `irritants-condition?` and the
+rest, one per standard type.
+
+```
+procedure: (condition-message c)
+
+func -> condition -> string
+```
+The message of `c`'s `&message` component. `condition-who` and
+`condition-irritants` read `&who` and `&irritants` the same way; each
+raises an `&assertion` when `c` has no such component.
+
+```
 procedure: (raise obj)
 
 func -> any -> never
@@ -687,12 +707,19 @@ Run `(before)`, then `(thunk)`, then `(after)` — `after` runs whenever
 control leaves `thunk`, and `before` again whenever it re-enters.
 Returns `thunk`'s value.
 
+The prelude's own errors raise the type R6RS names: `&assertion` for a
+wrong argument or call (so `error?` is `#f` for it -- test
+`assertion-violation?` or `violation?`), `&lexical` with `&i/o-read`
+for text the reader cannot read, `&implementation-restriction` for a
+result goeteia cannot represent, and `&i/o-filename` for a file that
+cannot be opened.
+
 With no handler, a `&serious` condition (or any value that is not a
 condition) prints `unhandled exception:` and its message and stops the
 program; a `&warning` prints `warning:` and the call returns. A program
 that never installs a handler does not carry the condition machinery.
-What remains different from R6RS -- continuations only escape, traps
-are not conditions, the prelude's own errors are all `&error` -- is in
+What remains different from R6RS -- continuations only escape, and
+traps are not conditions -- is in
 [docs/limits.md](https://github.com/guenchi/Goeteia/blob/master/docs/limits.md).
 
 ### Continuations
