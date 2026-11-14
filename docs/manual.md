@@ -881,6 +881,8 @@ func -> string -> *jsObject
 ```
 Evaluate JavaScript in the global scope: `eval(code)`.
 
+A page whose Content-Security-Policy leaves out `'unsafe-eval'` refuses this call. The plain values code most often evaluates text for can be made through the bridge instead: `{}` is `(js-new (js-get (js-global) "Object"))`, `null` is `(js-method (js-get (js-global) "JSON") "parse" "null")`, and an object with fields is an empty one filled with `js-set!`.
+
 ```scheme
 (js->number (js-eval "40+2"))
 => 42
@@ -3031,6 +3033,8 @@ loadGoeteiaAuto('app.wasm', 'app.fallback.js');
 - **a CSS selector** for an inert `<script type="goeteia/js">` tag holding the module text inline—the default, `script[type="goeteia/js"]`. The browser ignores a script of unknown type, so the text just sits in the document until the loader takes its `textContent`, strips the `export` keywords, and calls `main`.
 
 Append `?goeteia=js` to the page URL to force the fallback on an engine that does have Wasm GC—that is how you test it.
+
+**Under a Content-Security-Policy.** The URL shape needs no `'unsafe-eval'`: the loader imports the file as a module, and each later launch of the same URL in the page imports it with a `goeteia-launch` query of its own, so every launch gets a runtime of its own. If the import fails (a server that sends the file with a type a module may not have), the loader fetches the text and runs it instead, which does need `'unsafe-eval'`; if that fails too, the error names both causes. The inline shape always needs `'unsafe-eval'`: text in a tag can only be run by evaluating it. The wasm module needs `'wasm-unsafe-eval'`, as any page that instantiates WebAssembly does. The `(web ...)` libraries need nothing more; `js-eval` itself, and the libraries that install helper code with it -- `(gfx gltf)`, `(gfx ktx)`, `(gfx gl)`, `(gfx gpu)`, `(gfx sdf)`, `(gfx xr)`, `(gam save)` -- still need `'unsafe-eval'`.
 
 Which shape to use is a question of *when* the fallback is fetched, not of size: a server gzips inline HTML the same as a served file. A separate file is lazy—visitors with Wasm GC never download it, and it caches under its own URL, independent of the page. Inline costs every visitor a download that few of them execute, and buys self-containment: one file to copy, with nothing fetched alongside it. Prefer the separate file for a deployed site; inline when the page itself is the unit you distribute.
 
