@@ -32,7 +32,10 @@
                      (string=? (condition-message e) "bad thing")
                      (equal? (condition-irritants e) '(1 2)))))
        (error 'me "bad thing" 1 2))
-     ;; assert failures are guardable now
-     (eq? (guard (e ((error? e) 'asserted))
+     ;; a failed assert is guardable, and it is an &assertion violation,
+     ;; not an &error (R6RS; it was an &error here until the condition
+     ;; types existed)
+     (eq? (guard (e ((error? e) 'an-error)
+                    ((assertion-violation? e) 'asserted))
             (assert (= 1 2)))
           'asserted))

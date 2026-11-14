@@ -262,6 +262,16 @@ const apiHere = path.join(here, '..', 'docs', 'api.md');
             for (const n of m[1].split(/\s+/)) if (n) known.add(n);
             for (const f of m[2].matchAll(/\((?:immutable|mutable)\s+[^\s()]+\s+([^\s()]+)(?:\s+([^\s()]+))?/g)) { known.add(f[1]); if (f[2]) known.add(f[2]); }
         }
+        // condition types define the type, its constructor, its predicate
+        // and an accessor per field: (define-condition-type T super make
+        // pred (field accessor) ...), read to its matching paren
+        for (const m of prelude.matchAll(/^\(define-condition-type\b/gm)) {
+            let depth = 0, j = m.index;
+            for (; j < prelude.length; j++) { if (prelude[j] === '(') depth++; else if (prelude[j] === ')' && --depth === 0) break; }
+            const t = prelude.slice(m.index, j + 1).replace(/;[^\n]*/g, ' ').split(/[\s()]+/).filter(Boolean);
+            for (const n of [t[1], t[3], t[4]]) if (n) known.add(n);
+            for (let k = 6; k < t.length; k += 2) known.add(t[k]);
+        }
         // compiler primitives are registered as (name . arity) pairs, special forms as (cons 'name ...)
         const compiler = fs.readFileSync(path.join(here, '..', 'src', 'compiler.ss'), 'utf8');
         for (const m of compiler.matchAll(/\(([^\s()]+) \. [0-9]+\)/g)) known.add(m[1]);

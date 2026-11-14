@@ -842,6 +842,7 @@
              (xpand (cons (generated-head 'begin) (cdr (car cs)))))
             (else (pick (cdr cs))))))
         ((cond) (xpand-cond (cdr e)))
+        ((%guard-select) (xpand-guard-select (cdr e)))
         ;; A let* body is an R6RS <body>: it may open with definitions,
         ;; and they bind recursively, as a let's do.  The innermost level
         ;; is therefore a let with no bindings, not a begin: a begin in
@@ -928,6 +929,7 @@
                                            bs))))))))))
         ((quasiquote) (xpand-qq (cadr e) 0))
         ((define-record-type) (xpand-record e))
+        ((define-condition-type) (xpand-condition-type e))
         ((record-type-descriptor) (xpand-record-type-descriptor e))
         ((import)
          ;; Resolved by the driver, but the CLAUSE is read here, from
@@ -1033,7 +1035,7 @@
     lambda begin set! define do case cond and or not when unless else =>
     define-record-type import library apply assert guard let-values
     let*-values endianness case-lambda define-enumeration
-    record-type-descriptor))
+    record-type-descriptor define-condition-type))
 
 ;; set while the prelude is expanded, which has no clause and defines
 ;; what it likes
@@ -1346,6 +1348,91 @@
     (differ "sealed or opaque flag"))
   (unless (equal? fields (record-entry-fields first))
     (differ "fields")))
+
+;; (define-condition-type type super make pred (field accessor) ...)
+;; (R6RS 7.2): the record type with parent super and immutable fields,
+;; make its constructor, and pred and each accessor procedures over the
+;; prelude's $condition-is? and $condition-ref.  The record's own
+;; predicate and each field's raw accessor are minted (minted-alias,
+;; below), so nothing a program writes can name them.  It is a core form and not a prelude
+;; macro because a top-level definition a macro of another scope
+;; introduces does not reach a program here: the prelude's would be one
+;; name for every use, a library's is unbound.
+(define (condition-type-parts e)
+  (unless (and (list? e) (>= (length e) 5)
+               (symbol? (list-ref e 1)) (symbol? (list-ref e 2))
+               (symbol? (list-ref e 3)) (symbol? (list-ref e 4)))
+    (errorf 'goeteia
+            (string-append "define-condition-type: expected (define-condition-type"
+                           " type supertype constructor predicate"
+                           " (field accessor) ...):")
+            (strip-marks e)))
+  (let* ((rest (list-tail e 5))
+         (tagged (filter (lambda (c)
+                           (and (pair? c) (eq? (car c) $record-written-tag)))
+                         rest))
+         (specs (filter (lambda (c)
+                          (not (and (pair? c)
+                                    (eq? (car c) $record-written-tag))))
+                        rest)))
+    (for-each (lambda (s)
+                (unless (and (list? s) (= (length s) 2)
+                             (symbol? (car s)) (symbol? (cadr s)))
+                  (errorf 'goeteia
+                          "define-condition-type: a field is (field accessor):"
+                          (strip-marks s))))
+              specs)
+    (cons specs tagged)))
+
+(define (condition-type-bound-names f)
+  (if (and (list? f) (>= (length f) 5))
+      (append (list (list-ref f 1) (list-ref f 3) (list-ref f 4))
+              (fold-left (lambda (acc s)
+                           (if (and (list? s) (= (length s) 2))
+                               (append acc (list (cadr s)))
+                               acc))
+                         '()
+                         (list-tail f 5)))
+      '()))
+
+
+;; A name the form mints for a binding of its own: a token marked as an
+;; alias of $raw- and the public name it serves.  Its binding is its own,
+;; and no name a program writes can reach it; where a name is printed or
+;; quoted -- the failure path of a record accessor quotes the accessor's
+;; name -- it is that spelling.  A gensym's own name must never get
+;; there: the compiler hosted on Chez and the self-hosted one print it
+;; differently, and a quoted symbol is interned at run time, where it
+;; would stand for the program's own symbol of that spelling.  Nor may
+;; the spelling be the public name itself: where a program redefines an
+;; export, the prelude's definition of it is renamed by its spelling, and
+;; an alias spelled the same would be renamed with it.
+(define (minted-alias s)
+  (let ((f (gensym "raw")))
+    (set! *marks* (cons (cons f (sym-cat (list "$raw-" (unmark s))))
+                        *marks*))
+    f))
+
+(define (xpand-condition-type e)
+  (let* ((parts (condition-type-parts e))
+         (specs (car parts))
+         (type (list-ref e 1))
+         (raws (map (lambda (s) (minted-alias (cadr s))) specs))
+         (x (gensym "x")))
+    (xpand
+     `(,(generated-head 'begin)
+       (,(generated-head 'define-record-type)
+        (,type ,(list-ref e 3) ,(minted-alias (list-ref e 4)))
+        (parent ,(list-ref e 2))
+        (fields ,@(map (lambda (s r) (list 'immutable (car s) r)) specs raws))
+        ,@(cdr parts))
+       (,(generated-head 'define) (,(list-ref e 4) ,x)
+        (,(compiler-introduced '$condition-is?) ,x ,type))
+       ,@(map (lambda (s r)
+                `(,(generated-head 'define) (,(cadr s) ,x)
+                  (,(compiler-introduced '$condition-ref) ,x ,type ,r
+                   (,(generated-head 'quote) ,(cadr s)))))
+              specs raws)))))
 
 ;; (define-record-type <spec> <clause> ...) with <spec> = name | (name
 ;; constructor predicate), the clauses fields, parent, protocol,
@@ -1755,6 +1842,35 @@
          (else `(if ,(xpand (car c))
                     ,(xpand (cons (generated-head 'begin) (cdr c)))
                     ,(xpand-cond (cdr clauses))))))))
+
+;; (%guard-select clause ...), which the prelude's guard emits inside its
+;; handler: the clauses read exactly as cond reads them -- else and =>
+;; are recognised as cond recognises them, not where a local binding
+;; shadows them -- but what a clause answers is a thunk of its body, or
+;; of its receiver applied to the test's value, or of that value, and #f
+;; when no test holds.  The tests run here; a body runs only when the
+;; guard calls the thunk, after it has escaped.
+(define (xpand-guard-select clauses)
+  (if (null? clauses)
+      #f
+      (let ((c (car clauses)))
+        (cond
+         ((auxiliary? (car c) 'else)
+          `(lambda () ,(xpand (cons (generated-head 'begin) (cdr c)))))
+         ((null? (cdr c))
+          (let ((t (gensym "t")))
+            `(let ((,t ,(xpand (car c))))
+               (if ,t (lambda () ,t) ,(xpand-guard-select (cdr clauses))))))
+         ((and (pair? (cdr c)) (auxiliary? (cadr c) '=>))
+          (let ((t (gensym "t")))
+            `(let ((,t ,(xpand (car c))))
+               (if ,t
+                   (lambda () (,(xpand (caddr c)) ,t))
+                   ,(xpand-guard-select (cdr clauses))))))
+         (else `(if ,(xpand (car c))
+                    (lambda ()
+                      ,(xpand (cons (generated-head 'begin) (cdr c))))
+                    ,(xpand-guard-select (cdr clauses))))))))
 
 ;;;; ------------------------------------------------------------------
 ;;;; macro transformers
@@ -3093,7 +3209,45 @@
     record-type-descriptor record? record-rtd record-type-name
     record-type-parent record-type-uid record-type-generative?
     record-type-sealed? record-type-opaque? record-type-descriptor?
-    record-predicate))
+    record-predicate
+    ;; R20f: conditions and exceptions (define-condition-type is
+    ;; syntax, also in $rnrs-syntax), and hashtable? and port?, which
+    ;; the prelude bound without the table naming them
+    &assertion &condition &error &i/o &i/o-decoding &i/o-encoding
+    &i/o-file-already-exists &i/o-file-does-not-exist
+    &i/o-file-is-read-only &i/o-file-protection &i/o-filename
+    &i/o-invalid-position &i/o-port &i/o-read &i/o-write
+    &implementation-restriction &irritants &lexical &message
+    &no-infinities &no-nans &non-continuable &serious &syntax &undefined
+    &violation &warning &who assertion-violation? condition
+    condition-accessor condition-irritants condition-predicate
+    condition-who condition? define-condition-type error?
+    i/o-decoding-error? i/o-encoding-error-char i/o-encoding-error?
+    i/o-error-filename i/o-error-port i/o-error-position i/o-error?
+    i/o-file-already-exists-error? i/o-file-does-not-exist-error?
+    i/o-file-is-read-only-error? i/o-file-protection-error?
+    i/o-filename-error? i/o-invalid-position-error? i/o-port-error?
+    i/o-read-error? i/o-write-error?
+    implementation-restriction-violation? irritants-condition?
+    lexical-violation? make-assertion-violation make-error
+    make-i/o-decoding-error make-i/o-encoding-error make-i/o-error
+    make-i/o-file-already-exists-error
+    make-i/o-file-does-not-exist-error make-i/o-file-is-read-only-error
+    make-i/o-file-protection-error make-i/o-filename-error
+    make-i/o-invalid-position-error make-i/o-port-error
+    make-i/o-read-error make-i/o-write-error
+    make-implementation-restriction-violation make-irritants-condition
+    make-lexical-violation make-message-condition
+    make-no-infinities-violation make-no-nans-violation
+    make-non-continuable-violation make-serious-condition
+    make-syntax-violation make-undefined-violation make-violation
+    make-warning make-who-condition message-condition?
+    no-infinities-violation? no-nans-violation?
+    non-continuable-violation? serious-condition? simple-conditions
+    syntax-violation-form syntax-violation-subform syntax-violation?
+    undefined-violation? violation? warning? who-condition?
+    with-exception-handler assertion-violation syntax-violation
+    condition-message hashtable? port?))
 
 ;; ---- the import map ----------------------------------------------
 ;;
@@ -3242,7 +3396,8 @@
     define-syntax do else guard if lambda let let* let*-values
     let-values letrec letrec* or parameterize quasiquote quote set!
     syntax-rules unless unquote unquote-splicing when endianness
-    case-lambda define-enumeration record-type-descriptor))
+    case-lambda define-enumeration record-type-descriptor
+    define-condition-type))
 
 (define (identity-keyword? id)
   (let ((lib (car id)) (name (cdr id)))
@@ -6812,7 +6967,14 @@
                                      (hashtable-set! t (unmark (car e)) #t))
                                    table)
                          t)))
-          (by-name (make-eq-hashtable)))
+          (by-name (make-eq-hashtable))
+          ;; an open record predicate calls $record-is-a? from the code
+          ;; the back ends emit, after this pass, so no call of it is
+          ;; visible here: it is live exactly when the descriptor of an
+          ;; open type is
+          (open (let ((t (make-eq-hashtable)))
+                  (for-each (lambda (g) (hashtable-set! t g #t)) *open-rtds*)
+                  t)))
       (for-each (lambda (e)
                   (unless (hashtable-contains? by-name (car e))
                     (hashtable-set! by-name (car e) (cdr e))))
@@ -6889,7 +7051,11 @@
            ((hashtable-contains? live (car entry)) (grow live rest))
            (else
             (hashtable-set! live (car entry) #t)
-            (grow live (append (form-refs (cdr entry) '()) rest)))))))))))
+            (grow live
+                  (append (form-refs (cdr entry) '())
+                          (if (hashtable-contains? open (unmark (car entry)))
+                              (cons '$record-is-a? rest)
+                              rest))))))))))))
 
 ;; ---- a conservative inliner ----
 ;; A small, once-defined, fixed-arity top-level function whose body
@@ -7241,6 +7407,7 @@
         ((define) (list (define-target (cadr f))))
         ((define-syntax) (list (define-target (cadr f))))
         ((define-record-type) (record-bound-names f))
+        ((define-condition-type) (condition-type-bound-names f))
         ((begin) (fold-left (lambda (acc x) (append acc (bound-names x)))
                             '()
                             (cdr f)))
@@ -7377,6 +7544,15 @@
        ((and (symbol? h) (eq? (resolve-tag h) 'define-record-type)
              (pair? (cdr x)))
         (ns-record x table))
+       ;; every part is a name the form binds or a field name, so the
+       ;; plain walk scopes it; a renamed type keeps its written spelling
+       ;; for the printer, as ns-record keeps a record's
+       ((and (symbol? h) (eq? (resolve-tag h) 'define-condition-type)
+             (pair? (cdr x)) (symbol? (cadr x)))
+        (let ((scoped (ns-walk-list x table #f)))
+          (if (eq? (cadr scoped) (cadr x))
+              scoped
+              (append scoped (list (list $record-written-tag (cadr x)))))))
        ((and (symbol? h) (eq? (resolve-tag h) 'case) (pair? (cdr x)))
         (cons h (cons (ns-walk (cadr x) table #f)
                       (map (lambda (c)
@@ -7984,12 +8160,7 @@
                                      (record-loc! nf (form-loc f)))
                                    nf))
                      (inline-forms numbered))
-                 ;; an open record predicate calls $record-is-a? from
-                 ;; the code the back ends emit, after this pass, so no
-                 ;; call of it is visible here
-                 (if (pair? *open-rtds*)
-                     (cons '$record-is-a? export-names)
-                     export-names)))
+                 export-names))
          (fn-defs (filter fn-define? forms))
          (var-defs (filter var-define? forms))
          (main-steps (map (lambda (f)

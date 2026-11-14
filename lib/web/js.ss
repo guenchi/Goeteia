@@ -110,16 +110,17 @@
   ;; through a replaceable hook; the default writes the host console.
   (define ($cb-report e)
     (js-method (js-get (js-global) "console") "error"
-               (cond ((error? e)
-                      (let ((w (condition-who e)))
+               (cond ((message-condition? e)
+                      (let ((w (and (who-condition? e) (condition-who e))))
                         (string-append
                          "callback error: "
                          (cond ((symbol? w) (symbol->string w))
                                ((string? w) w)
                                (else "?"))
                          ": "
-                         ;; error does not police its msg argument;
-                         ;; a non-string here must not cost the report
+                         ;; make-message-condition does not police its
+                         ;; argument; a non-string here must not cost the
+                         ;; report
                          (let ((m (condition-message e)))
                            (if (string? m) m "(non-string message)")))))
                      ((symbol? e)

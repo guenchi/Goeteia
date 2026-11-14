@@ -68,9 +68,26 @@
        (js-method (js-eval "[1]") "map" (lambda _ (raise 'plain)))
        (js-eval "console.error = globalThis.__cbconsole")
        (js-truthy? (js-eval "__cberr.length === 1")))
-     ;; error does not police its msg argument; a condition carrying
-     ;; a non-string message must not cost the report (a formatter
-     ;; raise inside the hook would be swallowed silently)
+     ;; a condition carrying a non-string message must not cost the
+     ;; report (a formatter raise inside the hook would be swallowed
+     ;; silently).  error refuses a non-string message itself now, so
+     ;; the condition is made by hand: make-message-condition does not
+     ;; police its argument.
+     (begin
+       (js-eval "globalThis.__cberr = [];
+                 globalThis.__cbconsole = console.error;
+                 console.error = (...a) =>
+                   globalThis.__cberr.push(a.join(' '))")
+       (js-method (js-eval "[1]") "map"
+                  (lambda _ (raise (condition (make-error)
+                                              (make-who-condition 'oddball)
+                                              (make-message-condition 123)))))
+       (js-eval "console.error = globalThis.__cbconsole")
+       (and (js-truthy? (js-eval "__cberr.length === 1"))
+            (js-truthy? (js-eval "__cberr[0].includes('oddball')"))
+            (js-truthy? (js-eval "__cberr[0].includes('(non-string message)')"))))
+     ;; error's own refusal of a non-string message, inside a callback,
+     ;; is reported through the same channel: one line, naming error
      (begin
        (js-eval "globalThis.__cberr = [];
                  globalThis.__cbconsole = console.error;
@@ -79,7 +96,7 @@
        (js-method (js-eval "[1]") "map" (lambda _ (error 'oddball 123)))
        (js-eval "console.error = globalThis.__cbconsole")
        (and (js-truthy? (js-eval "__cberr.length === 1"))
-            (js-truthy? (js-eval "__cberr[0].includes('oddball')"))))
+            (js-truthy? (js-eval "__cberr[0].startsWith('callback error: error: ')"))))
      ;; ---- a hook that fails on its own account ------------------------
      ;; The reporting channel is caller-supplied, so it can raise.  $jscb
      ;; guards it separately from the callback it is reporting on -- the

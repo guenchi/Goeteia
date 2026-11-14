@@ -228,9 +228,8 @@ Still missing from R6RS, by group, for later batches of R20:
 value, n-ary forms of the
 comparisons that are binary today (`=`, `<`, `char<?`, `string<?` and
 the rest; the new `-ci` comparisons, `boolean=?` and `symbol=?` already
-take two or more arguments), and `with-exception-handler`; the
-condition types, the `&i/o` conditions among them; the binary and
-bytevector port procedures (`get-u8`, `put-u8`, the `get-bytevector-`
+take two or more arguments); the binary and bytevector port
+procedures (`get-u8`, `put-u8`, the `get-bytevector-`
 and `put-bytevector` procedures, `open-bytevector-input-port`,
 `open-bytevector-output-port`, `call-with-bytevector-output-port`);
 `current-error-port` and the `standard-` ports; `open-file-input-port`
@@ -300,7 +299,8 @@ The names: `quote` `quasiquote` `unquote` `unquote-splicing` `if` `let`
 `cond` `and` `or` `not` `when` `unless` `else` `=>`
 `define-record-type` `import` `library` `apply` `assert` `guard`
 `let-values` `let*-values` `endianness` `case-lambda`
-`define-enumeration` `record-type-descriptor`.  Before, some of these definitions were
+`define-enumeration` `record-type-descriptor` `define-condition-type`.
+Before, some of these definitions were
 refused by accident with a message naming the wrong keyword, some
 crashed the compiler, and the rest compiled and were silently ignored.
 
@@ -889,8 +889,10 @@ never names it carries nothing for it.
   What the protocol hands on is counted: the field values given to
   `new`, to a parent's procedure and to what it returns raise when there
   are too many or too few.
-- The conditions a record operation raises are made by `error`, not
-  `&assertion`; the condition types are the next group.
+- The conditions a record operation raises are made by `error`, so they
+  are `&error` and not `&assertion`, as all the prelude's own errors are
+  until the prelude's raising sites are given their types (see
+  "Conditions and exceptions" below).
 
 **goeteia's own answers**, where R6RS leaves the matter open and Chez
 differs: every record type the prelude defines and `(rnrs)` does not
@@ -922,6 +924,13 @@ Exception in goeteia: more than 63 distinct field counts among the record types 
 
 The JS target's records are arrays and have no such limit.
 
+The prelude's own record types count like a program's.  The condition
+types, live in a program that installs a handler or uses a condition
+procedure, use the counts 0, which takes no place, and 1; `&syntax`
+uses 2 when it is live.  So such a program, when it also defines
+related types of 2 fields or more, has 62 non-zero counts left for
+them, 61 when `&syntax` is live.
+
 **What a parent costs.**  A predicate, accessor or mutator of a type
 that no definition names as a parent compiles to the code it always
 had.  One of a type that has descendants tests the instance's own type
@@ -938,6 +947,97 @@ field (wasm on Node, nine runs, medians; JS five runs):
 
 The first three are within the noise of one another: the non-final
 struct type costs nothing measurable.
+
+## Conditions and exceptions
+
+`with-exception-handler`, `raise`, `raise-continuable` and `guard`
+follow R6RS, over continuations that can only escape.  A `guard` whose
+clauses do not match enters the body's dynamic environment again --
+the before thunks of its `dynamic-wind`s run, and the handlers it had
+are in force -- and passes the condition to the next handler, which is
+what R6RS's re-entry of the body's continuation amounts to.  The
+conditions are R6RS's: `&condition` and the standard types of
+`(rnrs conditions)`, `&no-infinities` and `&no-nans`, the `&i/o`
+types, compound conditions, `define-condition-type`,
+`condition-predicate` and `condition-accessor`.  A simple condition is
+a record (`record?` is `#t`, its type's parents go up to `&condition`);
+a compound condition is of an opaque type of the prelude's own, so
+`record?` is `#f` for it, where Chez answers `#t`.
+
+**Breaking, as R6RS says.**  A failed `assert` is an `&assertion`
+violation: `error?` is `#f` for it.  A handler that returns from `raise`
+raises `&non-continuable`; `raise-continuable` returns what its handler
+returns.  Around a `guard` whose clauses do not match, the after and
+before thunks now run in R6RS's order: left before the clauses are
+tested, entered again when none matched.  The names of the family --
+100 of them, `&condition` to `with-exception-handler`, and also
+`hashtable?` and `port?`, which were bound but not exported -- are
+exports of `(rnrs)`: a program that defines one must exclude it, and
+`define-condition-type` is among the names a program cannot define at
+top level (see above).
+
+**With no handler** (R6RS 7.1).  A condition that is not `&serious` --
+a `&warning`, say -- prints one line, `warning: ` and its report, and
+the call returns: `raise-continuable` with no value to see, `raise` by
+raising `&non-continuable`.  Chez returns only for a `&warning` and
+stops for any other condition that is not serious (a bare `&message`);
+goeteia takes R6RS's sentence as written.  Anything else prints
+`unhandled exception: ` and its report and stops the program at once,
+without running the after thunks of the `dynamic-wind`s it is inside
+(Chez runs them).  The report is `who: message irritant ...` for a
+condition with a message, the who printed as `#f` when there is none;
+anything else is written, a record as `#<NAME>` and a compound
+condition as `#<condition NAME ...>`.  There is no error port yet, so
+both lines go to the console output.
+
+**A program that installs no handler does not carry the machinery.**
+`error`, `assertion-violation` and a failed `assert` make and raise
+their condition through one procedure that only the entries installing
+a handler (`with-exception-handler`, `guard`) name.  Until one of them
+has run, nothing can see the condition, so they print the uncaught line
+themselves and stop: the same text, the same stop.  A program that
+names no `guard`, no `with-exception-handler`, no `raise` and no
+condition procedure loses all of it to dead-code removal.  Measured
+against the tree before conditions (wasm on Node, bytes):
+
+| program | wasm | JS |
+|---|---|---|
+| prints `hi` | +53 | +507 |
+| raises an error and catches it with `guard` | +4983 | +7861 |
+
+**What it costs to run.**  A frame carries the handler stack, so a
+`dynamic-wind` and a `guard` do a little more than before.  One million
+iterations each, medians of nine runs (wasm) and five (JS), in
+milliseconds:
+
+| loop | wasm before | wasm now | JS before | JS now |
+|---|---|---|---|---|
+| a `guard` entered, nothing raised | 81 | 117 | 85 | 144 |
+| `call/cc` as a loop exit, no `dynamic-wind` | 141 | 139 | 576 | 577 |
+| `call/cc` as a loop exit through three `dynamic-wind`s | 251 | 314 | 2374 | 1096 |
+
+And the depth: guards nested inside one another, a `dynamic-wind` in
+each, with a raise at the bottom that only the outermost one catches,
+run to about 1770 levels on wasm (1890 before) and about 650 on JS (as
+before).  While a guard tests its clauses, the body's own stack frames
+are still allocated.
+
+**What is not there.**
+- A continuation invoked after its `call/cc` returned -- for instance
+  one a clause's test took, invoked later by a handler -- is not
+  re-entered: Chez re-enters it, goeteia dies with a host exception, as
+  before.
+- A trap is not a condition: an illegal cast, an unreachable, a stack
+  overflow, a host error on JS stop the program and no handler sees
+  them.
+- The prelude's own errors are `&error`, whatever went wrong -- a bad
+  argument is not yet an `&assertion`, a reader error not yet
+  `&lexical` -- until each raising site is given its type.
+- No port operation raises an `&i/o` condition yet; the types are there
+  for programs.
+- Under JSPI a callback can run while another computation is suspended
+  in `js-await`, and the two share the dynamic environment (ledger
+  R78).
 
 ## Capacity limits in the graphics stack
 

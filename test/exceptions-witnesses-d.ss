@@ -1,0 +1,168 @@
+;; expect: #t
+;; R6RS exception semantics, witnessed against Chez 10 (ledger R20f):
+;; mixed chains of guards and handlers for raise and raise-continuable; &non-continuable
+;; through handlers that return; a handler that returns no value, three values.
+;;
+;; Every `run' evaluates a thunk under one outermost guard and records
+;; (name value trace); the trace is what the thunks noted, in order.  The
+;; expected list is what Chez prints for this same text with its own
+;; dynamic-wind, with-exception-handler, raise, raise-continuable, guard
+;; and call/cc.  goeteia's continuations only escape; these rows are the
+;; ones that say a guard which does not match still behaves as if the
+;; body had been left and entered again.
+;;
+;; ON THE TREE BEFORE THE CHANGE this file does not compile
+;; (with-exception-handler is unbound).
+(import (rnrs))
+(define kk #f)
+(define trace '())
+(define (note x) (set! trace (cons x trace)))
+(define (nc? c) (and (condition? c) (non-continuable-violation? c)))
+(define results '())
+(define (shown c)
+  (if (condition? c)
+      (if (non-continuable-violation? c) 'non-continuable 'condition)
+      c))
+(define (run name thunk)
+  (set! trace '())
+  (let ((v (guard (c (#t (list 'escaped (shown c)))) (thunk))))
+    (set! results (cons (list name v (reverse trace)) results))))
+
+(define (show c) (cond ((nc? c) 'NC) ((pair? c) (cons (show (car c)) (show (cdr c)))) (else c)))
+(define (dw tag thunk) (dynamic-wind (lambda () (note (list 'in tag))) thunk (lambda () (note (list 'out tag)))))
+(define cnt 0)
+;; d1 mixed chain, raise-continuable: G1 pass, user h2 re-raises (b a) continuably, G3 pass, h4 returns 40
+(run 'd1 (lambda ()
+  (with-exception-handler (lambda (c) (note (list 'h4 (show c))) 40)
+    (lambda () (guard (e ((string? e) 'g3))
+      (dw 3 (lambda () (with-exception-handler (lambda (c) (note (list 'h2 (show c))) (+ 1 (raise-continuable (list 'b c))))
+        (lambda () (guard (e ((string? e) 'g1))
+          (dw 1 (lambda () (list 'r (raise-continuable 'a))))))))))))))
+;; d2 the same with raise at the bottom: h2 and h4 return; who gets each &non-continuable
+(run 'd2 (lambda ()
+  (with-exception-handler (lambda (c) (note (list 'h4 (show c))) 40)
+    (lambda () (guard (e ((string? e) 'g3))
+      (dw 3 (lambda () (with-exception-handler (lambda (c) (note (list 'h2 (show c))) (+ 1 (raise-continuable (list 'b c))))
+        (lambda () (guard (e ((string? e) 'g1))
+          (dw 1 (lambda () (list 'r (raise 'a))))))))))))))
+;; d3 as d2 but G3 matches a &non-continuable
+(run 'd3 (lambda ()
+  (with-exception-handler (lambda (c) (note (list 'h4 (show c))) 40)
+    (lambda () (guard (e ((nc? e) (note 'g3-nc) 'g3nc))
+      (dw 3 (lambda () (with-exception-handler (lambda (c) (note (list 'h2 (show c))) (+ 1 (raise-continuable (list 'b c))))
+        (lambda () (guard (e ((string? e) 'g1))
+          (dw 1 (lambda () (list 'r (raise 'a))))))))))))))
+;; d4 user h2 calls RAISE on another object; G3 does not match; h4 returns; G1 at the bottom matches nc? (not in place)
+(run 'd4 (lambda ()
+  (with-exception-handler (lambda (c) (note (list 'h4 (show c))) 40)
+    (lambda () (guard (e ((string? e) 'g3))
+      (dw 3 (lambda () (with-exception-handler (lambda (c) (note (list 'h2 (show c))) (+ 1 (raise (list 'b c))))
+        (lambda () (guard (e ((nc? e) 'g1nc))
+          (dw 1 (lambda () (list 'r (raise-continuable 'a))))))))))))))
+;; d5 raise; G1 pass, h2 returns, nc to (h2 G3 h4): h2 returns again (nc), G3 pass, h4 returns, h4 again...
+(set! cnt 0)
+(run 'd5 (lambda ()
+  (with-exception-handler (lambda (c) (set! cnt (+ cnt 1)) (note (list 'h4 cnt (show c))) (if (< cnt 3) cnt (raise (list 'stop cnt))))
+    (lambda () (guard (e ((string? e) 'g3))
+      (dw 3 (lambda () (with-exception-handler (lambda (c) (note (list 'h2 (show c))) 'h2ret)
+        (lambda () (guard (e ((string? e) 'g1))
+          (dw 1 (lambda () (list 'r (raise 'a))))))))))))))
+;; d6 zero, many values, a pair whose car is a pass look-alike, through a passing guard
+(run 'd6 (lambda ()
+  (let* ((z (with-exception-handler (lambda (c) (values))
+              (lambda () (guard (e (#f 0)) (call-with-values (lambda () (raise-continuable 'z)) list)))))
+         (m (with-exception-handler (lambda (c) (values 1 2 3))
+              (lambda () (guard (e (#f 0)) (call-with-values (lambda () (raise-continuable 'm)) list)))))
+         (p (with-exception-handler (lambda (c) (list 'pass))
+              (lambda () (guard (e (#f 0)) (call-with-values (lambda () (raise-continuable 'p)) list)))))
+         (q (with-exception-handler (lambda (c) (values (cons 'pass '()) 'x))
+              (lambda () (guard (e (#f 0)) (call-with-values (lambda () (raise-continuable 'q)) list))))))
+    (list z m p q))))
+;; d7 an after thunk of an inner dynamic-wind raises continuably while a LATER guard (G2) leaves; who answers
+(run 'd7 (lambda ()
+  (with-exception-handler (lambda (c) (note (list 'hout (show c))) 'o)
+    (lambda () (guard (e ((string? e) 'g2))
+      (with-exception-handler (lambda (c) (note (list 'hmid (show c))) 'm)
+        (lambda () (guard (e ((string? e) 'g1))
+          (dynamic-wind (lambda () (note (list 'bef (raise-continuable 'b))))
+                          (lambda () (list 'r (raise-continuable 'a)))
+                          (lambda () (note (list 'aft (raise-continuable 'f)))))))))))))
+;; d8 a before thunk escapes during the LATER guard's re-entry; the loop is abandoned; a later raise
+(define esc #f)
+(set! cnt 0)
+(run 'd8 (lambda ()
+  (with-exception-handler (lambda (c) (note (list 'hout (show c))) 'o)
+    (lambda ()
+      (let ((r (call/cc (lambda (k) (set! esc k)
+        (guard (e ((string? e) 'g2))
+          (guard (e ((string? e) 'g1))
+            (dynamic-wind (lambda () (set! cnt (+ cnt 1)) (note (list 'bef cnt)) (if (= cnt 3) (esc 'escaped-in-before)))
+                            (lambda () (list 'r (raise-continuable 'a)))
+                            (lambda () (note 'aft)))))))))
+        (list r (raise-continuable 'post)))))))
+;; d9 handler A captures k and passes by calling raise-continuable; G passes; B escapes to k
+(run 'd9 (lambda ()
+  (with-exception-handler (lambda (c) (note (list 'B (show c))) (kk 'from-B))
+    (lambda () (guard (e ((string? e) 'g))
+      (dw 'g (lambda () (with-exception-handler
+        (lambda (c) (note (list 'A (show c)))
+          (let ((v (call/cc (lambda (k) (set! kk k) (raise-continuable c))))) (note (list 'A-got v)) (list 'A v)))
+        (lambda () (dw 'body (lambda () (list 'r (raise-continuable 'a)))))))))))))
+;; d10 G2's clause test raises continuably while the chain is in progress
+(run 'd10 (lambda ()
+  (with-exception-handler (lambda (c) (note (list 'h3 (show c))) (if (eq? c 't) #f 9))
+    (lambda () (guard (e ((begin (note (list 'test (raise-continuable 't))) #f) 'g2))
+      (dw 2 (lambda () (guard (e ((string? e) 'g1))
+        (dw 1 (lambda () (list 'r (raise-continuable 'a))))))))))))
+;; d11 the handler stack after a chain returned: a later raise from the same body
+(run 'd11 (lambda ()
+  (with-exception-handler (lambda (c) (note (list 'hout (show c))) 'o)
+    (lambda () (guard (e ((string? e) 'g2))
+      (with-exception-handler (lambda (c) (note (list 'hmid (show c))) (raise-continuable (list 'up c)))
+        (lambda () (guard (e ((string? e) 'g1))
+          (dw 1 (lambda () (let* ((a (raise-continuable 'a)) (b (raise-continuable 'b))) (list a b))))))))))))
+;; d12 raise; G1 pass; user h2 escapes to a continuation captured inside G1's body (live)
+(run 'd12 (lambda ()
+  (with-exception-handler (lambda (c) (note (list 'h2 (show c))) (if (eq? c 'a) (kk 'resumed) 'h2ret))
+    (lambda () (guard (e ((string? e) 'g1))
+      (dw 1 (lambda ()
+        (let ((v (call/cc (lambda (k) (set! kk k) (raise 'a)))))
+          (note (list 'body v)) (list 'after (raise-continuable 'again))))))))))
+;; d13 three guards pass, a handler returns to raise, the nc goes to G1? no: to G2 (under first) -- G2 matches nc
+(run 'd13 (lambda ()
+  (with-exception-handler (lambda (c) (note (list 'h (show c))) 'h)
+    (lambda () (guard (e ((nc? e) 'g3-nc))
+      (dw 3 (lambda () (guard (e ((nc? e) 'g2-nc))
+        (dw 2 (lambda () (guard (e ((nc? e) 'g1-nc))
+          (dw 1 (lambda () (raise 'a))))))))))))))
+;; d14 guard re-raise within a clause body under a passing chain
+(run 'd14 (lambda ()
+  (with-exception-handler (lambda (c) (note (list 'h (show c))) 'h)
+    (lambda () (guard (e ((symbol? e) (note 'g2) (raise-continuable (list 'again e))))
+      (dw 2 (lambda () (guard (e ((string? e) 'g1))
+        (dw 1 (lambda () (raise 'a)))))))))))
+
+(define expected
+  '((d1 (r 41) ((in 3) (in 1) (out 1) (in 1) (h2 a) (out 1) (out 3) (in 3) (in 1) (h4 (b a)) (out 1) (out 3)))
+    (d2 (escaped non-continuable) ((in 3) (in 1) (out 1) (in 1) (h2 a) (out 1) (out 3) (in 3) (in 1) (h4 (b a)) (h2 NC) (out 1) (out 3) (in 3) (in 1) (h4 (b NC)) (out 1) (out 3) (in 3) (in 1) (h4 NC) (h4 NC) (out 1) (out 3)))
+    (d3 g3nc ((in 3) (in 1) (out 1) (in 1) (h2 a) (out 1) (out 3) (in 3) (in 1) (h4 (b a)) (h2 NC) (out 1) (out 3) (in 3) (in 1) (h4 (b NC)) (out 1) (out 3) g3-nc))
+    (d4 (escaped non-continuable) ((in 3) (in 1) (out 1) (in 1) (h2 a) (out 1) (out 3) (in 3) (in 1) (h4 (b a)) (h4 NC) (out 1) (out 3)))
+    (d5 (escaped non-continuable) ((in 3) (in 1) (out 1) (in 1) (h2 a) (h2 NC) (out 1) (out 3) (in 3) (in 1) (h4 1 NC) (h4 2 NC) (out 1) (out 3)))
+    (d6 (() (1 2 3) ((pass)) ((pass) x)) ())
+    (d7 (r m) ((hmid b) (bef m) (hmid f) (aft m) (hmid b) (bef m) (hmid a) (hmid f) (aft m)))
+    (d8 (escaped-in-before o) ((bef 1) aft (bef 2) aft (bef 3) (hout post)))
+    (d9 (r (A from-B)) ((in g) (in body) (A a) (out body) (out g) (in g) (in body) (B a) (A-got from-B) (out body) (out g)))
+    (d10 (r 9) ((in 2) (in 1) (out 1) (in 1) (out 1) (out 2) (h3 t) (test #f) (in 2) (in 1) (h3 a) (out 1) (out 2)))
+    (d11 (o o) ((in 1) (out 1) (in 1) (hmid a) (out 1) (in 1) (hout (up a)) (out 1) (in 1) (hmid b) (out 1) (in 1) (hout (up b)) (out 1)))
+    (d12 (after h2ret) ((in 1) (out 1) (in 1) (h2 a) (body resumed) (out 1) (in 1) (h2 again) (out 1)))
+    (d13 g2-nc ((in 3) (in 2) (in 1) (out 1) (in 1) (out 1) (out 2) (in 2) (in 1) (out 1) (out 2) (out 3) (in 3) (in 2) (in 1) (h a) (out 1) (out 2) (out 3)))
+    (d14 h ((in 2) (in 1) (out 1) (in 1) (out 1) (out 2) g2 (h (again a))))))
+
+(define (differing got want)
+  (cond ((and (null? got) (null? want)) '())
+        ((null? got) (list (list 'missing (car want))))
+        ((null? want) (list (list 'extra (car got))))
+        ((equal? (car got) (car want)) (differing (cdr got) (cdr want)))
+        (else (cons (list 'got (car got) 'want (car want))
+                    (differing (cdr got) (cdr want))))))
+(display (let ((d (differing (reverse results) expected))) (if (null? d) #t d)))

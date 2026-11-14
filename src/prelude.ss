@@ -2294,7 +2294,7 @@
 
 ;; compatible with the host Chez errorf; format directives print as-is
 (define (errorf who msg . irritants)
-  (raise ($make-error who msg irritants)))
+  ($standard 'errorf 'error who msg irritants))
 
 (define (eqv? a b)
   (or (eq? a b)
@@ -2347,7 +2347,8 @@
 
 (define-syntax assert
   (syntax-rules ()
-    ((_ e) (let ((t e)) (if t t (errorf 'assert "assertion failed"))))))
+    ((_ e)
+     (let ((t e)) (if t t (assertion-violation 'assert "assertion failed"))))))
 
 (define (cons* a . rest) ($cons* a rest))
 (define ($cons* a rest)
@@ -2380,31 +2381,87 @@
     (apply f ($heads lists))
     ($for-eachn f ($tails lists))))
 
-;; ---- dynamic-wind ----
+;; ---- dynamic-wind and the dynamic environment ----
 ;;
-;; $winders holds (before . after) frames.  Escaping continuations
-;; capture the winder stack; $escape runs the after thunks of every
-;; frame being exited, then throws to the matching call/cc.
+;; The dynamic environment is $winders, a list of frames innermost
+;; first, and $handlers, the current handler stack.  Every change of
+;; $handlers is a frame: entering one pushes it and sets $handlers to
+;; its inside value, leaving it pops it and sets $handlers back to its
+;; outside value.  A frame is #(before after outside inside): two thunks
+;; or #f, and the two handler stacks.  Escaping continuations capture
+;; $winders; $escape switches back to it, then throws to the matching
+;; call/cc.
+;;
+;; A frame entered again sits in the very cell it sat in: a guard's base
+;; and a continuation's saved list are found by eq? on list tails, so a
+;; fresh cell would hide every tail below it.
 
 (define $winders '())
+(define $handlers '())
+
+(define ($push-frame! before after inside)
+  (set! $winders (cons (vector before after $handlers inside) $winders))
+  (set! $handlers inside))
+(define ($pop-frame!)
+  (let ((f (car $winders)))
+    (set! $winders (cdr $winders))
+    (set! $handlers (vector-ref f 2))
+    f))
 
 (define (dynamic-wind before thunk after)
   (before)
-  (set! $winders (cons (cons before after) $winders))
+  ($push-frame! before after $handlers)
   (let ((r (thunk)))
-    (set! $winders (cdr $winders))
+    ($pop-frame!)
     (after)
     r))
 
+;; leaves frames down to base, a tail of $winders, calling each after
+;; thunk once its frame is left
+(define ($leave-to base)
+  (unless (eq? $winders base)
+    (let ((f ($pop-frame!)))
+      (when (vector-ref f 1) ((vector-ref f 1)))
+      ($leave-to base))))
+
+;; the same, answering the cells that held the frames, outermost first.
+;; The cell is read before the frame is popped: two lets, so the order
+;; does not rest on how a let evaluates its bindings.
+(define ($leave-collect base)
+  (let loop ((acc '()))
+    (if (eq? $winders base)
+        acc
+        (let ((cell $winders))
+          (let ((f ($pop-frame!)))
+            (when (vector-ref f 1) ((vector-ref f 1)))
+            (loop (cons cell acc)))))))
+
+;; enters the frames of cells again, outermost first: the before thunk,
+;; then the cell itself as the head of $winders
+(define ($reenter cells)
+  (unless (null? cells)
+    (let ((f (car (car cells))))
+      (when (vector-ref f 0) ((vector-ref f 0)))
+      (set! $winders (car cells))
+      (set! $handlers (vector-ref f 3))
+      ($reenter (cdr cells)))))
+
+(define ($tail-of? base l)
+  (or (eq? l base) (and (pair? l) ($tail-of? base (cdr l)))))
+
+;; makes target, a frame list, the current one: leaves to the longest
+;; tail it shares with $winders and enters the rest of it again
+(define ($switch-to target)
+  (if ($tail-of? target $winders)
+      ($leave-to target)
+      (let loop ((common target) (enter '()))
+        (if ($tail-of? common $winders)
+            (begin ($leave-to common) ($reenter enter))
+            (loop (cdr common) (cons common enter))))))
+
 (define ($escape tok saved v)
-  ($unwind-to saved)
+  ($switch-to saved)
   (%throw-k tok v))
-(define ($unwind-to saved)
-  (unless (eq? $winders saved)
-    (let ((w (car $winders)))
-      (set! $winders (cdr $winders))
-      ((cdr w))
-      ($unwind-to saved))))
 
 ;; ---- vectors ----
 
@@ -3407,61 +3464,327 @@
 (define (string-map f s) (list->string (map f (string->list s))))
 (define (string-for-each f s) (for-each f (string->list s)))
 
-;; ---- exceptions: raise and guard over escape continuations ----
+;; ---- exceptions: handlers, raise and guard ----
 ;;
-;; A guard pushes its escape continuation on a handler stack; raise
-;; pops the nearest one and escapes to it (running dynamic-wind after
-;; thunks on the way).  An unmatched guard clause re-raises outward.
+;; R6RS's guard re-enters the body's continuation when no clause
+;; matches.  Continuations here only escape, and what has to be entered
+;; again is the dynamic environment, not the control stack: when a
+;; guard's handler runs, the body's stack is still there.  So a guard
+;; leaves the body's frames, tests its clauses, and either escapes with
+;; the clause or enters the same frames again and passes the condition
+;; on.  The handlers are called one at a time from one loop, so a
+;; condition that passes N guards does not hold N handler activations.
 
-(define $handlers '())
-(define $exn-mark (cons 0 0))
+(define (with-exception-handler handler thunk)
+  (unless (procedure? handler)
+    (assertion-violation 'with-exception-handler "not a procedure" handler))
+  (unless (procedure? thunk)
+    (assertion-violation 'with-exception-handler "not a procedure" thunk))
+  (set! $raise-standard $make-and-raise)
+  ($push-frame! #f #f (cons handler $handlers))
+  (let ((r (thunk)))
+    ($pop-frame!)
+    r))
 
-(define (raise obj)
-  (if (null? $handlers)
-      ($unhandled obj)
-      (let ((k (car $handlers)))
-        (set! $handlers (cdr $handlers))
-        (k (cons $exn-mark obj)))))
-(define (raise-continuable obj) (raise obj))
+;; what a guard's handler answers when no clause matched
+(define $pass (cons 'pass '()))
 
-(define ($try thunk)
-  ;; -> result, or ($exn-mark . obj) if something raised
-  (call/cc
-   (lambda (k)
-     (set! $handlers (cons k $handlers))
-     (let ((v (thunk)))
-       (set! $handlers (cdr $handlers))
-       v))))
-(define ($guard-hit? r)
-  (and (pair? r) (eq? (car r) $exn-mark)))
+;; Each handler runs under the handlers below it.  One that answers
+;; $pass hands obj on; one that returns ends raise-continuable with its
+;; values, and makes raise raise &non-continuable under the handlers
+;; that were below the FIRST handler raise called, whichever handler of
+;; the chain returned.
+(define ($signal obj continuable?)
+  (let ((first $handlers))
+    (let loop ((hs first))
+      (if (null? hs)
+          ($unhandled obj continuable? first)
+          (begin
+            ($push-frame! #f #f (cdr hs))
+            (let ((v ((car hs) obj)))
+              (cond
+               ((eq? v $pass) ($pop-frame!) (loop (cdr hs)))
+               (continuable? ($pop-frame!) v)
+               (else
+                ($pop-frame!)
+                ($push-frame! #f #f (cdr first))
+                ($non-continuable obj)))))))))
+
+(define (raise obj) ($signal obj #f))
+(define (raise-continuable obj) ($signal obj #t))
+
+(define ($non-continuable obj)
+  (raise ($make-compound
+          (list (make-non-continuable-violation)
+                (make-who-condition 'raise)
+                (make-message-condition
+                 "a handler returned from a non-continuable raise")
+                (make-irritants-condition (list obj))))))
+
+;; With no handler left (R6RS 7.1): a condition that is not &serious is
+;; reported as a warning and the call returns, which for raise counts as
+;; a handler that returned; anything else is reported and the program
+;; stops at once, without running the after thunks it is inside.
+(define ($unhandled obj continuable? first)
+  (if (and (condition? obj) (not (serious-condition? obj)))
+      (begin
+        (display "warning: ")
+        ($report obj)
+        (newline)
+        (unless continuable?
+          ($push-frame! #f #f (if (null? first) '() (cdr first)))
+          ($non-continuable obj)))
+      (begin
+        (display "unhandled exception: ")
+        ($report obj)
+        (newline)
+        (%abort))))
+
+;; who: message irritant ... for a condition with a message, else the
+;; object written, as any record is (#<NAME>), and a compound condition
+;; as #<condition NAME ...>
+(define ($report obj)
+  (cond
+   ((message-condition? obj)
+    (display (if (who-condition? obj) (condition-who obj) #f))
+    (display ": ")
+    (display (condition-message obj))
+    (when (irritants-condition? obj)
+      (for-each (lambda (x) (display " ") (write x))
+                (condition-irritants obj))))
+   (($compound? obj)
+    (display "#<condition")
+    (for-each (lambda (c) (display " ") (display ($condition-name c)))
+              ($compound-components obj))
+    (display ">"))
+   (else (write obj))))
+(define ($condition-name c) ($rtd-name (%record-rtd c)))
+
+;; (guard (var clause ...) body ...): select, from the handler, answers
+;; a thunk of the clause that matched or #f; %guard-select reads the
+;; clauses as cond reads them.  The body's frames are left before the
+;; tests run, so they run in the guard's environment, and entered again
+;; when nothing matched.  A matching clause runs after the escape, in
+;; tail position at the guard.
+(define $guard-mark (cons 'guard '()))
+(define ($guard select body)
+  (set! $raise-standard $make-and-raise)
+  (let ((base $winders))
+    (call/cc
+     (lambda (k)
+       ($guard-body (lambda (obj)
+                      (let ((frames ($leave-collect base)))
+                        (let ((run (select obj)))
+                          (if run
+                              (k (cons $guard-mark run))
+                              (begin ($reenter frames) $pass)))))
+                    body)))))
+;; with-exception-handler without its checks: the handler is the guard's
+(define ($guard-body handler body)
+  ($push-frame! #f #f (cons handler $handlers))
+  (let ((r (body)))
+    ($pop-frame!)
+    r))
+(define ($guard-result r)
+  (if (and (pair? r) (eq? (car r) $guard-mark)) ((cdr r)) r))
 
 (define-syntax guard
   (syntax-rules ()
-    ((_ (var clause ...) body ...)
-     (let ((r ($try (lambda () body ...))))
-       (if ($guard-hit? r)
-           (let ((var (cdr r)))
-             (cond clause ... (else (raise var))))
-           r)))))
+    ((_ (var clause ...) body1 body2 ...)
+     ($guard-result
+      ($guard (lambda (var) (%guard-select clause ...))
+              (lambda () body1 body2 ...))))))
 
-;; error conditions
-(define-record-type ($error-object $make-error error?)
-  (fields (immutable who condition-who)
-          (immutable msg condition-message)
-          (immutable irritants condition-irritants)))
-(define (error who msg . irritants)
-  (raise ($make-error who msg irritants)))
-(define ($unhandled obj)
-  (display "unhandled exception: ")
-  (if (error? obj)
+;; ---- conditions (R6RS 7.2) ----
+;;
+;; A simple condition is a record whose type descends from &condition; a
+;; compound one holds the list of its simple conditions, never nested,
+;; in a type of the prelude's own (sealed and opaque, as (rnrs) does not
+;; export it).  A type's predicate is true of a simple condition of the
+;; type or a descendant, and of a compound with such a component; an
+;; accessor reads the first such component.
+
+(define-record-type (&condition $make-condition $simple-condition?))
+(define-record-type ($compound $make-compound $compound?)
+  (fields (immutable components $compound-components)))
+
+(define ($condition-component x rtd)
+  (if ($compound? x)
+      (let loop ((cs ($compound-components x)))
+        (cond
+         ((null? cs) #f)
+         (($record-is-a? (car cs) rtd) (car cs))
+         (else (loop (cdr cs)))))
+      (and ($record-is-a? x rtd) x)))
+(define ($condition-is? x rtd)
+  (and ($condition-component x rtd) #t))
+(define ($condition-ref x rtd raw who)
+  (let ((c ($condition-component x rtd)))
+    (if c
+        (raw c)
+        (assertion-violation who "not a condition of this type" x))))
+
+(define (condition? x)
+  (or ($compound? x) ($record-is-a? x &condition)))
+
+(define (condition . cs)
+  (let ((l (let flat ((cs cs))
+             (cond
+              ((null? cs) '())
+              (($compound? (car cs))
+               (append ($compound-components (car cs)) (flat (cdr cs))))
+              (($record-is-a? (car cs) &condition)
+               (cons (car cs) (flat (cdr cs))))
+              (else
+               (assertion-violation 'condition "not a condition" (car cs)))))))
+    (if (and (pair? l) (null? (cdr l)))
+        (car l)
+        ($make-compound l))))
+
+(define (simple-conditions c)
+  (cond
+   (($compound? c) ($compound-components c))
+   (($record-is-a? c &condition) (list c))
+   (else (assertion-violation 'simple-conditions "not a condition" c))))
+
+(define ($check-condition-rtd who rtd)
+  (unless (and (record-type-descriptor? rtd)
+               (let up ((t rtd))
+                 (and t (or (eq? t &condition) (up ($rtd-parent t))))))
+    (assertion-violation who "not a condition type" rtd)))
+(define (condition-predicate rtd)
+  ($check-condition-rtd 'condition-predicate rtd)
+  (lambda (x) ($condition-is? x rtd)))
+(define (condition-accessor rtd proc)
+  ($check-condition-rtd 'condition-accessor rtd)
+  (lambda (c) ($condition-ref c rtd proc 'condition-accessor)))
+
+;; The standard types.  define-condition-type is the compiler's: the
+;; record type, and pred and the accessors as procedures over the two
+;; above, each field read through a raw accessor nobody else can name.
+(define-condition-type &warning &condition make-warning warning?)
+(define-condition-type &serious &condition
+  make-serious-condition serious-condition?)
+(define-condition-type &error &serious make-error error?)
+(define-condition-type &violation &serious make-violation violation?)
+(define-condition-type &assertion &violation
+  make-assertion-violation assertion-violation?)
+(define-condition-type &irritants &condition
+  make-irritants-condition irritants-condition?
+  (irritants condition-irritants))
+(define-condition-type &who &condition
+  make-who-condition who-condition?
+  (who condition-who))
+(define-condition-type &message &condition
+  make-message-condition message-condition?
+  (message condition-message))
+(define-condition-type &non-continuable &violation
+  make-non-continuable-violation non-continuable-violation?)
+(define-condition-type &implementation-restriction &violation
+  make-implementation-restriction-violation
+  implementation-restriction-violation?)
+(define-condition-type &lexical &violation
+  make-lexical-violation lexical-violation?)
+(define-condition-type &syntax &violation
+  make-syntax-violation syntax-violation?
+  (form syntax-violation-form)
+  (subform syntax-violation-subform))
+(define-condition-type &undefined &violation
+  make-undefined-violation undefined-violation?)
+(define-condition-type &no-infinities &implementation-restriction
+  make-no-infinities-violation no-infinities-violation?)
+(define-condition-type &no-nans &implementation-restriction
+  make-no-nans-violation no-nans-violation?)
+(define-condition-type &i/o &error make-i/o-error i/o-error?)
+(define-condition-type &i/o-read &i/o make-i/o-read-error i/o-read-error?)
+(define-condition-type &i/o-write &i/o
+  make-i/o-write-error i/o-write-error?)
+(define-condition-type &i/o-invalid-position &i/o
+  make-i/o-invalid-position-error i/o-invalid-position-error?
+  (position i/o-error-position))
+(define-condition-type &i/o-filename &i/o
+  make-i/o-filename-error i/o-filename-error?
+  (filename i/o-error-filename))
+(define-condition-type &i/o-file-protection &i/o-filename
+  make-i/o-file-protection-error i/o-file-protection-error?)
+(define-condition-type &i/o-file-is-read-only &i/o-file-protection
+  make-i/o-file-is-read-only-error i/o-file-is-read-only-error?)
+(define-condition-type &i/o-file-already-exists &i/o-filename
+  make-i/o-file-already-exists-error i/o-file-already-exists-error?)
+(define-condition-type &i/o-file-does-not-exist &i/o-filename
+  make-i/o-file-does-not-exist-error i/o-file-does-not-exist-error?)
+(define-condition-type &i/o-port &i/o
+  make-i/o-port-error i/o-port-error?
+  (port i/o-error-port))
+(define-condition-type &i/o-decoding &i/o-port
+  make-i/o-decoding-error i/o-decoding-error?)
+(define-condition-type &i/o-encoding &i/o-port
+  make-i/o-encoding-error i/o-encoding-error?
+  (char i/o-encoding-error-char))
+
+;; ---- error, assertion-violation, syntax-violation (R6RS 7.3) ----
+;;
+;; A program pays for the condition machinery only when something can
+;; catch a condition.  $raise-standard is #f until a handler is first
+;; installed: every entry that installs one stores $make-and-raise in it
+;; beforehand, and nothing else names that procedure.  While it is #f no
+;; handler has existed in this run and nothing can see the condition, so
+;; error and its siblings print the uncaught line themselves and stop:
+;; the text and the stop the general path gives the compound they would
+;; have made, which is serious.  A program that names no guard, no
+;; handler, no raise and no condition procedure then carries none of it.
+(define $raise-standard #f)
+
+;; the compound of kind, &who unless who is #f, &message and &irritants,
+;; raised; kind is data, a symbol naming the standard type
+(define ($make-and-raise kind who message irritants)
+  (raise ($make-compound
+          (cons ($kind-condition kind)
+                (let ((tail (list (make-message-condition message)
+                                  (make-irritants-condition irritants))))
+                  (if who (cons (make-who-condition who) tail) tail))))))
+(define ($kind-condition kind)
+  (cond
+   ((eq? kind 'error) (make-error))
+   ((eq? kind 'assertion) (make-assertion-violation))
+   (else (assertion-violation '$make-and-raise "not a condition kind" kind))))
+
+;; who and message are checked here, the same with a handler and without
+(define ($standard proc kind who message irritants)
+  (unless (or (symbol? who) (string? who) (not who))
+    (assertion-violation proc "who is not a symbol, a string or #f" who))
+  (unless (string? message)
+    (assertion-violation proc "the message is not a string" message))
+  (if $raise-standard
+      ($raise-standard kind who message irritants)
       (begin
-        (display (condition-who obj)) (display ": ")
-        (display (condition-message obj))
-        (for-each (lambda (x) (display " ") (write x))
-                  (condition-irritants obj)))
-      (write obj))
-  (newline)
-  (%abort))
+        (display "unhandled exception: ")
+        (display who)
+        (display ": ")
+        (display message)
+        (for-each (lambda (x) (display " ") (write x)) irritants)
+        (newline)
+        (%abort))))
+
+(define (error who message . irritants)
+  ($standard 'error 'error who message irritants))
+(define (assertion-violation who message . irritants)
+  ($standard 'assertion-violation 'assertion who message irritants))
+
+;; with who #f there is no &who: at run time a form is a datum, not an
+;; identifier a who could be taken from
+(define (syntax-violation who message form . subform)
+  (unless (or (symbol? who) (string? who) (not who))
+    (assertion-violation 'syntax-violation
+                         "who is not a symbol, a string or #f" who))
+  (unless (string? message)
+    (assertion-violation 'syntax-violation "the message is not a string"
+                         message))
+  (raise ($make-compound
+          (cons* (make-syntax-violation
+                  form (if (pair? subform) (car subform) #f))
+                 (make-message-condition message)
+                 (if who (list (make-who-condition who)) '())))))
 
 ;; ---- full bignum division (shift-subtract, bit at a time) ----
 

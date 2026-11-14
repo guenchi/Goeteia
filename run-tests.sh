@@ -740,6 +740,7 @@ for m in test/macro-toplevel-hygiene.mjs \
          test/compile-cli-ends-with-the-compilers-message.mjs \
          test/records-refusals.mjs \
          test/records-chain-limit.mjs \
+         test/conditions-with-no-handler.mjs \
          test/counter-embedded-is-current.mjs \
          test/defect-v01-shader-check-can-vanish-unnoticed.mjs \
          test/c02-product-fn-specs.mjs \
