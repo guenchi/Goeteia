@@ -604,16 +604,20 @@ The name of `sym` as a string.
 
 ### Error Handling
 
-`guard`/`raise` and `dynamic-wind`:
-
-`error` builds and raises a condition in one step —
-`(error who message irritant ...)`; `guard` catches it and
-`condition-message` / `error?` inspect it:
+R6RS exceptions and conditions: `with-exception-handler`, `raise`,
+`raise-continuable`, `guard`, `dynamic-wind`, and the condition types of
+`(rnrs conditions)` with the `&i/o` types. `error` builds a condition
+and raises it in one step; `guard` catches it, and the predicates and
+accessors inspect it:
 
 ```scheme
 (guard (e ((error? e)
            (display (condition-message e))))
   (error 'sqrt "negative argument" -1))
+
+(with-exception-handler
+  (lambda (c) 0)
+  (lambda () (+ 1 (raise-continuable 'oops))))
 
 (dynamic-wind
   (lambda () (display "enter"))
@@ -626,46 +630,70 @@ procedure: (error who message irritant ...)
 
 func -> symbol -> string -> any -> ... -> never
 ```
-Build a condition from `who`/`message`/`irritants` and raise it. Never
-returns normally — catch it with `guard`.
+Raise the compound of `&error`, `&who` (unless `who` is `#f`),
+`&message` and `&irritants`. `assertion-violation` takes the same
+arguments and raises `&assertion` instead; a failed `assert` raises
+`&assertion` with who `assert`.
 
 ```
 procedure: (raise obj)
 
 func -> any -> never
 ```
-Raise `obj` as a condition to the nearest enclosing `guard`.
+Hand `obj` -- a condition or any other value -- to the current
+handler. If the handler returns, `raise` raises `&non-continuable`.
 
 ```
-procedure: (error? c)
+procedure: (raise-continuable obj)
 
-func -> any -> boolean
+func -> any -> any
 ```
-Whether `c` is an error condition.
+Hand `obj` to the current handler and return what it returns.
 
 ```
-procedure: (condition-message c)
+procedure: (with-exception-handler handler thunk)
 
-func -> condition -> string
+func -> procedure -> procedure -> any
 ```
-The message carried by a condition.
+Call `thunk` with `handler` installed; the handler runs with the
+handlers that were outside it.
 
 ```
 syntax: (guard (var clause ...) body ...)
 
 any
 ```
-Evaluate `body`; if it raises, bind the condition to `var` and dispatch
-through the `cond`-style `clause`s (as in the example above). Evaluates
-to the body's value, or the chosen clause's value on a raise.
+Evaluate `body`; if it raises, bind the object to `var` and choose a
+clause as `cond` would. A matching clause's value is the guard's. When
+no clause matches, the body's dynamic environment is entered again and
+the object goes on to the next handler, as R6RS says.
+
+```
+syntax: (define-condition-type type supertype make pred (field accessor) ...)
+
+definition
+```
+Define a condition type: its constructor, a predicate true of a
+condition with a component of the type, and an accessor per field.
+`condition`, `simple-conditions`, `condition-predicate` and
+`condition-accessor` work on any condition type.
 
 ```
 procedure: (dynamic-wind before thunk after)
 
 func -> procedure -> procedure -> procedure -> any
 ```
-Run `(before)`, then `(thunk)`, then `(after)` — `after` runs even if
-`thunk` escapes via a continuation. Returns `thunk`'s value.
+Run `(before)`, then `(thunk)`, then `(after)` — `after` runs whenever
+control leaves `thunk`, and `before` again whenever it re-enters.
+Returns `thunk`'s value.
+
+With no handler, a `&serious` condition (or any value that is not a
+condition) prints `unhandled exception:` and its message and stops the
+program; a `&warning` prints `warning:` and the call returns. A program
+that never installs a handler does not carry the condition machinery.
+What remains different from R6RS -- continuations only escape, traps
+are not conditions, the prelude's own errors are all `&error` -- is in
+[docs/limits.md](https://github.com/guenchi/Goeteia/blob/master/docs/limits.md).
 
 ### Continuations
 
