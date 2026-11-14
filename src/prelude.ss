@@ -49,6 +49,13 @@
         ($display (bytevector-u8-ref x i))
         (loop (+ i 1))))
     ($wb 41))
+   ;; a compound condition as its components' types, as the uncaught
+   ;; report writes it
+   (($compound? x)
+    (%display-string "#<condition" 0)
+    (for-each (lambda (c) ($wb 32) ($display ($rtd-name (%record-rtd c))))
+              ($compound-components x))
+    ($wb 62))
    ((%recbase? x)
     ;; a descriptor prints as one; anything else as an instance
     (let ((r (%record-rtd x)))
@@ -592,7 +599,7 @@
 
 (define ($check-rtd who x)
   (unless (record-type-descriptor? x)
-    (error who "not a record-type descriptor" x)))
+    (assertion-violation who "not a record-type descriptor" x)))
 
 ;; a record, and not of an opaque type: the descriptor of descriptors
 ;; is opaque, so a descriptor is not one
@@ -603,7 +610,7 @@
 (define (record-rtd x)
   (if (record? x)
       (%record-rtd x)
-      (error 'record-rtd "not a record, or a record of an opaque type" x)))
+      (assertion-violation 'record-rtd "not a record, or a record of an opaque type" x)))
 (define (record-type-name rtd)
   ($check-rtd 'record-type-name rtd)
   ($rtd-name rtd))
@@ -654,12 +661,12 @@
           (immutable m $cd-m)))
 (define ($make-cd parent protocol n m)
   (unless (procedure? protocol)
-    (error 'define-record-type "the protocol is not a procedure" protocol))
+    (assertion-violation 'define-record-type "the protocol is not a procedure" protocol))
   ($make-cd* parent protocol n m))
 
 (define ($field-count! l k)
   (unless (= (length l) k)
-    (error 'define-record-type "wrong number of field values" l k)))
+    (assertion-violation 'define-record-type "wrong number of field values" l k)))
 
 ;; The procedure a level's protocol receives, and what the protocol
 ;; makes of it.  rest is the field values of the levels below, in
@@ -689,7 +696,7 @@
                     (finish (append own rest))))))
            (c (($cd-protocol cd) new)))
       (unless (procedure? c)
-        (error 'define-record-type "the protocol did not return a procedure"
+        (assertion-violation 'define-record-type "the protocol did not return a procedure"
                c))
       c)))
 
@@ -748,7 +755,7 @@
      ((eq? k 'file-in)
       (when (= ($port-b p) -2) ($port-b! p (%fread ($port-a p))))
       ($port-b p))
-     (else (errorf 'read "not an input port")))))
+     (else (assertion-violation 'read "not an input port")))))
 ;; Where the reader stands in the current input port.  The compiler
 ;; reads its source through this counter and error context wants
 ;; file:line; the reader's own diagnostics want a column too.
@@ -787,7 +794,7 @@
      ((eq? k 'string-out)
       ($port-a! p (cons (integer->char byte) ($port-a p))))
      ((eq? k 'file-out) (%fwrite ($port-a p) byte))
-     (else (errorf 'write "not an output port")))))
+     (else (assertion-violation 'write "not an output port")))))
 
 ;; One byte of pushback.  The line-ending forms are multi-byte -- NEL is
 ;; C2 85 and LS is E2 80 A8 -- so recognising one means looking past a
@@ -830,11 +837,14 @@
       thunk
       (lambda () ($set-in! p old)))))
 (define ($set-in! from to)
-  ($port-line! from $reader-line)
-  ($port-col! from $reader-column)
-  (set! $cip to)
-  (set! $reader-line ($port-line to))
-  (set! $reader-column ($port-col to)))
+  ;; the new port's position is read before any global changes, so a
+  ;; failure here leaves the reader as it was
+  (let ((line ($port-line to)) (col ($port-col to)))
+    ($port-line! from $reader-line)
+    ($port-col! from $reader-column)
+    (set! $cip to)
+    (set! $reader-line line)
+    (set! $reader-column col)))
 (define (with-output-to-string thunk)
   (let ((p (open-output-string)))
     ($with-out p thunk)
@@ -897,7 +907,12 @@
                          (%read-hash))))
             (begin (set! $reader-datum-line $reader-line)
                    ($read))))
-      ($with-in (car p) (lambda () ($read)))))
+      (begin
+        ;; checked before anything is switched: a failed read must leave
+        ;; the reader as it was
+        (unless (input-port? (car p))
+          (assertion-violation 'read "not an input port" (car p)))
+        ($with-in (car p) (lambda () ($read))))))
 (define ($read)
   (%skip-blanks)
   (let ((b (%peek-byte)))
@@ -906,7 +921,7 @@
      ((= b 40) (%next-byte) (%read-list))          ; (
      ((= b 41)                                     ; ) with nothing open
       (%next-byte)
-      (errorf 'read (string-append "unexpected ) at "
+      ($lexical-error 'read (string-append "unexpected ) at "
                                    (%at-line $reader-line $reader-column))))
      ((= b 39) (%next-byte) (list 'quote ($read)))  ; '
      ((= b 96) (%next-byte) (list 'quasiquote ($read))) ; `
@@ -954,7 +969,7 @@
         (let ((c (%next-byte)))
           (cond
            ((< c 0)
-            (errorf 'read
+            ($lexical-error 'read
                     (string-append "a |...| symbol reaches end of input at "
                                    (%at-line $reader-line $reader-column))))
            ((= c 124) (%read-atom acc #t))
@@ -966,7 +981,7 @@
             (%read-atom (%push-utf8
                          (%read-hex-escape $reader-line $reader-column) acc)
                         #t)
-            (errorf 'read
+            ($lexical-error 'read
                     (string-append "a backslash in a symbol must begin \\x, not \\"
                                    (if (< c 0) "<end of input>"
                                        (string (integer->char c)))
@@ -1040,7 +1055,7 @@
    ;; letting it become a symbol would make `(read ".")` answer a datum
    ;; where the reference answers an error.
    ((and (pair? bs) (null? (cdr bs)) (= (car bs) 46))
-    (errorf 'read (string-append "a lone . is not a datum at "
+    ($lexical-error 'read (string-append "a lone . is not a datum at "
                                  (%at-line $reader-line $reader-column))))
    ((%bytes->number bs) => (lambda (v) v))
    ;; Number-shaped and denoting no number.  Refused by name rather than
@@ -1333,7 +1348,7 @@
 (define $max-scale 10000)
 (define (%check-scale! scale)
   (when (< $max-scale (if (< scale 0) (- 0 scale) scale))
-    (errorf 'read
+    ($lexical-error 'read
             (string-append
              "exponent out of range -- at most 10^"
              (number->string $max-scale) " at "
@@ -1343,7 +1358,7 @@
 ;; that is 'exact, 'inexact, or #f for "whatever the spelling said".
 (define (%apply-exactness r want)
   (unless (%number-body? r)
-    (errorf '%apply-exactness "not a number body" r))
+    ($lexical-error '%apply-exactness "not a number body" r))
   (let* ((mag (car r)) (neg (caddr r))
          (inexact? (if want (eq? want 'inexact) (cadr r))))
     (if inexact?
@@ -1381,7 +1396,7 @@
              ;; reader hand back the boolean false for "#x#q1" -- a
              ;; value, from a token that has no value.
              (else
-              (errorf 'read
+              ($lexical-error 'read
                       (string-append "unrecognised number prefix #"
                                      (string (integer->char c)) " at "
                                      (%at-line $reader-line $reader-column))))))
@@ -1397,7 +1412,7 @@
 ;; the token; #bad and #b101 differ by two bytes and by nothing else
 ;; the message would show.
 (define (%prefix-twice what)
-  (errorf 'read
+  ($lexical-error 'read
           (string-append "a number carries at most one " what
                          " prefix at "
                          (%at-line $reader-line $reader-column))))
@@ -1407,7 +1422,7 @@
 ;; prefixed one through %read-hash -- say it here, so the wording and
 ;; the position are written once.
 (define (%denominator-zero-error)
-  (errorf 'read
+  ($lexical-error 'read
           (string-append
            "division by zero in a numeral -- write "
            "+inf.0, -inf.0 or +nan.0 at "
@@ -1422,7 +1437,7 @@
                  (= (car bs) 46) (= (car bs) 47))
              (find (cdr bs)))
             (else (car bs))))))
-    (errorf 'read
+    ($lexical-error 'read
             (if offender
                 (string-append (string (integer->char offender))
                                " is not a base-" (number->string base)
@@ -1573,7 +1588,7 @@
             (begin
               ;; "(. 2)" -- the dot has nothing to be the tail of
               (unless any?
-                (errorf 'read
+                ($lexical-error 'read
                         (string-append "a dot needs an item before it at "
                                        (%at-line $reader-line $reader-column))))
               (let ((d ($read)))
@@ -1600,12 +1615,12 @@
                       (%next-byte)
                       (if (%skip-hash-comment)
                           (close)
-                          (errorf 'read
+                          ($lexical-error 'read
                                   (string-append
                                    "more than one item found after dot at "
                                    (%at-line $reader-line $reader-column)))))
                      (else
-                      (errorf 'read
+                      ($lexical-error 'read
                               (string-append
                                "more than one item found after dot at "
                                (%at-line $reader-line $reader-column)))))))))
@@ -1616,7 +1631,7 @@
        (else
         (next (cons ($read) acc) #t))))))
 (define (%unclosed-list line col)
-  (errorf 'read (string-append "list opened at " (%at-line line col)
+  ($lexical-error 'read (string-append "list opened at " (%at-line line col)
                                " never closed")))
 
 (define (%read-string line col acc)
@@ -1624,7 +1639,7 @@
     (cond
      ((= b 34) (%bytes->string (reverse acc)))
      ((< b 0)
-      (errorf 'read (string-append "string opened at " (%at-line line col)
+      ($lexical-error 'read (string-append "string opened at " (%at-line line col)
                                    " never closed")))
      ((= b 92)                                     ; backslash
       ;; A LINE CONTINUATION is not an escape: R6RS 4.2.5 says a
@@ -1728,7 +1743,7 @@
     (when (%intraline-ws? (%peek-byte)) (%next-byte) (skip)))
   (let ((b (%next-byte)))
     (unless (%line-ending? b)
-      (errorf 'read
+      ($lexical-error 'read
               (string-append "a backslash in the string opened at "
                              (%at-line line col)
                              " is followed by whitespace and then no line "
@@ -1750,7 +1765,7 @@
    ;; holding this case -- "a trailing backslash cannot swallow the end
    ;; of input" -- and it is what caught that regression.
    ((< c 0)
-    (errorf 'read (string-append "string opened at " (%at-line line col)
+    ($lexical-error 'read (string-append "string opened at " (%at-line line col)
                                  " never closed")))
    ((= c 120)                                    ; x -- hex escape
     (%read-string line col (%push-utf8 (%read-hex-escape line col) acc)))
@@ -1777,7 +1792,7 @@
    ((= b 34) 34)       ; \" -> quote
    ((= b 92) 92)       ; \\ -> backslash
    (else
-    (errorf 'read
+    ($lexical-error 'read
             (string-append "\\" (string (integer->char b))
                            " is not a string escape at "
                            (%at-line $reader-line $reader-column))))))
@@ -1791,7 +1806,7 @@
     (let ((b (%next-byte)))
       (cond
        ((< b 0)
-        (errorf 'read
+        ($lexical-error 'read
                 (string-append "a \\x escape in the string opened at "
                                (%at-line line col)
                                " reaches end of input with no ;")))
@@ -1803,19 +1818,19 @@
         ;; inside the surrogate range, which UTF-16 reserves and which
         ;; integer->char would have to invent a meaning for.
         (when (< 1114111 v)
-          (errorf 'read
+          ($lexical-error 'read
                   (string-append "a \\x escape in the string opened at "
                                  (%at-line line col)
                                  " is past the last code point")))
         (when (and (<= 55296 v) (<= v 57343))
-          (errorf 'read
+          ($lexical-error 'read
                   (string-append "a \\x escape in the string opened at "
                                  (%at-line line col)
                                  " names a surrogate, which is not a character")))
         v)
        ((%digit-val b 16) => (lambda (d) (loop (+ (* v 16) d))))
        (else
-        (errorf 'read
+        ($lexical-error 'read
                 (string-append (string (integer->char b))
                                " is not a hexadecimal digit in the \\x escape"
                                " in the string opened at "
@@ -1847,7 +1862,7 @@
      ;; contents, silently.  A failure encoded as a legal protocol
      ;; signal is worse than a crash, because the caller handles it.
      (else
-      (errorf 'read
+      ($lexical-error 'read
               (string-append "unrecognised # syntax: #"
                              (if (< b 0) "<end of input>"
                                  (string (integer->char b)))
@@ -1912,7 +1927,7 @@
 (define (%skip-directive)
   (let ((name (%bytes->string (%read-name-token '()))))
     (unless (%known-directive? name %lexical-directives)
-      (errorf 'read
+      ($lexical-error 'read
               (string-append "unrecognised lexical directive: #!" name
                              " at " (%at-line $reader-line $reader-column)
                              " (this implementation knows "
@@ -1922,7 +1937,7 @@
   (let ((b (%next-byte)))
     (cond
      ((< b 0)
-      (errorf 'read
+      ($lexical-error 'read
               (string-append "a #| block comment reaches end of input with "
                              "no |# at "
                              (%at-line $reader-line $reader-column))))
@@ -1940,7 +1955,7 @@
 (define (%skip-datum)
   (let ((d ($read)))
     (when (eof-object? d)
-      (errorf 'read
+      ($lexical-error 'read
               (string-append "a #; datum comment has no datum after it at "
                              (%at-line $reader-line $reader-column))))))
 
@@ -1950,7 +1965,7 @@
   ;; read back its own output.
   (let ((u (%next-byte)) (eight (%next-byte)) (open (%next-byte)))
     (unless (and (= u 117) (= eight 56) (= open 40))   ; u 8 (
-      (errorf 'read
+      ($lexical-error 'read
               (string-append "unrecognised # syntax: #v (only #vu8( is a "
                              "bytevector) at "
                              (%at-line $reader-line $reader-column))))
@@ -1966,7 +1981,7 @@
               (let ((e (car es)))
                 (unless (and (integer? e) (exact? e)
                              (<= 0 e) (<= e 255))
-                  (errorf 'read
+                  ($lexical-error 'read
                           (string-append
                            "a bytevector element is an exact integer in "
                            "0..255 at "
@@ -2007,7 +2022,7 @@
   (let loop ((i 1) (v 0))
     (cond
      ((> v 127)
-      (errorf 'read
+      ($lexical-error 'read
               (string-append "a character literal above U+007F has no"
                              " self-hosted spelling: #\\" name " at "
                              (%at-line $reader-line $reader-column))))
@@ -2035,7 +2050,7 @@
    ((string=? name "delete") (%integer->char 127))
    ((%char-hex-name? name) (%char-hex-char name))
    ((= (string-length name) 1) (string-ref name 0))
-   (else (error 'read (string-append "unknown character name ending at "
+   (else ($lexical-error 'read (string-append "unknown character name ending at "
                                      (%at-line $reader-line $reader-column))
                 name))))
 
@@ -2544,7 +2559,7 @@
 (define ($new-ht h e) ($make-ht h e 0 (make-vector 8 '()) #t))
 (define ($ht-writable! who ht)
   (unless ($ht-mutable? ht)
-    (error who "the hashtable is immutable" ht)))
+    (assertion-violation who "the hashtable is immutable" ht)))
 
 (define (abs n) (if (< n 0) (- 0 n) n))
 (define (string-hash s) ($sh s 0 7))
@@ -2744,11 +2759,11 @@
 ;; procedure, so a guard can catch it.
 (define ($shl-refused n k)
   (if (< k 0)
-      (error 'bitwise-arithmetic-shift-left "negative shift count" n k)
-      (error 'bitwise-arithmetic-shift-left
-             "the shifted value is not a fixnum" n k)))
+      (assertion-violation 'bitwise-arithmetic-shift-left "negative shift count" n k)
+      ($restriction-error 'bitwise-arithmetic-shift-left
+                          "the shifted value is not a fixnum" n k)))
 (define ($shr-refused n k)
-  (error 'bitwise-arithmetic-shift-right "negative shift count" n k))
+  (assertion-violation 'bitwise-arithmetic-shift-right "negative shift count" n k))
 
 (define ($bn-limbs-of n)                ; fixnum magnitude -> limb vector
   (let count ((m n) (k 0))
@@ -3085,9 +3100,9 @@
    ((or (flonum? a) (flonum? b))
     (fltruncate (fl/ ($->fl a) ($->fl b))))
    ((and (integer? a) (integer? b))
-    (when ($eq2 b 0) (errorf 'quotient "division by zero"))
+    (when ($eq2 b 0) (assertion-violation 'quotient "division by zero"))
     ($bn-quot2 a b))
-   (else (errorf 'quotient "unsupported operand combination"))))
+   (else (assertion-violation 'quotient "unsupported operand combination"))))
 (%target-case
  (js)
  (wasm
@@ -3105,9 +3120,9 @@
     (let ((q (fltruncate (fl/ ($->fl a) ($->fl b)))))
       (fl- ($->fl a) (fl* q ($->fl b)))))
    ((and (integer? a) (integer? b))
-    (when ($eq2 b 0) (errorf 'remainder "division by zero"))
+    (when ($eq2 b 0) (assertion-violation 'remainder "division by zero"))
     ($bn-rem2 a b))
-   (else (errorf 'remainder "unsupported operand combination"))))
+   (else (assertion-violation 'remainder "unsupported operand combination"))))
 (%target-case
  (js)
  (wasm
@@ -3122,7 +3137,7 @@
 (define ($lt2 a b)
   (cond
    ((or (%complex? a) (%complex? b))
-    (errorf '< "complex numbers are not ordered"))
+    (assertion-violation '< "complex numbers are not ordered"))
    ((or (flonum? a) (flonum? b))
     (fl<? ($->fl a) ($->fl b)))
    ((or (%ratio? a) (%ratio? b))
@@ -3219,7 +3234,7 @@
   ;; able to skip the record and say which one it skipped, which an
   ;; abort does not allow and an endless loop does not even report.
   (when (and (flonum? x) (not ($fl-finite? x)))
-    (error 'inexact->exact "no exact equivalent" x))
+    (assertion-violation 'inexact->exact "no exact equivalent" x))
   (cond
    ;; Integral doubles inside the signed 30-bit fixnum range need no
    ;; rational construction. Fractional and larger values keep the
@@ -3273,8 +3288,12 @@
 (define ($div-check who n d)
   (unless (and (or (fixnum? n) (%bignum? n))
                (or (fixnum? d) (%bignum? d)))
-    (errorf who "operands must be exact integers"))
-  (when (= d 0) (errorf who "division by zero")))
+    ;; a real that is not an exact integer has an answer goeteia does
+    ;; not compute; anything else is a wrong argument
+    (if (and (real? n) (real? d))
+        ($restriction-error who "operands must be exact integers")
+        (assertion-violation who "operands must be exact integers")))
+  (when (= d 0) (assertion-violation who "division by zero")))
 (define ($div n d)
   (let ((q (quotient n d)) (r (remainder n d)))
     (if (< r 0) (if (< d 0) (+ q 1) (- q 1)) q)))
@@ -3440,7 +3459,7 @@
            (>= n 0) (<= n #x10FFFF)
            (not (and (>= n #xD800) (<= n #xDFFF))))
       (%integer->char n)
-      (error 'integer->char "not a Unicode scalar value" n)))
+      (assertion-violation 'integer->char "not a Unicode scalar value" n)))
 
 (define (char-upcase c)
   (let ((n (char->integer c)))
@@ -3552,13 +3571,7 @@
     (when (irritants-condition? obj)
       (for-each (lambda (x) (display " ") (write x))
                 (condition-irritants obj))))
-   (($compound? obj)
-    (display "#<condition")
-    (for-each (lambda (c) (display " ") (display ($condition-name c)))
-              ($compound-components obj))
-    (display ">"))
    (else (write obj))))
-(define ($condition-name c) ($rtd-name (%record-rtd c)))
 
 ;; (guard (var clause ...) body ...): select, from the handler, answers
 ;; a thunk of the clause that matched or #f; %guard-select reads the
@@ -3735,18 +3748,26 @@
 ;; handler, no raise and no condition procedure then carries none of it.
 (define $raise-standard #f)
 
-;; the compound of kind, &who unless who is #f, &message and &irritants,
-;; raised; kind is data, a symbol naming the standard type
+;; the compound of kind's conditions, &who unless who is #f, &message and
+;; &irritants, raised.  kind is data: a symbol naming the standard type,
+;; or (i/o-filename . path)
 (define ($make-and-raise kind who message irritants)
   (raise ($make-compound
-          (cons ($kind-condition kind)
-                (let ((tail (list (make-message-condition message)
-                                  (make-irritants-condition irritants))))
-                  (if who (cons (make-who-condition who) tail) tail))))))
-(define ($kind-condition kind)
+          (append ($kind-conditions kind)
+                  (let ((tail (list (make-message-condition message)
+                                    (make-irritants-condition irritants))))
+                    (if who (cons (make-who-condition who) tail) tail))))))
+(define ($kind-conditions kind)
   (cond
-   ((eq? kind 'error) (make-error))
-   ((eq? kind 'assertion) (make-assertion-violation))
+   ((eq? kind 'error) (list (make-error)))
+   ((eq? kind 'assertion) (list (make-assertion-violation)))
+   ;; R6RS 8.2.9 names &lexical; a reader that fails has also failed to
+   ;; read
+   ((eq? kind 'lexical) (list (make-lexical-violation) (make-i/o-read-error)))
+   ((eq? kind 'implementation-restriction)
+    (list (make-implementation-restriction-violation)))
+   ((and (pair? kind) (eq? (car kind) 'i/o-filename))
+    (list (make-i/o-filename-error (cdr kind))))
    (else (assertion-violation '$make-and-raise "not a condition kind" kind))))
 
 ;; who and message are checked here, the same with a handler and without
@@ -3770,6 +3791,22 @@
   ($standard 'error 'error who message irritants))
 (define (assertion-violation who message . irritants)
   ($standard 'assertion-violation 'assertion who message irritants))
+
+;; The prelude's own sites of the other kinds: each keeps the who, the
+;; message and the irritants it had, so the uncaught line is the same.
+;; the reader's: text it cannot read
+(define ($lexical-error who message . irritants)
+  ($standard '$lexical-error 'lexical who message irritants))
+;; a result that is defined and that goeteia cannot represent
+(define ($restriction-error who message . irritants)
+  ($standard '$restriction-error 'implementation-restriction
+             who message irritants))
+;; a file the host would not open, for a reason it does not give, so
+;; &i/o-filename and not &i/o-file-does-not-exist: the file may be there
+;; and protected
+(define ($cannot-open who path)
+  ($standard '$cannot-open (cons 'i/o-filename path) who "cannot open"
+             (list path)))
 
 ;; with who #f there is no &who: at run time a form is a datum, not an
 ;; identifier a who could be taken from
@@ -3843,7 +3880,7 @@
       (abs (* (quotient a (gcd a b)) b))))
 
 (define ($make-rat n d)
-  (when ($eq2 d 0) (errorf '/ "division by zero"))
+  (when ($eq2 d 0) (assertion-violation '/ "division by zero"))
   (let* ((neg (if (< d 0) (not (< n 0)) (< n 0)))
          (n (abs n))
          (d (abs d))
@@ -3889,12 +3926,12 @@
 (define (open-input-file path)
   ($send-path path)
   (let ((fd (%open-read)))
-    (when (< fd 0) (errorf 'open-input-file "cannot open" path))
+    (when (< fd 0) ($cannot-open 'open-input-file path))
     ($make-port 'file-in fd -2 1 0)))
 (define (open-output-file path)
   ($send-path path)
   (let ((fd (%open-write)))
-    (when (< fd 0) (errorf 'open-output-file "cannot open" path))
+    (when (< fd 0) ($cannot-open 'open-output-file path))
     ($make-port 'file-out fd 0 1 0)))
 (define (close-port p)
   (let ((k ($port-kind p)))
@@ -4262,7 +4299,7 @@
   (let loop ((i 0) (p 1)) (if (= i size) p (loop (+ i 1) (* p 256)))))
 (define ($endianness who e)
   (unless (or (eq? e 'big) (eq? e 'little))
-    (error who "unrecognized endianness" e)))
+    (assertion-violation who "unrecognized endianness" e)))
 (define (bytevector-uint-ref bv k e size)
   ($uint-ref 'bytevector-uint-ref bv k e size))
 (define (bytevector-sint-ref bv k e size)
@@ -4348,7 +4385,7 @@
 
 (define ($whole-elements who bv size)
   (unless (= 0 (remainder (bytevector-length bv) size))
-    (error who "bytevector length is not a multiple of size"
+    (assertion-violation who "bytevector length is not a multiple of size"
            (bytevector-length bv) size)))
 (define (bytevector->uint-list bv e size)
   ($endianness 'bytevector->uint-list e)
@@ -4689,7 +4726,7 @@
 (define ($case-lambda-apply clauses args n)
   (cond
    ((null? clauses)
-    (error 'case-lambda "no clause accepts this number of arguments" n))
+    (assertion-violation 'case-lambda "no clause accepts this number of arguments" n))
    (($formals-accept? (car (car clauses)) n)
     (apply (cdr (car clauses)) args))
    (else ($case-lambda-apply (cdr clauses) args n))))
@@ -4846,7 +4883,7 @@
        ($enum-sort
         (map (lambda (sym)
                (or ($enum-index type sym)
-                   (error 'enum-set-constructor
+                   (assertion-violation 'enum-set-constructor
                           "not a symbol of the enumeration" sym)))
              syms))))))
 (define (enum-set->list s)
@@ -4866,7 +4903,7 @@
   (and (enum-set-subset? s1 s2) (enum-set-subset? s2 s1)))
 (define ($enum-same-type who s1 s2)
   (unless (eq? ($enum-set-type s1) ($enum-set-type s2))
-    (error who "the enum-sets are not of the same enumeration type" s1 s2))
+    (assertion-violation who "the enum-sets are not of the same enumeration type" s1 s2))
   ($enum-set-type s1))
 (define (enum-set-union s1 s2)
   (let ((type ($enum-same-type 'enum-set-union s1 s2)))

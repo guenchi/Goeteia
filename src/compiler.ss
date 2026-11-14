@@ -1630,7 +1630,7 @@
                                        (,(generated-head 'if)
                                         (%record? r ,rtd)
                                         (%record-ref r ,total ,i)
-                                        (,(compiler-introduced 'error)
+                                        (,(compiler-introduced 'assertion-violation)
                                          (,(generated-head 'quote)
                                           ,(unmark (caddr f)))
                                          "not a record of this type"
@@ -1651,7 +1651,7 @@
                                              (,(generated-head 'if)
                                               (%record? r ,rtd)
                                               (%record-set! r ,total ,i v)
-                                              (,(compiler-introduced 'error)
+                                              (,(compiler-introduced 'assertion-violation)
                                                (,(generated-head 'quote)
                                                 ,(unmark (cadddr f)))
                                                "not a record of this type"

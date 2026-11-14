@@ -889,10 +889,11 @@ never names it carries nothing for it.
   What the protocol hands on is counted: the field values given to
   `new`, to a parent's procedure and to what it returns raise when there
   are too many or too few.
-- The conditions a record operation raises are made by `error`, so they
-  are `&error` and not `&assertion`, as all the prelude's own errors are
-  until the prelude's raising sites are given their types (see
-  "Conditions and exceptions" below).
+- A record operation that refuses its argument -- an accessor or a
+  mutator handed something that is not a record of its type, a protocol
+  that is not a procedure, a wrong count of field values -- raises an
+  `&assertion` violation, as every argument the prelude refuses does
+  (see "Conditions and exceptions" below).
 
 **goeteia's own answers**, where R6RS leaves the matter open and Chez
 differs: every record type the prelude defines and `(rnrs)` does not
@@ -987,8 +988,32 @@ without running the after thunks of the `dynamic-wind`s it is inside
 (Chez runs them).  The report is `who: message irritant ...` for a
 condition with a message, the who printed as `#f` when there is none;
 anything else is written, a record as `#<NAME>` and a compound
-condition as `#<condition NAME ...>`.  There is no error port yet, so
-both lines go to the console output.
+condition as `#<condition NAME ...>` -- which is also how `display` and
+`write` show one (Chez: `#<compound condition>`).  There is no error
+port yet, so both lines go to the console output.
+
+**The prelude's own errors** raise the type R6RS names, with the who,
+the message and the irritants they always had, so the uncaught line
+does not change:
+- a wrong argument or a wrong call -- type, domain, range, count, the
+  state of the object, an accessor handed another type's record,
+  division by zero: `&assertion`;
+- text the reader cannot read: `&lexical` and `&i/o-read` together (R6RS
+  8.2.9 names `&lexical`; Chez raises both);
+- a result that is defined and that goeteia cannot represent -- a left
+  shift whose result is not a fixnum, `div` and its family on a real
+  that is not an exact integer: `&implementation-restriction`;
+- a file `open-input-file` or `open-output-file` cannot open:
+  `&i/o-filename`, the path in its filename field.  Chez says
+  `&i/o-file-does-not-exist`; the host gives no reason, and the file may
+  be there and protected, so goeteia names the type both cases share.
+
+This is a break: an `&assertion` or an `&implementation-restriction` is
+a `&violation`, not an `&error`, so a handler written as
+`(guard (e ((error? e) ...)) ...)` no longer catches a refused argument;
+`assertion-violation?`, `violation?`, `serious-condition?` or an `else`
+clause do.  The reader's condition and the file one are still `&error`s
+(through `&i/o`).
 
 **A program that installs no handler does not carry the machinery.**
 `error`, `assertion-violation` and a failed `assert` make and raise
@@ -1002,8 +1027,8 @@ against the tree before conditions (wasm on Node, bytes):
 
 | program | wasm | JS |
 |---|---|---|
-| prints `hi` | +53 | +507 |
-| raises an error and catches it with `guard` | +4983 | +7861 |
+| prints `hi` | +464 | +929 |
+| raises an error and catches it with `guard` | +5722 | +8702 |
 
 **What it costs to run.**  A frame carries the handler stack, so a
 `dynamic-wind` and a `guard` do a little more than before.  One million
@@ -1030,11 +1055,12 @@ are still allocated.
 - A trap is not a condition: an illegal cast, an unreachable, a stack
   overflow, a host error on JS stop the program and no handler sees
   them.
-- The prelude's own errors are `&error`, whatever went wrong -- a bad
-  argument is not yet an `&assertion`, a reader error not yet
-  `&lexical` -- until each raising site is given its type.
-- No port operation raises an `&i/o` condition yet; the types are there
-  for programs.
+- A fixnum `quotient` or `remainder` by zero stops the program on both
+  targets before any condition is made (ledger R83); a bignum divisor of
+  zero raises `&assertion`.
+- Besides opening a file and reading, no port operation raises an `&i/o`
+  condition yet: a write to a file the host cannot write fails in the
+  host (ledger R84).
 - Under JSPI a callback can run while another computation is suspended
   in `js-await`, and the two share the dynamic environment (ledger
   R78).
