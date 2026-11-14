@@ -3029,6 +3029,8 @@
     (flonum? . 1) (fl+ . 2) (fl- . 2) (fl* . 2) (fl/ . 2)
     (fl=? . 2) (fl<? . 2) (flsqrt . 1) (flfloor . 1) (fltruncate . 1)
     (fixnum->flonum . 1) (%fl->fx . 1)
+    (%fl->bits16 . 2) (%bits16->fl . 4) (%single->bits16 . 2)
+    (%bits16->single . 2)
     (%bignum? . 1) (%make-bignum . 2) (%bignum-sign . 1) (%bignum-limbs . 1)
     (boolean? . 1) (procedure? . 1)
     (char->integer . 1) (%integer->char . 1)
@@ -3247,7 +3249,14 @@
     syntax-violation-form syntax-violation-subform syntax-violation?
     undefined-violation? violation? warning? who-condition?
     with-exception-handler assertion-violation syntax-violation
-    condition-message hashtable? port?))
+    condition-message hashtable? port?
+    ;; R20h: the IEEE accessors of bytevectors
+    bytevector-ieee-single-ref bytevector-ieee-single-set!
+    bytevector-ieee-single-native-ref bytevector-ieee-single-native-set!
+    bytevector-ieee-double-ref bytevector-ieee-double-set!
+    bytevector-ieee-double-native-ref bytevector-ieee-double-native-set!
+    ;; and UTF-16 and UTF-32
+    string->utf16 string->utf32 utf16->string utf32->string))
 
 ;; ---- the import map ----------------------------------------------
 ;;
@@ -3862,6 +3871,7 @@
     set-car! set-cdr! fixnum? char? string? symbol? boolean? procedure?
     flonum? fl+ fl- fl* fl/ fl=? fl<? flsqrt flfloor fltruncate
     fixnum->flonum %fl->fx
+    %fl->bits16 %bits16->fl %single->bits16 %bits16->single
     %bignum? %make-bignum %bignum-sign %bignum-limbs
     %big-add %big-neg %big-mul %big-quot %big-rem
     %big-lt %big-eq %big-norm %fx->big %big->fl %big->str
@@ -5377,7 +5387,8 @@
 (define fl-context-prims
   '(fl+ fl- fl* fl/ fl=? fl<? flsqrt flfloor fltruncate
     fixnum->flonum %fl->fx %mem-f64-set! %mem-f32-set!
-    %f32x4-scale! %f32x4-axpy! %f32x4-dot))
+    %f32x4-scale! %f32x4-axpy! %f32x4-dot
+    %fl->bits16 %bits16->fl %single->bits16 %bits16->single))
 (define (compile-fl-prim op args locals cell)
   (let ((expect (assq op prim-arity)))
     (unless (= (length args) (cdr expect))
@@ -5401,6 +5412,45 @@
            (struct-new TY-FLONUM)))
     ((%fl->fx)
      (list (compile-f64 (car args) locals cell) #xAA (wrap-int)))
+    ;; The bits of an IEEE number, 16 at a time, so that every piece is
+    ;; a fixnum: (%fl->bits16 x i) is bits 16i to 16i+15 of the double
+    ;; x, (%single->bits16 x i) the same of x rounded to a single
+    ;; (f32.demote_f64: to nearest, ties to even), and the other two
+    ;; build a number from its pieces, the lowest first.  The
+    ;; reinterpret instructions do the work; JS does it with a DataView
+    ;; and gives the same bits.
+    ((%fl->bits16)
+     (let* ((x (compile-f64 (car args) locals cell))
+            (i (compile-exp (cadr args) locals cell #f)))
+       ;; i64.reinterpret_f64, shifted right by 16i (i64.extend_i32_u,
+       ;; i64.shr_u), i32.wrap_i64, the low 16 bits
+       (list x #xBD i (unwrap-int) (i32const 4) #x74 #xAD #x88 #xA7
+             (i32const 65535) #x71 (wrap-int))))
+    ((%single->bits16)
+     (let* ((x (compile-f64 (car args) locals cell))
+            (i (compile-exp (cadr args) locals cell #f)))
+       ;; f32.demote_f64, i32.reinterpret_f32, i32.shr_u by 16i
+       (list x #xB6 #xBC i (unwrap-int) (i32const 4) #x74 #x76
+             (i32const 65535) #x71 (wrap-int))))
+    ((%bits16->fl)
+     ;; each piece i64.extend_i32_u, shifted left by 16i, or-ed in;
+     ;; f64.reinterpret_i64
+     (let ((pieces (map-in-order (lambda (a) (compile-exp a locals cell #f))
+                                 args)))
+       (list (car pieces) (unwrap-int) #xAD
+             (let more ((ps (cdr pieces)) (shift 16))
+               (if (null? ps)
+                   '()
+                   (list (car ps) (unwrap-int) #xAD #x42 (sleb shift) #x86
+                         #x84
+                         (more (cdr ps) (+ shift 16)))))
+             #xBF (struct-new TY-FLONUM))))
+    ((%bits16->single)
+     ;; f32.reinterpret_i32 of the two pieces, f64.promote_f32
+     (let* ((lo (compile-exp (car args) locals cell #f))
+            (hi (compile-exp (cadr args) locals cell #f)))
+       (list lo (unwrap-int) hi (unwrap-int) (i32const 16) #x74 #x72
+             #xBE #xBB (struct-new TY-FLONUM))))
     ((%f32x4-dot)
      (list (compile-f32x4-dot args locals cell)
            (struct-new TY-FLONUM)))

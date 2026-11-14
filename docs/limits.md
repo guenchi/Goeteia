@@ -229,13 +229,14 @@ value, n-ary forms of the
 comparisons that are binary today (`=`, `<`, `char<?`, `string<?` and
 the rest; the new `-ci` comparisons, `boolean=?` and `symbol=?` already
 take two or more arguments); the binary and bytevector port
-procedures (`get-u8`, `put-u8`, the `get-bytevector-`
+procedures (`get-u8`, `lookahead-u8`, `put-u8`, the `get-bytevector-`
 and `put-bytevector` procedures, `open-bytevector-input-port`,
 `open-bytevector-output-port`, `call-with-bytevector-output-port`);
 `current-error-port` and the `standard-` ports; `open-file-input-port`
-and its siblings, transcoders, codecs, buffer modes, port positions and
+and its siblings, transcoders (and with them `bytevector->string` and
+`string->bytevector`), codecs, buffer modes, port positions and
 custom ports; `bitwise-and`, `bitwise-ior` and `bitwise-xor` on
-bignums; the IEEE bytevector accessors;
+bignums;
 the procedural record layer (the syntactic one is complete: see
 "Records: parents, protocols and what is not there" below), Unicode
 normalisation and title case.
@@ -510,6 +511,18 @@ the two spellings still differ, because the difference is about storage
 and not about this procedure's range -- and it would start refusing
 calls that work today. So the range is R6RS's and the storage question
 is recorded here rather than answered by a side effect.
+
+The conversions that name an encoding take the string's bytes as
+UTF-8, which is what a string literal stores.  `string->utf16` and
+`string->utf32` decode them, a byte that starts no UTF-8 sequence
+becoming U+FFFD, and encode the code points; `utf16->string` and
+`utf32->string` decode and write the code points into the string as
+UTF-8, a lone surrogate, a code unit past U+10FFFF or a trailing odd
+byte becoming U+FFFD.  A high surrogate followed by a unit that is not
+a low one gives U+FFFD and that unit is then read on its own, as WHATWG
+decodes; Chez drops the unit.  `string->utf8` and `utf8->string` copy
+the bytes as they are: `utf8->string` keeps bytes that are not UTF-8,
+where Chez replaces them (ledger R89).
 
 ## Comments
 

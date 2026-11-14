@@ -924,6 +924,7 @@
 (define $jp-kernel-groups
   '((fl fl+ fl- fl* fl/ fl=? fl<? flsqrt flfloor fltruncate
         fixnum->flonum %fl->fx flonum? %js-to-number %big->fl)
+    (flbits %fl->bits16 %bits16->fl %single->bits16 %bits16->single)
     (num %ratio? %make-ratio %ratio-num %ratio-den
          %complex? %make-complex %cx-re %cx-im)
     (sym symbol? symbol->string %make-symbol %interned-symbols)
@@ -1009,6 +1010,12 @@
     ((fltruncate) (list "(new Fl(Math.trunc(FLV(" (a 0) "))))"))
     ((fixnum->flonum) (list "(new Fl(IU(" (a 0) ")))"))
     ((%fl->fx) (list "F2I(" (a 0) ".v)"))
+    ;; the bits of an IEEE number 16 at a time (see compile-fl-prim)
+    ((%fl->bits16) (list "FTB(" (a 0) "," (a 1) ")"))
+    ((%single->bits16) (list "STB(" (a 0) "," (a 1) ")"))
+    ((%bits16->fl)
+     (list "BTF(" (a 0) "," (a 1) "," (a 2) "," (a 3) ")"))
+    ((%bits16->single) (list "BTS(" (a 0) "," (a 1) ")"))
     ;; the numeric tower's building blocks
     ((%bignum?) (list "((typeof " (a 0) "==='bigint')?TRUE:FALSE)"))
     ((%big-add) (list "(" (a 0) "+" (a 1) ")"))
@@ -1251,6 +1258,20 @@
     ;; an open type's test: slot 0, then each descriptor's parent field
     ;; (a descriptor is a record of name, parent, flags, uid), ending
     ;; at #f or at the descriptor of descriptors, whose slot 0 is #f
+;; the bits of an IEEE number through one DataView: functions, so every
+    ;; operand is evaluated before the view is written.  setFloat32
+    ;; rounds to nearest, ties to even, as f32.demote_f64 does
+    (flbits (fl)
+    "const FBV=new DataView(new ArrayBuffer(8));"
+    "const FTB=(x,i)=>{FBV.setFloat64(0,FLV(x),true);"
+    "return W(FBV.getUint16(2*IU(i),true));};"
+    "const STB=(x,i)=>{FBV.setFloat32(0,FLV(x),true);"
+    "return W(FBV.getUint16(2*IU(i),true));};"
+    "const BTF=(a,b,c,d)=>{FBV.setUint16(0,IU(a),true);"
+    "FBV.setUint16(2,IU(b),true);FBV.setUint16(4,IU(c),true);"
+    "FBV.setUint16(6,IU(d),true);return new Fl(FBV.getFloat64(0,true));};"
+    "const BTS=(a,b)=>{FBV.setUint16(0,IU(a),true);"
+    "FBV.setUint16(2,IU(b),true);return new Fl(FBV.getFloat32(0,true));};")
     (recopen (rec)
     "const KRECO=(x,r)=>{if(x instanceof Rec)"
     "for(let t=x.f[0];t instanceof Rec;t=t.f[2])if(t===r)return TRUE;"

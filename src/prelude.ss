@@ -4416,6 +4416,243 @@
 (define (bytevector-s64-native-set! bv k n)
   (bytevector-sint-set! bv k n (native-endianness) 8))
 
+;; ---- IEEE-754 access (R6RS 2.8) ----
+;;
+;; The bits come from the primitives %fl->bits16 and %single->bits16 and
+;; go back through %bits16->fl and %bits16->single, 16 at a time so each
+;; piece is a fixnum; both targets give the same bits.  A value to store
+;; is any real, converted as inexact converts it.  The index is checked:
+;; 0 <= k, k + size <= the length, and for the native forms k a multiple
+;; of size.
+
+(define ($ieee-value who x)
+  (cond
+   ((flonum? x) x)
+   ((real? x) (inexact x))
+   (else (assertion-violation who "not a real number" x))))
+(define ($ieee-index who bv k size native?)
+  (unless (bytevector? bv)
+    (assertion-violation who "not a bytevector" bv))
+  (unless (and (fixnum? k) (<= 0 k) (<= (+ k size) (bytevector-length bv))
+               (or (not native?) (= 0 (remainder k size))))
+    (assertion-violation who "invalid index" k)))
+;; byte j of the number, counting from its least significant, sits at
+;; this index of bv
+(define ($ieee-at k e size j)
+  (if (eq? e 'big) (+ k (- size 1 j)) (+ k j)))
+
+(define ($ieee-ref who bv k e size native?)
+  ($endianness who e)
+  ($ieee-index who bv k size native?)
+  (let ((piece (lambda (p)
+                 (+ (bytevector-u8-ref bv ($ieee-at k e size (* 2 p)))
+                    (* 256 (bytevector-u8-ref
+                            bv ($ieee-at k e size (+ (* 2 p) 1))))))))
+    (if (= size 8)
+        (%bits16->fl (piece 0) (piece 1) (piece 2) (piece 3))
+        (%bits16->single (piece 0) (piece 1)))))
+(define ($ieee-set! who bv k x e size native?)
+  ($endianness who e)
+  ($ieee-index who bv k size native?)
+  (let ((x ($ieee-value who x)))
+    (let loop ((p 0))
+      (when (< (* 2 p) size)
+        (let ((bits (if (= size 8) (%fl->bits16 x p) (%single->bits16 x p))))
+          (bytevector-u8-set! bv ($ieee-at k e size (* 2 p))
+                              (bitwise-and bits 255))
+          (bytevector-u8-set! bv ($ieee-at k e size (+ (* 2 p) 1))
+                              (bitwise-arithmetic-shift-right bits 8)))
+        (loop (+ p 1))))))
+
+(define (bytevector-ieee-double-ref bv k e)
+  ($ieee-ref 'bytevector-ieee-double-ref bv k e 8 #f))
+(define (bytevector-ieee-single-ref bv k e)
+  ($ieee-ref 'bytevector-ieee-single-ref bv k e 4 #f))
+(define (bytevector-ieee-double-set! bv k x e)
+  ($ieee-set! 'bytevector-ieee-double-set! bv k x e 8 #f))
+(define (bytevector-ieee-single-set! bv k x e)
+  ($ieee-set! 'bytevector-ieee-single-set! bv k x e 4 #f))
+(define (bytevector-ieee-double-native-ref bv k)
+  ($ieee-ref 'bytevector-ieee-double-native-ref bv k (native-endianness) 8 #t))
+(define (bytevector-ieee-single-native-ref bv k)
+  ($ieee-ref 'bytevector-ieee-single-native-ref bv k (native-endianness) 4 #t))
+(define (bytevector-ieee-double-native-set! bv k x)
+  ($ieee-set! 'bytevector-ieee-double-native-set! bv k x (native-endianness)
+              8 #t))
+(define (bytevector-ieee-single-native-set! bv k x)
+  ($ieee-set! 'bytevector-ieee-single-native-set! bv k x (native-endianness)
+              4 #t))
+
+;; ---- UTF-16 and UTF-32 (R6RS 2.9) ----
+;;
+;; A string here is a sequence of bytes, which string->utf8 hands over
+;; as they are; these read a string as UTF-8 and write UTF-8 into one,
+;; so a string literal's characters survive the round trip.  Malformed
+;; input on either side -- a byte that starts no UTF-8 sequence, a lone
+;; surrogate, a code unit past U+10FFFF, bytes left over at the end --
+;; is U+FFFD.
+
+;; the code points of s, read as UTF-8
+(define ($utf8-points s)
+  (let ((n (string-length s))
+        (b (lambda (i) (char->integer (string-ref s i)))))
+    (let loop ((i 0) (acc '()))
+      (if (= i n)
+          (reverse acc)
+          (let* ((c (b i))
+                 (len (cond ((< c #x80) 1) ((< c #xC2) 0) ((< c #xE0) 2)
+                            ((< c #xF0) 3) ((< c #xF5) 4) (else 0)))
+                 (cont? (lambda (j)
+                          (and (< j n) (= (bitwise-and (b j) #xC0) #x80)))))
+            (if (and (> len 0)
+                     (let more ((j 1))
+                       (or (= j len) (and (cont? (+ i j)) (more (+ j 1))))))
+                (let ((cp (let fold ((j 1)
+                                     (cp (bitwise-and
+                                          c (cond ((= len 1) #x7F)
+                                                  ((= len 2) #x1F)
+                                                  ((= len 3) #x0F)
+                                                  (else #x07)))))
+                            (if (= j len)
+                                cp
+                                (fold (+ j 1)
+                                      (+ (* cp 64)
+                                         (bitwise-and (b (+ i j)) #x3F)))))))
+                  (loop (+ i len) (cons cp acc)))
+                (loop (+ i 1) (cons #xFFFD acc))))))))
+
+;; the string of the code points cps, written as UTF-8
+(define ($points->string cps)
+  (let ((bytes
+         (let loop ((cps cps) (acc '()))
+           (if (null? cps)
+               (reverse acc)
+               (let ((c (car cps)))
+                 (loop (cdr cps)
+                       (cond
+                        ((< c #x80) (cons c acc))
+                        ((< c #x800)
+                         (cons* (+ #x80 (bitwise-and c #x3F))
+                                (+ #xC0 (bitwise-arithmetic-shift-right c 6))
+                                acc))
+                        ((< c #x10000)
+                         (cons* (+ #x80 (bitwise-and c #x3F))
+                                (+ #x80 (bitwise-and
+                                         (bitwise-arithmetic-shift-right c 6)
+                                         #x3F))
+                                (+ #xE0 (bitwise-arithmetic-shift-right c 12))
+                                acc))
+                        (else
+                         (cons* (+ #x80 (bitwise-and c #x3F))
+                                (+ #x80 (bitwise-and
+                                         (bitwise-arithmetic-shift-right c 6)
+                                         #x3F))
+                                (+ #x80 (bitwise-and
+                                         (bitwise-arithmetic-shift-right c 12)
+                                         #x3F))
+                                (+ #xF0 (bitwise-arithmetic-shift-right c 18))
+                                acc)))))))))
+    (utf8->string (u8-list->bytevector bytes))))
+
+(define ($utf-endianness who opt)
+  (let ((e (if (null? opt) 'big (car opt))))
+    ($endianness who e)
+    e))
+
+(define (string->utf16 s . e)
+  (let* ((e ($utf-endianness 'string->utf16 e))
+         (units (let loop ((cps ($utf8-points s)) (acc '()))
+                  (if (null? cps)
+                      (reverse acc)
+                      (let ((c (car cps)))
+                        (if (< c #x10000)
+                            (loop (cdr cps) (cons c acc))
+                            (let ((c (- c #x10000)))
+                              (loop (cdr cps)
+                                    (cons* (+ #xDC00 (bitwise-and c #x3FF))
+                                           (+ #xD800
+                                              (bitwise-arithmetic-shift-right
+                                               c 10))
+                                           acc))))))))
+         (bv (make-bytevector (* 2 (length units)) 0)))
+    (let loop ((us units) (k 0))
+      (unless (null? us)
+        (bytevector-u16-set! bv k (car us) e)
+        (loop (cdr us) (+ k 2))))
+    bv))
+
+(define (string->utf32 s . e)
+  (let* ((e ($utf-endianness 'string->utf32 e))
+         (cps ($utf8-points s))
+         (bv (make-bytevector (* 4 (length cps)) 0)))
+    (let loop ((cps cps) (k 0))
+      (unless (null? cps)
+        (bytevector-u32-set! bv k (car cps) e)
+        (loop (cdr cps) (+ k 4))))
+    bv))
+
+;; the endianness to read with, and where the text starts: a leading
+;; byte-order mark decides and is dropped unless the endianness is
+;; mandatory
+(define ($utf-start who bv e mandatory mark-big mark-little)
+  ($endianness who e)
+  (let ((size (length mark-big))
+        (lead? (lambda (mark)
+                 (and (>= (bytevector-length bv) (length mark))
+                      (let same ((i 0) (m mark))
+                        (or (null? m)
+                            (and (= (bytevector-u8-ref bv i) (car m))
+                                 (same (+ i 1) (cdr m)))))))))
+    (cond
+     ((and (pair? mandatory) (car mandatory)) (cons e 0))
+     ((lead? mark-big) (cons 'big size))
+     ((lead? mark-little) (cons 'little size))
+     (else (cons e 0)))))
+
+(define (utf16->string bv e . mandatory)
+  (let* ((start ($utf-start 'utf16->string bv e mandatory '(#xFE #xFF)
+                            '(#xFF #xFE)))
+         (e (car start))
+         (n (bytevector-length bv)))
+    ($points->string
+     (let loop ((k (cdr start)) (acc '()))
+       (cond
+        ((= k n) (reverse acc))
+        ((= (+ k 1) n) (reverse (cons #xFFFD acc)))
+        (else
+         (let ((u (bytevector-u16-ref bv k e)))
+           (cond
+            ((and (<= #xD800 u) (< u #xDC00))
+             ;; a high surrogate pairs with a low one after it; alone, it
+             ;; is U+FFFD and the unit after it is read on its own (as
+             ;; WHATWG does; Chez drops that unit)
+             (let ((v (and (< (+ k 3) n) (bytevector-u16-ref bv (+ k 2) e))))
+               (if (and v (<= #xDC00 v) (< v #xE000))
+                   (loop (+ k 4)
+                         (cons (+ #x10000 (* (- u #xD800) 1024) (- v #xDC00))
+                               acc))
+                   (loop (+ k 2) (cons #xFFFD acc)))))
+            ((and (<= #xDC00 u) (< u #xE000))
+             (loop (+ k 2) (cons #xFFFD acc)))
+            (else (loop (+ k 2) (cons u acc)))))))))))
+
+(define (utf32->string bv e . mandatory)
+  (let* ((start ($utf-start 'utf32->string bv e mandatory
+                            '(0 0 #xFE #xFF) '(#xFF #xFE 0 0)))
+         (e (car start))
+         (n (bytevector-length bv)))
+    ($points->string
+     (let loop ((k (cdr start)) (acc '()))
+       (if (> (+ k 4) n)
+           (reverse (if (< k n) (cons #xFFFD acc) acc))
+           (let ((u (bytevector-u32-ref bv k e)))
+             (loop (+ k 4)
+                   (cons (if (or (> u #x10FFFF)
+                                 (and (<= #xD800 u) (< u #xE000)))
+                             #xFFFD
+                             u)
+                         acc))))))))
+
 (define ($whole-elements who bv size)
   (unless (= 0 (remainder (bytevector-length bv) size))
     (assertion-violation who "bytevector length is not a multiple of size"
