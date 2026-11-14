@@ -1050,6 +1050,16 @@ raw or zstd-supercompressed, decode to RGBA through `(gfx zstd)` +
 `(gfx uastc)`; `ktx-upload!` picks the path and `ktx-alpha?` reports
 alpha. Verified block-for-block against the reference transcoder's unpack
 (`test/ktx.ss` for ETC1S, `test/ktx-uastc.ss` for UASTC raw + zstd).
+
+What stays in the bump heap: `ktx-uastc-level!` and `ktx-upload!` take
+their staging from it (the inflated blocks, the zstd scratch, the buffer
+an upload is transcoded into) and put the water level back before they
+return, and also when they raise -- so a loop that uploads leaves
+`(fx-mark)` where it was.  The file itself is another matter:
+`ktx-parse` reads it in place and every later call reads it again, so
+its bytes live as long as the handle; `ktx-fetch!` and `ktx-stream!`
+copy the file into the heap themselves and keep it.  `ktx-stream!` also
+keeps the staging it transcodes into, one buffer per phase.
 Example: `examples/fx-ktx.html`.
 
 ### `(gfx zstd)` — Zstandard, RFC 8878

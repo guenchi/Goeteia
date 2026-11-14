@@ -170,46 +170,71 @@
                                  (gl-texture-base-level! slot 0)
                                  (cb slot k 'full)))))))))))))))
 
+  ;; ---- temporaries on the bump heap ----
+  ;; ($ktx-temporaries thunk) runs thunk with the heap's water level
+  ;; marked and puts the level back to the mark however thunk leaves:
+  ;; a return, a raise, an escape through a continuation.  Everything
+  ;; thunk allocates is therefore a temporary, and must not be read
+  ;; after thunk is done -- by a later call, or by a GL command
+  ;; replayed later from linear memory.  The uploads below qualify
+  ;; because the replayer's texture calls copy the bytes when they are
+  ;; made; nothing records the address.
+  ;;
+  ;; dynamic-wind and not a guard that re-raises: it installs no
+  ;; handler, it covers an escape as well as a raise, and the condition
+  ;; goes on to the caller untouched.
+  (define ($ktx-temporaries thunk)
+    (let ((mark (fx-mark)))
+      (dynamic-wind
+        (lambda () #f)
+        thunk
+        (lambda () (fx-release! mark)))))
+
   ;; transcode every level for whatever the context speaks and
-  ;; upload the chain; returns the texture slot.  Family 2 keeps the
-  ;; blocks as ETC1, 1 repacks BC1, 0 decodes level 0 to RGBA
+  ;; upload the chain; returns the texture slot, and puts back the
+  ;; staging it transcoded into.  Family 2 keeps the blocks as ETC1,
+  ;; 1 repacks BC1, 0 decodes level 0 to RGBA
   (define (ktx-upload! k)
     (if (ktx-uastc? k)
         ;; UASTC decodes to RGBA (level 0) and uploads uncompressed
-        (let* ((w (ktx-level-width k 0)) (h (ktx-level-height k 0))
-               (tmp (fx-alloc! (* w h 4)))
-               (slot (fx-texture!)))
-          (ktx-uastc-level! k 0 tmp)
-          (gl-texture-data! slot tmp w h)
-          slot)
+        ($ktx-temporaries
+         (lambda ()
+           (let* ((w (ktx-level-width k 0)) (h (ktx-level-height k 0))
+                  (tmp (fx-alloc! (* w h 4)))
+                  (slot (fx-texture!)))
+             (ktx-uastc-level! k 0 tmp)
+             (gl-texture-data! slot tmp w h)
+             slot)))
         (ktx-upload-basis! k)))
 
   (define (ktx-upload-basis! k)
     (let ((fam (if (ktx-alpha? k) 0 (gl-compressed-family)))
           (n (ktx-level-count k)))
-      (if (= fam 0)
-          (let* ((bytes (ktx-transcode-bytes k 0 'rgba))
-                 (tmp (fx-alloc! bytes))
-                 (slot (fx-texture!)))
-            (ktx-transcode! k 0 tmp 'rgba)
-            (gl-texture-data! slot tmp (ktx-level-width k 0)
-                              (ktx-level-height k 0))
-            slot)
-          (let* ((fmt (if (= fam 2) 'etc1 'bc1))
-                 (gfmt (if (= fam 2) 0 1))
-                 (tmp (fx-alloc! (ktx-transcode-bytes k 0 fmt)))
-                 (slot (fx-slot!)))
-            (gl-texture-compressed! slot n)
-            (let lvl ((l 0))
-              (when (< l n)
-                (ktx-transcode! k l tmp fmt)
-                (gl-compressed-level! slot l gfmt
-                                      (ktx-level-width k l)
-                                      (ktx-level-height k l)
-                                      tmp
-                                      (ktx-transcode-bytes k l fmt))
-                (lvl (+ l 1))))
-            slot))))
+      ($ktx-temporaries
+       (lambda ()
+         (if (= fam 0)
+             (let* ((bytes (ktx-transcode-bytes k 0 'rgba))
+                    (tmp (fx-alloc! bytes))
+                    (slot (fx-texture!)))
+               (ktx-transcode! k 0 tmp 'rgba)
+               (gl-texture-data! slot tmp (ktx-level-width k 0)
+                                 (ktx-level-height k 0))
+               slot)
+             (let* ((fmt (if (= fam 2) 'etc1 'bc1))
+                    (gfmt (if (= fam 2) 0 1))
+                    (tmp (fx-alloc! (ktx-transcode-bytes k 0 fmt)))
+                    (slot (fx-slot!)))
+               (gl-texture-compressed! slot n)
+               (let lvl ((l 0))
+                 (when (< l n)
+                   (ktx-transcode! k l tmp fmt)
+                   (gl-compressed-level! slot l gfmt
+                                         (ktx-level-width k l)
+                                         (ktx-level-height k l)
+                                         tmp
+                                         (ktx-transcode-bytes k l fmt))
+                   (lvl (+ l 1))))
+               slot))))))
 
   ;; ---- little-endian reads from staging ----
   (define ($k-u16 at)
@@ -926,7 +951,8 @@
          ($blk-alpha! sgd dst w h)))))
 
   ;; decode a UASTC level to RGBA at `dst' (w*h*4 bytes).  A zstd frame
-  ;; (supercompressionScheme 2) is inflated to the raw blocks first.
+  ;; (supercompressionScheme 2) is inflated to the raw blocks first, in
+  ;; staging that goes back to the heap before this returns or raises.
   (define (ktx-uastc-level! k l dst)
     (let* ((lv (vector-ref ($ktx-lindex k) l))
            (off (+ ($ktx-base k) (vector-ref lv 0)))
@@ -948,17 +974,22 @@
       ;; that buffer the decoder reads.
       (let ((need (uastc-level-bytes w h)))
         (if (= (ktx-scheme k) 2)
-            (let* ((blocks (begin
-                             (unless (>= ulen need)
-                               (error 'ktx "UASTC level shorter than its dimensions require"
-                                      ulen need))
-                             (fx-alloc! ulen)))
-                   (sclen (+ ulen 65536))
-                   (scratch (fx-alloc! sclen)))
-              ;; bound literal staging to the real scratch size, not the
-              ;; nominal max block -- a small ulen allocates < one block
-              (zstd-decode! off clen blocks scratch ulen sclen)
-              (uastc-decode! blocks dst w h))
+            ;; the inflated blocks and the zstd scratch are temporaries;
+            ;; dst is the caller's and lies below them
+            ($ktx-temporaries
+             (lambda ()
+               (let* ((blocks (begin
+                                (unless (>= ulen need)
+                                  (error 'ktx "UASTC level shorter than its dimensions require"
+                                         ulen need))
+                                (fx-alloc! ulen)))
+                      (sclen (+ ulen 65536))
+                      (scratch (fx-alloc! sclen)))
+                 ;; bound literal staging to the real scratch size, not
+                 ;; the nominal max block -- a small ulen allocates <
+                 ;; one block
+                 (zstd-decode! off clen blocks scratch ulen sclen)
+                 (uastc-decode! blocks dst w h))))
             (begin
               (unless (>= clen need)
                 (error 'ktx "UASTC level shorter than its dimensions require"
