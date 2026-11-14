@@ -910,9 +910,11 @@ a counter, so a build is reproducible.
 ancestors' fields first, and an ancestor's accessor reads a
 descendant's instance; for that the struct type of each field count
 used by a type with a parent or a child is declared a subtype of the
-next smaller such count.  The engine allows 63 supertypes, so a program
-whose live record types with a parent or a child have more than 63
-distinct field counts is refused:
+next smaller such count.  A type with no fields takes no place in the
+chain: its instances are the base struct itself, the one descriptor
+slot every record starts with.  The engine allows 63 supertypes, so a
+program whose live record types with a parent or a child have more than
+63 distinct non-zero field counts is refused:
 
 ```
 Exception in goeteia: more than 63 distinct field counts among the record types that have a parent or a child; the engine allows 63 supertypes (wasm): 64

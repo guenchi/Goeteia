@@ -1141,9 +1141,10 @@
 ;; The field counts that form the wasm struct chain (section 4 of the
 ;; records design): the totals of the record types that have a parent
 ;; or a child and whose descriptor survived dead-code removal, in
-;; increasing order.  One chain per module: the engine allows 63
-;; supertypes and the base has none, so 63 distinct counts is the
-;; limit.  The JS target's records are arrays and need none of this.
+;; increasing order, 0 left out: a record with no fields is the base,
+;; which every chain already starts from.  One chain per module: the
+;; engine allows 63 supertypes and the base has none, so 63 distinct
+;; non-zero counts is the limit.  The JS target's records are arrays and need none of this.
 (define *rec-chain* '())
 
 (define (record-chain-totals forms)
@@ -1160,6 +1161,7 @@
                                            (record-entry-kind e)))
                                       (hashtable-contains? live
                                                            (record-entry-rtd e))
+                                      (> (record-entry-total e) 0)
                                       (not (memv (record-entry-total e) acc)))
                                  (cons (record-entry-total e) acc)
                                  acc))
@@ -2751,10 +2753,15 @@
   (let ((e (assv arity *clos-ty*)))
     (unless e (errorf 'goeteia "missing closure type for arity:" arity))
     (cdr e)))
+;; A record with no fields is the base struct itself, one descriptor
+;; slot: no type is declared for the count 0, so it takes no place in
+;; the chain.
 (define (rec-ty nfields)
-  (let ((e (assv nfields *rec-ty*)))
-    (unless e (errorf 'goeteia "missing record type for a record with this many fields:" nfields))
-    (cdr e)))
+  (if (eqv? nfields 0)
+      TY-RECBASE
+      (let ((e (assv nfields *rec-ty*)))
+        (unless e (errorf 'goeteia "missing record type for a record with this many fields:" nfields))
+        (cdr e))))
 
 (define (intern! kind datum)
   (let find ((es *interned*))
@@ -8612,7 +8619,10 @@
                          (sort-by self-id
                                   (fold-left (lambda (acc n)
                                                (if (memv n acc) acc (cons n acc)))
-                                             (scan-recs forms '())
+                                             ;; 0 is the base, declared
+                                             ;; with the fixed types
+                                             (filter (lambda (n) (> n 0))
+                                                     (scan-recs forms '()))
                                              *rec-chain*))))
            (next (let number ((as plain-arities) (i TY-FIRST-FREE))
                    (if (null? as)
