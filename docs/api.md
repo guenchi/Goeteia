@@ -649,9 +649,9 @@ Both points are damped at one rate, and that is what holds the heading steady: t
 - `ktx-level-height` — the height of mip level `l`
 - `ktx-transcode!` — transcode level `l` into GPU format `fmt` at `dst`; the destination must be `ktx-transcode-bytes` long
 - `ktx-transcode-bytes` — how many bytes level `l` occupies once transcoded to `fmt` -- ask before allocating
-- `ktx-uastc-level!` — decode a UASTC level to RGBA at `dst` (`w*h*4` bytes); a zstd frame is inflated to the raw blocks first
+- `ktx-uastc-level!` — decode a UASTC level to RGBA at `dst` (`w*h*4` bytes); a zstd frame is inflated to the raw blocks first, in staging that goes back to the heap before it returns or raises
 - `ktx-fetch!` — fetch a `.ktx2` over the network, copy it into staging in one go, parse it, and hand the handle to `k`
-- `ktx-upload!` — transcode every level for whatever the context speaks and upload the chain; answers the texture slot. What it picks depends on the extensions present: ETC1 blocks kept, BC1 repacked, or level 0 decoded to RGBA
+- `ktx-upload!` — transcode every level for whatever the context speaks and upload the chain; answers the texture slot. What it picks depends on the extensions present: ETC1 blocks kept, BC1 repacked, or level 0 decoded to RGBA. Its staging goes back to the heap before it returns
 - `ktx-stream!` — fetch and upload in one call, handing the finished texture slot to `cb`
 - `ktx-alpha?` — whether the file carries alpha slices -- for ETC1S they are second slices whose grey carries the coverage
 
