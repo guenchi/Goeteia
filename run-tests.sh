@@ -738,6 +738,7 @@ for m in test/macro-toplevel-hygiene.mjs \
          test/large-arity-host.mjs \
          test/keyword-shadowing-refusals.mjs \
          test/compile-cli-ends-with-the-compilers-message.mjs \
+         test/records-refusals.mjs \
          test/counter-embedded-is-current.mjs \
          test/defect-v01-shader-check-can-vanish-unnoticed.mjs \
          test/c02-product-fn-specs.mjs \

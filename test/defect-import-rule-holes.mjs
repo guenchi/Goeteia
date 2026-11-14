@@ -1,8 +1,8 @@
 // REGRESSION GUARD (written as a red witness at de7604c; green since),
 // row by row: what a review of the import rule found it still gets
-// wrong, each row a whole program with the answer R6RS gives. Two rows
-// are green twins that record what the rule already gets right in the
-// same family, so a fix for a red row is shown not to break them.
+// wrong, each row a whole program with the answer R6RS gives. The rows
+// titled "twin" record what the rule already gets right in the same
+// family, so a fix for a red row is shown not to break them.
 // Readings on ceb47bf are in each row's comment.
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -47,7 +47,18 @@ const rows = [
     //    a record type whose generated names collide, are refused
     //    before private renaming hides them.  Green today.
     ['twin: a library privately defining an imported name is refused', '(import (rnrs))\n(begin\n' + LIB('p', 'f', '(rnrs)', '(define (car x) 42) (define (f) (car (list 1)))') + '\n(import (p)))\n(display (f))', { refused: /imported name may not be defined.*car/ }],
-    ['twin: a library record colliding with an import is refused', '(import (rnrs))\n(begin\n' + LIB('q', 'f', '(rnrs)', '(define-record-type vector (fields ref)) (define (f) 1)') + '\n(import (q)))\n(display (f))', { refused: /imported name may not be defined.*make-vector/ }],
+    // the record is named so that only its generated constructor meets
+    // an import (eq-hashtable and eq-hashtable? are not names of (rnrs),
+    // make-eq-hashtable is): a record type's own name is a binding too,
+    // and is the subject of 4b
+    ['twin: a library record whose generated name collides with an import is refused', '(import (rnrs))\n(begin\n' + LIB('q', 'f', '(rnrs)', '(define-record-type eq-hashtable (fields ref)) (define (f) 1)') + '\n(import (q)))\n(display (f))', { refused: /imported name may not be defined.*except: make-eq-hashtable "rnrs"/ }],
+    // 4b. a record type's name is bound to its descriptor, so the name
+    //     itself is judged, and before the generated names.  Until the
+    //     name became a binding this program was refused for make-vector
+    //     and the name vector was never judged.
+    ['a library record named like an import is refused for its own name', '(import (rnrs))\n(begin\n' + LIB('q', 'f', '(rnrs)', '(define-record-type vector (fields ref)) (define (f) 1)') + '\n(import (q)))\n(display (f))', { refused: /imported name may not be defined.*except: vector "rnrs"/ }],
+    ['twin: with the record name excluded, its generated constructor is refused', '(import (rnrs))\n(begin\n' + LIB('q', 'f', '(except (rnrs) vector)', '(define-record-type vector (fields ref)) (define (f) 1)') + '\n(import (q)))\n(display (f))', { refused: /imported name may not be defined.*except: make-vector "rnrs"/ }],
+    ['twin: a library record whose colliding names are all excluded compiles', '(import (rnrs))\n(begin\n' + LIB('q', 'f', '(except (rnrs) vector make-vector vector? vector-ref)', '(define-record-type vector (fields ref)) (define (f) (vector-ref (make-vector 5)))') + '\n(import (q)))\n(display (f))', { out: '5' }],
     // 5. a define-syntax inside a begin in a library body is a
     //    definition of the library and is refused like a top-level one.
     //    Today: compiles and answers 5.

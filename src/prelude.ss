@@ -565,6 +565,138 @@
 (define ($record-type-name-of x)
   ($rtd-name (or (%record-rtd x) x)))
 
+;; the other fields of a descriptor
+(define ($rtd-parent r) (%record-ref r 4 1))
+(define ($rtd-flags r) (%record-ref r 4 2))
+(define ($rtd-uid r) (%record-ref r 4 3))
+(define ($rtd-flag? r bit) (not (= 0 (bitwise-and ($rtd-flags r) bit))))
+
+;; x is a descriptor: the descriptor of descriptors, or a record whose
+;; slot 0 is it
+(define (record-type-descriptor? x)
+  (and (%recbase? x)
+       (or (eq? x $rtd-rtd) (eq? (%record-rtd x) $rtd-rtd))))
+
+;; "x is an instance of the type rtd denotes": slot 0, then the parent
+;; fields.  Total on every object, so an open predicate applied to a
+;; descriptor, or to anything else, answers #f and cannot trap.  The
+;; back ends call it from a predicate of a type that has descendants,
+;; when slot 0 is not the type itself.
+(define ($record-is-a? x rtd)
+  (and (%recbase? x)
+       (let walk ((t (%record-rtd x)))
+         (cond
+          ((eq? t rtd) #t)
+          ((record-type-descriptor? t) (walk ($rtd-parent t)))
+          (else #f)))))
+
+(define ($check-rtd who x)
+  (unless (record-type-descriptor? x)
+    (error who "not a record-type descriptor" x)))
+
+;; a record, and not of an opaque type: the descriptor of descriptors
+;; is opaque, so a descriptor is not one
+(define (record? x)
+  (and (%recbase? x)
+       (let ((r (%record-rtd x)))
+         (and (record-type-descriptor? r) (not ($rtd-flag? r 2))))))
+(define (record-rtd x)
+  (if (record? x)
+      (%record-rtd x)
+      (error 'record-rtd "not a record, or a record of an opaque type" x)))
+(define (record-type-name rtd)
+  ($check-rtd 'record-type-name rtd)
+  ($rtd-name rtd))
+(define (record-type-parent rtd)
+  ($check-rtd 'record-type-parent rtd)
+  ($rtd-parent rtd))
+(define (record-type-uid rtd)
+  ($check-rtd 'record-type-uid rtd)
+  ($rtd-uid rtd))
+(define (record-type-generative? rtd)
+  ($check-rtd 'record-type-generative? rtd)
+  (not ($rtd-flag? rtd 4)))
+(define (record-type-sealed? rtd)
+  ($check-rtd 'record-type-sealed? rtd)
+  ($rtd-flag? rtd 1))
+(define (record-type-opaque? rtd)
+  ($check-rtd 'record-type-opaque? rtd)
+  ($rtd-flag? rtd 2))
+(define (record-predicate rtd)
+  ($check-rtd 'record-predicate rtd)
+  (lambda (x) ($record-is-a? x rtd)))
+
+;; Every definition with one uid initialises its descriptor global
+;; here: the first to run makes the descriptor, the others receive that
+;; same object, so no definition depends on another's having run first
+;; and the type is one object at run time.  A program without a
+;; nongenerative clause does not carry the table.
+(define $uid-rtds '())
+(define ($nongenerative-rtd uid name parent flags)
+  (let ((e (assq uid $uid-rtds)))
+    (if e
+        (cdr e)
+        (let ((r (%record $rtd-rtd name parent flags uid)))
+          (set! $uid-rtds (cons (cons uid r) $uid-rtds))
+          r))))
+
+;; ---- constructor descriptors (R6RS 6.2) ----
+;;
+;; A type with a protocol has one, made where it is defined, so its
+;; protocol expression is evaluated once: the parent's descriptor when
+;; the parent has a protocol (else #f, and then m is the parent's
+;; field count), the protocol, and n, the type's own field count.
+(define-record-type ($cd $make-cd* $cd?)
+  (fields (immutable parent $cd-parent)
+          (immutable protocol $cd-protocol)
+          (immutable n $cd-n)
+          (immutable m $cd-m)))
+(define ($make-cd parent protocol n m)
+  (unless (procedure? protocol)
+    (error 'define-record-type "the protocol is not a procedure" protocol))
+  ($make-cd* parent protocol n m))
+
+(define ($field-count! l k)
+  (unless (= (length l) k)
+    (error 'define-record-type "wrong number of field values" l k)))
+
+;; The procedure a level's protocol receives, and what the protocol
+;; makes of it.  rest is the field values of the levels below, in
+;; order; finish allocates from the whole list.  Each count is checked
+;; and a mismatch raises.
+(define ($cd-step cd finish)
+  (lambda (rest)
+    (let* ((parent ($cd-parent cd))
+           (n ($cd-n cd))
+           (m ($cd-m cd))
+           (new (cond
+                 (parent
+                  (lambda pargs
+                    (lambda own
+                      ($field-count! own n)
+                      (apply (($cd-step parent finish) (append own rest))
+                             pargs))))
+                 ((> m 0)
+                  (lambda pargs
+                    ($field-count! pargs m)
+                    (lambda own
+                      ($field-count! own n)
+                      (finish (append pargs own rest)))))
+                 (else
+                  (lambda own
+                    ($field-count! own n)
+                    (finish (append own rest))))))
+           (c (($cd-protocol cd) new)))
+      (unless (procedure? c)
+        (error 'define-record-type "the protocol did not return a procedure"
+               c))
+      c)))
+
+;; the constructor of a type with a protocol: maker allocates from k
+;; values, the type's whole field count
+(define ($cd-constructor cd k maker)
+  (($cd-step cd (lambda (l) ($field-count! l k) (apply maker l))) '()))
+
 ;; ---- ports ----
 ;;
 ;; Console I/O rides the two host imports; string ports are plain

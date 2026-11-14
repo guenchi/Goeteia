@@ -928,6 +928,7 @@
                                            bs))))))))))
         ((quasiquote) (xpand-qq (cadr e) 0))
         ((define-record-type) (xpand-record e))
+        ((record-type-descriptor) (xpand-record-type-descriptor e))
         ((import)
          ;; Resolved by the driver, but the CLAUSE is read here, from
          ;; the program's own text.  An inline library's (import (a))
@@ -961,11 +962,13 @@
          ;; is the last point at which the library's own names are
          ;; separable from the top level it splices into
          (let ((saved *program-form?*)
-               (saved-table *expand-table*))
+               (saved-table *expand-table*)
+               (saved-scope *expanding-scope*))
            ;; a library's definitions answer to the library's own
            ;; clause, not to the program's -- and so does its EXPANSION,
            ;; so the table moves with the flag
            (set! *program-form?* #f)
+           (set! *expanding-scope* (strip-marks (cadr e)))
            (set! *expand-table*
                  (build-expand-table
                   (if (pair? (cadddr e)) (cdr (cadddr e)) '())))
@@ -974,6 +977,7 @@
                                            (xpand* (cdr (cdddr e))))))
              (set! *program-form?* saved)
              (set! *expand-table* saved-table)
+             (set! *expanding-scope* saved-scope)
              out)))
         ((case)
          ;; (case E ((d ...) body ...) ... (else body ...))
@@ -1028,7 +1032,8 @@
   '(quote quasiquote unquote unquote-splicing if let let* letrec letrec*
     lambda begin set! define do case cond and or not when unless else =>
     define-record-type import library apply assert guard let-values
-    let*-values endianness case-lambda define-enumeration))
+    let*-values endianness case-lambda define-enumeration
+    record-type-descriptor))
 
 ;; set while the prelude is expanded, which has no clause and defines
 ;; what it likes
@@ -1076,122 +1081,488 @@
               (map (lambda (x)
                      (if (symbol? x) (symbol->string (unmark x)) x))
                    parts))))
+
+;; ---- record types: the scope being expanded, and the registry -----
+;;
+;; The scope whose forms are being expanded: the prelude (named, since
+;; its forms record no scope), a library by its name, or the program.
+;; Expansion is sequential -- the prelude, then the program's forms in
+;; order, each library's body wholly inside the library arm -- and a
+;; macro's output is expanded in the scope that used the macro, so one
+;; variable, saved and restored by the library arm, is enough.
+(define *expanding-scope* 'the-program)
+
+;; One entry per record definition expanded so far, under the IDENTITY
+;; of its record name -- the scope that defines it and the name -- not
+;; its spelling: until canonicalise-prelude a library's exported point
+;; and a program's own point are one spelling.  The scope is kept as
+;; the defining scope introduced tokens take (a library's name, the
+;; program's, the prelude's); the key compares it the way an import's
+;; identity names a library, as its printed string.
+(define *record-types* '())
+
+;; What the registry knows of one definition.  A TYPE may be several
+;; definitions -- the ones that share a uid -- so the type's own facts
+;; (its descriptor globals, and whether it is open) live in a kind the
+;; definitions share, while each definition keeps its own descriptor
+;; global and, with a protocol, its own constructor descriptor.
+(define-record-type (record-entry make-record-entry record-entry?)
+  (fields (immutable key record-entry-key)
+          (immutable scope record-entry-scope)
+          (immutable rtd record-entry-rtd)
+          (immutable total record-entry-total)
+          (immutable parent record-entry-parent)
+          (immutable sealed? record-entry-sealed?)
+          (immutable opaque? record-entry-opaque?)
+          (immutable uid record-entry-uid)
+          (immutable cd record-entry-cd)
+          (immutable fields record-entry-fields)
+          (immutable kind record-entry-kind)))
+
+;; A type's descriptor globals, one per definition, and whether some
+;; definition names the type, or a descendant of it, as a parent.  An
+;; open type's predicates walk the parent fields; a closed one's compare
+;; slot 0 alone, which is today's code byte for byte.
+(define-record-type (record-kind make-record-kind record-kind?)
+  (fields (mutable globals record-kind-globals record-kind-globals-set!)
+          (mutable open? record-kind-open? record-kind-open-set!)))
+
+;; The descriptor globals of every open type, read by the back ends
+;; after all expansion: a definition a macro produced counts, which a
+;; scan before expansion would miss.
+(define *open-rtds* '())
+
+;; the rtd operand of a (%record? x rtd) is the global of an open type
+(define (open-rtd-operand? args)
+  (and (pair? args) (pair? (cdr args)) (symbol? (cadr args))
+       (memq (unmark (cadr args)) *open-rtds*)
+       #t))
+
+;; The field counts that form the wasm struct chain (section 4 of the
+;; records design): the totals of the record types that have a parent
+;; or a child and whose descriptor survived dead-code removal, in
+;; increasing order.  One chain per module: the engine allows 63
+;; supertypes and the base has none, so 63 distinct counts is the
+;; limit.  The JS target's records are arrays and need none of this.
+(define *rec-chain* '())
+
+(define (record-chain-totals forms)
+  (let ((live (make-eq-hashtable)))
+    (for-each (lambda (f)
+                (when (define-form? f)
+                  (hashtable-set! live (unmark (def-name f)) #t)))
+              forms)
+    (let ((chain (sort-by self-id
+                          (fold-left
+                           (lambda (acc e)
+                             (if (and (or (record-entry-parent e)
+                                          (record-kind-open?
+                                           (record-entry-kind e)))
+                                      (hashtable-contains? live
+                                                           (record-entry-rtd e))
+                                      (not (memv (record-entry-total e) acc)))
+                                 (cons (record-entry-total e) acc)
+                                 acc))
+                           '()
+                           *record-types*))))
+      (when (> (length chain) 63)
+        (errorf 'goeteia
+                (string-append "more than 63 distinct field counts among the"
+                               " record types that have a parent or a child;"
+                               " the engine allows 63 supertypes (wasm):")
+                (length chain)))
+      chain)))
+
+;; uid -> the first definition that gave it
+(define *record-uids* '())
+
+;; makes the uid of a bare (nongenerative): from a counter, so that a
+;; build is reproducible
+(define *record-uid-counter* 0)
+
+(define (open-record-kind! k)
+  (unless (record-kind-open? k)
+    (record-kind-open-set! k #t)
+    (set! *open-rtds* (append (record-kind-globals k) *open-rtds*))))
+
+(define (join-record-kind! k rtd)
+  (record-kind-globals-set! k (cons rtd (record-kind-globals k)))
+  (when (record-kind-open? k)
+    (set! *open-rtds* (cons rtd *open-rtds*))))
+
+;; a definition that names a parent opens that parent and every
+;; ancestor of it
+(define (open-record-lineage! e)
+  (when e
+    (open-record-kind! (record-entry-kind e))
+    (open-record-lineage! (record-entry-parent e))))
+
+(define (record-scope-key scope)
+  (cond
+   ((pair? scope) (lib-name-string scope))
+   ((eq? scope *prelude-scope*) *prelude-scope*)
+   (else 'the-program)))
+
+;; an import identity's library, as a key: (rnrs) is the prelude
+(define (identity-scope-key lib)
+  (if (string=? lib "rnrs") *prelude-scope* lib))
+
+(define (record-entry-at key name)
+  (let loop ((es *record-types*))
+    (cond
+     ((null? es) #f)
+     ((equal? (record-entry-key (car es)) (cons key name)) (car es))
+     (else (loop (cdr es))))))
+
+;; The record type X names in (parent X) or (record-type-descriptor X),
+;; resolved once, here.  A written X is looked up in the scope being
+;; expanded: its own definition, else the import entry its clause gives
+;; (rename and prefix already resolved).  An X a macro introduced is
+;; looked up in the scope the macro was written in: its own definition,
+;; else what that scope's import clauses give.  Whether an alias
+;; variable exists plays no part.
+(define (record-type-named x)
+  (let ((ic (and (symbol? x) (intro-context x))))
+    (or (and (symbol? x)
+             (if ic
+                 (let ((key (record-scope-key (cdr ic))) (n (car ic)))
+                   (or (record-entry-at key n)
+                       (if (string? key)
+                           (let ((o (binding-origin key n)))
+                             (record-entry-at (identity-scope-key (car o))
+                                              (cdr o)))
+                           (record-entry-imported (expand-entry n)))))
+                 (or (record-entry-at (record-scope-key *expanding-scope*)
+                                      (unmark x))
+                     (record-entry-imported (expand-entry x)))))
+        (errorf 'goeteia
+                "not a record type defined with define-record-type:"
+                (strip-marks x)))))
+
+(define (record-entry-imported e)
+  (and e
+       (let ((id (entry-identity e)))
+         (record-entry-at (identity-scope-key (car id)) (cdr id)))))
+
+;; A reference to a registered type's descriptor, or its constructor
+;; descriptor, from any scope: a token introduced in the scope that
+;; defines it.  Both names are gensyms, so the token is judged where it
+;; is bound and no other scope's definition can capture it.
+(define (record-entry-rtd-ref entry)
+  (introduced-in (record-entry-scope entry) (record-entry-rtd entry)))
+(define (record-entry-cd-ref entry)
+  (introduced-in (record-entry-scope entry) (record-entry-cd entry)))
+
+;; (record-type-descriptor X)
+(define (xpand-record-type-descriptor e)
+  (unless (and (pair? (cdr e)) (null? (cddr e)))
+    (errorf 'goeteia "record-type-descriptor takes one record name:"
+            (strip-marks e)))
+  (record-entry-rtd-ref (record-type-named (cadr e))))
+
+;; The clause that carries the record name's WRITTEN spelling when the
+;; namespacing of a library's private names has renamed it (ns-record).
+;; Its head is this uninterned symbol, which no program can write.
+(define $record-written-tag (gensym "written-name"))
+
+(define $record-clause-tags
+  '(fields parent protocol sealed opaque nongenerative))
+
+;; The clauses of a definition, as (tag . clause), each checked for its
+;; shape.  A clause the compiler does not implement, or one given
+;; twice, is refused here by name: these used to be dropped without a
+;; word, so a type compiled as one other than the type written.
+(define (record-clauses e)
+  (let loop ((cs (cddr e)) (acc '()))
+    (if (null? cs)
+        (reverse acc)
+        (let ((c (car cs)))
+          (unless (and (list? c) (pair? c) (symbol? (car c)))
+            (errorf 'goeteia "define-record-type: not a clause:"
+                    (strip-marks c)))
+          (let ((tag (if (eq? (car c) $record-written-tag)
+                         'written
+                         (resolve-tag (car c)))))
+            (cond
+             ((eq? tag 'parent-rtd)
+              (errorf 'goeteia
+                      (string-append "define-record-type: the parent-rtd"
+                                     " clause needs the procedural record"
+                                     " layer, which is not implemented:")
+                      (strip-marks c)))
+             ((not (or (eq? tag 'written) (memq tag $record-clause-tags)))
+              (errorf 'goeteia "define-record-type: unknown clause:"
+                      (strip-marks c)))
+             ((assq tag acc)
+              (errorf 'goeteia "define-record-type: clause given twice:"
+                      tag))
+             ((and (memq tag '(parent protocol written))
+                   (not (= (length c) 2)))
+              (errorf 'goeteia "define-record-type: malformed clause:"
+                      (strip-marks c)))
+             ((and (eq? tag 'parent) (not (symbol? (cadr c))))
+              (errorf 'goeteia "define-record-type: malformed clause:"
+                      (strip-marks c)))
+             ((and (memq tag '(sealed opaque))
+                   (not (and (= (length c) 2) (boolean? (cadr c)))))
+              (errorf 'goeteia
+                      (string-append "define-record-type: sealed and opaque"
+                                     " take #t or #f, written as such:")
+                      (strip-marks c)))
+             ((and (eq? tag 'nongenerative)
+                   (not (or (null? (cdr c))
+                            (and (= (length c) 2) (symbol? (cadr c))))))
+              (errorf 'goeteia "define-record-type: malformed clause:"
+                      (strip-marks c)))
+             (else (loop (cdr cs) (cons (cons tag c) acc)))))))))
+
+;; n fresh parameter names, for a constructor that takes fields of
+;; several levels, whose names may repeat
+(define (fresh-field-names n)
+  (let loop ((k n) (acc '()))
+    (if (= k 0) acc (loop (- k 1) (cons (gensym "f") acc)))))
+
+;; Definitions that share a uid are one type, so they must agree on
+;; everything but the protocol: the whole program is in front of the
+;; compiler, which can say so before anything runs.
+(define (record-uid-agrees! first uid parent sealed? opaque? fields)
+  (define (differ what)
+    (errorf 'goeteia
+            (string-append "define-record-type: two definitions with one"
+                           " uid differ in their " what ":")
+            uid))
+  (unless (eq? (and parent (record-entry-kind parent))
+               (and (record-entry-parent first)
+                    (record-entry-kind (record-entry-parent first))))
+    (differ "parent"))
+  (unless (and (eq? sealed? (record-entry-sealed? first))
+               (eq? opaque? (record-entry-opaque? first)))
+    (differ "sealed or opaque flag"))
+  (unless (equal? fields (record-entry-fields first))
+    (differ "fields")))
+
+;; (define-record-type <spec> <clause> ...) with <spec> = name | (name
+;; constructor predicate), the clauses fields, parent, protocol,
+;; sealed, opaque and nongenerative, and <field> = name | (immutable
+;; name [acc]) | (mutable name [acc [mut]]).
+;;
+;; An instance is one flat struct: slot 0 its descriptor, then the
+;; ancestors' fields, then its own, so field i of a type is slot
+;; total(parent) + i + 1 and an ancestor's accessor reads a
+;; descendant's instance where it reads its own.
 (define (xpand-record e)
   (let* ((spec (cadr e))
          (name (if (pair? spec) (car spec) spec))
          (ctor (if (pair? spec) (cadr spec) (sym-cat (list "make-" name))))
          (pred (if (pair? spec) (caddr spec) (sym-cat (list name "?"))))
-         (fspecs (let find ((cs (cddr e)))
-                   (cond
-                    ((null? cs) '())
-                    ((eq? (resolve-tag (car (car cs))) 'fields) (cdr (car cs)))
-                    (else (find (cdr cs))))))
+         (clauses (record-clauses e))
+         (clause (lambda (tag)
+                   (let ((c (assq tag clauses))) (and c (cdr c)))))
+         ;; the spelling the program wrote, which the printer shows
+         (written (let ((c (clause 'written)))
+                    (unmark (if c (cadr c) name))))
+         (fspecs (let ((c (clause 'fields))) (if c (cdr c) '())))
          ;; each field -> (name mutable? accessor mutator)
          (fields (map (lambda (fs) (parse-field fs name)) fspecs))
+         (field-shape (map (lambda (f) (cons (unmark (car f)) (cadr f)))
+                           fields))
          (nf (length fields))
          (rtd (gensym "rtd"))
-         (fnames (map car fields)))
+         (fnames (map car fields))
+         (parent (let ((c (clause 'parent)))
+                   (and c (record-type-named (cadr c)))))
+         ;; the parent's fields come first
+         (m (if parent (record-entry-total parent) 0))
+         (total (+ m nf))
+         ;; a literal (protocol #f) is no protocol clause
+         (proto (let ((c (clause 'protocol)))
+                  (and c (not (eq? (cadr c) #f)) (cadr c))))
+         ;; the prelude's types that (rnrs) does not export are sealed
+         ;; and opaque without a clause: record? is #f for a hashtable
+         (own? (and *expanding-prelude?*
+                    (not (memq (unmark name) $rnrs-exports))))
+         (sealed? (or own? (let ((c (clause 'sealed))) (and c (cadr c)))))
+         ;; opaque is the effective value: a child of an opaque type is
+         ;; opaque
+         (opaque? (or own?
+                      (let ((c (clause 'opaque))) (and c (cadr c)))
+                      (and parent (record-entry-opaque? parent))))
+         (uid (let ((c (clause 'nongenerative)))
+                (and c
+                     (if (pair? (cdr c))
+                         (unmark (cadr c))
+                         (begin
+                           (set! *record-uid-counter*
+                                 (+ *record-uid-counter* 1))
+                           (sym-cat (list "goeteia-rtd-" written "-"
+                                          (number->string
+                                           *record-uid-counter*))))))))
+         (flags (+ (if sealed? 1 0) (if opaque? 2 0) (if uid 4 0)))
+         (cd (and proto (gensym "cd")))
+         (first (and uid (let ((u (assq uid *record-uids*)))
+                           (and u (cdr u)))))
+         (kind (if first
+                   (record-entry-kind first)
+                   (make-record-kind '() #f))))
+    (let loop ((fs field-shape))
+      (when (pair? fs)
+        (when (assq (car (car fs)) (cdr fs))
+          (errorf 'goeteia "define-record-type: two fields have one name:"
+                  (car (car fs))))
+        (loop (cdr fs))))
+    (when (and parent (record-entry-sealed? parent))
+      (errorf 'goeteia
+              "define-record-type: a sealed record type cannot be a parent:"
+              (strip-marks (cadr (clause 'parent)))))
+    ;; R6RS 6.2: with a parent clause and no protocol clause, the parent
+    ;; must not have a protocol clause itself
+    (when (and parent (record-entry-cd parent) (not proto))
+      (errorf 'goeteia
+              (string-append "define-record-type: the parent has a protocol,"
+                             " so this definition needs a protocol clause"
+                             " (R6RS 6.2):")
+              written))
+    (when first
+      (record-uid-agrees! first uid parent sealed? opaque? field-shape))
+    (let ((entry (make-record-entry
+                  (cons (record-scope-key *expanding-scope*)
+                        (if (intro-context name) name (unmark name)))
+                  *expanding-scope* rtd total parent sealed? opaque? uid cd
+                  field-shape kind)))
+      (set! *record-types* (cons entry *record-types*))
+      (unless first
+        (when uid
+          (set! *record-uids* (cons (cons uid entry) *record-uids*))))
+      (join-record-kind! kind rtd)
+      (open-record-lineage! parent))
     (cons 'begin
           (map xpand
-               ;; the descriptor's pair is the compiler's own, not a call the
-               ;; program wrote -- a program that excludes cons still gets a
-               ;; record type, exactly as quasiquote's append works.  The
-               ;; definitions, tests and quotes are the compiler's too, so
-               ;; they carry generated heads, and the accessors' error is
-               ;; introduced like cons: a program that defines its own
-               ;; error does not have it called by a record accessor.
                ;; The descriptor is a record of four fields, its slot 0
                ;; the prelude's descriptor of descriptors: name, parent,
-               ;; flags, uid.  Every type the prelude defines whose name
-               ;; (rnrs) does not export is sealed and opaque (flags 3):
-               ;; record? is #f for a hashtable or a port.
+               ;; flags, uid.  It and the definitions, tests and quotes
+               ;; are the compiler's own, so they carry generated heads
+               ;; and introduced references: a program that defines its
+               ;; own error does not have it called by a record accessor.
+               ;; A nongenerative descriptor comes from the prelude's
+               ;; table by uid, so every definition of the type receives
+               ;; the one object.
                (cons `(,(generated-head 'define) ,rtd
-                       (%record ,(compiler-introduced '$rtd-rtd)
-                                (,(generated-head 'quote) ,(unmark name))
-                                #f
-                                ,(if (and *expanding-prelude?*
-                                          (not (memq (unmark name)
-                                                     $rnrs-exports)))
-                                     3
-                                     0)
-                                #f))
-                     (cons `(,(generated-head 'define) (,ctor . ,fnames)
-                              (%record ,rtd . ,fnames))
-                           (cons `(,(generated-head 'define) (,pred x)
-                                   (%record? x ,rtd))
-                                 (let accs ((fs fields) (i 0))
-                                   (if (null? fs)
-                                       '()
-                                       (let ((f (car fs)))
-                                         (cons
-                                          ;; The rtd is checked here and
-                                          ;; not inside %record-ref: the
-                                          ;; primitive casts to the struct
-                                          ;; type for a field COUNT, so two
-                                          ;; records with the same number of
-                                          ;; fields pass its cast and it
-                                          ;; hands back a field of a
-                                          ;; stranger -- a plausible number
-                                          ;; rather than a failure.  The
-                                          ;; predicate already knows the
-                                          ;; identity; this makes the
-                                          ;; accessor ask it too, so the two
-                                          ;; can no longer disagree about
-                                          ;; what a record of this type is.
-                                          ;;
-                                          ;; SIZE: inlinable-body? admits
-                                          ;; this body and rejects the
-                                          ;; mutator's below -- $inline-cap
-                                          ;; is 16 pairs and the two land on
-                                          ;; opposite sides of it.  Nobody
-                                          ;; chose that; it fell out of the
-                                          ;; mutator carrying one more
-                                          ;; argument.  Measured, the
-                                          ;; difference is not worth
-                                          ;; recovering: hoisting the error
-                                          ;; call into a helper puts the
-                                          ;; mutator back under the cap and
-                                          ;; buys at most 13% of the check's
-                                          ;; cost, with the run ranges
-                                          ;; overlapping.  It is written down
-                                          ;; because the next edit that
-                                          ;; lengthens either body crosses
-                                          ;; the same line silently.
-                                          `(,(generated-head 'define)
-                                            (,(caddr f) r)
-                                            (,(generated-head 'if)
-                                             (%record? r ,rtd)
-                                             (%record-ref r ,nf ,i)
-                                             (,(compiler-introduced 'error)
-                                              (,(generated-head 'quote)
-                                               ,(unmark (caddr f)))
-                                              "not a record of this type"
-                                              r)))
-                                          (append
-                                           (if (cadr f)
-                                               (list
-                                                ;; The check precedes the
-                                                ;; write, so a refused
-                                                ;; mutation leaves the object
-                                                ;; exactly as it was.
-                                                ;;
-                                                ;; This body is over
-                                                ;; $inline-cap and the
-                                                ;; accessor's is under it --
-                                                ;; see the note there before
-                                                ;; making either one longer.
-                                                `(,(generated-head 'define)
-                                                  (,(cadddr f) r v)
-                                                  (,(generated-head 'if)
-                                                   (%record? r ,rtd)
-                                                   (%record-set! r ,nf ,i v)
-                                                   (,(compiler-introduced 'error)
-                                                    (,(generated-head 'quote)
-                                                     ,(unmark (cadddr f)))
-                                                    "not a record of this type"
-                                                    r))))
-                                               '())
-                                           (accs (cdr fs) (+ i 1))))))))))))))
+                       ,(if uid
+                            `(,(compiler-introduced '$nongenerative-rtd)
+                              (,(generated-head 'quote) ,uid)
+                              (,(generated-head 'quote) ,written)
+                              ,(if parent (record-entry-rtd-ref parent) #f)
+                              ,flags)
+                            `(%record ,(compiler-introduced '$rtd-rtd)
+                                      (,(generated-head 'quote) ,written)
+                                      ,(if parent
+                                           (record-entry-rtd-ref parent)
+                                           #f)
+                                      ,flags
+                                      #f)))
+                     (append
+                      ;; the record name is a variable whose value is the
+                      ;; descriptor: a pure initialiser, so a program that
+                      ;; never names it drops it.  The prelude binds only
+                      ;; the names (rnrs) exports.
+                      (if own?
+                          '()
+                          (list `(,(generated-head 'define) ,name ,rtd)))
+                      ;; with a protocol the constructor is built once,
+                      ;; here, by the prelude over constructor descriptors;
+                      ;; finish allocates from a list it has counted
+                      (if proto
+                          (let ((as (fresh-field-names total)))
+                            (list
+                             `(,(generated-head 'define) ,cd
+                               (,(compiler-introduced '$make-cd)
+                                ,(if (and parent (record-entry-cd parent))
+                                     (record-entry-cd-ref parent)
+                                     #f)
+                                ,proto
+                                ,nf
+                                ,m))
+                             `(,(generated-head 'define) ,ctor
+                               (,(compiler-introduced '$cd-constructor)
+                                ,cd
+                                ,total
+                                (,(generated-head 'lambda) ,as
+                                 (%record ,rtd . ,as))))))
+                          ;; the constructor takes every field, the
+                          ;; ancestors' first
+                          (let ((as (if parent
+                                        (fresh-field-names total)
+                                        fnames)))
+                            (list `(,(generated-head 'define) (,ctor . ,as)
+                                    (%record ,rtd . ,as)))))
+                      (cons `(,(generated-head 'define) (,pred x)
+                              (%record? x ,rtd))
+                            (let accs ((fs fields) (i m))
+                              (if (null? fs)
+                                  '()
+                                  (let ((f (car fs)))
+                                    (cons
+                                     ;; The rtd is checked here and not
+                                     ;; inside %record-ref: the primitive
+                                     ;; casts to the struct type for a field
+                                     ;; COUNT, so two records with the same
+                                     ;; number of fields pass its cast and it
+                                     ;; hands back a field of a stranger -- a
+                                     ;; plausible number rather than a
+                                     ;; failure.  The predicate already knows
+                                     ;; the identity; this makes the accessor
+                                     ;; ask it too, so the two can no longer
+                                     ;; disagree about what a record of this
+                                     ;; type is.
+                                     ;;
+                                     ;; SIZE: inlinable-body? admits this body
+                                     ;; and rejects the mutator's below --
+                                     ;; $inline-cap is 16 pairs and the two
+                                     ;; land on opposite sides of it.  Nobody
+                                     ;; chose that; it fell out of the mutator
+                                     ;; carrying one more argument.  Measured,
+                                     ;; the difference is not worth
+                                     ;; recovering: hoisting the error call
+                                     ;; into a helper puts the mutator back
+                                     ;; under the cap and buys at most 13% of
+                                     ;; the check's cost, with the run ranges
+                                     ;; overlapping.  It is written down
+                                     ;; because the next edit that lengthens
+                                     ;; either body crosses the same line
+                                     ;; silently.
+                                     `(,(generated-head 'define)
+                                       (,(caddr f) r)
+                                       (,(generated-head 'if)
+                                        (%record? r ,rtd)
+                                        (%record-ref r ,total ,i)
+                                        (,(compiler-introduced 'error)
+                                         (,(generated-head 'quote)
+                                          ,(unmark (caddr f)))
+                                         "not a record of this type"
+                                         r)))
+                                     (append
+                                      (if (cadr f)
+                                          (list
+                                           ;; The check precedes the write,
+                                           ;; so a refused mutation leaves
+                                           ;; the object exactly as it was.
+                                           ;;
+                                           ;; This body is over $inline-cap
+                                           ;; and the accessor's is under it
+                                           ;; -- see the note there before
+                                           ;; making either one longer.
+                                           `(,(generated-head 'define)
+                                             (,(cadddr f) r v)
+                                             (,(generated-head 'if)
+                                              (%record? r ,rtd)
+                                              (%record-set! r ,total ,i v)
+                                              (,(compiler-introduced 'error)
+                                               (,(generated-head 'quote)
+                                                ,(unmark (cadddr f)))
+                                               "not a record of this type"
+                                               r))))
+                                          '())
+                                      (accs (cdr fs) (+ i 1))))))))))))))
 (define (parse-field fs rec-name)
   (cond
    ((symbol? fs)
@@ -1646,10 +2017,18 @@
 ;; resolution.  It rests on those two properties, and a head lacking
 ;; either is not covered by it.
 (define (compiler-introduced sym)
+  (introduced-in *prelude-scope* sym))
+
+;; The same token, minted under any scope: a library's name, the
+;; program's, or the prelude's.  A record type's child names its
+;; parent's descriptor this way when the parent was defined in another
+;; scope -- the descriptor is a gensym that scope defines, so the token
+;; is judged there, where it is bound, and no other scope can spell it.
+(define (introduced-in scope sym)
   (let ((saved-renames *renames*)
         (saved-scope *defining-scope*))
     (set! *renames* '())
-    (set! *defining-scope* *prelude-scope*)
+    (set! *defining-scope* scope)
     (let ((tok (rename-introduced sym)))
       (set! *renames* saved-renames)
       (set! *defining-scope* saved-scope)
@@ -2695,7 +3074,13 @@
     enum-set-constructor enum-set->list enum-set-member?
     enum-set-subset? enum-set=? enum-set-union enum-set-intersection
     enum-set-difference enum-set-complement enum-set-projection
-    define-enumeration rationalize))
+    define-enumeration rationalize
+    ;; R20e: the syntactic record layer (record-type-descriptor is
+    ;; syntax, also in $rnrs-syntax)
+    record-type-descriptor record? record-rtd record-type-name
+    record-type-parent record-type-uid record-type-generative?
+    record-type-sealed? record-type-opaque? record-type-descriptor?
+    record-predicate))
 
 ;; ---- the import map ----------------------------------------------
 ;;
@@ -2844,7 +3229,7 @@
     define-syntax do else guard if lambda let let* let*-values
     let-values letrec letrec* or parameterize quasiquote quote set!
     syntax-rules unless unquote unquote-splicing when endianness
-    case-lambda define-enumeration))
+    case-lambda define-enumeration record-type-descriptor))
 
 (define (identity-keyword? id)
   (let ((lib (car id)) (name (cdr id)))
@@ -5131,15 +5516,38 @@
     ((%record-rtd)
      (list (arg 0) (ref-cast TY-RECBASE) (struct-get TY-RECBASE 0)))
     ((%record?)
-     ;; (%record? x rtd)
-     (let ((tmp (fresh-local! cell)))
-       (list (arg 0) (local-set tmp)
-             (local-get tmp) (ref-test TY-RECBASE)
-             #x04 T-I32
-             (local-get tmp) (ref-cast TY-RECBASE) (struct-get TY-RECBASE 0)
-             (arg 1) OP-REF-EQ
-             #x05 (i32const 0) #x0B
-             (boolify))))
+     ;; (%record? x rtd): x is an instance of the type rtd denotes.
+     ;; CLOSED (the type has no descendant): a record struct whose slot
+     ;; 0 is rtd.  OPEN: that test, and when it fails, the prelude's
+     ;; $record-is-a?, which walks the parent fields from x's own
+     ;; descriptor.
+     (if (open-rtd-operand? args)
+         (let* ((tmp (fresh-local! cell))
+                (rtmp (fresh-local! cell))
+                (xname (gensym "x"))
+                (rname (gensym "rtd"))
+                (walk (compile-exp
+                       (list (compiler-introduced '$record-is-a?) xname rname)
+                       (cons (cons xname tmp) (cons (cons rname rtmp) locals))
+                       cell #f)))
+           (list (arg 0) (local-set tmp)
+                 (arg 1) (local-set rtmp)
+                 (local-get tmp) (ref-test TY-RECBASE)
+                 #x04 T-I32
+                 (local-get tmp) (ref-cast TY-RECBASE)
+                 (struct-get TY-RECBASE 0)
+                 (local-get rtmp) OP-REF-EQ
+                 #x05 (i32const 0) #x0B
+                 #x04 T-EQREF (global-get G-TRUE) #x05 walk #x0B))
+         (let ((tmp (fresh-local! cell)))
+           (list (arg 0) (local-set tmp)
+                 (local-get tmp) (ref-test TY-RECBASE)
+                 #x04 T-I32
+                 (local-get tmp) (ref-cast TY-RECBASE)
+                 (struct-get TY-RECBASE 0)
+                 (arg 1) OP-REF-EQ
+                 #x05 (i32const 0) #x0B
+                 (boolify)))))
     ((%record-ref)
      ;; (%record-ref x nfields index) with literal nfields/index
      (list (arg 0) (ref-cast (rec-ty (cadr args)))
@@ -5403,13 +5811,16 @@
 ;; call's only argument, and the rest left optimistic because no call
 ;; ever supplies them.
 ;;
+;; $record-is-a? is here for the reason $escape is: the open record
+;; predicate's call of it is built at emission.
+;;
 ;; Listing $escape here makes the emitted operands independent of all
 ;; of that.  The general fault -- a binding pair read as a call, and a
 ;; seed published for a function nothing calls -- is pinned by
 ;; test/defect-spec-candidate-by-name.mjs.
 (define $spec-denylist
   '($add2 $sub2 $mul2 $quot2 $rem2 $eq2 $lt2 $escape
-    $shl-refused $shr-refused))
+    $shl-refused $shr-refused $record-is-a?))
 
 (define (compute-fn-specs! fn-defs main-steps)
   (set! *fn-specs* '())
@@ -6784,10 +7195,9 @@
 (define (define-target x)
   (if (pair? x) (define-target (car x)) x))
 
-;; ctor, predicate, accessors and mutators, derived exactly as
-;; xpand-record derives them.  The record TYPE name is not a top-level
-;; variable -- it survives only as the tag datum inside the rtd, which
-;; the printer shows -- so it keeps its original name.
+;; the record name, ctor, predicate, accessors and mutators, derived
+;; exactly as xpand-record derives them.  The record name is a
+;; top-level variable whose value is the descriptor.
 (define (record-bound-names e)
   (let* ((spec (cadr e))
          (name (if (pair? spec) (car spec) spec))
@@ -6799,7 +7209,8 @@
                     ((eq? (resolve-tag (car (car cs))) 'fields) (cdr (car cs)))
                     (else (find (cdr cs))))))
          (fields (map (lambda (fs) (parse-field fs name)) fspecs)))
-    (cons (define-target ctor)
+    (cons name
+          (cons (define-target ctor)
           (cons (define-target pred)
                 (fold-left (lambda (acc f)
                              (append acc (cons (caddr f)
@@ -6807,7 +7218,7 @@
                                                    (list (cadddr f))
                                                    '()))))
                            '()
-                           fields)))))
+                           fields))))))
 
 ;; the names one top-level form of a library body binds
 (define (bound-names f)
@@ -6888,9 +7299,14 @@
 ;; so renaming only the references would leave the definitions behind
 ;; under their bare names: the library would call `L:make-point' and
 ;; define `make-point'.  Write the derived names out explicitly here,
-;; already renamed, and the expander then produces exactly them.  The
-;; record TYPE name is left alone -- it is not a top-level variable,
-;; it is the tag datum the rtd carries and the printer shows.
+;; already renamed, and the expander then produces exactly them.
+;;
+;; The record name is a top-level variable too, and is scoped like the
+;; constructor; its WRITTEN spelling, which the descriptor carries and
+;; the printer shows, travels beside it in a clause whose head no
+;; program can write, rather than being recovered later by taking a
+;; prefix off.  The X of (parent X) is scoped as a reference, and a
+;; protocol is an expression of the library like any other.
 (define (ns-record e table)
   (let* ((spec (cadr e))
          (name (if (pair? spec) (car spec) spec))
@@ -6902,21 +7318,35 @@
                          ((null? cs) '())
                          ((eq? (resolve-tag (car (car cs))) 'fields) (cdr (car cs)))
                          (else (find (cdr cs))))))))
-    (cons (car e)
-          (cons (list name (ns-lookup ctor table) (ns-lookup pred table))
-                (map (lambda (c)
-                       (if (and (pair? c) (eq? (resolve-tag (car c)) 'fields))
-                           (cons (car c)
-                                 (map (lambda (f)
-                                        (if (cadr f)
-                                            (list 'mutable (car f)
-                                                  (ns-lookup (caddr f) table)
-                                                  (ns-lookup (cadddr f) table))
-                                            (list 'immutable (car f)
-                                                  (ns-lookup (caddr f) table))))
-                                      fields))
-                           c))
-                     (cddr e))))))
+    (let ((scoped (ns-lookup name table)))
+      (cons (car e)
+            (cons (list scoped (ns-lookup ctor table) (ns-lookup pred table))
+                  (append
+                   (map (lambda (c)
+                          (let ((tag (and (pair? c) (symbol? (car c))
+                                          (resolve-tag (car c)))))
+                            (cond
+                             ((eq? tag 'fields)
+                              (cons (car c)
+                                    (map (lambda (f)
+                                           (if (cadr f)
+                                               (list 'mutable (car f)
+                                                     (ns-lookup (caddr f) table)
+                                                     (ns-lookup (cadddr f) table))
+                                               (list 'immutable (car f)
+                                                     (ns-lookup (caddr f) table))))
+                                         fields)))
+                             ((eq? tag 'parent)
+                              (cons (car c)
+                                    (map (lambda (x) (ns-lookup x table))
+                                         (cdr c))))
+                             ((eq? tag 'protocol)
+                              (cons (car c) (ns-walk-list (cdr c) table #f)))
+                             (else c))))
+                        (cddr e))
+                   (if (eq? scoped name)
+                       '()
+                       (list (list $record-written-tag name)))))))))
 
 (define (ns-walk x table total?)
   (cond
@@ -7368,6 +7798,11 @@
   (set! *splice-scope* #f)
   (set! *judgement-units* '())
   (set! *scope-macro-names* '())
+  (set! *record-types* '())
+  (set! *expanding-scope* 'the-program)
+  (set! *open-rtds* '())
+  (set! *record-uids* '())
+  (set! *record-uid-counter* 0)
   ;; library privates get their namespace before anything reads the
   ;; forms -- collect-macros! descends into libraries and would
   ;; otherwise register a library's macros under their bare names
@@ -7401,14 +7836,16 @@
          ;; a written head in it must not resolve against the USER's
          ;; renames, the same hazard the prefix split exists for
          (%table-off (set! *expand-table* '()))
-         (%prelude-on (set! *expanding-prelude?* #t))
+         (%prelude-on (begin (set! *expanding-prelude?* #t)
+                             (set! *expanding-scope* *prelude-scope*)))
          (expanded-prefix (if (> pre-n 0)
                               (close-scope *prelude-scope*
                                            (expand-forms (first-n forms pre-n)
                                                          (first-n locs pre-n))
                                            '())
                               '()))
-         (%prelude-off (set! *expanding-prelude?* #f))
+         (%prelude-off (begin (set! *expanding-prelude?* #f)
+                              (set! *expanding-scope* 'the-program)))
          (%program-form-on (set! *program-form?* #t))
          ;; the program's own scope for the expander, built from the
          ;; clause the program wrote, after collect-macros! has
@@ -7534,7 +7971,12 @@
                                      (record-loc! nf (form-loc f)))
                                    nf))
                      (inline-forms numbered))
-                 export-names))
+                 ;; an open record predicate calls $record-is-a? from
+                 ;; the code the back ends emit, after this pass, so no
+                 ;; call of it is visible here
+                 (if (pair? *open-rtds*)
+                     (cons '$record-is-a? export-names)
+                     export-names)))
          (fn-defs (filter fn-define? forms))
          (var-defs (filter var-define? forms))
          (main-steps (map (lambda (f)
@@ -8093,6 +8535,7 @@
     (set! *plain-ty* '())
     (set! *clos-ty* '())
     (set! *rec-ty* '())
+    (set! *rec-chain* '())
     (set! *lifted* '())
     (set! *wrappers* '())
     (set! *adapters* '())
@@ -8158,7 +8601,13 @@
                                                         '()
                                                         prim-arity)
                                              forms)))
-           (rec-fields (sort-by self-id (scan-recs forms '())))
+           (rec-fields (begin
+                         (set! *rec-chain* (record-chain-totals forms))
+                         (sort-by self-id
+                                  (fold-left (lambda (acc n)
+                                               (if (memv n acc) acc (cons n acc)))
+                                             (scan-recs forms '())
+                                             *rec-chain*))))
            (next (let number ((as plain-arities) (i TY-FIRST-FREE))
                    (if (null? as)
                        i
@@ -8337,13 +8786,26 @@
                                              (list #x64 (sleb TY-FNG) #x00)
                                              (list T-EQREF #x00)))))))
                       clos-arities)
-                 ;; per-field-count record types: rtd slot + n fields
+                 ;; per-field-count record types: rtd slot + n fields.  A
+                 ;; count outside the chain is `sub final' of the base; a
+                 ;; count in it is a subtype of the count before it, so an
+                 ;; ancestor's accessor casts a descendant's instance, and
+                 ;; only the largest is final.
                  (map (lambda (n)
-                        (list #x4F (counted (list (uleb TY-RECBASE)))
-                              #x5F
-                              (counted
-                               (cons (list T-EQREF #x00)
-                                     (repeat-n n (list T-EQREF #x01))))))
+                        (let ((above (memv n *rec-chain*))
+                              (below (let find ((c *rec-chain*) (prev #f))
+                                       (cond
+                                        ((null? c) #f)
+                                        ((= (car c) n) prev)
+                                        (else (find (cdr c) (car c)))))))
+                          (list (if (and above (pair? (cdr above))) #x50 #x4F)
+                                (counted (list (uleb (if below
+                                                         (rec-ty below)
+                                                         TY-RECBASE))))
+                                #x5F
+                                (counted
+                                 (cons (list T-EQREF #x00)
+                                       (repeat-n n (list T-EQREF #x01)))))))
                       rec-fields)
                  ;; specialized function types: f64 where a parameter
                  ;; qualified, eqref otherwise; result stays eqref

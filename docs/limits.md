@@ -237,8 +237,9 @@ and `put-bytevector` procedures, `open-bytevector-input-port`,
 and its siblings, transcoders, codecs, buffer modes, port positions and
 custom ports; `bitwise-and`, `bitwise-ior` and `bitwise-xor` on
 bignums; the IEEE bytevector accessors;
-the procedural record layer, Unicode normalisation and
-title case.
+the procedural record layer (the syntactic one is complete: see
+"Records: parents, protocols and what is not there" below), Unicode
+normalisation and title case.
 
 `div`, `mod`, `div0` and `mod0` are present but accept **exact
 integers only** — deliberately narrower than R6RS, which defines them
@@ -298,7 +299,8 @@ The names: `quote` `quasiquote` `unquote` `unquote-splicing` `if` `let`
 `let*` `letrec` `letrec*` `lambda` `begin` `set!` `define` `do` `case`
 `cond` `and` `or` `not` `when` `unless` `else` `=>`
 `define-record-type` `import` `library` `apply` `assert` `guard`
-`let-values` `let*-values` `endianness`.  Before, some of these definitions were
+`let-values` `let*-values` `endianness` `case-lambda`
+`define-enumeration` `record-type-descriptor`.  Before, some of these definitions were
 refused by accident with a message naming the wrong keyword, some
 crashed the compiler, and the rest compiled and were silently ignored.
 
@@ -828,6 +830,112 @@ default has to be the safe one. Removing the cost where the type is
 already known is a compiler question — eliding the check when the value
 provably came from the matching constructor — and it is written up
 separately rather than solved by handing callers a sharp edge.
+
+## Records: parents, protocols and what is not there
+
+**Since 2026-11-14** (ledger R74, R20e) `define-record-type` reads every
+clause R6RS gives it but `parent-rtd`: `fields`, `parent`, `protocol`,
+`sealed`, `opaque` and `nongenerative`, each at most once.  Until then it
+read `fields` and dropped the rest without a word, so a type with a
+parent compiled as a parentless one.  The record name is bound, to the
+type's descriptor, and `(rnrs)` binds `record-type-descriptor`,
+`record?`, `record-rtd`, `record-type-name`, `record-type-parent`,
+`record-type-uid`, `record-type-generative?`, `record-type-sealed?`,
+`record-type-opaque?`, `record-type-descriptor?` and
+`record-predicate`.
+
+**Refused when the program is compiled**, by name, where each used to be
+dropped: a clause the compiler does not know; a clause given twice;
+`parent-rtd`; a `sealed` or `opaque` value other than a literal `#t` or
+`#f`; two fields of one name; a sealed parent; a parent that is not a
+record type defined with `define-record-type`, or is defined further
+down; a definition with a parent and no protocol whose parent has a
+protocol (R6RS 6.2); and two definitions with one uid that differ in
+their parent, their sealed or opaque flag, or their fields (names, order
+and mutability -- not the protocol).  A literal `(protocol #f)` is no
+protocol clause.  A protocol expression that is not a procedure is
+found when the definition runs.
+
+**The record name is a binding now.**  A program that defines a record
+type and a variable of the same name in one scope defines the name
+twice, and a record type named like an import is refused until the
+import is excluded -- both as R6RS says:
+
+```
+(import (except (rnrs) list))
+(define-record-type (list make-my-list my-list?) (fields a))
+```
+
+The name is a variable whose value is the descriptor; a program that
+never names it carries nothing for it.
+
+**Not there.**
+
+- The procedural layer: `make-record-type-descriptor`,
+  `make-record-constructor-descriptor`, `record-constructor`,
+  `record-constructor-descriptor`, `record-accessor`, `record-mutator`,
+  `record-type-field-names` and `record-field-mutable?` are unbound, and
+  the `parent-rtd` clause is refused.
+- A local `define-record-type` (inside a body), as before.
+- The clause keywords (`fields` `mutable` `immutable` `parent`
+  `protocol` `sealed` `opaque` `nongenerative` `parent-rtd`) are
+  recognised by spelling inside the form and are not `(rnrs)` bindings:
+  binding them would refuse every program with a variable named
+  `parent`, `fields` or `protocol`.
+- The arguments a program hands to a protocol's own procedure are not
+  counted: a constructor made by a protocol is a closure, and a closure
+  call does not check its argument count in goeteia (ledger R65) --
+  surplus arguments are ignored and too few trap, where Chez raises.
+  What the protocol hands on is counted: the field values given to
+  `new`, to a parent's procedure and to what it returns raise when there
+  are too many or too few.
+- The conditions a record operation raises are made by `error`, not
+  `&assertion`; the condition types are the next group.
+
+**goeteia's own answers**, where R6RS leaves the matter open and Chez
+differs: every record type the prelude defines and `(rnrs)` does not
+export -- hashtables, ports, enumeration types and sets, error objects
+-- is sealed and opaque, so `record?` answers `#f` for them and
+`record-rtd` refuses them; Chez answers `#t` for a hashtable.  A
+descriptor is a record of an opaque type, so `(record? rtd)` is `#f`;
+Chez answers `#t`.  A descriptor prints as `#<record type NAME>`.
+
+**Two definitions with one uid are one type**, wherever they stand: each
+has its own descriptor variable, and both receive the one descriptor at
+run time, so each name's predicate and accessors take the other's
+instances.  A bare `(nongenerative)` gets a uid the compiler makes from
+a counter, so a build is reproducible.
+
+**The wasm target's limit.**  An instance is one flat struct, its
+ancestors' fields first, and an ancestor's accessor reads a
+descendant's instance; for that the struct type of each field count
+used by a type with a parent or a child is declared a subtype of the
+next smaller such count.  The engine allows 63 supertypes, so a program
+whose live record types with a parent or a child have more than 63
+distinct field counts is refused:
+
+```
+Exception in goeteia: more than 63 distinct field counts among the record types that have a parent or a child; the engine allows 63 supertypes (wasm): 64
+```
+
+The JS target's records are arrays and have no such limit.
+
+**What a parent costs.**  A predicate, accessor or mutator of a type
+that no definition names as a parent compiles to the code it always
+had.  One of a type that has descendants tests the instance's own type
+first, as before, and when that fails walks the parent fields.
+Measured over three million iterations of construct, test and read one
+field (wasm on Node, nine runs, medians; JS five runs):
+
+| loop | wasm | JS |
+|---|---|---|
+| a type without relatives, before the change | 213 ms | 156 ms |
+| the same type after it | 211 ms | 145 ms |
+| the same type when an unrelated family shares its field count (its struct type is no longer final) | 210 ms | 154 ms |
+| an ancestor's predicate and accessor on a descendant's instance | 230 ms (+8%) | 172 ms (+10%) |
+
+The first three are within the noise of one another: the non-final
+struct type costs nothing measurable.
 
 ## Capacity limits in the graphics stack
 

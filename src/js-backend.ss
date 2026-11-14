@@ -1073,7 +1073,13 @@
     ((%record) (list "(new Rec([" (jsep "," trees) "]))"))
     ((%recbase?) (list "((" (a 0) " instanceof Rec)?TRUE:FALSE)"))
     ((%record-rtd) (list "(" (a 0) ".f[0])"))
-    ((%record?) (list "(KREC(" (a 0) "," (a 1) "))"))
+    ((%record?)
+     ;; KREC for a closed type; KRECO also walks the parent fields
+     (if (open-rtd-operand? args)
+         (begin
+           (jkernel! 'recopen)
+           (list "(KRECO(" (a 0) "," (a 1) "))"))
+         (list "(KREC(" (a 0) "," (a 1) "))")))
     ((%record-ref)
      (list "(" (a 0) ".f[" (number->string (+ (caddr args) 1)) "])"))
     ((%record-set!)
@@ -1242,6 +1248,13 @@
     (rec (core)
     "class Rec{constructor(f){this.f=f;}}"
     "const KREC=(x,r)=>(x instanceof Rec&&x.f[0]===r)?TRUE:FALSE;")
+    ;; an open type's test: slot 0, then each descriptor's parent field
+    ;; (a descriptor is a record of name, parent, flags, uid), ending
+    ;; at #f or at the descriptor of descriptors, whose slot 0 is #f
+    (recopen (rec)
+    "const KRECO=(x,r)=>{if(x instanceof Rec)"
+    "for(let t=x.f[0];t instanceof Rec;t=t.f[2])if(t===r)return TRUE;"
+    "return FALSE;};")
     (membuf (core)
     ;; Basic WebAssembly.Memory gives grow its real failure and old-view
     ;; detachment semantics even on hosts without WasmGC.  Hosts with
