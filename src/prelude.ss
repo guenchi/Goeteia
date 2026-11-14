@@ -2501,8 +2501,30 @@
   (when (< i (vector-length v))
     (vector-set! v i x)
     ($vf! v x (+ i 1))))
-(define (vector-map f v) (list->vector (map f (vector->list v))))
-(define (vector-for-each f v) (for-each f (vector->list v)))
+;; R6RS 11.13: one vector or several of one length.  The call with one
+;; keeps its own code; with more, the vectors are checked first and then
+;; walked together, for-each from the first element to the last.
+(define (vector-map f v . more)
+  (if (null? more)
+      (list->vector (map f (vector->list v)))
+      (list->vector
+       (apply map f ($one-length 'vector-map vector-length vector->list
+                                 (cons v more))))))
+(define (vector-for-each f v . more)
+  (if (null? more)
+      (for-each f (vector->list v))
+      (apply for-each f ($one-length 'vector-for-each vector-length
+                                     vector->list (cons v more)))))
+;; the lists of xs, once their lengths are found one; else an &assertion
+;; naming who
+(define ($one-length who len to-list xs)
+  (let ((n (len (car xs))))
+    (for-each (lambda (x)
+                (unless (= (len x) n)
+                  (assertion-violation who "the arguments differ in length"
+                                       (car xs) x)))
+              (cdr xs))
+    (map to-list xs)))
 
 ;; ---- bytevectors ----
 
@@ -3095,9 +3117,14 @@
     (let ((ba ($->bn a)) (bb ($->bn b)))
       ($bn-norm (if (= (%bignum-sign ba) (%bignum-sign bb)) 0 1)
                 ($mag-mul (%bignum-limbs ba) (%bignum-limbs bb)))))))
+;; an exact or an inexact zero, either sign: R6RS quotient and remainder
+;; raise for it, where fl/ would answer an infinity or a NaN
+(define ($zero-divisor? b)
+  (if (flonum? b) (fl=? b (fixnum->flonum 0)) ($eq2 b 0)))
 (define ($quot2 a b)
   (cond
    ((or (flonum? a) (flonum? b))
+    (when ($zero-divisor? b) (assertion-violation 'quotient "division by zero"))
     (fltruncate (fl/ ($->fl a) ($->fl b))))
    ((and (integer? a) (integer? b))
     (when ($eq2 b 0) (assertion-violation 'quotient "division by zero"))
@@ -3117,6 +3144,7 @@
 (define ($rem2 a b)
   (cond
    ((or (flonum? a) (flonum? b))
+    (when ($zero-divisor? b) (assertion-violation 'remainder "division by zero"))
     (let ((q (fltruncate (fl/ ($->fl a) ($->fl b)))))
       (fl- ($->fl a) (fl* q ($->fl b)))))
    ((and (integer? a) (integer? b))
@@ -3481,7 +3509,12 @@
 (define (string-upcase s) (string-map (lambda (c) (char-upcase c)) s))
 (define (string-downcase s) (string-map (lambda (c) (char-downcase c)) s))
 (define (string-map f s) (list->string (map f (string->list s))))
-(define (string-for-each f s) (for-each f (string->list s)))
+;; R6RS 11.12: one string or several of one length, as vector-for-each
+(define (string-for-each f s . more)
+  (if (null? more)
+      (for-each f (string->list s))
+      (apply for-each f ($one-length 'string-for-each string-length
+                                     string->list (cons s more)))))
 
 ;; ---- exceptions: handlers, raise and guard ----
 ;;

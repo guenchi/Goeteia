@@ -997,7 +997,8 @@ the message and the irritants they always had, so the uncaught line
 does not change:
 - a wrong argument or a wrong call -- type, domain, range, count, the
   state of the object, an accessor handed another type's record,
-  division by zero: `&assertion`;
+  division by zero (`quotient` and `remainder` by an exact or an
+  inexact zero, whatever the operands, on both targets): `&assertion`;
 - text the reader cannot read: `&lexical` and `&i/o-read` together (R6RS
   8.2.9 names `&lexical`; Chez raises both);
 - a result that is defined and that goeteia cannot represent -- a left
@@ -1055,9 +1056,6 @@ are still allocated.
 - A trap is not a condition: an illegal cast, an unreachable, a stack
   overflow, a host error on JS stop the program and no handler sees
   them.
-- A fixnum `quotient` or `remainder` by zero stops the program on both
-  targets before any condition is made (ledger R83); a bignum divisor of
-  zero raises `&assertion`.
 - Besides opening a file and reading, no port operation raises an `&i/o`
   condition yet: a write to a file the host cannot write fails in the
   host (ledger R84).

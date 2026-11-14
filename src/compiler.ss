@@ -5067,9 +5067,12 @@
              ;; whose quotient is one past the top.  Divisor -1 is
              ;; therefore sent to the generic path, which promotes;
              ;; the fast path is wrong for that one input and would
-             ;; wrap it back to itself rather than raise.  Division by
-             ;; zero still traps in the divide below, as before.
-             (list (local-get tb) (unwrap-int) (i32const -1) #x46
+             ;; wrap it back to itself rather than raise.  A zero
+             ;; divisor goes there too, where it raises: the divide
+             ;; below would trap.  One test takes both, b + 1 below 2
+             ;; unsigned.
+             (list (local-get tb) (unwrap-int) (i32const 1) #x6A
+                   (i32const 2) #x49
                    #x04 T-EQREF
                    slow
                    #x05
@@ -5077,10 +5080,17 @@
                    (local-get tb) (unwrap-int)
                    #x6D (wrap-int)
                    #x0B))
-            (else                       ; remainder
-             (list (local-get ta) (untag)
+            (else
+             ;; remainder: a zero divisor goes to the generic path,
+             ;; where it raises; the divide would trap
+             (list (local-get tb) (untag) #x45
+                   #x04 T-EQREF
+                   slow
+                   #x05
+                   (local-get ta) (untag)
                    (local-get tb) (untag)
-                   #x6F (gc-op #x1C))))
+                   #x6F (gc-op #x1C)
+                   #x0B)))
           #x05 slow #x0B)))
 
 ;; ---- unboxed float expressions ----
@@ -5197,7 +5207,8 @@
               ((bitwise-xor) (list a b #x73))
               ((bitwise-arithmetic-shift-right bitwise-arithmetic-shift-left)
                (list a b (checked-shift rop cell)))
-              ((remainder) (list a b #x6F))
+              ((remainder) (list a b (checked-remainder cell)))
+              ;; i32-expr? takes a quotient only by a positive literal
               ((quotient) (list a b #x6D)))))))
    (else (list (compile-exp e locals cell #f) (unwrap-int)))))
 
@@ -5220,6 +5231,22 @@
             ((bitwise-xor) #x73)
             (else (checked-shift op cell)))
           (wrap-int))))
+
+;; i32.rem_s of two raw i32s on the stack, with a zero divisor sent to
+;; the prelude's generic remainder, which raises the condition naming
+;; remainder; the divide itself would trap, and a trap is not
+;; catchable.  The unreachable after the call tells the validator that
+;; nothing comes back.  As in checked-shift, one local per let.
+(define (checked-remainder cell)
+  (let ((n (i32-scratch! cell)))
+   (let ((d (i32-scratch! cell)))
+    (list (local-set d) (local-set n)
+          (local-get d) #x45
+          #x04 #x40
+          (local-get n) (wrap-int) (local-get d) (wrap-int)
+          (generic-call '$rem2) #x00
+          #x0B
+          (local-get n) (local-get d) #x6F))))
 
 ;; An arithmetic shift of two machine integers on the stack, leaving
 ;; the exact result or refusing.  Fixnums run from -2^29 to 2^29 - 1.
@@ -5430,7 +5457,10 @@
                     locals))
     (let* ((a (compile-i32 (car args) locals cell))
            (b (compile-i32 (cadr args) locals cell)))
-      (list a b (if (eq? op 'quotient) #x6D #x6F) (wrap-int))))
+      ;; i32-expr? takes a quotient only by a positive literal
+      (list a b
+            (if (eq? op 'quotient) #x6D (checked-remainder cell))
+            (wrap-int))))
    (else (compile-prim* op args locals cell))))
 
 (define (compile-prim* op args locals cell)

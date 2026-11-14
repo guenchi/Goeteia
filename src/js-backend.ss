@@ -1381,16 +1381,18 @@
     ;; sends it there: |a/b| <= |a| with equality only at |b|=1, so the
     ;; single overflowing quotient is the most negative fixnum over -1,
     ;; and W would wrap that one back to itself instead of promoting.
+    ;; A zero divisor goes there too, where it raises the condition.
     (list "const JQUO=(a,b)=>{if(typeof a==='number'&&typeof b==='number')"
-          "{const d=b>>1;if(d===0)throw new RangeError('divide by zero');"
-          "if(d!==-1)return W(Math.trunc((a>>1)/d));}return "
+          "{const d=b>>1;"
+          "if(d!==0&&d!==-1)return W(Math.trunc((a>>1)/d));}return "
           (jgeneric-tr '$quot2 "a,b") ";};"))
    ((string=? name "JREM")
     ;; operands stay tagged (2a % 2b = 2(a%b)); renormalize to i31
-    ;; like ref.i31, with no extra shift
-    (list "const JREM=(a,b)=>{if(typeof a==='number'&&typeof b==='number')"
-          "{if(b===0)throw new RangeError('divide by zero');"
-          "return ((a%b)<<1)>>1;}return " (jgeneric-tr '$rem2 "a,b") ";};"))
+    ;; like ref.i31, with no extra shift.  A zero divisor goes to the
+    ;; generic path, where it raises the condition.
+    (list "const JREM=(a,b)=>{if(typeof a==='number'&&typeof b==='number'"
+          "&&b!==0)return ((a%b)<<1)>>1;return "
+          (jgeneric-tr '$rem2 "a,b") ";};"))
    ((string=? name "JSHL")
     ;; Operands are tagged (2n), so the result is t * 2^k, exact in a
     ;; double because the factor is a power of two, and in range iff
