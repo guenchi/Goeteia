@@ -300,7 +300,25 @@ Whether `x` is a flonum.
 
 ### Records
 
-`define-record-type` compiles to GC structs with an identity slot (a unique pair), so `point?` is one `ref.test` plus one `ref.eq`. Records are mutable via field accessors if the field is declared `(mutable ...)`.
+`define-record-type` takes the clauses R6RS gives it -- `fields`, `parent`, `protocol`, `sealed`, `opaque` and `nongenerative` -- and compiles each type to a GC struct whose slot 0 holds the type's descriptor, the ancestors' fields first, then its own. Records are mutable via field accessors if the field is declared `(mutable ...)`.
+
+```scheme
+(define-record-type point (fields x (mutable y)))
+(define-record-type cpoint (parent point) (fields colour)
+  (protocol (lambda (n) (lambda (x y c) ((n x y) (list 'rgb c))))))
+
+(define p (make-cpoint 1 2 'red))
+(point? p)                                ; => #t
+(point-x p)                               ; => 1
+(cpoint-colour p)                         ; => (rgb red)
+(record-type-name (record-rtd p))         ; => cpoint
+(eq? (record-type-parent (record-type-descriptor cpoint))
+     (record-type-descriptor point))      ; => #t
+```
+
+The record name is bound, to the type's descriptor, so a library exports and imports it like a variable, and a child can name a parent from another library under any import clause. `(rnrs)` also binds `record-type-descriptor`, `record?`, `record-rtd`, `record-type-name`, `record-type-parent`, `record-type-uid`, `record-type-generative?`, `record-type-sealed?`, `record-type-opaque?`, `record-type-descriptor?` and `record-predicate`.
+
+A predicate of a type that no definition names as a parent is one `ref.test` plus one `ref.eq`; one of a type with descendants tests that first and then walks the parent fields. The procedural layer (`make-record-type-descriptor` and the rest) and `parent-rtd` are not there; [docs/limits.md](https://github.com/guenchi/Goeteia/blob/master/docs/limits.md) lists that with the rest of what records do not do, and what is refused at compile time.
 
 ### Low-Level Primitives
 
@@ -4024,5 +4042,6 @@ Long form in `docs/simulation.md`.
 - **Async needs JSPI**: `(web fetch)` and the direct-style `(web rpc)` suspend over Wasm JSPI, so they need an engine that has it (Chrome stable; Node with `--experimental-wasm-jspi`). Elsewhere, feature-detect with `(fetch-direct?)` and use the callback `rpc!`. The JS target cannot suspend at all—`js-await` hands the promise straight back—so its kernel hides `WebAssembly.Suspending`/`promising` from the program's view of the host: the probes answer no even in a JSPI-enabled browser, and the same feature test that picks the callback route on a wasm engine without JSPI picks it here, automatically. Nothing to special-case in your code.
 - **The JS target trades speed for reach**: it is the compatibility path, not a second fast path. Flonums stay boxed, and the SIMD primitives underneath `(gfx mat)` run as scalar loops—correct, not fast. Control flow costs nothing in reach, though: self tail calls become loops and non-self tail calls trampoline (the call returns a thunk the nearest non-tail frame bounces), so mutual recursion runs in constant JS stack just as `return_call` does on wasm.
 - **No datum labels**: the reader does not support `#0=` / `#0#` cyclic-structure notation.
+- **Records: the syntactic layer only**: `define-record-type` takes every clause but `parent-rtd`, but the procedural layer (`make-record-type-descriptor`, `record-constructor`, `record-accessor` and the rest) is not there, nor is a local `define-record-type`. On wasm, the record types that have a parent or a child may use at most 63 distinct field counts in one program. See [Records](#records).
 
 These are design decisions, not bugs; file issues if you have use cases that need them.
