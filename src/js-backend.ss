@@ -1258,7 +1258,11 @@
     ;; an open type's test: slot 0, then each descriptor's parent field
     ;; (a descriptor is a record of name, parent, flags, uid), ending
     ;; at #f or at the descriptor of descriptors, whose slot 0 is #f
-;; the bits of an IEEE number through one DataView: functions, so every
+    (recopen (rec)
+    "const KRECO=(x,r)=>{if(x instanceof Rec)"
+    "for(let t=x.f[0];t instanceof Rec;t=t.f[2])if(t===r)return TRUE;"
+    "return FALSE;};")
+    ;; the bits of an IEEE number through one DataView: functions, so every
     ;; operand is evaluated before the view is written.  setFloat32
     ;; rounds to nearest, ties to even, as f32.demote_f64 does
     (flbits (fl)
@@ -1272,10 +1276,6 @@
     "FBV.setUint16(6,IU(d),true);return new Fl(FBV.getFloat64(0,true));};"
     "const BTS=(a,b)=>{FBV.setUint16(0,IU(a),true);"
     "FBV.setUint16(2,IU(b),true);return new Fl(FBV.getFloat32(0,true));};")
-    (recopen (rec)
-    "const KRECO=(x,r)=>{if(x instanceof Rec)"
-    "for(let t=x.f[0];t instanceof Rec;t=t.f[2])if(t===r)return TRUE;"
-    "return FALSE;};")
     (membuf (core)
     ;; Basic WebAssembly.Memory gives grow its real failure and old-view
     ;; detachment semantics even on hosts without WasmGC.  Hosts with

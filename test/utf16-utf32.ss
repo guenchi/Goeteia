@@ -21,6 +21,16 @@
 (define (bv . xs) (u8-list->bytevector xs))
 ;; a string as the UTF-8 bytes that spell it
 (define (u8 s) (bl (string->utf8 s)))
+;; the code points a string holding these bytes is read as: string->utf32
+;; reads a string as UTF-8, and utf8->string on Chez replaces what is
+;; malformed first, the same way
+(define (points . bytes)
+  (let loop ((l (bytevector->u8-list (string->utf32 (utf8->string (u8-list->bytevector bytes)) 'big)))
+             (acc '()))
+    (if (null? l)
+        (reverse acc)
+        (loop (cddddr l)
+              (cons (+ (* 16777216 (car l)) (* 65536 (cadr l)) (* 256 (caddr l)) (cadddr l)) acc)))))
 
 (define fails '())
 (define (want row got expect)
@@ -76,5 +86,29 @@
       (guard (c (#t 'raised))
         (list (u8 (utf32->string (bv 0 0 216 0 0 17 0 0) 'big)) (u8 (utf32->string (bv 0 0 0 65 0) 'big))))
       '((239 191 189 239 191 189) (65 239 191 189)))
+(want 'utf8-valid-edges
+      (guard (c (#t 'raised))
+        (map (lambda (bs) (apply points bs)) '((#xC2 #x80) (#xDF #xBF) (#xE0 #xA0 #x80) (#xED #x9F #xBF) (#xEE #x80 #x80) (#xF0 #x90 #x80 #x80) (#xF4 #x8F #xBF #xBF) (#xE2 #x82 #xAC))))
+      '((128) (2047) (2048) (55295) (57344) (65536) (1114111) (8364)))
+(want 'utf8-overlong
+      (guard (c (#t 'raised))
+        (map (lambda (bs) (apply points bs)) '((#xC0 #xAF) (#xC1 #xBF) (#xE0 #x80 #x80) (#xE0 #x9F #xBF) (#xF0 #x80 #x80 #x80))))
+      '((65533) (65533) (65533) (65533) (65533)))
+(want 'utf8-surrogates-and-past-the-last
+      (guard (c (#t 'raised))
+        (map (lambda (bs) (apply points bs)) '((#xED #xA0 #x80) (#xF4 #x90 #x80 #x80) (#xF4 #x8F #xBF #xBF #x80))))
+      '((65533) (65533) (1114111 65533)))
+(want 'utf8-truncated-and-interrupted
+      (guard (c (#t 'raised))
+        (map (lambda (bs) (apply points bs)) '((#xC2) (#xE2 #x82) (#x61 #xE2 #x82 #x62) (#xE0 #x80 #x41) (#xE0 #xA0 #x41) (#xF0 #x90 #x41) (#xC2 #x41))))
+      '((65533) (65533) (97 65533 98) (65533 65) (65533 65) (65533 65) (65533 65)))
+(want 'utf8-bytes-that-start-nothing
+      (guard (c (#t 'raised))
+        (map (lambda (bs) (apply points bs)) '((#x80) (#xBF #x41) (#xFF) (#xF5 #x80 #x80 #x80) (#xF7 #xBF #xBF #xBF) (#xF8 #x88 #x80 #x80 #x80))))
+      '((65533) (65533 65) (65533) (65533 65533 65533 65533) (65533 65533 65533 65533) (65533 65533 65533 65533 65533)))
+(want 'utf8-malformed-to-utf16
+      (guard (c (#t 'raised))
+        (list (bytevector->u8-list (string->utf16 (utf8->string (u8-list->bytevector '(#xED #xA0 #x80))))) (bytevector->u8-list (string->utf16 (utf8->string (u8-list->bytevector '(#xF4 #x90 #x80 #x80))) 'little))))
+      '((255 253) (253 255)))
 
 (display (if (null? fails) #t (reverse fails)))

@@ -4492,7 +4492,12 @@
 ;; surrogate, a code unit past U+10FFFF, bytes left over at the end --
 ;; is U+FFFD.
 
-;; the code points of s, read as UTF-8
+;; the code points of s, read as UTF-8.  A lead byte announces its
+;; length (C0-DF two, E0-EF three, F0-F4 four) and the bytes 80-BF after
+;; it are taken up to that length.  A sequence cut short -- by the end,
+;; or by a byte that is not 80-BF, which is then read anew -- is one
+;; U+FFFD; so is a whole one that is overlong, a surrogate or past
+;; U+10FFFF.  Any other byte is a U+FFFD of its own.  (Chez reads so.)
 (define ($utf8-points s)
   (let ((n (string-length s))
         (b (lambda (i) (char->integer (string-ref s i)))))
@@ -4500,26 +4505,30 @@
       (if (= i n)
           (reverse acc)
           (let* ((c (b i))
-                 (len (cond ((< c #x80) 1) ((< c #xC2) 0) ((< c #xE0) 2)
-                            ((< c #xF0) 3) ((< c #xF5) 4) (else 0)))
-                 (cont? (lambda (j)
-                          (and (< j n) (= (bitwise-and (b j) #xC0) #x80)))))
-            (if (and (> len 0)
-                     (let more ((j 1))
-                       (or (= j len) (and (cont? (+ i j)) (more (+ j 1))))))
-                (let ((cp (let fold ((j 1)
-                                     (cp (bitwise-and
-                                          c (cond ((= len 1) #x7F)
-                                                  ((= len 2) #x1F)
+                 (len (cond ((< c #x80) 1) ((< c #xC0) 0) ((< c #xE0) 2)
+                            ((< c #xF0) 3) ((< c #xF5) 4) (else 0))))
+            (cond
+             ((= len 1) (loop (+ i 1) (cons c acc)))
+             ((= len 0) (loop (+ i 1) (cons #xFFFD acc)))
+             (else
+              (let take ((j 1)
+                         (cp (bitwise-and c (cond ((= len 2) #x1F)
                                                   ((= len 3) #x0F)
                                                   (else #x07)))))
-                            (if (= j len)
-                                cp
-                                (fold (+ j 1)
-                                      (+ (* cp 64)
-                                         (bitwise-and (b (+ i j)) #x3F)))))))
-                  (loop (+ i len) (cons cp acc)))
-                (loop (+ i 1) (cons #xFFFD acc))))))))
+                (cond
+                 ((= j len)
+                  (loop (+ i len)
+                        (cons (if (or (< cp (cond ((= len 2) #x80)
+                                                  ((= len 3) #x800)
+                                                  (else #x10000)))
+                                      (and (<= #xD800 cp) (< cp #xE000))
+                                      (> cp #x10FFFF))
+                                  #xFFFD
+                                  cp)
+                              acc)))
+                 ((and (< (+ i j) n) (= (bitwise-and (b (+ i j)) #xC0) #x80))
+                  (take (+ j 1) (+ (* cp 64) (bitwise-and (b (+ i j)) #x3F))))
+                 (else (loop (+ i j) (cons #xFFFD acc))))))))))))
 
 ;; the string of the code points cps, written as UTF-8
 (define ($points->string cps)
