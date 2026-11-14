@@ -9,7 +9,8 @@
 
 ;; Open with #nocull to turn the hi-Z occlusion cull off: the picture
 ;; must be identical -- occlusion culling that changes it is a bug.
-(when (string=? "#nocull" (js->string (js-eval "location.hash")))
+(when (string=? "#nocull"
+                (js->string (js-get (js-get (js-global) "location") "hash")))
   (sgpu-occlusion! #f))
 
 (define angle (signal 0.0))

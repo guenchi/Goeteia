@@ -56,7 +56,11 @@
 
   (define (rpc! url datum on-reply . more)
     (let ((on-error (if (pair? more) (car more) (lambda (e) (js-undefined))))
-          (opts (js-eval "({method:'POST',headers:{'Content-Type':'application/sexpr'}})")))
+          (opts (js-new (js-get (js-global) "Object")))
+          (headers (js-new (js-get (js-global) "Object"))))
+      (js-set! headers "Content-Type" "application/sexpr")
+      (js-set! opts "method" "POST")
+      (js-set! opts "headers" headers)
       (js-set! opts "body" (rpc-serialize datum))
       (js-method
        (js-method

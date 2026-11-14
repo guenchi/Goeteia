@@ -31,7 +31,7 @@
 
 (define tex #f)
 
-(define (now) (js->number (js-eval "Date.now()")))
+(define (now) (js->number (js-method (js-get (js-global) "Date") "now")))
 
 (define t0 (now))
 (ktx-stream!

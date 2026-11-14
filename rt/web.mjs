@@ -147,19 +147,47 @@ export function runGoeteiaInline(text) {
 // needed -- the lazy shape: WasmGC users never download the fallback,
 // and the file caches independently of the page.  ?goeteia=js forces
 // the fallback, for testing it on a GC engine.
+// how many times each fallback URL has been launched in this page
+const launches = new Map();
 export async function loadGoeteiaAuto(url, fallback = 'script[type="goeteia/js"]') {
     const forced = new URLSearchParams(location.search).get('goeteia') === 'js';
     if (!forced && hasWasmGC()) return loadGoeteia(url);
     if (/\.m?js([?#]|$)/.test(fallback)) {
-        // Evaluating the cached module namespace directly would reuse the
-        // generated kernel's module-scoped memory and FFI locals on every
-        // call.  Fetching still benefits from the browser's HTTP cache, but
-        // runGoeteiaInline creates a fresh runtime scope for each launch.
+        // The fallback is imported as a module, which needs no code made
+        // from strings (a Content-Security-Policy without 'unsafe-eval'
+        // allows it).  One URL imported twice is one module, and its
+        // kernel's memory and FFI locals are module-scoped, so every
+        // launch after the first imports the URL with a query of its own
+        // and gets a runtime of its own.  When the import fails -- a
+        // server that sends the file with a type a module may not have, a
+        // scheme the engine will not import -- the old route runs: fetch
+        // the text and run it with runGoeteiaInline, which needs eval.
         const href = new URL(fallback, location.href).href;
-        const response = await fetch(href);
-        if (!response.ok)
-            throw new Error(`Goeteia: ${href} not found`);
-        return runGoeteiaInline(await response.text());
+        const n = launches.get(href) || 0;
+        launches.set(href, n + 1);
+        let spec = href;
+        if (n > 0) {
+            const u = new URL(href);
+            u.searchParams.set('goeteia-launch', String(n));
+            spec = u.href;
+        }
+        let mod;
+        try {
+            mod = await import(spec);
+        } catch (importError) {
+            try {
+                const response = await fetch(href);
+                if (!response.ok)
+                    throw new Error(`${href} not found`);
+                return runGoeteiaInline(await response.text());
+            } catch (oldError) {
+                throw new Error(`Goeteia: importing ${spec} failed ` +
+                                `(${importError.message}); fetching it and ` +
+                                `running its text failed too ` +
+                                `(${oldError.message})`);
+            }
+        }
+        return mod.main(browserIO());
     }
     const tag = document.querySelector(fallback);
     if (!tag) throw new Error('no Goeteia fallback on this page');

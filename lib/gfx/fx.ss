@@ -879,7 +879,7 @@
   (define ($fx-seen? set el)
     (and set (js-truthy? (js-method set "has" el))))
   (define ($fx-see! set el)
-    (let ((s (or set (js-eval "new WeakSet()"))))
+    (let ((s (or set (js-new (js-get (js-global) "WeakSet")))))
       (js-method s "add" el)
       s))
 

@@ -34,18 +34,22 @@
 
   ;; does the host have real JSPI? (the identity fallback would hand
   ;; a Promise straight back; a suspending await never can)
+  ;; whether the global WebAssembly has a Suspending; #f with no
+  ;; WebAssembly at all
   (define (fetch-direct?)
-    (js-truthy? (js-eval "typeof WebAssembly.Suspending === 'function'")))
+    (let ((wasm (js-get (js-global) "WebAssembly")))
+      (and (js-truthy? wasm)
+           (js-truthy? (js-get wasm "Suspending")))))
 
   ;; opts: an alist -- ((method . "POST") (body . "...")
   ;;                    (headers . (("Content-Type" . "text/plain"))))
   (define (fetch url . more)
-    (let ((o (js-eval "({})")))
+    (let ((o (js-new (js-get (js-global) "Object"))))
       (when (pair? more)
         (for-each
          (lambda (kv)
            (if (eq? (car kv) 'headers)
-               (let ((h (js-eval "({})")))
+               (let ((h (js-new (js-get (js-global) "Object"))))
                  (for-each (lambda (p) (js-set! h (car p) (cdr p))) (cdr kv))
                  (js-set! o "headers" h))
                (js-set! o (symbol->string (car kv)) (cdr kv))))
@@ -57,7 +61,9 @@
   (define (response-text r) (js->string (js-await (js-method r "text"))))
   (define (response-header r name)
     (let ((v (js-method (js-get r "headers") "get" name)))
-      (if (js-eq? v (js-eval "null")) #f (js->string v))))
+      (if (js-eq? v (js-method (js-get (js-global) "JSON") "parse" "null"))
+          #f
+          (js->string v))))
 
   (define (http-get url)
     (response-text (fetch url)))

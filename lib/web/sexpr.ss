@@ -65,39 +65,19 @@
   ;; made it false.
   (define (sfail msg pos) (raise (list 'sexpr-error msg pos)))
 
-  ;; ---- flonum <-> IEEE-754 base64, via a JS DataView --------------------
-  ;; The full round trip lives in JS (hardware IEEE, little-endian fixed
-  ;; there so no Scheme boolean crosses the FFI): flonum -> 8 LE bytes ->
-  ;; base64, and back. Bit-exact for every double, inf included (a NaN's
-  ;; payload is the host's business -- see the note at the top),
-  ;; and byte-identical to Chez's bytevector-ieee-double-* on the igropyr
-  ;; side, -0.0 included: this runtime's flonums DO carry a signed zero
-  ;; (see the note on b64->flonum for the one place it used to be lost,
-  ;; and how it is recovered).
-  (define _ig-f2b
-    (js-eval "globalThis.__igf2b=(x)=>{const dv=new DataView(new ArrayBuffer(8));dv.setFloat64(0,x,true);let s='';const u=new Uint8Array(dv.buffer);for(let i=0;i<8;i++)s+=String.fromCharCode(u[i]);return btoa(s);}"))
-  (define _ig-b2f
-    (js-eval "globalThis.__igb2f=(s)=>{const b=atob(s);const dv=new DataView(new ArrayBuffer(8));for(let i=0;i<8;i++)dv.setUint8(i,b.charCodeAt(i));return dv.getFloat64(0,true);}"))
-  (define __igf2b (js-get (js-global) "__igf2b"))
-  (define __igb2f (js-get (js-global) "__igb2f"))
-  (define (flonum->b64 x) (js->string (js-call __igf2b (js-undefined) x)))
-  ;; getFloat64 hands an integer-valued double (1.0) back as a JS integer,
-  ;; which js->number makes a fixnum -- force it back to a flonum so #f8
-  ;; always decodes to a flonum, never an integer.
-  ;;
-  ;; That same integral path is where the sign of -0.0 goes: JS -0 is
-  ;; integral, so js->number answers the FIXNUM 0 and the sign is gone
-  ;; before any Scheme code sees it.  (The runtime's flonums do carry a
-  ;; signed zero -- (fl/ 1.0 x) tells the two apart -- so this is the
-  ;; bridge's integral shortcut, not a limit of the float type.)  The
-  ;; decoded bytes still have the sign bit, so read it there and rebuild.
-  (define (b64->flonum s)
-    (exact->inexact (js->number (js-call __igb2f (js-undefined) s))))
-  (define (bytes->flonum bv)
-    (let ((v (b64->flonum (base64-encode bv))))
-      (if (and (fl=? v 0.0) (>= (bytevector-u8-ref bv 7) 128))
-          (fl* (fl- 0.0 1.0) 0.0)           ; -0.0, which the bridge dropped
-          v)))
+  ;; ---- flonum <-> IEEE-754 base64 ----------------------------------------
+  ;; A flonum crosses as the eight bytes bytevector-ieee-double-set!
+  ;; writes, little-endian, in base64: bit-exact for every double, the
+  ;; infinities and -0.0 included (a NaN's payload is the host's
+  ;; business -- see the note at the top), and byte-identical to Chez's
+  ;; bytevector-ieee-double-* on the igropyr side.  The bytes carry the
+  ;; sign, so -0.0 needs no repair, and what is read back is always a
+  ;; flonum, never an integer.
+  (define (flonum->b64 x)
+    (let ((bv (make-bytevector 8 0)))
+      (bytevector-ieee-double-set! bv 0 x 'little)
+      (base64-encode bv)))
+  (define (bytes->flonum bv) (bytevector-ieee-double-ref bv 0 'little))
 
   ;; ---- base64 (RFC 4648) -------------------------------------------------
   ;; Same bytes as Igropyr's; integer arithmetic in place of bit ops.

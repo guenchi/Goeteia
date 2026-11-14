@@ -66,8 +66,10 @@
           (set! $audio-ctx ((car factory)))
           (begin
             (set! $audio-ctx
-                  (js-eval
-                   "new (globalThis.AudioContext || globalThis.webkitAudioContext)()"))
+                  (let ((g (js-global)))
+                    (js-new (if (js-truthy? (js-get g "AudioContext"))
+                                (js-get g "AudioContext")
+                                (js-get g "webkitAudioContext")))))
             (js-method $audio-ctx "resume"))))
     $audio-ctx)
 

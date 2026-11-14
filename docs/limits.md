@@ -1078,6 +1078,47 @@ are still allocated.
   in `js-await`, and the two share the dynamic environment (ledger
   R78).
 
+## A Content-Security-Policy
+
+A page that sets a Content-Security-Policy decides whether code may be
+made from strings (`eval`, `new Function`).  What goeteia needs:
+
+- The wasm module needs `'wasm-unsafe-eval'` in `script-src`, as any
+  page that instantiates WebAssembly does.
+- The `(web ...)` libraries and the JS fallback given as a URL need no
+  `'unsafe-eval'`: the libraries make the JS values they need through
+  the bridge, and `loadGoeteiaAuto` imports the fallback file as a
+  module.  Each launch of one fallback URL after the first imports it
+  with a `goeteia-launch` query of its own, so each launch gets a
+  runtime of its own, as it did when the file was run with `new
+  Function`.  When the import fails (a server that sends the file with
+  a type a module may not have), the loader fetches the file and runs
+  its text, which does need `'unsafe-eval'`; when that fails too, the
+  error names both causes.
+- Still needing `'unsafe-eval'`: `js-eval` itself (it evaluates a
+  string, which is what it is for); the libraries that install helper
+  code with it -- `(gfx gltf)`, `(gfx ktx)`, `(gfx gl)`, `(gfx gpu)`,
+  `(gfx sdf)`, `(gfx xr)`, `(gam save)`; and the fallback kept inline in
+  the page (a selector for an inert script tag), whose text can only be
+  run by evaluating it.
+
+A program that needs a plain JS value under such a policy makes it with
+the bridge, as the libraries do:
+
+```scheme
+;; {}
+(js-new (js-get (js-global) "Object"))
+;; null
+(js-method (js-get (js-global) "JSON") "parse" "null")
+;; {a: 1, b: true}
+(let ((o (js-new (js-get (js-global) "Object"))))
+  (js-set! o "a" 1)
+  (js-set! o "b" #t)
+  o)
+;; true
+(js-call (js-get (js-global) "Boolean") (js-global) 1)
+```
+
 ## Capacity limits in the graphics stack
 
 - **Index width is per-geometry, and follows the vertex count.** A u16

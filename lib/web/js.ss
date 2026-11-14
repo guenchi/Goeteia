@@ -209,6 +209,8 @@
   ;; onto and draining the same argStack and shifting the caller's
   ;; earlier arguments: (js-method cl "toggle" "active" #f) collapsed
   ;; into eval("active"). These defines run after every procedure
-  ;; above is initialized, so js-eval is ready when they evaluate.
-  (define js-true (js-eval "true"))
-  (define js-false (js-eval "false")))
+  ;; above is initialized, so the bridge is ready when they evaluate.
+  ;; They call the global Boolean rather than evaluating text, so loading
+  ;; this library needs no code made from strings.
+  (define js-true (js-call (js-get (js-global) "Boolean") (js-global) 1))
+  (define js-false (js-call (js-get (js-global) "Boolean") (js-global) 0)))

@@ -67,23 +67,32 @@
             (mutable chars $g-chars $g-chars!)))
 
   ;; the numbers in a computed style string, e.g. the two rgb() stops
-  ;; of "linear-gradient(120deg, rgb(21, 80, 196), rgb(71, 136, 238))"
-  (define $numbers
-    (js-eval "(s => { const m = String(s).match(/\\d+/g);
-                      return m ? m.map(Number) : []; })"))
+  ;; of "linear-gradient(120deg, rgb(21, 80, 196), rgb(71, 136, 238))":
+  ;; each maximal run of the digits 0 to 9, read as a decimal integer,
+  ;; in order -- so "0.5" gives 0 and 5
+  (define ($numbers s)
+    (let ((n (string-length s)))
+      (let loop ((i 0) (run #f) (acc '()))
+        (if (= i n)
+            (reverse (if run (cons run acc) acc))
+            (let ((c (string-ref s i)))
+              (if (and (char<=? #\0 c) (char<=? c #\9))
+                  (loop (+ i 1)
+                        (+ (* 10 (or run 0)) (- (char->integer c) 48))
+                        acc)
+                  (loop (+ i 1) #f (if run (cons run acc) acc))))))))
 
   ;; gradient text clips the ELEMENT's background to its own text --
   ;; absolute glyph spans come out invisible.  Sample a solid colour
   ;; per glyph instead; across the heading the eye reads the blend.
   (define ($gradient-sampler cs w)
     (and (string=? (js->string (js-get cs "color")) "rgba(0, 0, 0, 0)")
-         (let ((ns (js-call $numbers (js-undefined)
-                            (js-get cs "backgroundImage"))))
-           (let ((n (js->number (js-get ns "length"))))
+         (let ((ns (list->vector
+                    ($numbers (js->string (js-get cs "backgroundImage"))))))
+           (let ((n (vector-length ns)))
              (and (>= n 6)
                   (let ((c (lambda (i) ; the last six are r g b r g b
-                             ($fl (js->number
-                                   (js-index ns (+ (- n 6) i)))))))
+                             ($fl (vector-ref ns (+ (- n 6) i))))))
                     (lambda (x)
                       (let* ((t (fl/ x (if (fl<? 1.0 w) w 1.0)))
                              (t (cond ((fl<? t 0.0) 0.0)
@@ -340,8 +349,11 @@
         (add-event-listener! global "scroll" scroll)
         (add-event-listener! global "resize" resize)
         (when observer
-          (js-method observer "observe" (js-get global "document")
-                     (js-eval "({childList:true,subtree:true})")))
+          (let ((options (js-new (js-get global "Object"))))
+            (js-set! options "childList" #t)
+            (js-set! options "subtree" #t)
+            (js-method observer "observe" (js-get global "document")
+                       options)))
         (set! stop
           (lambda ()
             (unless stopped

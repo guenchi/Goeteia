@@ -183,7 +183,7 @@
     (wall (+ w 1))))
 
 (define nocull
-  (let ((h (js->string (js-eval "location.hash"))))
+  (let ((h (js->string (js-get (js-get (js-global) "location") "hash"))))
     (and (> (string-length h) 1) (string=? h "#nocull"))))
 
 (define ready #f)

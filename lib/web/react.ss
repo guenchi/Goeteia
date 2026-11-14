@@ -38,20 +38,25 @@
   ;; time: the host asked for a component that WAS registered, by a
   ;; module that DID register it, and got undefined.
   ;;
-  ;; So adopt what is there.  The whole decision is one JS expression
-  ;; on purpose: reading the global, judging it and installing a
-  ;; replacement are one step, and splitting them would leave a window
-  ;; in which two modules both see nothing and both install.  A value
-  ;; that is present but not an object is replaced, which is what
-  ;; happened to it before and is the only thing left to do with it.
+  ;; So adopt what is there.  Reading the global, judging it and
+  ;; installing a replacement are one synchronous run of bridge calls,
+  ;; and no other JS runs between two bridge calls of one synchronous
+  ;; call, so they are one step: no window opens in which two modules
+  ;; both see nothing and both install.  What is there is kept when
+  ;; Object(v) is v -- an object, or a function, which holds properties
+  ;; as an object does -- and replaced otherwise, which is what happened
+  ;; to such a value before and the only thing left to do with it.
   (define $registry #f)
   (define ($ensure-registry)
     (unless $registry
       (set! $registry
-            (js-eval
-             (string-append
-              "(globalThis.__goeteia && typeof globalThis.__goeteia === 'object')"
-              " ? globalThis.__goeteia : (globalThis.__goeteia = {})"))))
+            (let* ((g (js-global))
+                   (v (js-get g "__goeteia")))
+              (if (js-eq? (js-call (js-get g "Object") g v) v)
+                  v
+                  (let ((fresh (js-new (js-get g "Object"))))
+                    (js-set! g "__goeteia" fresh)
+                    fresh)))))
     $registry)
 
   (define (react-component name mount)
