@@ -631,6 +631,9 @@ run_mjs test/mrt-msaa-on-gpu.mjs
 # An if with more than three parts or fewer than two is refused at
 # compile time, on both compilers and both targets.
 run_mjs test/if-arity-is-checked.mjs
+# A comparison with fewer than two arguments, or a not with other than
+# one, is refused at compile time and named, on every compiler.
+run_mjs test/comparison-and-not-counts-are-checked.mjs
 # An import set may nest -- only, except, rename and prefix over another
 # set -- on both compilers and both targets.
 run_mjs test/import-sets-nest.mjs

@@ -104,7 +104,10 @@ for (const [name, exported, form, use] of [
     ['apply', true, `(define (apply f xs) 'mine)`, `(apply car '((1)))`],
     ['assert', true, `(define (assert . xs) 'mine)`, `(assert #f)`],
     ['guard', true, `(define (guard . xs) 'mine)`, `(guard 1 2)`],
-    ['not', false, `(define (not x) 'mine)`, `(not 1)`],
+    // (rnrs) exports not since M53 (R6RS lists it), so a program defining
+    // it excludes it first, as for assert and guard; before M53 it was
+    // not exported and (except (rnrs) not) was itself refused
+    ['not', true, `(define (not x) 'mine)`, `(not 1)`],
 ]) {
     test(`a top-level definition of ${name} is refused, by name`, async () => {
         const said = await refusal(topLevel(name, exported, form, use));

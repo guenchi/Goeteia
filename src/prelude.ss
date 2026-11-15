@@ -4128,6 +4128,76 @@
        (or (null? rest) ($chain same? b (car rest) (cdr rest)))))
 (define (boolean=? a b . rest) ($chain eq? a b rest))
 (define (symbol=? a b . rest) ($chain eq? a b rest))
+;; The comparisons as procedures of two or more arguments (R6RS
+;; 11.7.4.3, 11.11, 11.12, 11.13; ledger R20): what = < and the rest are
+;; as values and through apply, and what a direct call with three or
+;; more arguments compiles to -- the expander sends all of those here
+;; (builtin-value-ref and xpand-comparison-call in src/compiler.ss).  A
+;; direct call with two arguments still compiles to the binary primitive
+;; or procedure, which does not check its arguments' types (ledger R93).
+;;
+;; Every argument is checked before any pair is compared, so one after a
+;; false pair is checked too, as Chez checks it.  The count is checked
+;; here because a closure call does not check its own (ledger R65).
+;;
+;; These are what a comparison passed as a value runs, so they are also
+;; what (make-hashtable string-hash string=?) calls on every probe: the
+;; checks are a plain loop, with no closure made per call.
+(define ($nary-compare who ok? what cmp args)
+  (if (and (pair? args) (pair? (cdr args)))
+      (let check ((l args))
+        (cond ((null? l)
+               (let loop ((a (car args)) (l (cdr args)))
+                 (or (null? l)
+                     (and (cmp a (car l)) (loop (car l) (cdr l))))))
+              ((ok? (car l)) (check (cdr l)))
+              (else (assertion-violation who what (car l)))))
+      (assertion-violation who "takes two or more arguments" args)))
+(define ($nary= . args)
+  ($nary-compare '= number? "not a number" (lambda (a b) (= a b)) args))
+(define ($nary< . args)
+  ($nary-compare '< real? "not a real number" (lambda (a b) (< a b)) args))
+(define ($nary> . args)
+  ($nary-compare '> real? "not a real number" > args))
+(define ($nary<= . args)
+  ($nary-compare '<= real? "not a real number" <= args))
+(define ($nary>= . args)
+  ($nary-compare '>= real? "not a real number" >= args))
+(define ($nary-char=? . args)
+  ($nary-compare 'char=? char? "not a character" char=? args))
+(define ($nary-char<? . args)
+  ($nary-compare 'char<? char? "not a character" char<? args))
+(define ($nary-char>? . args)
+  ($nary-compare 'char>? char? "not a character" char>? args))
+(define ($nary-char<=? . args)
+  ($nary-compare 'char<=? char? "not a character" char<=? args))
+(define ($nary-char>=? . args)
+  ($nary-compare 'char>=? char? "not a character" char>=? args))
+(define ($nary-string=? . args)
+  ($nary-compare 'string=? string? "not a string" string=? args))
+(define ($nary-string<? . args)
+  ($nary-compare 'string<? string? "not a string" string<? args))
+(define ($nary-string>? . args)
+  ($nary-compare 'string>? string? "not a string" string>? args))
+(define ($nary-string<=? . args)
+  ($nary-compare 'string<=? string? "not a string" string<=? args))
+(define ($nary-string>=? . args)
+  ($nary-compare 'string>=? string? "not a string" string>=? args))
+(define ($nary-fl=? . args)
+  ($nary-compare 'fl=? flonum? "not a flonum" (lambda (a b) (fl=? a b)) args))
+(define ($nary-fl<? . args)
+  ($nary-compare 'fl<? flonum? "not a flonum" (lambda (a b) (fl<? a b)) args))
+(define ($nary-fl>? . args)
+  ($nary-compare 'fl>? flonum? "not a flonum" fl>? args))
+(define ($nary-fl<=? . args)
+  ($nary-compare 'fl<=? flonum? "not a flonum" fl<=? args))
+(define ($nary-fl>=? . args)
+  ($nary-compare 'fl>=? flonum? "not a flonum" fl>=? args))
+;; not as a value: one argument, counted for the same reason
+(define ($not . args)
+  (unless (and (pair? args) (null? (cdr args)))
+    (assertion-violation 'not "takes exactly one argument" args))
+  (if (car args) #f #t))
 
 ;; A fixnum is 30 bits on both back ends: compile-datum's fits-fixnum?
 ;; and the runtime's fixnum? agree on -2^29 .. 2^29-1.

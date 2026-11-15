@@ -674,8 +674,91 @@
           (if macro
               (xpand (apply-macro (cdr macro) e))
               (xpand-core e)))))
-   ((symbol? e) (renamed-ref e))
+   ((symbol? e)
+    (let ((r (renamed-ref e)))
+      (if (eq? r e) (builtin-value-ref e) r)))
    (else e)))
+
+;; ---- the comparisons and not as procedures (ledger R20) -------------
+;;
+;; R6RS gives = < > <= >=, the char and string comparisons and the fl
+;; comparisons two or more arguments, and not is a procedure as well as
+;; what a call of it expands to.  The prelude has each as a procedure
+;; that checks its count and every argument's type and then compares
+;; neighbour to neighbour ($nary-compare, $not in src/prelude.ss).  The
+;; expander sends there:
+;;
+;;   - a reference to one of them as a value -- a variable, an argument
+;;     of map or apply;
+;;   - a direct call of a comparison with three or more arguments, which
+;;     as a call evaluates each argument once.
+;;
+;; A direct call with exactly two arguments is left as it was written
+;; and compiles to the binary primitive or procedure it always did, so a
+;; program that never does either of the above compiles to the same
+;; bytes.  That call does not check its arguments' types (ledger R93).
+;; A direct call with fewer than two, or a not with other than one, is
+;; refused here, as a wrong count for a primitive is.
+;;
+;; Only the binding (rnrs) exports is meant: a name is looked up in the
+;; import table, so a local binding of the spelling, a program that
+;; excludes it and defines its own, or the prelude (which expands
+;; against no table) is left alone, and a rename reaches the procedure
+;; under its new spelling.
+(define $nary-comparisons
+  '((= . $nary=) (< . $nary<) (> . $nary>) (<= . $nary<=) (>= . $nary>=)
+    (char=? . $nary-char=?) (char<? . $nary-char<?) (char>? . $nary-char>?)
+    (char<=? . $nary-char<=?) (char>=? . $nary-char>=?)
+    (string=? . $nary-string=?) (string<? . $nary-string<?)
+    (string>? . $nary-string>?) (string<=? . $nary-string<=?)
+    (string>=? . $nary-string>=?)
+    (fl=? . $nary-fl=?) (fl<? . $nary-fl<?) (fl>? . $nary-fl>?)
+    (fl<=? . $nary-fl<=?) (fl>=? . $nary-fl>=?)))
+
+;; the import-table entry a free identifier refers to, or #f
+(define (imported-entry x)
+  (and (symbol? x)
+       (not (lexically-bound? x))
+       (eq? (renamed-ref x) x)
+       (expand-entry (unmark x))))
+
+;; (origin . procedure) when x names one of the comparisons, else #f
+(define (nary-comparison-of x)
+  (let ((e (imported-entry x)))
+    (and e
+         (eq? (entry-kind e) 'variable)
+         (assq (entry-origin e) $nary-comparisons))))
+
+(define (names-not? x)
+  (let ((e (imported-entry x)))
+    (and e
+         (eq? (entry-kind e) 'keyword)
+         (eq? (entry-origin e) 'not))))
+
+(define (builtin-value-ref x)
+  (let ((c (nary-comparison-of x)))
+    (cond (c (cdr c))
+          ((names-not? x) '$not)
+          (else x))))
+
+;; how many operands a form has, or #f when they are not a proper list
+(define (operand-count e)
+  (let count ((l (cdr e)) (n 0))
+    (cond ((pair? l) (count (cdr l) (+ n 1)))
+          ((null? l) n)
+          (else #f))))
+
+(define (xpand-comparison-call c e)
+  (let ((n (operand-count e)))
+    (cond
+     ((not n) (xpand-tagged (resolve-tag (car e)) e))
+     ((= n 2) (cons (car e) (xpand* (cdr e))))
+     ((< n 2)
+      (errorf 'goeteia
+              (string-append (symbol->string (unmark (car e)))
+                             " takes two or more arguments:")
+              (strip-marks e)))
+     (else (cons (cdr c) (xpand* (cdr e)))))))
 
 ;; ---- the expander's own forms carry generated heads ----------------
 ;;
@@ -734,7 +817,10 @@
 ;; the origin's spelling a second time read it through the alias table
 ;; again, so a swap of two keywords could not be written.
 (define (xpand-core-form e)
-  (xpand-tagged (resolve-tag (car e)) e))
+  (let ((c (nary-comparison-of (car e))))
+    (if c
+        (xpand-comparison-call c e)
+        (xpand-tagged (resolve-tag (car e)) e))))
 
 ;; A keyword written under an alias: its origin is what is emitted.
 (define (keyword-alias? h)
@@ -821,7 +907,19 @@
            (let ((t (gensym "t")))
              `(let ((,t ,(xpand (cadr e))))
                 (if ,t ,t ,(xpand (cons (generated-head 'or) (cddr e)))))))))
-        ((not) `(if ,(xpand (cadr e)) #f #t))
+        ((not)
+         (unless (eqv? (operand-count e) 1)
+           (errorf 'goeteia "not takes exactly one argument:"
+                   (strip-marks e)))
+         `(if ,(xpand (cadr e)) #f #t))
+        ;; the variable a set! assigns is a binder, not a value: it is
+        ;; resolved as before, without builtin-value-ref, so assigning
+        ;; an imported comparison is refused as it always was
+        ((set!)
+         (if (and (pair? (cdr e)) (symbol? (cadr e)))
+             (cons (head-out tag (car e))
+                   (cons (renamed-ref (cadr e)) (xpand* (cddr e))))
+             (cons (head-out tag (car e)) (xpand* (cdr e)))))
         ((when)
          (xpand (list (generated-head 'if) (cadr e)
                       (cons (generated-head 'begin) (cddr e))
@@ -3103,6 +3201,10 @@
     ;; than defined by the prelude.  The check itself found them --
     ;; one missing name accounted for 111 red cells in a sweep.
     apply call/cc call-with-current-continuation
+    ;; not is an arm of the expander in the operator position and a
+    ;; procedure as a value ($not); it is exported as syntax, since a
+    ;; variable cannot be imported under a spelling the expander takes
+    not
     and begin case cond define define-record-type define-syntax do
     else if lambda let let* letrec letrec* or parameterize
     quasiquote quote set! syntax-rules unless unquote
@@ -3411,7 +3513,7 @@
     let-values letrec letrec* or parameterize quasiquote quote set!
     syntax-rules unless unquote unquote-splicing when endianness
     case-lambda define-enumeration record-type-descriptor
-    define-condition-type))
+    define-condition-type not))
 
 (define (identity-keyword? id)
   (let ((lib (car id)) (name (cdr id)))

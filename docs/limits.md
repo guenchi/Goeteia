@@ -158,6 +158,21 @@ Where these are narrower than R6RS:
   neither upper nor lower case, so `(char-upper-case? #\xC0;)` is `#f`
   where Chez answers `#t`, and `string-foldcase` does not expand a
   sharp s.  The `-ci` comparisons fold with `char-foldcase`.
+- The comparisons (`=` `<` `>` `<=` `>=`, the `char` and `string`
+  comparisons, `fl=?` and the other `fl` ones) take two or more
+  arguments, and `not` is a procedure as well as a form (since
+  2026-11-15).  Called with three or more arguments, or used as a value
+  or through `apply`, a comparison checks every argument -- a number for
+  `=`, a real for the others, a character, a string, a flonum -- and
+  raises `&assertion` naming itself for one of the wrong type or for a
+  single argument, also after a pair that is false.  A direct call with
+  exactly two arguments is still the binary primitive or procedure, as
+  fast as before and as unchecked: given a symbol, `(< 2 'a)` traps on
+  wasm and answers on JS, and `(char<? #\a 1)` answers on both, where
+  `(< 1 2 'a)` raises (ledger R93).  A comparison passed as a value --
+  the equivalence of `(make-hashtable string-hash string=?)`, the order
+  of a sort -- is the checking procedure, and each call of it pays for
+  its argument list and its checks.
 - `even?` and `odd?` answer `#f` for a flonum that is not a finite
   integer, where R6RS raises.
 - `div-and-mod` and `div0-and-mod0` take exact integers only, as `div`
@@ -229,11 +244,8 @@ Where these are narrower than R6RS:
 Still missing from R6RS, by group, for later batches of R20:
 `flexp`, `fllog`, `flexpt`, `flasin`, `flacos` and `flatan` with
 `expt`, `exp`, `log` and the inverse trigonometric functions
-(`flasin`/`flacos`/`flatan`/`flatan2` live in `(gfx mat)`); `not` as a
-value, n-ary forms of the
-comparisons that are binary today (`=`, `<`, `char<?`, `string<?` and
-the rest; the new `-ci` comparisons, `boolean=?` and `symbol=?` already
-take two or more arguments); binary file ports;
+(`flasin`/`flacos`/`flatan`/`flatan2` live in `(gfx mat)`); binary file
+ports;
 `current-error-port` and the `standard-` ports; `open-file-input-port`
 and its siblings, transcoders (and with them `bytevector->string` and
 `string->bytevector`), codecs, buffer modes, port positions and
