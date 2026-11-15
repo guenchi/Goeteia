@@ -659,6 +659,12 @@ run_mjs test/many-definitions-compile-in-linear-time.mjs
 # An only, except or rename naming what its import set does not
 # provide is refused, in a program's import and a library's.
 run_mjs test/import-sets-name-only-what-is-there.mjs
+# A malformed asset ends a decode in a condition that names the decoder,
+# never in a trap or a timeout (ledger R98): a fixed sample of mutations,
+# and the sample the census of tools/mutate.mjs found trapping, decoded
+# through the harness's --sample mode.
+run_mjs test/decoders-never-trap.mjs
+run_mjs test/decoders-never-trap-sample.mjs
 # The first check that judges a shader by what it PUTS ON THE SCREEN
 # rather than by whether it compiles.  Stands down loudly without a
 # browser, like the one above.

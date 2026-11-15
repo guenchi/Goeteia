@@ -1,0 +1,37 @@
+# driver	fixture	len	pos	val	why chosen (target:class on 57868e4)
+image	tga-rle	8	7	255	js:memory access out of bounds; wasm:memory access out of bounds
+image	tga-rle	8	8	255	js:expected i31; wasm:illegal cast
+image	tga-rle	1	13	255	js:memory access out of bounds; wasm:memory access out of bounds
+image	tga-rle	1	15	240	js:memory access out of bounds; wasm:memory access out of bounds
+ktx	etc1s	8	15	255	js:memory access out of bounds; wasm:memory access out of bounds
+ktx	etc1s	8	17	255	js:expected i31
+ktx	etc1s	8	20	255	js:expected i31
+ktx	etc1s	1	22	255	js:memory access out of bounds; wasm:memory access out of bounds
+ktx	etc1s	1	23	255	js:expected i31; wasm:illegal cast
+ktx	etc1s	1	26	240	js:memory access out of bounds; wasm:memory access out of bounds
+ktx	etc1s	1	40	0	js:expected vector
+ktx	etc1s	1	280	0	js:array element access out of bounds; wasm:array element access out of bounds
+ktx	etc1s	8	292	0	wasm:illegal cast
+ktx	etc1s	8	397	255	js:array element access out of bounds; wasm:array element access out of bounds
+ktx	etc1s	8	400	0	js:expected vector
+ktx	etc1s	8	547	0	js:expected vector; wasm:illegal cast
+ktx	etc1s	8	575	0	js:array element access out of bounds; wasm:array element access out of bounds
+ktx	uastc-zstd	1	99	240	js:expected i31; wasm:illegal cast
+ktx	uastc-zstd	1	99	255	js:expected i31; wasm:illegal cast
+ktx	uastc-zstd	1	195	13	js:array element access out of bounds; wasm:array element access out of bounds
+meshopt	bv0	8	51	0	js:integer overflow; wasm:float unrepresentable in integer range
+meshopt	bv0	8	52	0	js:integer overflow; wasm:float unrepresentable in integer range
+meshopt	bv0	1	58	0	js:integer overflow; wasm:float unrepresentable in integer range
+uastc	blocks	8	99	255	js:array element access out of bounds; wasm:array element access out of bounds
+uastc	blocks	1	180	255	js:array element access out of bounds; wasm:array element access out of bounds
+uastc	blocks	8	180	255	js:array element access out of bounds; wasm:array element access out of bounds
+zstd	blob	1	10	0	js:array element access out of bounds; wasm:array element access out of bounds
+zstd	blob	8	3073	255	js:array element access out of bounds; wasm:array element access out of bounds
+zstd	blob	8	3075	255	js:array element access out of bounds; wasm:array element access out of bounds
+zstd	mb	1	9	0	js:array element access out of bounds; wasm:array element access out of bounds
+zstd	mb	8	401	255	wasm:timeout (30 s alone)
+zstd	mb	8	403	255	wasm:timeout (30 s alone)
+zstd	mb	1	408	255	wasm:timeout (30 s alone)
+zstd	mb	1	423	255	js:array element access out of bounds; wasm:array element access out of bounds
+zstd	mb	8	493	255	js:array element access out of bounds; wasm:array element access out of bounds
+zstd	text	1	9	197	js:array element access out of bounds; wasm:array element access out of bounds

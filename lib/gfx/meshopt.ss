@@ -568,7 +568,13 @@
                  (x (fl+ x (if (fl<? x 0.0) (fl- 0.0 tt) tt)))
                  (y (fl+ y (if (fl<? y 0.0) (fl- 0.0 tt) tt)))
                  (l (flsqrt (fl+ (fl+ (fl* x x) (fl* y y)) (fl* z z))))
-                 (s (fl/ maxv l))
+                 ;; an encoder stores z as the vector's one, so a vector of
+                 ;; length zero is malformed: its scale would be infinite,
+                 ;; and 0 times that is NaN, which no rounding to an
+                 ;; integer can take (ledger R98)
+                 (s (if (fl=? l 0.0)
+                        (error 'meshopt "octahedral vector of length zero" i)
+                        (fl/ maxv l)))
                  (wr (lambda (c v)
                        (if (= bytes 1)
                            ($u8! (+ at c) ($iround (fl* v s)))

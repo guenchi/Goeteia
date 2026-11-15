@@ -258,6 +258,16 @@
               (loop (+ i 1)))))))
 
   ;; decode a whole level: blocks laid out row-major, into a w*h RGBA image
+;; The common pattern is a field of the block: 5 bits index tables of 30
+  ;; (two subsets) and 19 (mode 7) patterns, and 4 bits one of 11 (mode 3),
+  ;; so a block can name a pattern no table has (ledger R98).  A procedure
+  ;; of its own, called from each arm: a let or an inlined >= in the
+  ;; middle of uastc-general! became two closures a block on JS.
+  (define ($pattern table common mode)
+    (if (< common (vector-length table))
+        (vector-ref table common)
+        (error 'uastc "common partition pattern out of range" mode common)))
+
   (define (uastc-general! src dst mode)
     (let ((p (vector (+ (vector-ref $hcsz mode) (vector-ref $hint mode))))  ; skip mode + hints
           (subsets (vector-ref $sub mode))
@@ -308,9 +318,9 @@
                 (loop (+ i 1))))
             ;; partition pattern + anchors
             (let* ((pat (cond ((= subsets 1) #f)
-                              ((= mode 3) (vector-ref $pat3 common))
-                              ((= mode 7) (vector-ref $pat7 common))
-                              (else (vector-ref $pat2 common))))
+                              ((= mode 3) ($pattern $pat3 common mode))
+                              ((= mode 7) ($pattern $pat7 common mode))
+                              (else ($pattern $pat2 common mode))))
                    (anchors (if (= subsets 1) #f
                                 (let ((av (make-vector subsets 0)))
                                   (let sub ((s 0))

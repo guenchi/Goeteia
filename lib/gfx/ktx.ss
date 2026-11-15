@@ -497,6 +497,9 @@
           (vector counts firsts syms offs fast)))))
 
   (define ($huff-decode b t)
+    ;; a table of no symbols reads as #f ($huff-read), and a stream may
+    ;; still ask to decode from it (ledger R98)
+    (unless t (error 'ktx "huffman code from an empty table"))
     (let ((e (vector-ref (vector-ref t 4) ($br-peek b 10))))
       (if (>= e 0)
           (begin ($br-drop! b (bitwise-and e 31))
@@ -527,6 +530,10 @@
           #f
           (let ((clsizes (make-vector 21 0))
                 (ncl ($br-bits b 5)))
+            ;; five bits can count past the 21 code-length codes there
+            ;; are (ledger R98)
+            (when (> ncl 21)
+              (error 'ktx "too many huffman code-length codes" ncl))
             (let rd ((i 0))
               (when (< i ncl)
                 (vector-set! clsizes (vector-ref $huff-cl-order i)
@@ -541,19 +548,27 @@
                      ((<= c 16)
                       (vector-set! sizes cur c)
                       (fill (+ cur 1)))
+                     ;; a run of zeros, or of the previous size, must stay
+                     ;; within the table, and a repeat needs a size
+                     ;; before it, as read_huffman_table requires (ledger
+                     ;; R98)
                      ((= c 17) (fill (+ cur 3 ($br-bits b 3))))
                      ((= c 18) (fill (+ cur 11 ($br-bits b 7))))
                      (else
                       (let ((rpt (if (= c 19)
                                      (+ 3 ($br-bits b 2))
-                                     (+ 7 ($br-bits b 7))))
-                            (prev (vector-ref sizes (- cur 1))))
+                                     (+ 7 ($br-bits b 7)))))
+                        (when (= cur 0)
+                          (error 'ktx "huffman size repeat with no size before it"))
+                        (when (> (+ cur rpt) total)
+                          (error 'ktx "huffman size repeat runs past the table" cur rpt total))
+                        (let ((prev (vector-ref sizes (- cur 1))))
                         (let rep ((r 0) (cur cur))
                           (if (= r rpt)
                               (fill cur)
                               (begin
                                 (vector-set! sizes cur prev)
-                                (rep (+ r 1) (+ cur 1)))))))))))
+                                (rep (+ r 1) (+ cur 1))))))))))))
               ($huff-build sizes total))))))
 
   ;; ---- the codebooks and slice tables, decoded once at parse ----
@@ -571,6 +586,10 @@
            (blob (+ at 20 (* levels 20))))
       (when (> (+ 20 (* levels 20) eplen sellen tablen) len)
         (error 'ktx "BasisLZ tables outside global data"))
+      ;; every block names an endpoint and a selector, the first one
+      ;; entry 0, so an empty codebook cannot be decoded (ledger R98)
+      (when (or (= epc 0) (= selc 0))
+        (error 'ktx "BasisLZ codebook with no entries" epc selc))
       (let d ((l 0))
         (when (< l levels)
           (let ((e (+ at 20 (* l 20))))
@@ -671,12 +690,16 @@
            (rover (vector (quotient histsize 2)))
            (uprow (make-vector nbx 0))   ; previous row's endpoints
            (saved (make-vector (quotient (+ nbx 1) 2) 0))
+           ;; a history of size zero keeps nothing (the reference writes
+           ;; past its buffer there, which is undefined) -- without this,
+           ;; the second add wrote past the one cell (ledger R98)
            (hist-add!
             (lambda (v)
-              (vector-set! hist (vector-ref rover 0) v)
-              (vector-set! rover 0 (+ 1 (vector-ref rover 0)))
-              (when (= (vector-ref rover 0) histsize)
-                (vector-set! rover 0 (quotient histsize 2)))))
+              (when (> histsize 0)
+                (vector-set! hist (vector-ref rover 0) v)
+                (vector-set! rover 0 (+ 1 (vector-ref rover 0)))
+                (when (= (vector-ref rover 0) histsize)
+                  (vector-set! rover 0 (quotient histsize 2))))))
            (hist-use!
             (lambda (i)
               (when (> i 0)
@@ -739,15 +762,26 @@
                             ((= pred 1) up)
                             ((= pred 2) ul)
                             (else
-                             (let ((e (+ prev-ep
-                                         ($huff-decode b deltam))))
-                               (if (>= e epc) (- e epc) e))))))
+                             (let* ((e (+ prev-ep
+                                          ($huff-decode b deltam)))
+                                    (e (if (>= e epc) (- e epc) e)))
+                               ;; the delta model's symbols can run past
+                               ;; the codebook; the writers index it with
+                               ;; ep (ledger R98)
+                               (when (>= e epc)
+                                 (error 'ktx "endpoint index out of range" e epc))
+                               e)))))
                   ;; the selector, through the history buffer
                   (let-values
                       (((sel sel-rle)
                         (if (> sel-rle 0)
                             (values (vector-ref hist 0) (- sel-rle 1))
                             (let ((s ($huff-decode b selm)))
+                              ;; past the codebook, the history and the
+                              ;; run symbol there is nothing to name
+                              ;; (ledger R98)
+                              (when (> s (+ selc histsize))
+                                (error 'ktx "selector symbol out of range" s))
                               (if (= s (+ selc histsize))
                                   (let* ((run ($huff-decode b rlem))
                                          (n (if (= run 63)
@@ -954,6 +988,21 @@
            (h (ktx-level-height k l))
            (nbx (quotient (+ w 3) 4))
            (nby (quotient (+ h 3) 4)))
+      ;; Each slice must lie within its level, and the destination within
+      ;; linear memory, before anything is allocated or written: a header
+      ;; can declare dimensions far larger than the file, and the writers
+      ;; and $slice-decode!'s row buffers take their sizes from them
+      ;; (ledger R98).
+      (when (> (+ (vector-ref desc 0) len) (vector-ref lv 1))
+        (error 'ktx "slice runs past its level" (vector-ref desc 0) len))
+      (when (and (> (vector-ref desc 3) 0)
+                 (> (+ (vector-ref desc 2) (vector-ref desc 3)) (vector-ref lv 1)))
+        (error 'ktx "alpha slice runs past its level"
+               (vector-ref desc 2) (vector-ref desc 3)))
+      (when (> (+ dst (if (eq? fmt 'rgba) (* w h 4) (* nbx nby 8)))
+               (* 65536 (%mem-size)))
+        (error 'ktx "transcoded level does not fit in memory at the destination"
+               w h))
       ($slice-decode!
        sgd at len nbx nby
        (case fmt
@@ -999,13 +1048,24 @@
             ;; dst is the caller's and lies below them
             ($ktx-temporaries
              (lambda ()
-               (let* ((blocks (begin
+               (let* ((sclen (+ ulen 65536))
+                      (blocks (begin
                                 (unless (>= ulen need)
                                   (error 'ktx "UASTC level shorter than its dimensions require"
                                          ulen need))
+                                ;; the two temporaries, ulen and ulen plus
+                                ;; 64 KiB, must end below the largest
+                                ;; address that is a fixnum: a length field
+                                ;; can claim 4 GiB, and an address past that
+                                ;; is a bignum no load or store takes
+                                ;; (ledger R98)
+                                (when (> (+ (fx-mark) ulen sclen 16) (greatest-fixnum))
+                                  (error 'ktx "UASTC level too large to inflate" ulen))
                                 (fx-alloc! ulen)))
-                      (sclen (+ ulen 65536))
                       (scratch (fx-alloc! sclen)))
+                 ;; fx-alloc! grows memory without asking whether it grew
+                 (when (> (+ scratch sclen) (* 65536 (%mem-size)))
+                   (error 'ktx "no memory to inflate the UASTC level" ulen))
                  ;; bound literal staging to the real scratch size, not
                  ;; the nominal max block -- a small ulen allocates <
                  ;; one block

@@ -953,6 +953,13 @@
            (right? (not (= 0 (bitwise-and desc 16))))
            (total (* w h))
            (p (+ $src-start 18 (vector-ref hd 0))))
+      ;; The whole destination, w * h RGBA pixels from dst, must lie in
+      ;; linear memory before a pixel is written: a header of a few
+      ;; bytes can declare 65535 x 65535, and with rows stored bottom-up
+      ;; the first pixel lands on the last row (ledger R98).
+      (when (> (+ dst (* total 4)) (* 65536 (%mem-size)))
+        (error 'image "TGA image does not fit in memory at the destination"
+               w h))
       ;; k counts pixels in file order; the origin flags decide where
       ;; each one goes, so nothing is written twice or left unwritten
       (let ((put!

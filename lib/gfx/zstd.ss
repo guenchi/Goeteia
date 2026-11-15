@@ -97,6 +97,14 @@
   (define ($bbr-read r n)
     (if (= n 0) 0
         (let ((off (- (vector-ref r 1) n)))
+          ;; Reading past the start gives zeros, shifted up by how far
+          ;; past it is.  A valid stream goes at most one read past it
+          ;; (the Huffman window, up to 11 bits; a weights read, up to 6),
+          ;; while a malformed one that asks for more sequences than it
+          ;; holds would shift by a count that grows with every read --
+          ;; on wasm a power of two built bit by bit (ledger R98)
+          (when (< off -64)
+            (error 'zstd "bitstream read past its start" off))
           (vector-set! r 1 off)
           (if (>= off 0)
               ($rble (vector-ref r 0) n off)
@@ -160,7 +168,16 @@
            (freqs (make-vector 256 0)))
       (let loop ((remaining ($shl 1 alog)) (symb 0))
         (if (or (<= remaining 0) (>= symb 256))
-            (begin ($fbr-align r) (vector freqs symb alog))
+            (begin
+              ;; the counts must fill the table exactly, as the reference
+              ;; decoder requires: more, and $fse-build places symbols
+              ;; below the table's start; fewer, and its spread can circle
+              ;; without finding a free cell (ledger R98)
+              (unless (= remaining 0)
+                (error 'zstd "FSE counts do not sum to the table size"
+                       remaining))
+              ($fbr-align r)
+              (vector freqs symb alog))
             (let* ((bits (+ 1 ($hb (+ remaining 1))))
                    (val ($fbr-read r bits))
                    (lm (- ($shl 1 (- bits 1)) 1))
@@ -306,7 +323,11 @@
             (vector ($huf-from-weights weights nsym) (+ 1 (quotient (+ nsym 1) 2))))
           (let* ((r ($fbr (+ at 1)))
                  (nc ($fse-decode-header r))
-                 (dt ($fse-build ($nc-counts nc) ($nc-nsym nc) ($nc-log nc)))
+                 ;; the weights' FSE table is at most 2^6 cells
+                 (dt (if (> ($nc-log nc) 6)
+                         (error 'zstd "Huffman weight table accuracy log too large"
+                                ($nc-log nc))
+                         ($fse-build ($nc-counts nc) ($nc-nsym nc) ($nc-log nc))))
                  (hdr ($fbr-bytes r))
                  (bstart (+ at 1 hdr))
                  (blen (- hb hdr))
@@ -315,6 +336,11 @@
                  (log ($nc-log nc)))
             (let ((s1 ($bbr-read br log)) (s2 ($bbr-read br log)))
               (let loop ((s1 s1) (s2 s2) (i 0))
+                ;; a step writes up to three weights, and there are at
+                ;; most 255: a stream that has not ended by then is
+                ;; malformed (ledger R98)
+                (when (> (+ i 3) 255)
+                  (error 'zstd "more than 255 Huffman weights"))
                 (vector-set! weights i ($fse-peek dt s1))
                 (let ((s1u ($fse-update dt s1 br)))
                   (if (< ($bbr-off br) 0)
@@ -408,15 +434,28 @@
   ;; =================== sequences ===================
   ;; `prev' is the frame's previous decode table for this stream --
   ;; mode 3 (Repeat) reuses it across blocks
-  (define ($seq-table mode dist deflog at prev)
+  ;; maxsym and maxlog are the format's limits for the kind of table --
+  ;; literal lengths 35 and 9, offsets 31 and 8, match lengths 52 and 9 --
+  ;; checked before a table is built: a symbol past maxsym indexes past
+  ;; the code tables in $sequences, and a log past maxlog asks $fse-build
+  ;; for up to 2^20 cells (ledger R98)
+  (define ($seq-table mode dist deflog maxsym maxlog at prev)
     (cond
      ((= mode 0) (values ($predef dist deflog) at))
-     ((= mode 1) (values (vector 0 (vector ($u8 at)) (vector 0) (vector 0)) (+ at 1)))
+     ((= mode 1)
+      (let ((sym ($u8 at)))
+        (when (> sym maxsym)
+          (error 'zstd "sequence symbol out of range" sym maxsym))
+        (values (vector 0 (vector sym) (vector 0) (vector 0)) (+ at 1))))
      ((= mode 2)
       (let* ((r ($fbr at))
-             (nc ($fse-decode-header r))
-             (dt ($fse-build ($nc-counts nc) ($nc-nsym nc) ($nc-log nc))))
-        (values dt (+ at ($fbr-bytes r)))))
+             (nc ($fse-decode-header r)))
+        (when (> ($nc-log nc) maxlog)
+          (error 'zstd "sequence table accuracy log too large" ($nc-log nc) maxlog))
+        (when (> ($nc-nsym nc) (+ maxsym 1))
+          (error 'zstd "sequence symbol out of range" (- ($nc-nsym nc) 1) maxsym))
+        (let ((dt ($fse-build ($nc-counts nc) ($nc-nsym nc) ($nc-log nc))))
+          (values dt (+ at ($fbr-bytes r))))))
      (else
       (unless prev (error 'zstd "repeat FSE mode with no prior table"))
       (values prev at))))
@@ -440,9 +479,9 @@
                    (ofmode (bitwise-and ($shr modes 4) 3))
                    (mlmode (bitwise-and ($shr modes 2) 3))
                    (tat (+ nat 1)))
-              (let*-values (((llt tat) ($seq-table llmode $ll-dist 6 tat pll))
-                            ((oft tat) ($seq-table ofmode $of-dist 5 tat pof))
-                            ((mlt tat) ($seq-table mlmode $ml-dist 6 tat pml)))
+              (let*-values (((llt tat) ($seq-table llmode $ll-dist 6 35 9 tat pll))
+                            ((oft tat) ($seq-table ofmode $of-dist 5 31 8 tat pof))
+                            ((mlt tat) ($seq-table mlmode $ml-dist 6 52 9 tat pml)))
                 (let* ((br ($bbr tat (- endat tat)))
                        (lls ($bbr-read br (vector-ref llt 0)))
                        (ofs ($bbr-read br (vector-ref oft 0)))
