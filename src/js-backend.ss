@@ -951,7 +951,7 @@
   (jkernel-for-op! op)
   (let ((expect (assq op prim-arity)))
     (when (and expect
-               (not (memq op '(+ - *)))
+               (not (memq op '(+ - * bitwise-and bitwise-ior bitwise-xor)))
                (not (= (length trees) (cdr expect))))
       (errorf 'goeteia "wrong argument count for primitive:" op)))
   (case op
@@ -1063,19 +1063,30 @@
     ((bytevector-u8-ref) (list "(AR(BVU(" (a 0) ")," (a 1) ")<<1)"))
     ((bytevector-u8-set!)
      (list "AW(BVU(" (a 0) ")," (a 1) ",IU(" (a 2) "))"))
-    ;; fixnum bitwise, straight on the tagged representation
-    ((bitwise-and) (list "(I31(" (a 0) ")&I31(" (a 1) "))"))
-    ((bitwise-ior) (list "(I31(" (a 0) ")|I31(" (a 1) "))"))
-    ((bitwise-xor) (list "(I31(" (a 0) ")^I31(" (a 1) "))"))
-    ;; the shifts answer exactly or refuse, as the wasm side's
-    ;; checked-shift does; JSHL and JSHR say how.  The first operand
-    ;; is checked before the second is evaluated, as the inline form
-    ;; did and the wasm side does, so a bad operand stops the shift
-    ;; before any effect of the other one runs
+    ;; the bitwise operations on exact integers of any size (ledger
+    ;; R76): two fixnums straight on the tagged representation in the
+    ;; helper, anything else to the prelude's two-operand procedure.
+    ;; and, ior and xor take any number of arguments, folded two at a
+    ;; time, with the answers prim-nary gives for none and one, as on
+    ;; the wasm side; the shifts take two
+    ((bitwise-and bitwise-ior bitwise-xor)
+     (let ((h (jhelper! (case op
+                          ((bitwise-and) "JBAND")
+                          ((bitwise-ior) "JBIOR")
+                          (else "JBXOR")))))
+       (cond
+        ((= (length trees) 0) (jd (nary-zero op)))
+        ((= (length trees) 1)
+         (list h "(" (jd (nary-zero op)) "," (a 0) ")"))
+        (else
+         (let fold ((code (a 0)) (i 1))
+           (if (= i (length trees))
+               code
+               (fold (list h "(" code "," (a i) ")") (+ i 1))))))))
     ((bitwise-arithmetic-shift-left)
-     (list (jhelper! "JSHL") "(I31(" (a 0) ")," (a 1) ")"))
+     (list (jhelper! "JSHL") "(" (a 0) "," (a 1) ")"))
     ((bitwise-arithmetic-shift-right)
-     (list (jhelper! "JSHR") "(I31(" (a 0) ")," (a 1) ")"))
+     (list (jhelper! "JSHR") "(" (a 0) "," (a 1) ")"))
     ;; records
     ((%record) (list "(new Rec([" (jsep "," trees) "]))"))
     ((%recbase?) (list "((" (a 0) " instanceof Rec)?TRUE:FALSE)"))
@@ -1414,25 +1425,42 @@
     (list "const JREM=(a,b)=>{if(typeof a==='number'&&typeof b==='number'"
           "&&b!==0)return ((a%b)<<1)>>1;return "
           (jgeneric-tr '$rem2 "a,b") ";};"))
+   ;; and, ior and xor of two fixnums straight on the tagged values,
+   ;; whose low bit stays clear; anything else to the prelude, a
+   ;; character included: it is a number here too, 2c + 1, told from a
+   ;; fixnum by its low bit (amendment 4 of R76)
+   ((string=? name "JBAND")
+    (list "const JBAND=(a,b)=>(typeof a==='number'&&typeof b==='number'&&!((a|b)&1))"
+          "?(a&b):" (jgeneric-tr '$band2 "a,b") ";"))
+   ((string=? name "JBIOR")
+    (list "const JBIOR=(a,b)=>(typeof a==='number'&&typeof b==='number'&&!((a|b)&1))"
+          "?(a|b):" (jgeneric-tr '$bior2 "a,b") ";"))
+   ((string=? name "JBXOR")
+    (list "const JBXOR=(a,b)=>(typeof a==='number'&&typeof b==='number'&&!((a|b)&1))"
+          "?(a^b):" (jgeneric-tr '$bxor2 "a,b") ";"))
    ((string=? name "JSHL")
-    ;; Operands are tagged (2n), so the result is t * 2^k, exact in a
+    ;; Operands are tagged (2n), so the result is a * 2^k, exact in a
     ;; double because the factor is a power of two, and in range iff
     ;; it lies in the tagged fixnum range [-2^30, 2^30 - 2].  A count
-    ;; of 30 or more fits only a zero; anything else, or a negative
-    ;; count, goes to the prelude's refusal.  The bare << took the
-    ;; count modulo 32 and wrapped the result.
-    (list "const JSHL=(a,b)=>{const t=I31(a),k=IU(b);"
-          "if(k>=0&&k<30){const p=t*(1<<k);"
+    ;; of 30 or more fits only a zero.  Anything else -- a result past
+    ;; the range, a negative count, an operand that is not a fixnum --
+    ;; goes to the prelude, which answers the exact integer or raises.
+    ;; The bare << took the count modulo 32 and wrapped the result.
+    (list "const JSHL=(a,b)=>{if(typeof a==='number'&&typeof b==='number'&&!((a|b)&1)){"
+          "const k=b>>1;"
+          "if(k>=0&&k<30){const p=a*(1<<k);"
           "if(p>=-1073741824&&p<=1073741822)return p;}"
-          "else if(k>=30&&t===0)return 0;return "
-          (jgeneric-tr '$shl-refused "a,b") ";};"))
+          "else if(k>=30&&a===0)return 0;}return "
+          (jgeneric-tr '$shl2 "a,b") ";};"))
    ((string=? name "JSHR")
     ;; >> takes its count modulo 32, so a count of 31 or more is
     ;; clamped to 31, which leaves 0 or -1 by the sign, the exact
-    ;; answer; &-2 keeps the result tagged.  A negative count refuses.
-    (list "const JSHR=(a,b)=>{const t=I31(a),k=IU(b);"
-          "if(k<0)return " (jgeneric-tr '$shr-refused "a,b") ";"
-          "return (t>>(k<31?k:31))&-2;};"))
+    ;; answer; &-2 keeps the result tagged.  A negative count or an
+    ;; operand that is not a fixnum goes to the prelude.
+    (list "const JSHR=(a,b)=>{if(typeof a==='number'&&typeof b==='number'&&!((a|b)&1)){"
+          "const k=b>>1;"
+          "if(k>=0)return (a>>(k<31?k:31))&-2;}return "
+          (jgeneric-tr '$shr2 "a,b") ";};"))
    ((string=? name "JEQN")
     (list "const JEQN=(a,b)=>(typeof a==='number'&&typeof b==='number')"
           "?a===b:((" (jgeneric-tr '$eq2 "a,b") ")!==FALSE);"))
@@ -1588,10 +1616,17 @@
                                      ;; rather than invent one
                                      "(()=>{throw new Error(\"wrong argument count\")})()")
                                  ":" r ".length===1?"
-                                 (if (eq? (nary-unary datum) 'negate)
-                                     (list (jp '- (list 'eta 'eta)
-                                               (list "0" (list r "[0]"))))
-                                     (list r "[0]"))
+                                 (case (nary-unary datum)
+                                   ((negate)
+                                    (list (jp '- (list 'eta 'eta)
+                                              (list "0" (list r "[0]")))))
+                                   ;; the binary operation with its
+                                   ;; identity, so the one argument is
+                                   ;; checked as two are
+                                   ((with-zero)
+                                    (list (jp datum (list 'eta 'eta)
+                                              (list (jd z) (list r "[0]")))))
+                                   (else (list r "[0]")))
                                  ":" r ".reduce((" x "," y ")=>"
                                  (jp datum (list 'eta 'eta) (list x y))
                                  "))")))

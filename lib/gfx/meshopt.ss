@@ -406,6 +406,11 @@
               (let ((v (bitwise-ior
                         v (bitwise-arithmetic-shift-left
                            (bitwise-and b 127) sh))))
+                ;; the shift takes any exact integer (ledger R76), so a
+                ;; varint past the fixnum range arrives here as a bignum;
+                ;; it cannot be an index, and refusing it keeps a
+                ;; malformed stream a condition rather than a trap
+                (unless (fixnum? v) (error 'meshopt "varint past the fixnum range" v))
                 (if (< b 128)
                     (let ((nl (+ (vector-ref state 1) ($unzig v))))
                       (vector-set! state 1 nl) nl)
@@ -517,6 +522,8 @@
               (vector-set! data 0 (+ (vector-ref data 0) 1))
               (let ((v (bitwise-ior v (bitwise-arithmetic-shift-left
                                        (bitwise-and b 127) sh))))
+                ;; as in meshopt-index!: refused, not decoded as a bignum
+                (unless (fixnum? v) (error 'meshopt "varint past the fixnum range" v))
                 (if (< b 128)
                     (let* ((base (bitwise-and v 1))
                            (vv (bitwise-arithmetic-shift-right v 1))
@@ -540,6 +547,11 @@
 
   ;; octahedral normals/tangents: stride 4 (int8) or 8 (int16)
   (define (meshopt-filter-oct! dst count stride)
+    ;; the filter is defined for 4 and 8 bytes a vertex; any other
+    ;; stride made the maximum below a bignum, which the shift used to
+    ;; refuse and now answers (ledger R76)
+    (unless (or (= stride 4) (= stride 8))
+      (error 'meshopt-filter-oct! "stride must be 4 or 8" stride))
     (let* ((bytes (quotient stride 4))    ; 1 or 2 per component
            (maxv (fixnum->flonum
                   (- (bitwise-arithmetic-shift-left 1 (- (* bytes 8) 1)) 1))))

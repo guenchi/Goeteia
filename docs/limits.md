@@ -233,9 +233,9 @@ Where these are narrower than R6RS:
 - `rationalize` answers exactly when both arguments are exact and
   inexactly when either is; an inexact pair is searched with its exact
   values, so it finds the same simplest rational as the exact search.
-- The `bitwise-` procedures above take exact integers of any size, but
-  `bitwise-and`, `bitwise-ior` and `bitwise-xor` still take fixnums
-  only (see "Bitwise operations and big operands").
+- The `bitwise-` procedures above take exact integers of any size, and
+  so do `bitwise-and`, `bitwise-ior`, `bitwise-xor` and the two
+  arithmetic shifts (see "Bitwise operations and big operands").
 - `greatest-fixnum` is 2^29-1, `least-fixnum` is -2^29 and
   `fixnum-width` is 30 on both back ends (Chez: 61 bits).
 - None of these check the types of their arguments beyond what the
@@ -249,8 +249,7 @@ ports;
 `current-error-port` and the `standard-` ports; `open-file-input-port`
 and its siblings, transcoders (and with them `bytevector->string` and
 `string->bytevector`), codecs, buffer modes, port positions and
-custom ports; `bitwise-and`, `bitwise-ior` and `bitwise-xor` on
-bignums;
+custom ports;
 the procedural record layer (the syntactic one is complete: see
 "Records: parents, protocols and what is not there" below), Unicode
 normalisation and title case.
@@ -577,39 +576,58 @@ Chez's answer.
 
 ## Bitwise operations and big operands
 
-The bitwise operations work on fixnums, which run from -2^29 to
-2^29 - 1 (the i31 representation).
+`bitwise-and`, `bitwise-ior`, `bitwise-xor`,
+`bitwise-arithmetic-shift-left` and `bitwise-arithmetic-shift-right`
+take exact integers of any size (since 2026-11-15, ledger R76).
 
-**An operand of 2^29 or more traps.** The symptom is an `illegal cast`
-trap in integer code that looks correct (measured: 2^29 - 4 works,
-2^29 exactly traps). Keep bitwise operands strictly below 2^29 — split
-wider values, or use lookup tables for hashing-style code.
+- The first three take any number of arguments: `(bitwise-and)` is -1,
+  and `(bitwise-ior)` and `(bitwise-xor)` are 0.
+- A left shift whose result leaves the fixnum range answers the exact
+  integer: `(bitwise-arithmetic-shift-left 1 40)` is 1099511627776.
+- A right shift by 31 or more answers what the exact shift does: for a
+  fixnum, 0 or -1 by the sign.
+- An argument that is not an exact integer, or a negative count,
+  raises `&assertion` naming the procedure.
 
-**Since 2026-10-22 the arithmetic shifts answer exactly or refuse.**
+**Where the machine operation stops.** A bitwise form compiles to the
+bare machine operation only when every operand is known to be a fixnum:
+a literal, a variable the compiler keeps as a machine integer, a byte
+load, or another such operation.  A left shift qualifies only when its
+count is a literal and its operand has a bound the compiler can see --
+a literal, a mask with a non-negative literal, a byte load, a remainder
+by a literal -- whose bit length plus the count is at most 29, so the
+result cannot leave the range.  A `bitwise-and` with a literal mask from
+0 to 2^29 - 1 qualifies whatever its other operand is, because its
+answer lies within the mask's bits: that operand is tested once at run
+time; a bignum is masked by the general procedure first, and anything
+that is not an exact integer, a character included, is refused by it.
+Every other call tests both operands at run time: two fixnums are
+answered inline, and anything else calls the general procedure, which
+answers a bignum and refuses what is not an exact integer.  That test
+and branch is the cost of operands of any size, and it falls on the
+code that shifts and masks values it cannot bound: the bundled decoders
+above all.
 
-- `bitwise-arithmetic-shift-left` whose exact result is not a fixnum is
-  refused with a condition naming `bitwise-arithmetic-shift-left`,
-  which a `guard` can catch. It is not promoted to a bignum, because no
-  other bitwise operation here takes one. Zero shifted by any
-  non-negative count is zero.
-- `bitwise-arithmetic-shift-right` by 31 or more answers 0 or -1 by the
-  sign, which is its exact result.
-- A negative count is refused by either, naming the procedure.
+**What it used to do.**
+- An operand of 2^29 or more trapped: an uncatchable `illegal cast` on
+  wasm, a host `TypeError` on JS.
+- From 2026-10-22 a left shift past the fixnum range was refused with a
+  condition naming `bitwise-arithmetic-shift-left`.
+- Before that, both shifts took the count modulo 32, and the left shift
+  wrapped its result.
 
-Before, both took the count modulo 32 and the left shift wrapped its
-result, with nothing to say so: `(bitwise-arithmetic-shift-left 1 29)`
-answered -536870912, a shift left by 32 answered the operand unchanged,
-and `(bitwise-arithmetic-shift-right 1024 40)` answered 4. The refusal
-happens when the shift runs, not when the program compiles, so a
-constant shift that would overflow can sit in a branch that is never
-taken.
-
-A malformed asset can therefore fail deep inside a decoder. The
-decoders shift as they read -- meshopt's index deltas, the
-variable-length counts in KTX's Basis data, zstd's offset codes -- and a
-stream that drives one of those shifts past the fixnum range used to
-decode silently into something else; it is now refused, from inside
-the decoder, as a `bitwise-arithmetic-shift-left` condition.
+**Malformed assets.** The decoders used to rely on that refusal to stop
+a stream that drove a shift past the fixnum range.  Each now checks the
+values that matter itself, and a malformed asset still ends in a
+condition naming the decoder:
+- meshopt refuses a varint past the fixnum range, and
+  `meshopt-filter-oct!` a stride other than 4 or 8;
+- KTX's Basis reader refuses a variable-length count whose shift reaches
+  32 bits, where the reference transcoder stops too, and one past the
+  fixnum range, and Huffman code lengths that are over-subscribed;
+- zstd refuses a Huffman code longer than 11 bits.  An offset past the
+  fixnum range ends in "match offset precedes output", as any offset
+  outside the output does.
 
 ## `%mem-i32-ref` wraps at 2^29 instead of widening or trapping
 

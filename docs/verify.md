@@ -47,7 +47,8 @@ The clocks and `Math.random` are stubbed and frames step at a fixed
 60 Hz, so a run is a pure function of its bytes and the input it was
 given. A wasm trap says four words and names no line, so the verdict
 attaches the Scheme-level cause: `illegal cast` becomes a paragraph
-about the i31 fixnum range, `unreachable` points at the program's own
+about a value of the wrong kind (a pair that is not one, an index past
+the i31 fixnum range), `unreachable` points at the program's own
 stdout, and so on.
 
 **draw** — only when the spec asks. The recorded frames must contain at

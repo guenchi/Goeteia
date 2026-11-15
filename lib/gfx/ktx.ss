@@ -396,12 +396,24 @@
     (vector-set! b 3 (- (vector-ref b 3) k)))
   (define ($br-vlc b chunk)             ; basis variable-length count
     (let loop ((shift 0) (out 0))
+      ;; a count is a fixnum, which either chunk reaches by a shift of
+      ;; 28, so a longer run of continuation bits is malformed; refused
+      ;; before the shift, which takes any exact integer (ledger R76)
+      ;; and would otherwise compute the bignum of a payload shifted by
+      ;; however many bits the run held -- quadratic in its length -- for
+      ;; the check below to refuse.  The reference transcoder's
+      ;; decode_vlc stops at 32 as well
+      (when (>= shift 32) (error 'ktx "variable-length count too long" shift))
       (let* ((v ($br-bits b (+ chunk 1)))
              (out (+ out (bitwise-arithmetic-shift-left
                           (bitwise-and
                            v (- (bitwise-arithmetic-shift-left 1 chunk)
                                 1))
                           shift))))
+        ;; the shift takes any exact integer (ledger R76): a run of
+        ;; continuation bits makes the count a bignum, which every
+        ;; caller would use as a length, so it is refused here
+        (unless (fixnum? out) (error 'ktx "variable-length count past the fixnum range" out))
         (if (= 0 (bitwise-arithmetic-shift-right v chunk))
             out
             (loop (+ shift chunk) out)))))
@@ -427,6 +439,15 @@
                          (sum (+ l 1) (+ t (vector-ref counts l)))))))
         (let codes ((l 1) (code 0) (off 0))
           (when (<= l 16)
+            ;; a canonical code has at most 2^l codes of length l or
+            ;; less (Kraft); an over-subscribed table is malformed.  The
+            ;; shift below used to refuse such a table once its codes
+            ;; left the fixnum range; it takes any exact integer now
+            ;; (ledger R76), so the table is refused here, before it
+            ;; can reach a decode
+            (when (> (+ code (vector-ref counts l))
+                     (bitwise-arithmetic-shift-left 1 l))
+              (error 'ktx "over-subscribed huffman code lengths"))
             (vector-set! firsts l code)
             (vector-set! offs l off)
             (codes (+ l 1)

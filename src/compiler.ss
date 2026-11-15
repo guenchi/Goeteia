@@ -3112,7 +3112,9 @@
 ;;   (op zero-value unary)   unary: 'self or 'negate; #f zero-value
 ;;   means the zero-argument call has no answer and must fail.
 (define prim-nary
-  '((+ 0 self) (* 1 self) (- #f negate)))
+  '((+ 0 self) (* 1 self) (- #f negate)
+    (bitwise-and -1 with-zero) (bitwise-ior 0 with-zero)
+    (bitwise-xor 0 with-zero)))
 
 (define (nary? op) (and (assq op prim-nary) #t))
 (define (nary-zero op) (cadr (assq op prim-nary)))
@@ -4122,9 +4124,14 @@
                  (if zero zero (list '%unreachable))
                  (list 'if (list (intrinsic-for 'null?)
                                  (list (intrinsic-for 'cdr) a))
-                       (if (eq? (nary-unary name) 'negate)
-                           (list (intrinsic-for '-) 0 (list (intrinsic-for 'car) a))
-                           (list (intrinsic-for 'car) a))
+                       (case (nary-unary name)
+                         ((negate)
+                          (list (intrinsic-for '-) 0 (list (intrinsic-for 'car) a)))
+                         ;; the binary operation with its identity, so
+                         ;; the one argument is checked as two are
+                         ((with-zero)
+                          (list name zero (list (intrinsic-for 'car) a)))
+                         (else (list (intrinsic-for 'car) a)))
                        (list '%loop lp (list acc l)
                              (list (list (intrinsic-for 'car) a)
                                    (list (intrinsic-for 'cdr) a))
@@ -5276,6 +5283,79 @@
            (and a (= (length (cdr e)) (cdr a))))
          rop)))
 
+;; A typed left shift must not leave the fixnum range, so it is typed
+;; only when the compiler can bound it: a literal count k from 0 to 29
+;; and an operand whose magnitude is at most b -- a literal, a
+;; bitwise-and with a non-negative literal mask, a byte load, a
+;; remainder by a non-zero literal -- with bit-length(b) + k <= 29,
+;; that is b * 2^k < 2^29.  The test is written without expt so that
+;; the self-hosted compiler, whose fixnums stop at 2^29, gives the same
+;; bytes.
+(define (bit-length-of n)
+  (let loop ((n n) (k 0))
+    (if (= n 0) k (loop (quotient n 2) (+ k 1)))))
+(define (typed-shift-bound e locals)
+  (cond
+   ((i32-literal? e) (abs e))
+   ((not (pair? e)) #f)
+   ((eq? ($i32-prim-of e locals) 'bitwise-and)
+    (cond ((and (i32-literal? (caddr e)) (>= (caddr e) 0)) (caddr e))
+          ((and (i32-literal? (cadr e)) (>= (cadr e) 0)) (cadr e))
+          (else #f)))
+   ((eq? ($i32-prim-of e locals) '%mem-u8-ref) 255)
+   ((and (eq? ($i32-prim-of e locals) 'remainder)
+         (i32-literal? (caddr e)) (not (= (caddr e) 0)))
+    (- (abs (caddr e)) 1))
+   (else #f)))
+;; a literal the compiler can mask with in a typed tree: an i32 literal
+;; that is not negative, so the masked answer is a fixnum of its bits
+(define (mask-literal? e) (and (i32-literal? e) (>= e 0)))
+
+;; One operand of a typed bitwise-and whose other operand is the
+;; literal mask m.  A typed operand is compiled as any other; one that
+;; is not is evaluated on the generic path and tested once: an i31 is
+;; unwrapped, and anything else goes to the prelude's $band2 with m,
+;; whose answer -- within m's bits, or a raise for an operand that is
+;; not an exact integer -- is a fixnum and is unwrapped.  The tree then
+;; ands with m as always, which changes nothing on the slow path.
+(define (compile-and-operand x m locals cell)
+  (if (i32-expr? x locals)
+      (compile-i32 x locals cell)
+      (let ((t (fresh-local! cell)))
+        (list (compile-exp x locals cell #f) (local-set t)
+              ;; a fixnum: an i31 whose low bit is clear (a character is
+              ;; an i31 with it set, and goes to $band2, which refuses it)
+              (local-get t) (gc-op #x14 T-I31)
+              #x04 T-I32
+              (local-get t) (untag) (i32const 1) #x71 OP-I32-EQZ
+              #x05 (i32const 0) #x0B
+              #x04 T-I32
+              (local-get t) (unwrap-int)
+              #x05
+              (local-get t) (emit-fixnum m) (generic-call '$band2) (unwrap-int)
+              #x0B))))
+
+;; the two operands of a typed tree's binary operation, in source order
+(define (compile-i32-operands rop e locals cell)
+  (if (and (eq? rop 'bitwise-and)
+           (not (and (i32-expr? (cadr e) locals)
+                     (i32-expr? (caddr e) locals))))
+      (if (mask-literal? (caddr e))
+          (let* ((a (compile-and-operand (cadr e) (caddr e) locals cell))
+                 (b (compile-i32 (caddr e) locals cell)))
+            (list a b))
+          (let* ((a (compile-i32 (cadr e) locals cell))
+                 (b (compile-and-operand (caddr e) (cadr e) locals cell)))
+            (list a b)))
+      (let* ((a (compile-i32 (cadr e) locals cell))
+             (b (compile-i32 (caddr e) locals cell)))
+        (list a b))))
+
+(define (typed-shift-fits? x k locals)
+  (and (i32-literal? k) (>= k 0) (< k 30)
+       (let ((b (typed-shift-bound x locals)))
+         (and b (<= (+ (bit-length-of b) k) 29)))))
+
 (define (i32-expr? e locals)
   (cond
    ((i32-literal? e) #t)
@@ -5283,10 +5363,27 @@
    ((pair? e)
     (or (i32-if? e locals)
         (case ($i32-prim-of e locals)
-          ((bitwise-and bitwise-ior bitwise-xor
-            bitwise-arithmetic-shift-right
-            bitwise-arithmetic-shift-left
-            %mem-u8-ref) #t)
+          ((%mem-u8-ref) #t)
+          ;; a bitwise form is a typed tree only over typed operands,
+          ;; as remainder is: its operands are then machine integers
+          ;; in the fixnum range, and so is its result (ledger R76)
+          ((bitwise-ior bitwise-xor bitwise-arithmetic-shift-right)
+           (and (i32-expr? (cadr e) locals)
+                (i32-expr? (caddr e) locals)))
+          ;; and with a non-negative literal mask is a typed tree whatever
+          ;; the other operand: its answer lies within the mask's bits, a
+          ;; fixnum, so an operand that is not typed becomes a typed leaf
+          ;; (compile-and-operand) -- amendment 1 of R76
+          ((bitwise-and)
+           (or (and (i32-expr? (cadr e) locals)
+                    (i32-expr? (caddr e) locals))
+               (mask-literal? (cadr e))
+               (mask-literal? (caddr e))))
+          ;; a left shift only where it cannot leave that range
+          ((bitwise-arithmetic-shift-left)
+           (and (i32-expr? (cadr e) locals)
+                (i32-expr? (caddr e) locals)
+                (typed-shift-fits? (cadr e) (caddr e) locals)))
           ((remainder)
            (and (i32-expr? (cadr e) locals)
                 (i32-expr? (caddr e) locals)))
@@ -5316,17 +5413,16 @@
                 #x2D (uleb 0) (uleb 0))
           ;; compile in source order: codegen effects must not
           ;; depend on the host's argument evaluation order
-          (let* ((a (compile-i32 (cadr e) locals cell))
-                 (b (compile-i32 (caddr e) locals cell)))
+          (let ((ab (compile-i32-operands rop e locals cell)))
             (case rop
-              ((bitwise-and) (list a b #x71))
-              ((bitwise-ior) (list a b #x72))
-              ((bitwise-xor) (list a b #x73))
+              ((bitwise-and) (list ab #x71))
+              ((bitwise-ior) (list ab #x72))
+              ((bitwise-xor) (list ab #x73))
               ((bitwise-arithmetic-shift-right bitwise-arithmetic-shift-left)
-               (list a b (checked-shift rop cell)))
-              ((remainder) (list a b (checked-remainder cell)))
+               (list ab (checked-shift rop cell)))
+              ((remainder) (list ab (checked-remainder cell)))
               ;; i32-expr? takes a quotient only by a positive literal
-              ((quotient) (list a b #x6D)))))))
+              ((quotient) (list ab #x6D)))))))
    (else (list (compile-exp e locals cell #f) (unwrap-int)))))
 
 ;; the prims that route through the context whatever their
@@ -5335,19 +5431,144 @@
 (define i32-context-prims
   '(bitwise-and bitwise-ior bitwise-xor
     bitwise-arithmetic-shift-left bitwise-arithmetic-shift-right))
+;; A direct call of one of the five.  A typed tree -- every operand
+;; typed, and a left shift that cannot overflow (i32-expr?) -- is the
+;; machine operation on machine integers, as it always was.  Any other
+;; call takes exact integers of any size (ledger R76): two operands go
+;; through bitwise2, and bitwise-and, -ior and -xor take any number,
+;; folded two at a time, with the answers prim-nary gives for none and
+;; one.  The shifts take exactly two.
 (define (compile-i32-prim op args locals cell)
-  (let ((expect (assq op prim-arity)))
-    (unless (= (length args) (cdr expect))
-      (errorf 'goeteia "wrong argument count for primitive:" op)))
-  (let* ((a (compile-i32 (car args) locals cell))
-         (b (compile-i32 (cadr args) locals cell)))
-    (list a b
-          (case op
-            ((bitwise-and) #x71)
-            ((bitwise-ior) #x72)
-            ((bitwise-xor) #x73)
-            (else (checked-shift op cell)))
-          (wrap-int))))
+  (let ((n (length args)))
+    (cond
+     ((and (= n 2) (i32-expr? (cons op args) locals))
+      (let ((ab (compile-i32-operands op (cons op args) locals cell)))
+        (list ab
+              (case op
+                ((bitwise-and) #x71)
+                ((bitwise-ior) #x72)
+                ((bitwise-xor) #x73)
+                (else (checked-shift op cell)))
+              (wrap-int))))
+     ((or (= n 2) (nary? op))
+      ;; arguments compile once, in source order
+      (let ((argc (map-in-order (lambda (a) (compile-exp a locals cell #f))
+                                args)))
+        (cond
+         ((= n 0) (emit-fixnum (nary-zero op)))
+         ((= n 1) (bitwise2 op (emit-fixnum (nary-zero op)) (car argc) cell))
+         (else
+          (let fold ((code (car argc)) (rest (cdr argc)))
+            (if (null? rest)
+                code
+                (fold (bitwise2 op code (car rest) cell) (cdr rest))))))))
+     (else (errorf 'goeteia "wrong argument count for primitive:" op)))))
+
+;; One of the five on two operands of any kind, the eqrefs acode and
+;; bcode leave.  Both fixnums is the fast path inline: and, ior and xor
+;; straight on the tagged values, whose low bit stays clear; the left
+;; shift when the count is 0 to 29 and the result a fixnum, which it
+;; tests as checked-shift does; the right shift when the count is not
+;; negative, a count of 31 or more answering by the sign.  Everything
+;; else -- a bignum, an overflowing or negative shift, a value that is
+;; not an exact integer -- calls the prelude's two-operand procedure,
+;; which answers exactly or raises.
+;;
+;; The layout keeps the fast path short (amendment 3 of R76).  Each
+;; operand is tested and cast in one step by br_on_cast, so the fast
+;; path holds no second test; every way off it is a branch to the end
+;; of one block, after which the call is emitted once:
+;;
+;;   block $out (result eqref)
+;;     block $slow
+;;       block (result i31ref) ta; br_on_cast 0 eq->i31; drop; br 1 end
+;;       i31.get_s -> ra
+;;       block (result i31ref) tb; br_on_cast 0 eq->i31; drop; br 1 end
+;;       i31.get_s -> rb
+;;       (ra | rb) & 1, br_if 0: a character is an i31 with the low bit set
+;;       the operation on ra and rb, br_if 0 where it cannot answer
+;;       br 1 (to $out, with the answer)
+;;     end
+;;     ta tb call the procedure
+;;   end
+(define (bitwise2 op acode bcode cell)
+  (let ((ta (fresh-local! cell)))
+   (let ((tb (fresh-local! cell)))
+    (let ((ra (i32-scratch! cell)))
+     (let ((rb (i32-scratch! cell)))
+      (define (raw t r)
+        (list #x02 T-I31
+              (local-get t)
+              ;; br_on_cast, flags 1: the input may be null, the output
+              ;; not; the label is the enclosing block, eq to i31
+              (gc-op #x18) #x01 (uleb 0) T-EQREF T-I31
+              #x1A
+              #x0C (uleb 1)
+              #x0B
+              (gc-op #x1D) (local-set r)))
+      (list acode (local-set ta) bcode (local-set tb)
+            #x02 T-EQREF
+            #x02 #x40
+            (raw ta ra)
+            (raw tb rb)
+            ;; a character is an i31 too, told from a fixnum by its low
+            ;; bit: either one set goes to the procedure, which refuses
+            ;; it (amendment 4 of R76)
+            (local-get ra) (local-get rb) #x72 (i32const 1) #x71
+            #x0D (uleb 0)
+            (case op
+              ((bitwise-and bitwise-ior bitwise-xor)
+               (list (local-get ra) (local-get rb)
+                     (case op
+                       ((bitwise-and) #x71)
+                       ((bitwise-ior) #x72)
+                       (else #x73))
+                     (gc-op #x1C)))
+              (else (fast-shift op ra rb cell)))
+            #x0C (uleb 1)
+            #x0B
+            (local-get ta) (local-get tb)
+            (generic-call (case op
+                            ((bitwise-and) '$band2)
+                            ((bitwise-ior) '$bior2)
+                            ((bitwise-xor) '$bxor2)
+                            ((bitwise-arithmetic-shift-left) '$shl2)
+                            (else '$shr2)))
+            #x0B))))))
+
+;; the fast path of a shift of the raw tagged fixnums in ra and rb,
+;; inside bitwise2's $slow block: it leaves the eqref answer, or
+;; branches to the end of that block (br_if 0) where it cannot answer.
+;; As in checked-shift, one local per let.
+(define (fast-shift op ra rb cell)
+  (let ((n (i32-scratch! cell)))
+   (let ((k (i32-scratch! cell)))
+    ;; n sign-extended, shifted by k, in 64 bits
+    (define (wide)
+      (list (local-get n) #xAC (local-get k) #xAD #x86))
+    (list
+     (local-get ra) (i32const 1) #x75 (local-set n)
+     (local-get rb) (i32const 1) #x75 (local-set k)
+     (if (eq? op 'bitwise-arithmetic-shift-left)
+         (list
+          ;; a count from 0 to 29, unsigned
+          (local-get k) (i32const 30) #x4F #x0D (uleb 0)
+          ;; the result fits 32 bits, and then bits 29 to 31 agree, as
+          ;; in checked-shift
+          (wide) (wide) #xC4 #x52 #x0D (uleb 0)
+          (wide) #xA7 (i32const 29) #x75
+          (wide) #xA7 (i32const 31) #x75
+          #x47 #x0D (uleb 0)
+          (wide) #xA7 (wrap-int))
+         (list
+          (local-get k) (i32const 0) #x48 #x0D (uleb 0)
+          ;; select keeps k when k < 31, unsigned, and 31 otherwise
+          (local-get n)
+          (local-get k) (i32const 31)
+          (local-get k) (i32const 31) #x49
+          #x1B
+          #x75
+          (wrap-int)))))))
 
 ;; i32.rem_s of two raw i32s on the stack, with a zero divisor sent to
 ;; the prelude's generic remainder, which raises the condition naming
@@ -6175,7 +6396,8 @@
 ;; test/defect-spec-candidate-by-name.mjs.
 (define $spec-denylist
   '($add2 $sub2 $mul2 $quot2 $rem2 $eq2 $lt2 $escape
-    $shl-refused $shr-refused $record-is-a?))
+    $shl-refused $shr-refused $record-is-a?
+    $band2 $bior2 $bxor2 $shl2 $shr2))
 
 (define (compute-fn-specs! fn-defs main-steps)
   (set! *fn-specs* '())
@@ -7126,8 +7348,11 @@
         (cons '= '(begin $eq2))
         (cons '< '(begin $lt2))
         (cons 'zero? '(begin $eq2))
-        (cons 'bitwise-arithmetic-shift-left '(begin $shl-refused))
-        (cons 'bitwise-arithmetic-shift-right '(begin $shr-refused))))
+        (cons 'bitwise-and '(begin $band2))
+        (cons 'bitwise-ior '(begin $bior2))
+        (cons 'bitwise-xor '(begin $bxor2))
+        (cons 'bitwise-arithmetic-shift-left '(begin $shl-refused $shl2))
+        (cons 'bitwise-arithmetic-shift-right '(begin $shr-refused $shr2))))
 
 (define (prune-dead forms extra-roots)
   (let ((table (fold-left (lambda (acc f)

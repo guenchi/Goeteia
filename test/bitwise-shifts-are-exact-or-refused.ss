@@ -15,21 +15,21 @@
 ;; operand whose shifted RESULT does not fit was never covered by that,
 ;; and wrapped silently.
 ;;
-;; THE RULE.  The bitwise operations here work on fixnums, which run
-;; from -2^29 to 2^29 - 1 (the i31 representation; (fixnum? 2^29) is
-;; #f, measured).  A left shift whose exact result is outside that range
-;; is refused, catchably, naming bitwise-arithmetic-shift-left; it is not
-;; promoted to a bignum, because no other bitwise operation here takes a
-;; bignum.  A right shift by 31 or more answers 0 or -1 by the sign,
-;; which is its exact result.  A negative count is refused by either.
-;; Refusal happens when the shift is evaluated, not at compile time: a
-;; constant shift that would overflow may sit in a branch never taken.
+;; THE RULE, since batch M50 (ledger R76).  A shift answers its exact
+;; result, a bignum when the result leaves the fixnum range, -2^29 to
+;; 2^29 - 1: (shl 1 29) is 536870912.  From 2026-10-22 until M50 such a
+;; left shift was refused instead, because no other bitwise operation
+;; here took a bignum; now they all do.  A right shift by 31 or more
+;; answers 0 or -1 by the sign.  A negative count is refused by either,
+;; naming the procedure, when the shift is evaluated: a constant shift
+;; with a negative count may sit in a branch never taken.
 ;;
 ;; MEASURED BEFORE THE CHANGE: compiled to JS with a check on every left
 ;; shift, the 368 .ss cells of this tree performed no overflowing shift
 ;; (91 cells compile one in; the decoders run tens of thousands of them,
 ;; the widest result 21 bits, and the GLB cells' string hashes 29 bits).
-;; So refusing changes no existing cell's result.
+;; So refusing changed no existing cell's result then, and the exact
+;; answer changes none now.
 ;;
 ;; ROUTES, each with rows: operands from a mutable cell (no constant
 ;; folding); literal operands, including one in a branch never taken;
@@ -37,20 +37,24 @@
 ;; through a computed operator; and the shift consumed as a raw 32-bit
 ;; value by the wasm back end's other consumers -- bitwise and/ior/xor,
 ;; a comparison, a let-bound integer, a quotient, a conditional arm --
-;; where the fixnum bound must be the same as in the boxed path.
+;; where the answer must be the same exact integer as in the boxed path.
 ;;
 ;; WHAT THE CENSUS CANNOT SEE, and why one row is here: it covered the
 ;; test fixtures.  A crafted or malformed asset can drive a decoder's
 ;; shift past the fixnum range -- meshopt's varint reader allows a
 ;; shift of 28, so a fifth byte of 2 gives 2 << 28 -- and there the old
-;; behaviour decoded a wrapped value silently.  Under the rule it
-;; refuses.  That is a change, and a wanted one: a malformed asset is an
-;; error, not a different mesh.  The KTX VLC accumulator and zstd's
-;; ($shl 1 ofc) have the same shape and are not exercised here.
+;; behaviour decoded a wrapped value silently.  It is refused: a
+;; malformed asset is an error, not a different mesh.  Until M50 the
+;; shift itself refused it; since M50 the shift answers 2^29 and the
+;; decoder refuses the value by its own range check.  The KTX VLC
+;; accumulator and zstd's ($shl 1 ofc) have the same shape and are not
+;; exercised here.
 ;;
-;; DELIBERATELY ABSENT: operands or counts that are not fixnums (a
-;; flonum count, a bignum operand).  Their error contract is not part
-;; of this change.
+;; Big operands, n-ary forms and what raises for each of the five are in
+;; test/bitwise-on-any-exact-integer.ss.
+;;
+;; ON THE TREE BEFORE M50 the rows that answer an exact integer answer
+;; (refused bitwise-arithmetic-shift-left).
 (import (rnrs) (gfx meshopt))
 
 (define fails '())
@@ -70,17 +74,17 @@
 (want "CONTROL -1 << 29, the least fixnum" (try (lambda () (shl (id -1) (id 29)))) -536870912)
 (want "CONTROL 3 << 26" (try (lambda () (shl (id 3) (id 26)))) 201326592)
 (want "CONTROL 0 << 100 is 0" (try (lambda () (shl (id 0) (id 100)))) 0)
-(want "1 << 29 does not fit and is refused" (try (lambda () (shl (id 1) (id 29)))) '(refused bitwise-arithmetic-shift-left))
-(want "3 << 29 is refused" (try (lambda () (shl (id 3) (id 29)))) '(refused bitwise-arithmetic-shift-left))
-(want "-3 << 28 is below the least fixnum and refused" (try (lambda () (shl (id -3) (id 28)))) '(refused bitwise-arithmetic-shift-left))
-(want "1 << 32 is refused, not taken modulo 32" (try (lambda () (shl (id 1) (id 32)))) '(refused bitwise-arithmetic-shift-left))
-(want "1 << 40 is refused" (try (lambda () (shl (id 1) (id 40)))) '(refused bitwise-arithmetic-shift-left))
+(want "1 << 29 does not fit and is the exact integer" (try (lambda () (shl (id 1) (id 29)))) 536870912)
+(want "3 << 29 is exact" (try (lambda () (shl (id 3) (id 29)))) 1610612736)
+(want "-3 << 28 is below the least fixnum: the exact integer" (try (lambda () (shl (id -3) (id 28)))) -805306368)
+(want "1 << 32 is 2^32, not taken modulo 32" (try (lambda () (shl (id 1) (id 32)))) 4294967296)
+(want "1 << 40 is exact" (try (lambda () (shl (id 1) (id 40)))) 1099511627776)
 (want "a negative left count is refused" (try (lambda () (shl (id 1) (id -1)))) '(refused bitwise-arithmetic-shift-left))
 
 ;; ---- left shift, literal operands ----
 (want "CONTROL literal 1 << 5" (try (lambda () (shl 1 5))) 32)
-(want "literal 1 << 32 is refused when evaluated" (try (lambda () (bitwise-arithmetic-shift-left 1 32))) '(refused bitwise-arithmetic-shift-left))
-(want "literal 1 << 29 is refused when evaluated" (try (lambda () (bitwise-arithmetic-shift-left 1 29))) '(refused bitwise-arithmetic-shift-left))
+(want "literal 1 << 32 is the exact integer" (try (lambda () (bitwise-arithmetic-shift-left 1 32))) 4294967296)
+(want "literal 1 << 29 is the exact integer" (try (lambda () (bitwise-arithmetic-shift-left 1 29))) 536870912)
 
 ;; ---- zero counts, and a zero operand with a negative count ----
 (want "CONTROL 5 << 0" (try (lambda () (shl (id 5) (id 0)))) 5)
@@ -93,38 +97,28 @@
       (try (lambda () (if (id #f) (bitwise-arithmetic-shift-left 1 40) 'fine))) 'fine)
 
 ;; ---- the shift as a procedure value ----
-(want "through apply, 1 << 29 is refused" (try (lambda () (apply bitwise-arithmetic-shift-left (list (id 1) (id 29))))) '(refused bitwise-arithmetic-shift-left))
+(want "through apply, 1 << 29 is exact" (try (lambda () (apply bitwise-arithmetic-shift-left (list (id 1) (id 29))))) 536870912)
 (want "CONTROL through apply, 1 << 5" (try (lambda () (apply bitwise-arithmetic-shift-left (list (id 1) (id 5))))) 32)
-(want "through a computed operator, 1 << 29 is refused"
-      (try (lambda () ((if (id #t) bitwise-arithmetic-shift-left bitwise-arithmetic-shift-right) (id 1) (id 29)))) '(refused bitwise-arithmetic-shift-left))
+(want "through a computed operator, 1 << 29 is exact" (try (lambda () ((if (id #t) bitwise-arithmetic-shift-left bitwise-arithmetic-shift-right) (id 1) (id 29)))) 536870912)
 (want "CONTROL each operand is evaluated once"
       (let ((n 0)) (define (op x) (set! n (+ n 1)) x) (shl (op 1) (op 5)) n) 2)
 
 ;; ---- left shift inside a chain of bitwise operations ----
 (want "CONTROL a fitting shift inside a chain" (try (lambda () (bitwise-and (bitwise-arithmetic-shift-left (id 3) (id 4)) (id 255)))) 48)
-(want "an overflowing shift inside a chain is refused, not masked"
-      (try (lambda () (bitwise-and (bitwise-arithmetic-shift-left (id 1) (id 32)) (id 255)))) '(refused bitwise-arithmetic-shift-left))
-(want "an overflowing shift under ior is refused"
-      (try (lambda () (bitwise-ior (bitwise-arithmetic-shift-left (id 5) (id 28)) (id 1)))) '(refused bitwise-arithmetic-shift-left))
+(want "an overflowing shift inside a chain answers exactly" (try (lambda () (bitwise-and (bitwise-arithmetic-shift-left (id 1) (id 32)) (id 255)))) 0)
+(want "an overflowing shift under ior is exact" (try (lambda () (bitwise-ior (bitwise-arithmetic-shift-left (id 5) (id 28)) (id 1)))) 1342177281)
 
-(want "1 << 29 under and is refused: the raw path keeps the fixnum bound"
-      (try (lambda () (bitwise-and (bitwise-arithmetic-shift-left (id 1) (id 29)) (id 255)))) '(refused bitwise-arithmetic-shift-left))
-(want "-3 << 28 under and is refused"
-      (try (lambda () (bitwise-and (bitwise-arithmetic-shift-left (id -3) (id 28)) (id 255)))) '(refused bitwise-arithmetic-shift-left))
-(want "an overflowing shift under xor is refused"
-      (try (lambda () (bitwise-xor (bitwise-arithmetic-shift-left (id 1) (id 29)) (id 1)))) '(refused bitwise-arithmetic-shift-left))
+(want "1 << 29 under and: the exact integer, masked" (try (lambda () (bitwise-and (bitwise-arithmetic-shift-left (id 1) (id 29)) (id 255)))) 0)
+(want "-3 << 28 under and is the exact integer" (try (lambda () (bitwise-and (bitwise-arithmetic-shift-left (id -3) (id 28)) (id 255)))) 0)
+(want "an overflowing shift under xor is exact" (try (lambda () (bitwise-xor (bitwise-arithmetic-shift-left (id 1) (id 29)) (id 1)))) 536870913)
 (want "a negative count under and is refused"
       (try (lambda () (bitwise-and (bitwise-arithmetic-shift-left (id 1) (id -1)) (id 255)))) '(refused bitwise-arithmetic-shift-left))
 (want "a negative right count under and is refused"
       (try (lambda () (bitwise-and (bitwise-arithmetic-shift-right (id 1024) (id -1)) (id 255)))) '(refused bitwise-arithmetic-shift-right))
-(want "an overflowing shift compared is refused"
-      (try (lambda () (< (bitwise-arithmetic-shift-left (id 1) (id 29)) (id 5)))) '(refused bitwise-arithmetic-shift-left))
-(want "an overflowing shift bound by let is refused"
-      (try (lambda () (let ((v (bitwise-arithmetic-shift-left (id 1) (id 29)))) (+ v 1)))) '(refused bitwise-arithmetic-shift-left))
-(want "an overflowing shift as a quotient operand is refused"
-      (try (lambda () (quotient (bitwise-arithmetic-shift-left (id 1) (id 29)) (id 2)))) '(refused bitwise-arithmetic-shift-left))
-(want "an overflowing shift in a conditional arm under and is refused"
-      (try (lambda () (bitwise-and (if (id #t) (bitwise-arithmetic-shift-left (id 1) (id 29)) (id 0)) (id 255)))) '(refused bitwise-arithmetic-shift-left))
+(want "an overflowing shift compared is exact" (try (lambda () (< (bitwise-arithmetic-shift-left (id 1) (id 29)) (id 5)))) #f)
+(want "an overflowing shift bound by let is exact" (try (lambda () (let ((v (bitwise-arithmetic-shift-left (id 1) (id 29)))) (+ v 1)))) 536870913)
+(want "an overflowing shift as a quotient operand is exact" (try (lambda () (quotient (bitwise-arithmetic-shift-left (id 1) (id 29)) (id 2)))) 268435456)
+(want "an overflowing shift in a conditional arm under and is the exact integer" (try (lambda () (bitwise-and (if (id #t) (bitwise-arithmetic-shift-left (id 1) (id 29)) (id 0)) (id 255)))) 0)
 
 ;; ---- right shift ----
 (want "CONTROL 1024 >> 3" (try (lambda () (shr (id 1024) (id 3)))) 128)

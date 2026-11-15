@@ -275,6 +275,11 @@
             (when (> w 0) (set! ws (+ ws ($shl 1 (- w 1))))))
           (s (+ i 1))))
       (let* ((mx (+ 1 ($hb ws)))
+             ;; a Huffman code is at most 11 bits long.  A weight read
+             ;; from a malformed stream can be any FSE symbol, and the
+             ;; shift above takes any exact integer (ledger R76), so mx
+             ;; can be anything; the tables below are 2^mx long
+             (mx (if (> mx 11) (error 'zstd "huffman code longer than 11 bits" mx) mx))
              (left (- ($shl 1 mx) ws))
              (lastw (+ 1 ($hb left)))
              (n (+ nsym 1))

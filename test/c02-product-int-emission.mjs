@@ -23,6 +23,27 @@
 //         of: taking car/cdr off the primitive arm makes the compiler
 //         refuse the program rather than emit a slower one.  Its row
 //         pins the structure and says so.
+//
+// SINCE BATCH M50 (ledger R76, design (III) with amendments 1-4) a
+// bitwise form is an i32 tree only over typed operands -- literals, typed
+// slots, byte loads, nested typed operations -- or as a bitwise-and with a
+// fixnum literal mask, whose answer is a fixnum whatever its other operand
+// is.  mix's x is a parameter, so its nested expression is no longer a
+// tree and its intermediate is boxed; the row that showed the raw
+// intermediate is now mixb's, which threads the same expression through
+// two byte loads.  Measured by main on the branch (11-15) and against a
+// mutant whose i32-expr? answers #f:
+//   mixb  ref.i31 8, i31.get 16, call 6; the mutant 12, 22, 8.
+//   gate  its (bitwise-and x 7) is a masked tree again, so the comparison
+//         in test position stays off the generic primitive: call 4,
+//         ref.i31 4 (one call and one tag more than before M50: the masked
+//         leaf's slow branch; i31.get 11); the mutant 5, 6.
+//   mix   ref.i31 8, i31.get 15: its (bitwise-and x 255) is a masked
+//         leaf, and the leaf tests the low bit (a character is an i31 too,
+//         amendment 4), one i31.get more than the mutant's 8, 14.  Its
+//         nested xor is not a tree, so the row pins the structure.
+//   bump  ref.i31 7, call 6, the same under the mutant: the control
+//         (i31.get 17, the mutant 16, not pinned).
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
@@ -43,22 +64,28 @@ test('the walker consumes every function body exactly', () => {
     assert.equal(clean, total, `walker desynced on ${total - clean} of ${total} bodies`);
 });
 
-test('mix keeps its nested bitwise intermediate raw', () => {
+test('mixb keeps its nested bitwise intermediate raw', () => {
+    const r = m.inspect('mixb'); assert.ok(r && r.clean, 'mixb missing');
+    assert.equal(r.count(REF_I31), 8, `mixb tags ${r.count(REF_I31)} times`);
+    assert.equal(r.count(I31_GET), 16, `mixb untags ${r.count(I31_GET)} times`);
+});
+
+test('mix, whose operand is a parameter, is on the generic path (structure only)', () => {
     const r = m.inspect('mix'); assert.ok(r && r.clean, 'mix missing');
-    assert.equal(r.count(REF_I31), 6, `mix tags ${r.count(REF_I31)} times`);
-    assert.equal(r.count(I31_GET), 10, `mix untags ${r.count(I31_GET)} times`);
+    assert.equal(r.count(REF_I31), 8, `mix tags ${r.count(REF_I31)} times`);
+    assert.equal(r.count(I31_GET), 15, `mix untags ${r.count(I31_GET)} times`);
 });
 
 test('gate compares in test position without the generic primitive', () => {
     const r = m.inspect('gate'); assert.ok(r && r.clean, 'gate missing');
-    assert.equal(r.count(OP.call), 3, `gate makes ${r.count(OP.call)} calls`);
-    assert.equal(r.count(REF_I31), 3, `gate tags ${r.count(REF_I31)} times`);
+    assert.equal(r.count(OP.call), 4, `gate makes ${r.count(OP.call)} calls`);
+    assert.equal(r.count(REF_I31), 4, `gate tags ${r.count(REF_I31)} times`);
 });
 
 test('bump, on the generic path, is what it was (control)', () => {
     const r = m.inspect('bump'); assert.ok(r && r.clean, 'bump missing');
-    assert.equal(r.count(REF_I31), 6);
-    assert.equal(r.count(OP.call), 5);
+    assert.equal(r.count(REF_I31), 7);
+    assert.equal(r.count(OP.call), 6);
 });
 
 test('second reads both pair fields directly (structure only; no degrading mutant known)', () => {

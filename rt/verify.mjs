@@ -1308,11 +1308,12 @@ export function assertCheckKeys(checks) {
 // a new trap is a new row, not a change to the pipeline.
 const TRAP_HINTS = [
     [/illegal cast/i,
-     'a wasm type assertion failed.  The usual cause is a value that left the '
-     + 'i31 fixnum range (|x| >= 2^30) and then entered a path that accepts only '
-     + 'fixnums -- bitwise operators, %mem-* accessors, character and index '
-     + 'conversions all do.  Keep large numbers on the flonum side, or use a '
-     + 'lookup table; do not do 32-bit bitwise arithmetic on big integers'],
+     'a wasm type assertion failed: a value of one kind reached an operation '
+     + 'that takes another -- car or cdr of something that is not a pair, '
+     + 'vector-ref of something that is not a vector, or a number past the i31 '
+     + 'fixnum range (|x| >= 2^29) used as an index, a %mem-* address or a '
+     + 'character.  The bitwise operators take exact integers of any size, so '
+     + 'a big number reaches such a path only through code that uses it as one'],
     [/array element access out of bounds|out of bounds/i,
      'a vector or string index went out of bounds.  Check whether the loop bound '
      + 'is the length or the last index'],

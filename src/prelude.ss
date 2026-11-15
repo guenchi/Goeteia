@@ -2781,11 +2781,13 @@
 ;; The compiler's inline fixnum paths call $add2/$sub2/$mul2/$quot2/
 ;; $rem2/$lt2/$eq2 on overflow or non-fixnum operands.
 
-;; The inline arithmetic shifts call these when they cannot answer
-;; exactly: a left shift whose result is not a fixnum, or a negative
-;; count for either.  The bitwise operations take fixnums only, so the
-;; answer is a refusal and not a bignum; it is a condition naming the
-;; procedure, so a guard can catch it.
+;; A shift inside a typed tree (checked-shift in src/compiler.ss) calls
+;; these when it cannot answer: a negative count for either.  A typed
+;; left shift is typed only where it cannot overflow, so the second
+;; branch of $shl-refused is a guard that does not fire; an overflowing
+;; shift outside a typed tree goes to $shl2 below and answers the exact
+;; integer (ledger R76).  The condition names the procedure, so a guard
+;; can catch it.
 (define ($shl-refused n k)
   (if (< k 0)
       (assertion-violation 'bitwise-arithmetic-shift-left "negative shift count" n k)
@@ -2793,6 +2795,45 @@
                           "the shifted value is not a fixnum" n k)))
 (define ($shr-refused n k)
   (assertion-violation 'bitwise-arithmetic-shift-right "negative shift count" n k))
+
+;; The five bitwise operations on exact integers of any size (ledger
+;; R76).  A direct call of two fixnums is answered inline; these take
+;; everything else -- a bignum operand, an overflowing left shift, a
+;; negative count, an operand that is not an exact integer -- and the
+;; value forms and other arities reach them through the inline paths.
+;;
+;; and, ior and xor go by 28-bit chunks: floor division and modulo by
+;; 2^28 split an integer into its low chunk and the rest, for negative
+;; integers as for positive ones (an integer read as an infinite two's
+;; complement string), so each chunk is a fixnum the fixnum operation
+;; takes.  When both rests are 0 or -1 the operation on them gives the
+;; sign of everything above, and the result is reassembled with * and +.
+(define ($exact-integer? x) (or (fixnum? x) (%bignum? x)))
+(define ($bitwise-check who x)
+  (unless ($exact-integer? x)
+    (assertion-violation who "not an exact integer" x)))
+(define ($bitwise-chunks who op a b)
+  ($bitwise-check who a)
+  ($bitwise-check who b)
+  (let loop ((a a) (b b) (scale 1) (acc 0))
+    (if (and (or (eqv? a 0) (eqv? a -1)) (or (eqv? b 0) (eqv? b -1)))
+        (+ acc (* scale (op a b)))
+        (loop (div a 268435456) (div b 268435456) (* scale 268435456)
+              (+ acc (* scale (op (mod a 268435456) (mod b 268435456))))))))
+(define ($band2 a b)
+  ($bitwise-chunks 'bitwise-and (lambda (x y) (bitwise-and x y)) a b))
+(define ($bior2 a b)
+  ($bitwise-chunks 'bitwise-ior (lambda (x y) (bitwise-ior x y)) a b))
+(define ($bxor2 a b)
+  ($bitwise-chunks 'bitwise-xor (lambda (x y) (bitwise-xor x y)) a b))
+(define ($shl2 n k)
+  ($bitwise-check 'bitwise-arithmetic-shift-left n)
+  ($bitwise-check 'bitwise-arithmetic-shift-left k)
+  (if (< k 0) ($shl-refused n k) (bitwise-arithmetic-shift n k)))
+(define ($shr2 n k)
+  ($bitwise-check 'bitwise-arithmetic-shift-right n)
+  ($bitwise-check 'bitwise-arithmetic-shift-right k)
+  (if (< k 0) ($shr-refused n k) (bitwise-arithmetic-shift n (- 0 k))))
 
 (define ($bn-limbs-of n)                ; fixnum magnitude -> limb vector
   (let count ((m n) (k 0))

@@ -1694,8 +1694,8 @@ images; interlacing and 16-bit samples are named refusals.
 from staging or a bytevector, output is RGBA8 at a staging base —
 exactly the shape `rimg` samples and `render-textured!` writes —
 and `inflate!`, `zlib-inflate!`, `crc32` and `adler32` are exported
-on their own.  All 32-bit arithmetic rides 16-bit halves, clear of
-the fixnum bitwise bound.
+on their own.  All 32-bit arithmetic rides 16-bit halves, inside the
+fixnum range, where a bitwise operation is answered inline.
 
 Two contracts are easy to trip over. First, **these entry points
 return multiple values, not aggregates**: `png-info` hands back three

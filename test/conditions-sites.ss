@@ -127,11 +127,10 @@
       (guard (c (#t 'raised))
         (site (lambda () (bitwise-arithmetic-shift-right 1 -1))))
       '(assertion #f #t #f #t #t))
-;; OWN: Chez answers no-condition
 (want 'shift-left-out-of-the-fixnum-range
       (guard (c (#t 'raised))
         (site (lambda () (bitwise-arithmetic-shift-left 1 100))))
-      '(implementation-restriction #f #t #f #t #t))
+      'no-condition)
 (want 'div-by-zero
       (guard (c (#t 'raised))
         (site (lambda () (div 1 0))))

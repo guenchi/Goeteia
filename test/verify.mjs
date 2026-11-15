@@ -127,9 +127,11 @@ test('a run-time trap lands on the smoke stage with the Scheme-level cause', asy
     assert.equal(r.stage, 'smoke');
     const [e] = r.errors;
     assert.match(e.message, /illegal cast/);
-    // "illegal cast" says nothing; the hint has to name what it means here
+    // "illegal cast" says nothing; the hint has to name what it means here.
+    // Since batch M50 the page traps on car of a number, so the hint must
+    // name that; the fixnum range stays among the causes it names.
+    assert.match(e.hint, /not a pair/);
     assert.match(e.hint, /i31 fixnum range/);
-    assert.match(e.hint, /bitwise/);
 });
 
 test('a rendering program that never draws lands on the draw stage', async () => {
