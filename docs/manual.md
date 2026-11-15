@@ -898,6 +898,8 @@ Scheme closures automatically convert to callable JS functions:
 ; now JS can call globalThis.myCallback(5), which calls the Scheme closure
 ```
 
+A JavaScript caller passes as many arguments as it likes: an event handler is handed the event, `requestAnimationFrame` a timestamp, `forEach` the element, its index and the array. So a Scheme procedure called from JavaScript takes the arguments it accepts and the rest are dropped, as they are for a JavaScript function: `(lambda () ...)` and `(lambda (e) ...)` both work as event handlers. One that needs more arguments than it is given is not run; the failure goes to `js-callback-error!` (by default, a line on the console). Calls between Scheme procedures are counted exactly: too many or too few raise `&assertion`.
+
 The host-side bridge (`rt/jsbridge.mjs`, used by `rt/run.mjs` and `rt/web.mjs`) holds the closure as an opaque reference and invokes the exported `$jscb` when JS calls it, marshaling arguments and the return value through dedicated imports. Error handling: if the closure raises an error, the exception is caught and `undefined` is returned.
 
 ### Example: DOM Manipulation
