@@ -715,6 +715,18 @@
     (fl=? . $nary-fl=?) (fl<? . $nary-fl<?) (fl>? . $nary-fl>?)
     (fl<=? . $nary-fl<=?) (fl>=? . $nary-fl>=?)))
 
+;; Each n-ary comparison's two-argument companion in the prelude: as a
+;; value the comparison is a closure with two entries, the companion for
+;; a call of two arguments and the n-ary procedure for any other count
+;; (ledger R97; compile-fn-value).
+(define (two-entry-companion name)
+  (and (assq-cdr name $nary-comparisons)
+       (let ((s (symbol->string name)))
+         (string->symbol (string-append "$nary2" (substring s 5 (string-length s)))))))
+(define (assq-cdr x alist)
+  (and (pair? alist)
+       (or (eq? (cdr (car alist)) x) (assq-cdr x (cdr alist)))))
+
 ;; the import-table entry a free identifier refers to, or #f
 (define (imported-entry x)
   (and (symbol? x)
@@ -4140,8 +4152,16 @@
                                    (list lp
                                          (list name acc (list (intrinsic-for 'car) l))
                                          (list (intrinsic-for 'cdr) l)))))))))
-    (lift-variadic! idx '() a body '())
-    (set! *wrappers* (cons (list name idx idx 0 #t) *wrappers*))
+    (lift-variadic! idx '() a body '() #f)
+    (if (memq name '(bitwise-and bitwise-ior bitwise-xor))
+        ;; two entries (ledger R97): a call of two arguments takes the
+        ;; typed entry, the binary operation, and allocates nothing
+        (let ((tidx (alloc-fn!))
+              (x (gensym "x"))
+              (y (gensym "y")))
+          (lift-fixed! tidx (list x y) (list (list name x y)) '())
+          (set! *wrappers* (cons (list name tidx idx 2 #f) *wrappers*)))
+        (set! *wrappers* (cons (list name idx idx 0 #t) *wrappers*)))
     (global-get (intern! 'fn name))))
 
 (define (compile-fixed-prim-value name arity)
@@ -4155,13 +4175,32 @@
       (set! *wrappers* (cons (list name idx gidx arity #f) *wrappers*))
       (global-get (intern! 'fn name)))))
 
-;; walk an argument list held in local t, pushing n elements
-(define (unpack-args t n)
-  (map (lambda (_)
-         (list (local-get t) (ref-cast TY-PAIR) (struct-get TY-PAIR 0)
-               (local-get t) (ref-cast TY-PAIR) (struct-get TY-PAIR 1)
-               (local-set t)))
-       (nums-below n)))
+;; walk an argument list held in local t, pushing n elements.  Every
+;; generic entry is (closure, argument list) in locals 0 and 1, and a
+;; list shorter than n -- or, when exact?, longer -- calls $wrong-count
+;; with the two, n and whether more are taken, and returns what it
+;; answers, which is never: it raises &assertion (ledger R65).  A pair
+;; is tested before it is read, so a short list no longer traps on the
+;; cast.
+(define (wrong-count-unless test n exact?)
+  (list test OP-I32-EQZ
+        #x04 #x40
+        (local-get 0) (local-get 1) (emit-fixnum n) (emit-fixnum (if exact? 0 1))
+        (generic-call '$wrong-count) #x0F
+        #x0B))
+(define (unpack-args t n exact?)
+  (list
+   (map (lambda (_)
+          (list (wrong-count-unless (list (local-get t) (ref-test TY-PAIR))
+                                    n exact?)
+                (local-get t) (ref-cast TY-PAIR) (struct-get TY-PAIR 0)
+                (local-get t) (ref-cast TY-PAIR) (struct-get TY-PAIR 1)
+                (local-set t)))
+        (nums-below n))
+   (if exact?
+       (wrong-count-unless (list (local-get t) (global-get G-NULL) OP-REF-EQ)
+                           n exact?)
+       '())))
 
 ;; the shared generic entry for fixed-arity closures: unpack the
 ;; argument list and forward to the fast entry
@@ -4178,7 +4217,7 @@
                  (let ((t 2))
                    (list (local-get 0) (ref-cast (cdr tys))
                          (local-get 1) (local-set t)
-                         (unpack-args t arity)
+                         (unpack-args t arity #t)
                          (local-get 0) (ref-cast (cdr tys))
                          (struct-get (cdr tys) 0)
                          #x15 (uleb (car tys)))))) ; return_call_ref
@@ -4208,16 +4247,32 @@
           (if variadic?
               ;; generic-only wrapper: unpack the fixed arguments,
               ;; pass the remainder as the rest list
-              (let ((t 2))
+              (let ((t 2)
+                    (companion (two-entry-companion name)))
                 (record-fn!
                  widx
                  (list TY-FNG 2 1 '()
                        (list (local-get 1) (local-set t)
-                             (unpack-args t nfixed)
+                             (unpack-args t nfixed #f)
                              (local-get t)
                              #x12 (uleb idx))))   ; return_call f
-                (set! *wrappers*
-                      (cons (list name widx widx nfixed #t) *wrappers*))
+                (if (and companion (assq companion *fns*))
+                    ;; two entries (ledger R97): the closure is one of
+                    ;; arity two, whose typed entry tail-calls the
+                    ;; two-argument companion and whose generic entry is
+                    ;; the wrapper above
+                    (let ((cidx (cadr (assq companion *fns*)))
+                          (tidx (alloc-fn!))
+                          (tys (clos-ty 2)))
+                      (record-fn!
+                       tidx
+                       (list (car tys) 3 0 '()
+                             (list (local-get 1) (local-get 2)
+                                   #x12 (uleb cidx))))
+                      (set! *wrappers*
+                            (cons (list name tidx widx 2 #f) *wrappers*)))
+                    (set! *wrappers*
+                          (cons (list name widx widx nfixed #t) *wrappers*)))
                 (global-get (intern! 'fn name)))
               ;; typed wrapper plus the shared per-arity adapter
               (let ((tys (clos-ty nfixed)))
@@ -4771,9 +4826,8 @@
   ;; A lambda of more fixed parameters than a function type can carry,
   ;; and no rest, is lifted as a variadic one is: its body is its own
   ;; generic entry and unpacks the parameters from the argument list.
-  ;; The rest it is given is a fresh name nothing refers to.  As for
-  ;; every procedure called through its generic entry, the count is not
-  ;; checked.
+  ;; The rest it is given is a fresh name nothing refers to, and it must
+  ;; come out empty: surplus arguments raise, as too few do (ledger R65).
   (let* ((rest (or (formals-rest formals)
                    (and (not (typed-arity? (length (formals-fixed formals))))
                         (gensym "rest"))))
@@ -4783,7 +4837,8 @@
          (idx (alloc-fn!)))
     (if rest
         (begin
-          (lift-variadic! idx (formals-fixed formals) rest body free)
+          (lift-variadic! idx (formals-fixed formals) rest body free
+                          (not (formals-rest formals)))
           (list (ref-func idx)
                 (ref-func idx)
                 (env-chain free locals)
@@ -4854,8 +4909,11 @@
                             (- (car cell) (+ arity 1)) f64s
                             (list prologue body-code))))))
 
-(define (lift-variadic! idx fixed rest body free)
-  ;; the body is its own generic entry: (closure args-list) -> value
+(define (lift-variadic! idx fixed rest body free exact?)
+  ;; the body is its own generic entry: (closure args-list) -> value.
+  ;; Too few arguments for the fixed parameters raise through
+  ;; $wrong-count; so do surplus ones when exact? -- a wide lambda whose
+  ;; rest is not the program's (ledger R65)
   (let* ((cell (list 2))
          (t (fresh-local! cell))
          (locals (slot-locals! (cons rest fixed) cell '()))
@@ -4863,13 +4921,21 @@
          (prologue
           (list (local-get 1) (local-set t)
                 (map (lambda (p)
-                       (list (local-get t) (ref-cast TY-PAIR)
+                       (list (wrong-count-unless
+                              (list (local-get t) (ref-test TY-PAIR))
+                              (length fixed) exact?)
+                             (local-get t) (ref-cast TY-PAIR)
                              (struct-get TY-PAIR 0)
                              (local-set (cdr (assq p locals)))
                              (local-get t) (ref-cast TY-PAIR)
                              (struct-get TY-PAIR 1)
                              (local-set t)))
                      fixed)
+                (if exact?
+                    (wrong-count-unless
+                     (list (local-get t) (global-get G-NULL) OP-REF-EQ)
+                     (length fixed) exact?)
+                    '())
                 (local-get t) (local-set (cdr (assq rest locals)))
                 (env-prologue free locals cell TY-CLOSV)))
          (saved *f64-slots*)
@@ -6397,7 +6463,12 @@
 (define $spec-denylist
   '($add2 $sub2 $mul2 $quot2 $rem2 $eq2 $lt2 $escape
     $shl-refused $shr-refused $record-is-a?
-    $band2 $bior2 $bxor2 $shl2 $shr2))
+    $band2 $bior2 $bxor2 $shl2 $shr2 $wrong-count
+    $nary2= $nary2< $nary2> $nary2<= $nary2>=
+    $nary2-char=? $nary2-char<? $nary2-char>? $nary2-char<=? $nary2-char>=?
+    $nary2-string=? $nary2-string<? $nary2-string>? $nary2-string<=?
+    $nary2-string>=?
+    $nary2-fl=? $nary2-fl<? $nary2-fl>? $nary2-fl<=? $nary2-fl>=?))
 
 (define (compute-fn-specs! fn-defs main-steps)
   (set! *fn-specs* '())
@@ -7349,6 +7420,25 @@
         (cons '< '(begin $lt2))
         (cons 'zero? '(begin $eq2))
         (cons 'bitwise-and '(begin $band2))
+        ;; an n-ary comparison as a value calls its companion (R97)
+        (cons '$nary= '(begin $nary2=)) (cons '$nary< '(begin $nary2<))
+        (cons '$nary> '(begin $nary2>)) (cons '$nary<= '(begin $nary2<=))
+        (cons '$nary>= '(begin $nary2>=))
+        (cons '$nary-char=? '(begin $nary2-char=?))
+        (cons '$nary-char<? '(begin $nary2-char<?))
+        (cons '$nary-char>? '(begin $nary2-char>?))
+        (cons '$nary-char<=? '(begin $nary2-char<=?))
+        (cons '$nary-char>=? '(begin $nary2-char>=?))
+        (cons '$nary-string=? '(begin $nary2-string=?))
+        (cons '$nary-string<? '(begin $nary2-string<?))
+        (cons '$nary-string>? '(begin $nary2-string>?))
+        (cons '$nary-string<=? '(begin $nary2-string<=?))
+        (cons '$nary-string>=? '(begin $nary2-string>=?))
+        (cons '$nary-fl=? '(begin $nary2-fl=?))
+        (cons '$nary-fl<? '(begin $nary2-fl<?))
+        (cons '$nary-fl>? '(begin $nary2-fl>?))
+        (cons '$nary-fl<=? '(begin $nary2-fl<=?))
+        (cons '$nary-fl>=? '(begin $nary2-fl>=?))
         (cons 'bitwise-ior '(begin $bior2))
         (cons 'bitwise-xor '(begin $bxor2))
         (cons 'bitwise-arithmetic-shift-left '(begin $shl-refused $shl2))
@@ -8572,7 +8662,10 @@
                                      (record-loc! nf (form-loc f)))
                                    nf))
                      (inline-forms numbered))
-                 export-names))
+                 ;; $wrong-count is called from code built at emission
+                 ;; (every generic entry, and the JS back end's IC), so
+                 ;; no reference in the source keeps it (ledger R65)
+                 (cons '$wrong-count export-names)))
          (fn-defs (filter fn-define? forms))
          (var-defs (filter var-define? forms))
          (main-steps (map (lambda (f)

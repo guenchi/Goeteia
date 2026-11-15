@@ -4234,6 +4234,75 @@
   ($nary-compare 'fl<=? flonum? "not a flonum" fl<=? args))
 (define ($nary-fl>=? . args)
   ($nary-compare 'fl>=? flonum? "not a flonum" fl>=? args))
+;; The comparisons as values are closures with two entries (ledger R97):
+;; called with two arguments they take these, which check both and
+;; compare, allocating nothing; any other count takes the n-ary procedure
+;; above.  A failed check hands the pair to the n-ary procedure, which
+;; raises the condition it would have (compile-fn-value in
+;; src/compiler.ss and the JS back end build the two-entry values).  The
+;; numeric ones ask fixnum? first, a primitive test, before the prelude's
+;; number? and real?: a sort or a table of fixnums pays nothing more.
+(define ($nary2= a b)
+  (if (if (fixnum? a) (fixnum? b) (and (number? a) (number? b)))
+      (= a b)
+      ($nary= a b)))
+(define ($nary2< a b)
+  (if (if (fixnum? a) (fixnum? b) (and (real? a) (real? b)))
+      (< a b)
+      ($nary< a b)))
+(define ($nary2> a b)
+  (if (if (fixnum? a) (fixnum? b) (and (real? a) (real? b)))
+      (> a b)
+      ($nary> a b)))
+(define ($nary2<= a b)
+  (if (if (fixnum? a) (fixnum? b) (and (real? a) (real? b)))
+      (<= a b)
+      ($nary<= a b)))
+(define ($nary2>= a b)
+  (if (if (fixnum? a) (fixnum? b) (and (real? a) (real? b)))
+      (>= a b)
+      ($nary>= a b)))
+(define ($nary2-char=? a b)
+  (if (and (char? a) (char? b)) (char=? a b) ($nary-char=? a b)))
+(define ($nary2-char<? a b)
+  (if (and (char? a) (char? b)) (char<? a b) ($nary-char<? a b)))
+(define ($nary2-char>? a b)
+  (if (and (char? a) (char? b)) (char>? a b) ($nary-char>? a b)))
+(define ($nary2-char<=? a b)
+  (if (and (char? a) (char? b)) (char<=? a b) ($nary-char<=? a b)))
+(define ($nary2-char>=? a b)
+  (if (and (char? a) (char? b)) (char>=? a b) ($nary-char>=? a b)))
+(define ($nary2-string=? a b)
+  (if (and (string? a) (string? b)) (string=? a b) ($nary-string=? a b)))
+(define ($nary2-string<? a b)
+  (if (and (string? a) (string? b)) (string<? a b) ($nary-string<? a b)))
+(define ($nary2-string>? a b)
+  (if (and (string? a) (string? b)) (string>? a b) ($nary-string>? a b)))
+(define ($nary2-string<=? a b)
+  (if (and (string? a) (string? b)) (string<=? a b) ($nary-string<=? a b)))
+(define ($nary2-string>=? a b)
+  (if (and (string? a) (string? b)) (string>=? a b) ($nary-string>=? a b)))
+(define ($nary2-fl=? a b)
+  (if (and (flonum? a) (flonum? b)) (fl=? a b) ($nary-fl=? a b)))
+(define ($nary2-fl<? a b)
+  (if (and (flonum? a) (flonum? b)) (fl<? a b) ($nary-fl<? a b)))
+(define ($nary2-fl>? a b)
+  (if (and (flonum? a) (flonum? b)) (fl>? a b) ($nary-fl>? a b)))
+(define ($nary2-fl<=? a b)
+  (if (and (flonum? a) (flonum? b)) (fl<=? a b) ($nary-fl<=? a b)))
+(define ($nary2-fl>=? a b)
+  (if (and (flonum? a) (flonum? b)) (fl>=? a b) ($nary-fl>=? a b)))
+;; A procedure called with the wrong number of arguments through its
+;; generic entry -- apply, a call whose count is not its closure's, map
+;; and for-each, a procedure with a rest -- raises here (ledger R65).  The
+;; adapters and the variadic entries in src/compiler.ss, and the JS
+;; back end's IC, call it with the procedure, the argument list, the
+;; count the entry takes and 1 when it takes more (a rest), else 0.  The
+;; irritants are the procedure, the arguments and what it takes: n, or
+;; (at-least n).  $jscb in (web js) reads them back.
+(define ($wrong-count proc args n rest)
+  (assertion-violation #f "wrong number of arguments" proc args
+                       (if (eqv? rest 1) (list 'at-least n) n)))
 ;; not as a value: one argument, counted for the same reason
 (define ($not . args)
   (unless (and (pair? args) (null? (cdr args)))

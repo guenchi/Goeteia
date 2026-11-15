@@ -717,8 +717,14 @@ parameters (with or without a rest).  The JavaScript target has no such
 limit and exports it as before.
 
 As for every procedure entered through its generic entry, the number of
-arguments is **not checked** there: too few traps, and surplus ones are
-ignored (ledger R65, for every arity and both targets).
+arguments is checked there (since 2026-11-15, ledger R65, for every
+arity and both targets): too few, or more than a procedure without a
+rest takes, raise `&assertion` with the message "wrong number of
+arguments" and the procedure, the arguments and what it takes (n, or
+`(at-least n)`) as irritants.  A procedure that JavaScript calls -- an
+event handler, a timer, a `forEach` callback -- is the exception: it
+takes the arguments it accepts and the rest are dropped, as a
+JavaScript function drops them; too few go to `js-callback-error!`.
 
 What is bounded:
 
@@ -927,13 +933,12 @@ never names it carries nothing for it.
   recognised by spelling inside the form and are not `(rnrs)` bindings:
   binding them would refuse every program with a variable named
   `parent`, `fields` or `protocol`.
-- The arguments a program hands to a protocol's own procedure are not
-  counted: a constructor made by a protocol is a closure, and a closure
-  call does not check its argument count in goeteia (ledger R65) --
-  surplus arguments are ignored and too few trap, where Chez raises.
-  What the protocol hands on is counted: the field values given to
-  `new`, to a parent's procedure and to what it returns raise when there
-  are too many or too few.
+- The arguments a program hands to a protocol's own procedure are
+  counted as any closure call's are (since 2026-11-15, ledger R65): too
+  many or too few raise `&assertion`, "wrong number of arguments".  What
+  the protocol hands on is counted too: the field values given to `new`,
+  to a parent's procedure and to what it returns raise when there are
+  too many or too few.
 - A record operation that refuses its argument -- an accessor or a
   mutator handed something that is not a record of its type, a protocol
   that is not a procedure, a wrong count of field values -- raises an

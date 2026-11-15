@@ -1296,7 +1296,7 @@ The page: markup, styling, reactivity, transport.
 - `js->string` — a JavaScript string as a Scheme string
 - `number->js` — a Scheme number as a JavaScript number, inexact on the way out
 - `js->number` — a JavaScript number as a Scheme number
-- `->js` — any Scheme value as the corresponding JavaScript one; a closure becomes a callable JavaScript function
+- `->js` — any Scheme value as the corresponding JavaScript one; a closure becomes a callable JavaScript function, which takes the arguments it accepts and drops the rest, as a JavaScript function does -- too few go to js-callback-error!
 - `js-eval` — evaluates a string of JavaScript source and answers the result
 - `js-await` — waits for a promise and answers what it resolved to; without engine support for stack switching the promise comes back unawaited instead
 - `js-callback-error!` — installs what runs when a Scheme callback raises inside a JavaScript call, or restores the default console report when given #f -- the stack it would otherwise unwind into is not ours

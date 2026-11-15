@@ -28,9 +28,9 @@
 ;;                     -- an arity nothing else in the program uses -- still
 ;;                     gets its type
 ;;   surplus           a procedure of 1000 parameters applied to 1001 values
-;;                     answers as if the last were absent.  That is the
-;;                     missing argument-count check of every generic entry
-;;                     (ledger R65), pinned here as it is; Chez raises.
+;;                     raises &assertion, as Chez does.  Until batch M54
+;;                     the generic entry dropped the last value (ledger
+;;                     R65) and this row pinned that.
 ;;
 ;; Two things this file is careful about, both older than the change it tests:
 ;;   - each large form is the body of a procedure of its own and is never in
@@ -262,7 +262,7 @@
 ;; ---- once
 
 (row! 'nested (lambda () (list (nested-n count-args 1000 (apply-direct 37)))) 1000)
-(row! 'surplus (lambda () (list (guard (c (#t 'raised)) (apply (fixed-n 1000) (upto 1001))))) '(0 999))
+(row! 'surplus (lambda () (list (guard (c ((assertion-violation? c) 'assertion) (#t 'other)) (apply (fixed-n 1000) (upto 1001))))) 'assertion)
 
 (for-each (lambda (r) (want (car r) ((cadr r)) (list (caddr r)))) (reverse rows))
 (display (if (null? fails) #t (reverse fails)))

@@ -464,7 +464,13 @@
               (jvar-name (cdr v))
               (let ((f (assq-marked e *fns*)))
                 (if f
-                    (jfn-name r (cadr f))
+                    ;; an n-ary comparison as a value has two entries
+                    ;; (ledger R97): one module constant, like a
+                    ;; primitive's (jconst! 'two)
+                    (let ((c (two-entry-companion r)))
+                      (if (and c (assq c *fns*))
+                          (jconst! 'two r)
+                          (jfn-name r (cadr f))))
                     (let ((p (assq r prim-arity)))
                       (if p
                           ;; A primitive as a value: ONE eta-expansion,
@@ -500,7 +506,7 @@
                (rn (jfresh!))
                (env2 (append (map2* cons fixed fnames)
                              (cons (cons rest rn) env))))
-          (list "((" (jsep "," (append fnames (list (string-append "..." rr))))
+          (list "VF((" (jsep "," (append fnames (list (string-append "..." rr))))
                 ")=>{const " rn "=L2(" rr ");"
                 (without-jself (lambda () (jt-body body env2 '())))
                 "})"))
@@ -1211,14 +1217,21 @@
     "for(let i=xs.length-1;i>=0;i--)l={t:\"pair\",a:xs[i],d:l};return l;};"
     "const LD=(xs,tl)=>{let l=tl;"
     "for(let i=xs.length-1;i>=0;i--)l={t:\"pair\",a:xs[i],d:l};return l;};"
-    "const IC=(f,xs)=>{if(xs.length<f.length)"
-    "throw new TypeError('wrong argument count');return f(...xs);};"
+    ;; a call through the generic path checks the count (ledger R65): a
+    ;; function takes exactly f.length arguments, or at least that many
+    ;; when it has a rest, which VF marks; anything else goes to WCH,
+    ;; which raises &assertion through the prelude's $wrong-count
+    "const VF=(f)=>{f.v=1;return f;};"
+    "const IC=(f,xs)=>{const n=f.length;"
+    "if(xs.length!==n&&(xs.length<n||f.v!==1))return WCH(f,xs);"
+    "return f(...xs);};"
     ;; the trampoline: a non-self tail call returns a TC thunk instead
     ;; of calling (wasm: return_call), and every non-tail call site
     ;; unwinds through TR, so tail chains run in constant JS stack
     "class TC{constructor(f,xs){this.f=f;this.xs=xs;}}"
-    "const TCI=(f,xs)=>{if(xs.length<f.length)"
-    "throw new TypeError('wrong argument count');return new TC(f,xs);};"
+    "const TCI=(f,xs)=>{const n=f.length;"
+    "if(xs.length!==n&&(xs.length<n||f.v!==1))return WCH(f,xs);"
+    "return new TC(f,xs);};"
     "const TR=(r)=>{while(r instanceof TC)r=r.f(...r.xs);return r;};"
     "const A2=(f,pre,l)=>{const xs=pre;"
     "for(;l!==NIL;l=l.d)xs.push(l.a);return IC(f,xs);};"
@@ -1470,6 +1483,11 @@
    ((string=? name "JZ")
     (list "const JZ=(a)=>typeof a==='number'?a===0:(("
           (jgeneric-tr '$eq2 "a,(0)") ")!==FALSE);"))
+   ((string=? name "WCH")
+    ;; a generic call with the wrong number of arguments (ledger R65)
+    ;; with the count f takes (tagged) and 1 when it takes more
+    (list "const WCH=(f,xs)=>"
+          (jgeneric-tr '$wrong-count "f,L2(xs),(f.length<<1),(f.v===1?2:0)") ";"))
    ((string=? name "JFN")
     (list "const JFN=(clo)=>(...args)=>{const fr={args,ret:void 0};"
           "CBS.push(fr);try{" (jgeneric-tr '$jscb "clo") ";}finally{CBS.pop();}"
@@ -1493,10 +1511,10 @@
                (env (append (map2* cons fixed fnames)
                             (list (cons rest rn)))))
           (set! *jself* #f)
-          (list "const " (jfn-name name idx) "=("
+          (list "const " (jfn-name name idx) "=VF(("
                 (jsep "," (append fnames (list (string-append "..." rr))))
                 ")=>{const " rn "=L2(" rr ");"
-                (jt-body (cddr d) env '()) "};\n"))
+                (jt-body (cddr d) env '()) "});\n"))
         ;; fixed arity: the body rides a labeled loop so a direct
         ;; self tail call rebinds and continues (wasm: return_call)
         (let ((env (map2* cons fixed fnames))
@@ -1534,6 +1552,8 @@
     (set! *jconsts* '())
     (set! *jconst-n* 0)
     (set! *jhelpers* '())
+    ;; every program's generic calls (IC, TCI) may need it
+    (jhelper! "WCH")
     (set! *jkernels* '(core))
     ;; the same deterministic numbering the wasm backend uses
     (let number ((ds fn-defs) (i N-IMPORTS))
@@ -1589,6 +1609,21 @@
                  (list "const C" (jb28 i) "="
                        (cond
                         ((eq? kind 'str) (list "S(" (jstring-lit datum) ")"))
+                        ;; an n-ary comparison as a value (ledger R97):
+                        ;; two arguments call its companion, which
+                        ;; allocates nothing; any other count the n-ary
+                        ;; procedure.  Marked variadic, so IC lets any
+                        ;; count through to it
+                        ((eq? kind 'two)
+                         (let ((c (two-entry-companion datum)))
+                           ;; declared with no parameters: its length, 0, is
+                           ;; what IC takes as the least count, and every
+                           ;; count is the n-ary procedure's to judge
+                           (list "VF(function(){return arguments.length===2?"
+                                 (jfn-name c (cadr (assq c *fns*)))
+                                 "(arguments[0],arguments[1]):"
+                                 (jfn-name datum (cadr (assq datum *fns*)))
+                                 "(...arguments);})")))
                         ;; the eta-expansion of a primitive used as a
                         ;; value; built here so that every reference is
                         ;; this one name.  Constants are emitted after
@@ -1603,8 +1638,16 @@
                         ;; backend and the direct-call path read
                         ((and (eq? kind 'prim) (nary? datum))
                          (let* ((r (jfresh!)) (x (jfresh!)) (y (jfresh!))
-                                (z (nary-zero datum)))
-                           (list "((..." r ")=>" r ".length===0?"
+                                (z (nary-zero datum))
+                                (two? (memq datum '(bitwise-and bitwise-ior
+                                                    bitwise-xor)))
+                                (n (jfresh!)))
+                          ;; and, ior and xor as values have two entries
+                          ;; (ledger R97): two arguments take the binary
+                          ;; operation directly, any other count the fold
+                          (list
+                           (if two? (list "(()=>{const " n "=") '())
+                           (list "VF((..." r ")=>" r ".length===0?"
                                  ;; the zero-argument answer is a
                                  ;; Scheme number, so it goes through
                                  ;; the datum emitter: a bare JS
@@ -1629,7 +1672,14 @@
                                    (else (list r "[0]")))
                                  ":" r ".reduce((" x "," y ")=>"
                                  (jp datum (list 'eta 'eta) (list x y))
-                                 "))")))
+                                 "))")
+                           (if two?
+                               (list ";return VF(function(){"
+                                     "return arguments.length===2?"
+                                     (jp datum (list 'eta 'eta)
+                                         (list "arguments[0]" "arguments[1]"))
+                                     ":" n "(...arguments);});})()")
+                               '()))))
                         ((eq? kind 'prim)
                          (let ((ps (map-in-order
                                     (lambda (i) (jfresh!))

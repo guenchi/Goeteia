@@ -142,8 +142,48 @@
                         ;; a failing hook must not mask the answer
                         (guard (e2 (#t #f)) ($cb-error e))
                         (js-undefined)))
-               (->js (apply f args))))
+               (->js ($apply-from-js f args))))
             (gather (- i 1) (cons (%js-cb-arg i) args))))))
+
+  ;; A procedure called from JS takes the arguments it accepts, and the
+  ;; rest are dropped, as a JS function drops them: an event handler is
+  ;; handed the event, requestAnimationFrame a timestamp, forEach three
+  ;; arguments.  Too few still fail.  Calls between Scheme procedures
+  ;; are counted exactly (ledger R65).
+  ;;
+  ;; The count is learnt from the refusal itself: $wrong-count names the
+  ;; procedure, the arguments and what it takes.  A refusal naming f with
+  ;; an argument list as long as the one passed here is the entry's own --
+  ;; whether a procedure takes a count depends on the count alone, so a
+  ;; body that had started would not be refused a list of that length --
+  ;; and the body has not run.  Then f is applied once more, to as many as
+  ;; it takes.  Any other condition, and a refusal for too few, go on to
+  ;; the callback error hook as before.  No body runs twice.
+  (define $apply-again (list 'apply-again))
+  (define ($apply-from-js f args)
+    (let ((v (guard (e ((fewer-for-js e f args)
+                        => (lambda (l) (cons $apply-again l))))
+               (apply f args))))
+      (if (and (pair? v) (eq? (car v) $apply-again))
+          (apply f (cdr v))
+          v)))
+  ;; the first n of args when e is f's own refusal of more than the n it
+  ;; takes exactly, else #f
+  (define (fewer-for-js e f args)
+    (and (assertion-violation? e)
+         (message-condition? e)
+         (equal? (condition-message e) "wrong number of arguments")
+         (irritants-condition? e)
+         (let ((irr (condition-irritants e)))
+           (and (= (length irr) 3)
+                (eq? (car irr) f)
+                (list? (cadr irr))
+                (= (length (cadr irr)) (length args))
+                (fixnum? (caddr irr))
+                (< (caddr irr) (length args))
+                ($first-n args (caddr irr))))))
+  (define ($first-n l n)
+    (if (= n 0) '() (cons (car l) ($first-n (cdr l) (- n 1)))))
   (export $jscb)
 
   (define (js-get obj name)
