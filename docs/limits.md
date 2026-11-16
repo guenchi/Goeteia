@@ -17,8 +17,9 @@ until a slider hits an integral position.
 **Cause**: `js->number` returns a *fixnum* whenever the JS value is
 integral (`0`, `1`, a slider at an exact stop), and a flonum
 otherwise -- except a JavaScript `-0`, which comes back as the flonum
-`-0.0` so that its sign is kept.  The `fl+ fl- fl* fl/ fl<? fl=?` family traps on fixnum
-operands — they do not coerce.
+`-0.0` so that its sign is kept.  The `fl+ fl- fl* fl/` family traps on fixnum
+operands — they do not coerce — and the `fl` comparisons raise `&assertion`
+for one ("not a flonum", since 2026-11-15).
 
 **Workaround**: normalize at the boundary, once:
 
@@ -166,10 +167,18 @@ Where these are narrower than R6RS:
   `=`, a real for the others, a character, a string, a flonum -- and
   raises `&assertion` naming itself for one of the wrong type or for a
   single argument, also after a pair that is false.  A direct call with
-  exactly two arguments is still the binary primitive or procedure, as
-  fast as before and as unchecked: given a symbol, `(< 2 'a)` traps on
-  wasm and answers on JS, and `(char<? #\a 1)` answers on both, where
-  `(< 1 2 'a)` raises (ledger R93).  A comparison passed as a value --
+  exactly two arguments is the binary primitive or procedure, as fast as
+  before for two fixnums, and checked where it leaves them (since
+  2026-11-15, ledger R93 and R102): `(< 2 'a)`, `(+ 1 'x)`, `(abs 'x)`,
+  `(fl<? 1.0 'a)` and `(string<? "a" 1)` raise `&assertion` naming the
+  operation, with "not a number", "not a real number", "not a flonum"
+  or "not a string", the same answer as the n-ary path.  A character is
+  the exception: it is an i31, as a fixnum is, and the fast path does
+  not tell them apart, so `(+ #\a 1)` answers `#\b`, `(* #\a 2)` 194
+  and `(char<? #\a 1)` an answer, on both targets (ledger R102b; telling
+  them apart is a test on every arithmetic operation and comparison,
+  which M50 priced at 3 to 5 points where it was added to the bitwise
+  operators).  A comparison passed as a value --
   the equivalence of `(make-hashtable string-hash string=?)`, the order
   of a sort -- is the checking procedure, and each call of it pays for
   its argument list and its checks.

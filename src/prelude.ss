@@ -414,6 +414,8 @@
         ($wb (+ 48 (remainder n 10))))))
 
 (define (string=? a b)
+  (unless (string? a) (assertion-violation 'string=? "not a string" a))
+  (unless (string? b) (assertion-violation 'string=? "not a string" b))
   (and (= (string-length a) (string-length b))
        (%string-eq-from a b 0)))
 
@@ -2185,7 +2187,7 @@
 
 (define (void) (begin))
 
-(define (> a b) (< b a))
+(define (> a b) (%lt b a '>))
 ;; <= and >= are built from < and =, NOT as the negation of the
 ;; opposite strict comparison.  (not (> a b)) equals (<= a b) for every
 ;; pair of real numbers and differs on exactly one input: a NaN, which
@@ -2199,8 +2201,8 @@
 ;; It also decides whether the guards spelled (and (real? x) (not (< x 0)))
 ;; keep NaN out: they do, and they do it through <, so they were never
 ;; the thing to fix.
-(define (<= a b) (if (< a b) #t (= a b)))
-(define (>= a b) (if (< b a) #t (= a b)))
+(define (<= a b) (%le a b '<=))
+(define (>= a b) (%le b a '>=))
 ;; R6RS max and min take one argument or more, not exactly two.  They
 ;; were binary, so `(max 1 5 2)' was a compile error and `(apply max
 ;; (list 3 9 4 100))' answered 9 -- the extra arguments went by without
@@ -2212,10 +2214,10 @@
 ;; inconsistency than leaving it, so it stays a known gap.)
 (define (max a . rest)
   (let loop ((m a) (l rest))
-    (if (null? l) m (loop (if (< m (car l)) (car l) m) (cdr l)))))
+    (if (null? l) m (loop (if (%lt m (car l) 'max) (car l) m) (cdr l)))))
 (define (min a . rest)
   (let loop ((m a) (l rest))
-    (if (null? l) m (loop (if (< (car l) m) (car l) m) (cdr l)))))
+    (if (null? l) m (loop (if (%lt (car l) m 'min) (car l) m) (cdr l)))))
 
 ;; A list has FINITE length by definition, so a chain that cycles is
 ;; not one and #f is the only answer -- but the answer has to ARRIVE.
@@ -2321,8 +2323,8 @@
 (define (eqv? a b)
   (or (eq? a b)
       (and (flonum? a) (flonum? b) ($fl-eqv? a b))
-      (and (%bignum? a) (%bignum? b) ($eq2 a b))
-      (and (%ratio? a) (%ratio? b) ($eq2 a b))
+      (and (%bignum? a) (%bignum? b) ($eq2 a b 'eqv?))
+      (and (%ratio? a) (%ratio? b) ($eq2 a b 'eqv?))
       (and (%complex? a) (%complex? b)
            (eqv? (%cx-re a) (%cx-re b))
            (eqv? (%cx-im a) (%cx-im b)))))
@@ -2590,7 +2592,7 @@
   (unless ($ht-mutable? ht)
     (assertion-violation who "the hashtable is immutable" ht)))
 
-(define (abs n) (if (< n 0) (- 0 n) n))
+(define (abs n) (if (%lt n 0 'abs) (- 0 n) n))
 (define (string-hash s) ($sh s 0 7))
 ;; Preserve (31*h + c) modulo 2^29-1 without promoting the product
 ;; to a bignum. Fold 32*h at bit 29, then subtract h. Every intermediate
@@ -3100,12 +3102,28 @@
       (fl* (fixnum->flonum -1) ($nonneg->fl (- 0 num) den))
       ($nonneg->fl num den)))
 
-(define ($->fl x)
+;; who and what name the operation the program wrote and what it needs, for
+;; the condition raised when x is no number at all (ledger R93): the last
+;; arm was the bignum conversion, which cast whatever reached it
+(define ($->fl x who what)
   (cond
    ((flonum? x) x)
    ((fixnum? x) (fixnum->flonum x))
    ((%ratio? x) ($exact->fl (%ratio-num x) (%ratio-den x)))
-   (else ($bn->fl x))))
+   ((%bignum? x) ($bn->fl x))
+   (else (assertion-violation who what x))))
+;; the operand of a two-operand operation that is not an exact integer,
+;; raised as what is not -- called from the integer arm, where every
+;; other kind of number has been sent elsewhere
+(define ($int? x) (or (fixnum? x) (%bignum? x)))
+(define ($not-a who what a b)
+  (assertion-violation who what (if ($int? a) b a)))
+;; the operands of the complex and ratio arms, which take them apart
+;; with real-part and numerator: those pass a non-number through, and
+;; the condition would name the operation they call instead
+(define ($numbers! who what ok? a b)
+  (unless (ok? a) (assertion-violation who what a))
+  (unless (ok? b) (assertion-violation who what b)))
 (%target-case
  (js)
  (wasm
@@ -3124,40 +3142,49 @@
 (define ($add2 a b)
   (cond
    ((or (%complex? a) (%complex? b))
+    ($numbers! '+ "not a number" number? a b)
     ($cx ($add2 (real-part a) (real-part b))
          ($add2 (imag-part a) (imag-part b))))
    ((or (flonum? a) (flonum? b))
-    (fl+ ($->fl a) ($->fl b)))
+    (fl+ ($->fl a '+ "not a number") ($->fl b '+ "not a number")))
    ((or (%ratio? a) (%ratio? b))
+    ($numbers! '+ "not a number" number? a b)
     ($make-rat ($add2 ($mul2 (numerator a) (denominator b))
                       ($mul2 (numerator b) (denominator a)))
                ($mul2 (denominator a) (denominator b))))
-   (else ($bn-add ($->bn a) ($->bn b)))))
+   ((and ($int? a) ($int? b)) ($bn-add ($->bn a) ($->bn b)))
+   (else ($not-a '+ "not a number" a b))))
 (define ($sub2 a b)
   (cond
    ((or (%complex? a) (%complex? b))
+    ($numbers! '- "not a number" number? a b)
     ($cx ($sub2 (real-part a) (real-part b))
          ($sub2 (imag-part a) (imag-part b))))
    ((or (flonum? a) (flonum? b))
-    (fl- ($->fl a) ($->fl b)))
+    (fl- ($->fl a '- "not a number") ($->fl b '- "not a number")))
    ((or (%ratio? a) (%ratio? b))
+    ($numbers! '- "not a number" number? a b)
     ($make-rat ($sub2 ($mul2 (numerator a) (denominator b))
                       ($mul2 (numerator b) (denominator a)))
                ($mul2 (denominator a) (denominator b))))
-   (else ($bn-add ($->bn a) ($bn-negate ($->bn b))))))
+   ((and ($int? a) ($int? b)) ($bn-add ($->bn a) ($bn-negate ($->bn b))))
+   (else ($not-a '- "not a number" a b))))
 (define ($mul2 a b)
   (cond
    ((or (%complex? a) (%complex? b))
+    ($numbers! '* "not a number" number? a b)
     (let ((ar (real-part a)) (ai (imag-part a))
           (br (real-part b)) (bi (imag-part b)))
       ($cx ($sub2 ($mul2 ar br) ($mul2 ai bi))
            ($add2 ($mul2 ar bi) ($mul2 ai br)))))
    ((or (flonum? a) (flonum? b))
-    (fl* ($->fl a) ($->fl b)))
+    (fl* ($->fl a '* "not a number") ($->fl b '* "not a number")))
    ((or (%ratio? a) (%ratio? b))
+    ($numbers! '* "not a number" number? a b)
     ($make-rat ($mul2 (numerator a) (numerator b))
                ($mul2 (denominator a) (denominator b))))
-   (else ($bn-mul2 a b))))
+   ((and ($int? a) ($int? b)) ($bn-mul2 a b))
+   (else ($not-a '* "not a number" a b))))
 (%target-case
  (js)
  (wasm
@@ -3167,15 +3194,15 @@
                 ($mag-mul (%bignum-limbs ba) (%bignum-limbs bb)))))))
 ;; an exact or an inexact zero, either sign: R6RS quotient and remainder
 ;; raise for it, where fl/ would answer an infinity or a NaN
-(define ($zero-divisor? b)
-  (if (flonum? b) (fl=? b (fixnum->flonum 0)) ($eq2 b 0)))
+(define ($zero-divisor? b who)
+  (if (flonum? b) (fl=? b (fixnum->flonum 0)) ($eq2 b 0 who)))
 (define ($quot2 a b)
   (cond
    ((or (flonum? a) (flonum? b))
-    (when ($zero-divisor? b) (assertion-violation 'quotient "division by zero"))
-    (fltruncate (fl/ ($->fl a) ($->fl b))))
+    (when ($zero-divisor? b 'quotient) (assertion-violation 'quotient "division by zero"))
+    (fltruncate (fl/ ($->fl a 'quotient "not a number") ($->fl b 'quotient "not a number"))))
    ((and (integer? a) (integer? b))
-    (when ($eq2 b 0) (assertion-violation 'quotient "division by zero"))
+    (when ($eq2 b 0 'quotient) (assertion-violation 'quotient "division by zero"))
     ($bn-quot2 a b))
    (else (assertion-violation 'quotient "unsupported operand combination"))))
 (%target-case
@@ -3192,11 +3219,12 @@
 (define ($rem2 a b)
   (cond
    ((or (flonum? a) (flonum? b))
-    (when ($zero-divisor? b) (assertion-violation 'remainder "division by zero"))
-    (let ((q (fltruncate (fl/ ($->fl a) ($->fl b)))))
-      (fl- ($->fl a) (fl* q ($->fl b)))))
+    (when ($zero-divisor? b 'remainder) (assertion-violation 'remainder "division by zero"))
+    (let ((q (fltruncate (fl/ ($->fl a 'remainder "not a number")
+                              ($->fl b 'remainder "not a number")))))
+      (fl- ($->fl a 'remainder "not a number") (fl* q ($->fl b 'remainder "not a number")))))
    ((and (integer? a) (integer? b))
-    (when ($eq2 b 0) (assertion-violation 'remainder "division by zero"))
+    (when ($eq2 b 0 'remainder) (assertion-violation 'remainder "division by zero"))
     ($bn-rem2 a b))
    (else (assertion-violation 'remainder "unsupported operand combination"))))
 (%target-case
@@ -3210,17 +3238,27 @@
                (qr ($mag-divmod (%bignum-limbs ba) (%bignum-limbs bb)))
                (r ($bn-norm 0 (cdr qr))))
           (if ($bn-neg? ba) (- 0 r) r))))))
-(define ($lt2 a b)
+;; who is the comparison the program wrote (<, >, max, abs, ...): the
+;; compiler passes it on the slow path of each, so a non-number is
+;; refused in that name (ledger R93)
+(define ($lt2 a b who)
   (cond
    ((or (%complex? a) (%complex? b))
-    (assertion-violation '< "complex numbers are not ordered"))
+    (assertion-violation who "complex numbers are not ordered"))
    ((or (flonum? a) (flonum? b))
-    (fl<? ($->fl a) ($->fl b)))
+    (fl<? ($->fl a who "not a real number") ($->fl b who "not a real number")))
    ((or (%ratio? a) (%ratio? b))
+    ($numbers! who "not a real number" real? a b)
     ;; denominators are positive, so cross-multiplication is safe
     ($lt2 ($mul2 (numerator a) (denominator b))
-          ($mul2 (numerator b) (denominator a))))
-   (else ($bn-lt2 a b))))
+          ($mul2 (numerator b) (denominator a))
+          who))
+   ((and ($int? a) ($int? b)) ($bn-lt2 a b))
+   (else ($not-a who "not a real number" a b))))
+;; <= as < or =, not as the negation of >: a NaN is unordered, and
+;; (<= nan x) must be #f
+(define ($le2 a b who)
+  (if ($lt2 a b who) #t ($eq2 a b who)))
 (%target-case
  (js)
  (wasm
@@ -3232,17 +3270,20 @@
        ((< sb sa) #t)
        ((= sa 1) (< 0 ($mag-cmp (%bignum-limbs ba) (%bignum-limbs bb))))
        (else (< ($mag-cmp (%bignum-limbs ba) (%bignum-limbs bb)) 0)))))))
-(define ($eq2 a b)
+(define ($eq2 a b who)
   (cond
    ((or (%complex? a) (%complex? b))
-    (and ($eq2 (real-part a) (real-part b))
-         ($eq2 (imag-part a) (imag-part b))))
+    ($numbers! who "not a number" number? a b)
+    (and ($eq2 (real-part a) (real-part b) who)
+         ($eq2 (imag-part a) (imag-part b) who)))
    ((or (flonum? a) (flonum? b))
-    (fl=? ($->fl a) ($->fl b)))
+    (fl=? ($->fl a who "not a number") ($->fl b who "not a number")))
    ((or (%ratio? a) (%ratio? b))
-    (and ($eq2 (numerator a) (numerator b))
-         ($eq2 (denominator a) (denominator b))))
-   (else ($bn-eq2 a b))))
+    ($numbers! who "not a number" number? a b)
+    (and ($eq2 (numerator a) (numerator b) who)
+         ($eq2 (denominator a) (denominator b) who)))
+   ((and ($int? a) ($int? b)) ($bn-eq2 a b))
+   (else ($not-a who "not a number" a b))))
 (%target-case
  (js)
  (wasm
@@ -3259,25 +3300,28 @@
 (define ($div2 a b)
   (cond
    ((or (%complex? a) (%complex? b))
+    ($numbers! '/ "not a number" number? a b)
     (let* ((ar (real-part a)) (ai (imag-part a))
            (br (real-part b)) (bi (imag-part b))
            (den ($add2 ($mul2 br br) ($mul2 bi bi))))
       ($cx ($div2 ($add2 ($mul2 ar br) ($mul2 ai bi)) den)
            ($div2 ($sub2 ($mul2 ai br) ($mul2 ar bi)) den))))
    ((or (flonum? a) (flonum? b))
-    (fl/ ($->fl a) ($->fl b)))
+    (fl/ ($->fl a '/ "not a number") ($->fl b '/ "not a number")))
    (else
+    ($numbers! '/ "not a number" number? a b)
     ($make-rat ($mul2 (numerator a) (denominator b))
                ($mul2 (denominator a) (numerator b))))))
 ;; $->fl has no complex case: it falls through to the bignum path
 ;; and the cast traps -- and a wasm trap is not a condition, so a
 ;; caller cannot even catch it.  A complex converts component-wise.
-(define ($->inexact x)
+(define ($->inexact x who)
   (if (%complex? x)
-      ($cx ($->fl (%cx-re x)) ($->fl (%cx-im x)))
-      ($->fl x)))
-(define (exact->inexact x) ($->inexact x))
-(define (inexact x) ($->inexact x))
+      ($cx ($->fl (%cx-re x) who "not a number")
+           ($->fl (%cx-im x) who "not a number"))
+      ($->fl x who "not a number")))
+(define (exact->inexact x) ($->inexact x 'exact->inexact))
+(define (inexact x) ($->inexact x 'inexact))
 (define ($fl->exact-integer m)
   ;; integral non-negative flonum -> exact, in 2^24 chunks
   (let ((two24 (fixnum->flonum 16777216)))
@@ -3352,8 +3396,8 @@
    (else x)))
 (define (sqrt x)
   (if (and (real? x) (< x 0))
-      ($cx 0 (flsqrt ($->fl (- 0 x))))
-      (flsqrt ($->fl x))))
+      ($cx 0 (flsqrt ($->fl (- 0 x) 'sqrt "not a number")))
+      (flsqrt ($->fl x 'sqrt "not a number"))))
 
 ;; ---- R6RS division: div/mod floor the remainder into [0, |d|),
 ;; div0/mod0 center it in [-|d|/2, |d|/2).  Exact integers only --
@@ -3454,9 +3498,9 @@
 (define ($tan-fl x) (fl/ ($sin-fl x) ($cos-fl x)))
 
 ;; the R6RS entries: widen, then hand over
-(define (sin v) ($sin-fl ($->fl v)))
-(define (cos v) ($cos-fl ($->fl v)))
-(define (tan v) ($tan-fl ($->fl v)))
+(define (sin v) ($sin-fl ($->fl v 'sin "not a number")))
+(define (cos v) ($cos-fl ($->fl v 'cos "not a number")))
+(define (tan v) ($tan-fl ($->fl v 'tan "not a number")))
 
 ;; ---- the string library ----
 
@@ -3493,7 +3537,12 @@
                 (inner (+ i 1))))
             (outer (cdr ss) (+ at (string-length s))))))))
 
-(define ($string-cmp a b)               ; lexicographic: -1 0 1
+;; lexicographic: -1 0 1.  who is the comparison the program wrote: a
+;; non-string is refused in its name, once a call, before string-length
+;; would cast it (ledger R102)
+(define ($string-cmp a b who)
+  (unless (string? a) (assertion-violation who "not a string" a))
+  (unless (string? b) (assertion-violation who "not a string" b))
   (let ((la (string-length a)) (lb (string-length b)))
     (let loop ((i 0))
       (cond
@@ -3503,10 +3552,10 @@
        ((< (char->integer (string-ref a i)) (char->integer (string-ref b i))) -1)
        ((< (char->integer (string-ref b i)) (char->integer (string-ref a i))) 1)
        (else (loop (+ i 1)))))))
-(define (string<? a b) (< ($string-cmp a b) 0))
-(define (string>? a b) (< 0 ($string-cmp a b)))
-(define (string<=? a b) (< ($string-cmp a b) 1))
-(define (string>=? a b) (< -1 ($string-cmp a b)))
+(define (string<? a b) (< ($string-cmp a b 'string<?) 0))
+(define (string>? a b) (< 0 ($string-cmp a b 'string>?)))
+(define (string<=? a b) (< ($string-cmp a b 'string<=?) 1))
+(define (string>=? a b) (< -1 ($string-cmp a b 'string>=?)))
 
 (define (char=? a b) (eq? a b))
 (define (char<? a b) (< (char->integer a) (char->integer b)))
@@ -3954,14 +4003,14 @@
 
 (define (gcd a b)
   (let loop ((a (abs a)) (b (abs b)))
-    (if ($eq2 b 0) a (loop b (remainder a b)))))
+    (if ($eq2 b 0 'gcd) a (loop b (remainder a b)))))
 (define (lcm a b)
-  (if (or ($eq2 a 0) ($eq2 b 0))
+  (if (or ($eq2 a 0 'lcm) ($eq2 b 0 'lcm))
       0
       (abs (* (quotient a (gcd a b)) b))))
 
 (define ($make-rat n d)
-  (when ($eq2 d 0) (assertion-violation '/ "division by zero"))
+  (when ($eq2 d 0 '/) (assertion-violation '/ "division by zero"))
   (let* ((neg (if (< d 0) (not (< n 0)) (< n 0)))
          (n (abs n))
          (d (abs d))
@@ -3969,7 +4018,7 @@
          (n (quotient n g))
          (d (quotient d g))
          (n (if neg (- 0 n) n)))
-    (if ($eq2 d 1) n (%make-ratio n d))))
+    (if ($eq2 d 1 '/) n (%make-ratio n d))))
 (define (numerator x) (if (%ratio? x) (%ratio-num x) x))
 (define (denominator x) (if (%ratio? x) (%ratio-den x) 1))
 ;; Fixing integer? does not fix this one: the flonum? arm answered
@@ -3984,18 +4033,20 @@
 
 (define ($cx re im)                     ; collapse an exact zero imaginary
   (cond
-   ((and (exact? im) ($eq2 im 0)) re)
+   ((and (exact? im) ($eq2 im 0 'make-rectangular)) re)
    ;; inexactness is contagious across the parts (r6rs), so mixed
    ;; literals read the same as under a host reader: 1.0+2i = 1.0+2.0i
-   ((and (flonum? re) (not (flonum? im))) (%make-complex re ($->fl im)))
-   ((and (flonum? im) (not (flonum? re))) (%make-complex ($->fl re) im))
+   ((and (flonum? re) (not (flonum? im)))
+    (%make-complex re ($->fl im 'make-rectangular "not a number")))
+   ((and (flonum? im) (not (flonum? re)))
+    (%make-complex ($->fl re 'make-rectangular "not a number") im))
    (else (%make-complex re im))))
 (define (make-rectangular re im) ($cx re im))
 (define (real-part x) (if (%complex? x) (%cx-re x) x))
 (define (imag-part x) (if (%complex? x) (%cx-im x) 0))
 (define (magnitude x)
   (let ((re (real-part x)) (im (imag-part x)))
-    (flsqrt ($->fl (+ (* re re) (* im im))))))
+    (flsqrt ($->fl (+ (* re re) (* im im)) 'magnitude "not a number"))))
 
 ;; ---- file ports ----
 ;;
@@ -4063,8 +4114,8 @@
 
 ;; ---- numbers ----
 
-(define (positive? x) (< 0 x))
-(define (negative? x) (< x 0))
+(define (positive? x) (%lt 0 x 'positive?))
+(define (negative? x) (%lt x 0 'negative?))
 
 ;; An inexact integer is even or odd too: (even? 4.0) is #t.  A flonum
 ;; that is not a finite integer is neither, which is where R6RS raises.
@@ -4900,10 +4951,27 @@
 ;; These take flonums.  Given another real, each does what the primitive
 ;; under it does with one (docs/limits.md); real->flonum takes any real.
 
+;; fl<? and fl=? refuse a non-flonum in their own names (the compiler
+;; calls $fl-refuse from their checked unwrap, ledger R102); these three
+;; are built on them, so they check their arguments first, in theirs
+(define ($fl-refuse who x) (assertion-violation who "not a flonum" x))
+(define ($flonums! who a b rest)
+  (unless (flonum? a) ($fl-refuse who a))
+  (unless (flonum? b) ($fl-refuse who b))
+  (let each ((l rest))
+    (when (pair? l)
+      (unless (flonum? (car l)) ($fl-refuse who (car l)))
+      (each (cdr l)))))
 (define ($fl<= x y) (if (fl<? x y) #t (fl=? x y)))
-(define (fl>? a b . rest) ($chain (lambda (x y) (fl<? y x)) a b rest))
-(define (fl<=? a b . rest) ($chain $fl<= a b rest))
-(define (fl>=? a b . rest) ($chain (lambda (x y) ($fl<= y x)) a b rest))
+(define (fl>? a b . rest)
+  ($flonums! 'fl>? a b rest)
+  ($chain (lambda (x y) (fl<? y x)) a b rest))
+(define (fl<=? a b . rest)
+  ($flonums! 'fl<=? a b rest)
+  ($chain $fl<= a b rest))
+(define (fl>=? a b . rest)
+  ($flonums! 'fl>=? a b rest)
+  ($chain (lambda (x y) ($fl<= y x)) a b rest))
 
 ;; -0.0 is not less than 0.0, so a negative zero is told apart by the
 ;; sign of its reciprocal; negating by multiplying keeps a NaN a NaN

@@ -723,6 +723,8 @@
   (and (assq-cdr name $nary-comparisons)
        (let ((s (symbol->string name)))
          (string->symbol (string-append "$nary2" (substring s 5 (string-length s)))))))
+(define (assq-ref x alist)
+  (let ((e (assq x alist))) (and e (cdr e))))
 (define (assq-cdr x alist)
   (and (pair? alist)
        (or (eq? (cdr (car alist)) x) (assq-cdr x (cdr alist)))))
@@ -3136,6 +3138,9 @@
   '((car . 1) (cdr . 1) (cons . 2) (pair? . 1) (null? . 1) (zero? . 1)
     (+ . 2) (- . 2) (* . 2) (quotient . 2) (remainder . 2)
     (= . 2) (< . 2) (eq? . 2)
+    ;; the prelude's named comparisons: < <= = with the operation the
+    ;; program wrote, a quoted symbol, passed to the slow path (R93)
+    (%lt . 3) (%le . 3) (%eq . 3)
     (set-car! . 2) (set-cdr! . 2)
     (fixnum? . 1) (char? . 1) (string? . 1) (symbol? . 1)
     (flonum? . 1) (fl+ . 2) (fl- . 2) (fl* . 2) (fl/ . 2)
@@ -3988,7 +3993,7 @@
    specs))
 
 (define primitives
-  '(+ - * quotient remainder = < eq? cons car cdr pair? null? zero?
+  '(+ - * quotient remainder = < %eq %lt %le eq? cons car cdr pair? null? zero?
     set-car! set-cdr! fixnum? char? string? symbol? boolean? procedure?
     flonum? fl+ fl- fl* fl/ fl=? fl<? flsqrt flfloor fltruncate
     fixnum->flonum %fl->fx
@@ -4267,8 +4272,32 @@
                       (record-fn!
                        tidx
                        (list (car tys) 3 0 '()
-                             (list (local-get 1) (local-get 2)
-                                   #x12 (uleb cidx))))
+                             (list
+                              ;; the numeric ones compare two fixnums
+                              ;; here, in i32 on the tagged values, and
+                              ;; call the companion only otherwise: a
+                              ;; character is an i31 too, told by its
+                              ;; low bit, and goes to the companion,
+                              ;; which refuses it (M58 rule 7)
+                              (let ((cmp (assq-ref name
+                                                   '(($nary= . #x46) ($nary< . #x48)
+                                                     ($nary> . #x4A) ($nary<= . #x4C)
+                                                     ($nary>= . #x4E)))))
+                                (if cmp
+                                    (list (local-get 1) (gc-op #x14 T-I31)
+                                          (local-get 2) (gc-op #x14 T-I31)
+                                          #x71
+                                          #x04 #x40
+                                          (local-get 1) (untag) (local-get 2) (untag)
+                                          #x72 (i32const 1) #x71 OP-I32-EQZ
+                                          #x04 #x40
+                                          (local-get 1) (untag) (local-get 2) (untag)
+                                          cmp (boolify) #x0F
+                                          #x0B
+                                          #x0B)
+                                    '()))
+                              (local-get 1) (local-get 2)
+                              #x12 (uleb cidx))))
                       (set! *wrappers*
                             (cons (list name tidx widx 2 #f) *wrappers*)))
                     (set! *wrappers*
@@ -4530,8 +4559,8 @@
          (not (assq (car e) locals))
          (not (top-level-defined? (car e)))
          (= (length (cdr e)) 2))
-    (let* ((a (compile-f64 (cadr e) locals cell))
-           (b (compile-f64 (caddr e) locals cell)))
+    (let* ((a (compile-f64 (cadr e) locals cell (head-op (car e))))
+           (b (compile-f64 (caddr e) locals cell (head-op (car e)))))
       (list a b (if (eq? (head-op (car e)) 'fl=?) #x61 #x63))))
    ((and (pair? e)
          (memq (head-op (car e)) i32-predicates)
@@ -5162,7 +5191,7 @@
 
 ;; predicates that produce a raw i32 truth value; used directly in
 ;; test position (no boolean boxing) and boolified elsewhere
-(define i32-predicates '(= < zero? eq? pair? null? string? symbol?
+(define i32-predicates '(= < %lt %le %eq zero? eq? pair? null? string? symbol?
                          procedure? eof-object?))
 ;; call a generic arithmetic helper from the prelude by name
 (define (generic-call name)
@@ -5171,9 +5200,14 @@
     (list #x10 (uleb (cadr f)))))
 (define (pred-i32 op argc cell)
   (define (arg i) (list-ref argc i))
+  ;; the operation's name, which the slow path hands the generic helper
+  ;; so that it refuses a non-number in that name (ledger R93)
+  (define (who-code name) (compile-exp (list 'quote name) '() cell #f))
   (case op
-    ((= <)
-     ;; both fixnums: compare tagged; otherwise the generic helper
+    ((= < %eq %lt %le)
+     ;; both fixnums: compare tagged; otherwise the generic helper.  The
+     ;; operands are evaluated in source order; %lt and %le compare the
+     ;; first with the second, as < does
      (let* ((ta (fresh-local! cell)) (tb (fresh-local! cell)))
        (list (arg 0) (local-set ta) (arg 1) (local-set tb)
              (local-get ta) (gc-op #x14 T-I31)
@@ -5181,10 +5215,14 @@
              #x71
              #x04 T-I32
              (local-get ta) (untag) (local-get tb) (untag)
-             (if (eq? op '=) #x46 #x48)
+             (case op ((= %eq) #x46) ((%le) #x4C) (else #x48))
              #x05
              (local-get ta) (local-get tb)
-             (generic-call (if (eq? op '=) '$eq2 '$lt2))
+             (case op
+               ((=) (who-code '=))
+               ((<) (who-code '<))
+               (else (arg 2)))
+             (generic-call (case op ((= %eq) '$eq2) ((%le) '$le2) (else '$lt2)))
              (truthy)
              #x0B)))
     ((zero?)
@@ -5194,7 +5232,7 @@
              #x04 T-I32
              (local-get ta) (untag) OP-I32-EQZ
              #x05
-             (local-get ta) (emit-fixnum 0) (generic-call '$eq2)
+             (local-get ta) (emit-fixnum 0) (who-code 'zero?) (generic-call '$eq2)
              (truthy)
              #x0B)))
     ((eq?) (list (arg 0) (arg 1) OP-REF-EQ))
@@ -5727,7 +5765,14 @@
     (set! *f64-slots* (cons (- -100000 v) *f64-slots*))
     v))
 
-(define (compile-f64 e locals cell)
+;; who, when given, is the fl comparison whose own operand e is: a generic
+;; operand is then tested with br_on_cast and refused in that name
+;; ($fl-refuse) instead of cast.  It applies to e's own unwrap only, not
+;; to the operands of an fl+ inside it: the fl arithmetic family casts as
+;; before (docs/limits.md, ledger R102).
+(define (compile-f64 e locals cell . who)
+  (define (leaf)
+    (if (pair? who) (checked-unwrap-fl (car who) cell) (unwrap-fl)))
   (define (direct rop)
     (case rop
       ((fl+ fl- fl* fl/)
@@ -5753,7 +5798,7 @@
     (let ((slot (assq e locals)))
       (if (and slot (memv (cdr slot) *f64-slots*))
           (local-get (cdr slot))               ; raw f64 slot, no unbox
-          (list (compile-exp e locals cell #f) (unwrap-fl)))))
+          (list (compile-exp e locals cell #f) (leaf)))))
    ((pair? e)
     (let* ((h (car e))
            (rop (head-op h)))
@@ -5773,8 +5818,26 @@
                (c (compile-f64 (caddr e) locals cell))
                (alt (compile-f64 (cadddr e) locals cell)))
           (list t #x04 T-F64 c #x05 alt #x0B)))
-       (else (list (compile-exp e locals cell #f) (unwrap-fl))))))
-   (else (list (compile-exp e locals cell #f) (unwrap-fl)))))
+       (else (list (compile-exp e locals cell #f) (leaf))))))
+   (else (list (compile-exp e locals cell #f) (leaf)))))
+
+;; an eqref that should be a flonum, to its f64: br_on_cast to the
+;; flonum, which is the test the cast makes, and otherwise the prelude's
+;; $fl-refuse, which raises &assertion in the comparison's name
+(define (checked-unwrap-fl who cell)
+  (let ((t (fresh-local! cell)))
+    (list (local-set t)
+          #x02 #x64 (sleb TY-FLONUM)
+          (local-get t)
+          ;; br_on_cast, flags 1: the input may be null, the output not;
+          ;; to the block's end, eq to the flonum struct
+          (gc-op #x18) #x01 (uleb 0) T-EQREF (sleb TY-FLONUM)
+          #x1A
+          (compile-exp (list 'quote who) '() cell #f) (local-get t)
+          (generic-call '$fl-refuse)
+          #x00
+          #x0B
+          (gc-op #x02 (uleb TY-FLONUM) (uleb 0)))))
 
 ;; float primitives bypass the generic path so their arguments compile
 ;; in the f64 context (no intermediate boxing)
@@ -5794,8 +5857,8 @@
        (list a b (case op ((fl+) #xA0) ((fl-) #xA1) ((fl*) #xA2) (else #xA3))
              (struct-new TY-FLONUM))))
     ((fl=? fl<?)
-     (let* ((a (compile-f64 (car args) locals cell))
-            (b (compile-f64 (cadr args) locals cell)))
+     (let* ((a (compile-f64 (car args) locals cell op))
+            (b (compile-f64 (cadr args) locals cell op)))
        (list a b (if (eq? op 'fl=?) #x61 #x63) (boolify))))
     ((flsqrt flfloor fltruncate)
      (list (compile-f64 (car args) locals cell)
@@ -5940,7 +6003,7 @@
              (fold (arith2 op code (arg i) cell) (+ i 1)))))))
     ((quotient remainder)
      (arith2 op (arg 0) (arg 1) cell))
-    ((= < zero? eq?) (list (pred-i32 op argc cell) (boolify)))
+    ((= < %lt %le %eq zero? eq?) (list (pred-i32 op argc cell) (boolify)))
     ((cons) (list (arg 0) (arg 1) (struct-new TY-PAIR)))
     ((car) (list (arg 0) (ref-cast TY-PAIR) (struct-get TY-PAIR 0)))
     ((cdr) (list (arg 0) (ref-cast TY-PAIR) (struct-get TY-PAIR 1)))
@@ -6461,7 +6524,7 @@
 ;; seed published for a function nothing calls -- is pinned by
 ;; test/defect-spec-candidate-by-name.mjs.
 (define $spec-denylist
-  '($add2 $sub2 $mul2 $quot2 $rem2 $eq2 $lt2 $escape
+  '($add2 $sub2 $mul2 $quot2 $rem2 $eq2 $lt2 $le2 $fl-refuse $escape
     $shl-refused $shr-refused $record-is-a?
     $band2 $bior2 $bxor2 $shl2 $shr2 $wrong-count
     $nary2= $nary2< $nary2> $nary2<= $nary2>=
@@ -7419,6 +7482,11 @@
         (cons '= '(begin $eq2))
         (cons '< '(begin $lt2))
         (cons 'zero? '(begin $eq2))
+        (cons '%eq '(begin $eq2))
+        (cons '%lt '(begin $lt2))
+        (cons '%le '(begin $le2 $lt2 $eq2))
+        (cons 'fl<? '(begin $fl-refuse))
+        (cons 'fl=? '(begin $fl-refuse))
         (cons 'bitwise-and '(begin $band2))
         ;; an n-ary comparison as a value calls its companion (R97)
         (cons '$nary= '(begin $nary2=)) (cons '$nary< '(begin $nary2<))

@@ -129,6 +129,77 @@
   (let ((call (list (jgeneric name) "(" argstr ")")))
     (if (jbouncy? name) (list "TR(" call ")") call)))
 
+;; a symbol constant naming an operation, handed to a prelude helper that
+;; refuses an argument in that name (ledger R93)
+(define (jwho name) (jkernel! 'sym) (jconst! 'sym name))
+;; the operation's name in a %lt, %le or %eq form: its third operand, a
+;; quoted symbol
+(define (jwho-of x) (strip-marks (cadr x)))
+;; A comparison helper of two arguments with the operation's name in it:
+;; KIND_C, a top-level arrow whose slow path names the constant C (jglue).
+;; Passing the name as a third argument cost every comparison, fast path
+;; included, a read of the module constant: up to a quarter of the time
+;; of a decoder's loop on JS; a closure over C from a factory still cost
+;; 5 to 9 percent, which a plain arrow does not.
+(define (jcmp! kind who)
+  (jhelper! (string-append kind "_" (jwho who))))
+;; A comparison as a JS boolean.  Where both operands are a variable or a
+;; numeric literal, which can be read twice, the fixnum test and the
+;; comparison are written at the call site and only the slow path calls
+;; the helper -- the shape a hot loop's (< i n) has; any other operand
+;; goes through the helper whole, so nothing is evaluated twice.
+(define (jtext x)
+  (cond ((string? x) x)
+        ((pair? x) (apply string-append (map jtext x)))
+        ((null? x) "")
+        ;; anything else is not plain text: the operand is then not simple
+        (else "#")))
+(define (jsimple-operand x)
+  ;; (a i) wraps an operand as "(" code ")": the code alone, or #f
+  (let* ((t (jtext x)) (n (string-length t)))
+    (and (> n 2)
+         (char=? (string-ref t 0) #\() (char=? (string-ref t (- n 1)) #\))
+         (let ((in (substring t 1 (- n 1))))
+           (and (> (string-length in) 0)
+                (let ok ((i 0))
+                  (or (= i (string-length in))
+                      (let ((c (string-ref in i)))
+                        (and (or (char-alphabetic? c) (char-numeric? c)
+                                 (and (char=? c #\-) (= i 0)))
+                             (ok (+ i 1))))))
+                (not (char-numeric? (string-ref in 0)))
+                in)))))
+(define (jsimple-number x)
+  (let* ((t (jtext x)) (n (string-length t)))
+    (and (> n 2)
+         (char=? (string-ref t 0) #\() (char=? (string-ref t (- n 1)) #\))
+         (let ((in (substring t 1 (- n 1))))
+           (and (> (string-length in) 0)
+                (let ok ((i 0))
+                  (or (= i (string-length in))
+                      (let ((c (string-ref in i)))
+                        (and (or (char-numeric? c) (and (char=? c #\-) (= i 0)))
+                             (ok (+ i 1))))))
+                in)))))
+;; h is the helper's name (jcmp!) and a, b the operands' code, each
+;; made by the caller in that order with let*: a call's arguments are
+;; evaluated in an order the host chooses, and fresh names and constants
+;; are numbered as they are made, so the two compilers must make them
+;; in the same order
+(define (jcmp-test kind h a b)
+  (let* ((sa (or (jsimple-operand a) (jsimple-number a)))
+         (sb (and b (or (jsimple-operand b) (jsimple-number b))))
+         (op (cond ((string=? kind "JEQN") "===")
+                   ((string=? kind "JLEN") "<=")
+                   (else "<"))))
+    (cond
+     ((and (string=? kind "JZ") sa)
+      (list "(typeof " sa "==='number'?" sa "===0:" h "(" sa "))"))
+     ((string=? kind "JZ") (list h "(" a ")"))
+     ((and sa sb)
+      (list "((typeof " sa "==='number'&&typeof " sb "==='number')?" sa op sb
+            ":" h "(" sa "," sb "))"))
+     (else (list h "(" a "," b ")")))))
 (define (jhelper! name) ; record a used glue helper (emitted at the end)
   (unless (member name *jhelpers*)
     (set! *jhelpers* (cons name *jhelpers*)))
@@ -775,9 +846,12 @@
             (a (lambda (i) (list "(" (jx (list-ref (cdr e) i) env lctx) ")"))))
         (jkernel-for-op! rop)
         (case rop
-          ((=) (list (jhelper! "JEQN") "(" (a 0) "," (a 1) ")"))
-          ((<) (list (jhelper! "JLTN") "(" (a 0) "," (a 1) ")"))
-          ((zero?) (list (jhelper! "JZ") "(" (a 0) ")"))
+          ((=) (let* ((h (jcmp! "JEQN" '=)) (x (a 0)) (y (a 1))) (jcmp-test "JEQN" h x y)))
+          ((<) (let* ((h (jcmp! "JLTN" '<)) (x (a 0)) (y (a 1))) (jcmp-test "JLTN" h x y)))
+          ((%eq) (let* ((h (jcmp! "JEQN" (jwho-of (list-ref (cdr e) 2)))) (x (a 0)) (y (a 1))) (jcmp-test "JEQN" h x y)))
+          ((%lt) (let* ((h (jcmp! "JLTN" (jwho-of (list-ref (cdr e) 2)))) (x (a 0)) (y (a 1))) (jcmp-test "JLTN" h x y)))
+          ((%le) (let* ((h (jcmp! "JLEN" (jwho-of (list-ref (cdr e) 2)))) (x (a 0)) (y (a 1))) (jcmp-test "JLEN" h x y)))
+          ((zero?) (let* ((h (jcmp! "JZ" 'zero?)) (x (a 0))) (jcmp-test "JZ" h x #f)))
           ((eq?) (list "(" (a 0) "===" (a 1) ")"))
           ((pair?) (list "((" (a 0) ".t)===\"pair\")"))
           ((null?) (list "(" (a 0) "===NIL)"))
@@ -785,8 +859,10 @@
           ((symbol?) (list "(" (a 0) " instanceof Sym)"))
           ((procedure?) (list "(typeof " (a 0) "==='function')"))
           ((eof-object?) (list "(" (a 0) "===EOFV)"))
-          ((fl=?) (list "(FLV(" (a 0) ")===FLV(" (a 1) "))"))
-          ((fl<?) (list "(FLV(" (a 0) ")<FLV(" (a 1) "))"))
+          ((fl=?) (let ((f (jcmp! "FLC" 'fl=?)))
+                    (list "(" f "(" (a 0) ")===" f "(" (a 1) "))")))
+          ((fl<?) (let ((f (jcmp! "FLC" 'fl<?)))
+                    (list "(" f "(" (a 0) ")<" f "(" (a 1) "))")))
           (else (list "((" (jx e env lctx) ")!==FALSE)"))))
       (list "((" (jx e env lctx) ")!==FALSE)")))
 
@@ -984,9 +1060,12 @@
                (fold (list h "(" code "," (a i) ")") (+ i 1))))))))
     ((quotient) (list (jhelper! "JQUO") "(" (a 0) "," (a 1) ")"))
     ((remainder) (list (jhelper! "JREM") "(" (a 0) "," (a 1) ")"))
-    ((=) (list "(" (jhelper! "JEQN") "(" (a 0) "," (a 1) ")?TRUE:FALSE)"))
-    ((<) (list "(" (jhelper! "JLTN") "(" (a 0) "," (a 1) ")?TRUE:FALSE)"))
-    ((zero?) (list "(" (jhelper! "JZ") "(" (a 0) ")?TRUE:FALSE)"))
+    ((=) (let* ((h (jcmp! "JEQN" '=)) (x (a 0)) (y (a 1))) (list "(" (jcmp-test "JEQN" h x y) "?TRUE:FALSE)")))
+    ((<) (let* ((h (jcmp! "JLTN" '<)) (x (a 0)) (y (a 1))) (list "(" (jcmp-test "JLTN" h x y) "?TRUE:FALSE)")))
+    ((%eq) (let* ((h (jcmp! "JEQN" (jwho-of (list-ref args 2)))) (x (a 0)) (y (a 1))) (list "(" (jcmp-test "JEQN" h x y) "?TRUE:FALSE)")))
+    ((%lt) (let* ((h (jcmp! "JLTN" (jwho-of (list-ref args 2)))) (x (a 0)) (y (a 1))) (list "(" (jcmp-test "JLTN" h x y) "?TRUE:FALSE)")))
+    ((%le) (let* ((h (jcmp! "JLEN" (jwho-of (list-ref args 2)))) (x (a 0)) (y (a 1))) (list "(" (jcmp-test "JLEN" h x y) "?TRUE:FALSE)")))
+    ((zero?) (let* ((h (jcmp! "JZ" 'zero?)) (x (a 0))) (list "(" (jcmp-test "JZ" h x #f) "?TRUE:FALSE)")))
     ((eq?) (list "((" (a 0) "===" (a 1) ")?TRUE:FALSE)"))
     ((cons) (list "({t:\"pair\",a:" (a 0) ",d:" (a 1) "})"))
     ((car) (list "(PV(" (a 0) ").a)"))
@@ -1009,8 +1088,10 @@
     ((fl-) (list "(new Fl(FLV(" (a 0) ")-FLV(" (a 1) ")))"))
     ((fl*) (list "(new Fl(FLV(" (a 0) ")*FLV(" (a 1) ")))"))
     ((fl/) (list "(new Fl(FLV(" (a 0) ")/FLV(" (a 1) ")))"))
-    ((fl=?) (list "((FLV(" (a 0) ")===FLV(" (a 1) "))?TRUE:FALSE)"))
-    ((fl<?) (list "((FLV(" (a 0) ")<FLV(" (a 1) "))?TRUE:FALSE)"))
+    ((fl=?) (let ((f (jcmp! "FLC" 'fl=?)))
+              (list "((" f "(" (a 0) ")===" f "(" (a 1) "))?TRUE:FALSE)")))
+    ((fl<?) (let ((f (jcmp! "FLC" 'fl<?)))
+              (list "((" f "(" (a 0) ")<" f "(" (a 1) "))?TRUE:FALSE)")))
     ((flsqrt) (list "(new Fl(Math.sqrt(FLV(" (a 0) "))))"))
     ((flfloor) (list "(new Fl(Math.floor(FLV(" (a 0) "))))"))
     ((fltruncate) (list "(new Fl(Math.trunc(FLV(" (a 0) "))))"))
@@ -1404,6 +1485,15 @@
 
 ;; glue helpers: emitted only when used, resolving prelude generics
 ;; by their compiled names
+;; "JLTN_C3" -> ("JLTN" . "C3"), for the comparison kinds; #f else
+(define (jcmp-parts name)
+  (let loop ((ks '("JLTN" "JEQN" "JLEN" "JZ" "FLC")))
+    (and (pair? ks)
+         (let* ((k (car ks)) (n (string-length k)))
+           (if (and (> (string-length name) (+ n 1))
+                    (string=? (substring name 0 (+ n 1)) (string-append k "_")))
+               (cons k (substring name (+ n 1) (string-length name)))
+               (loop (cdr ks)))))))
 (define (jglue name)
   (cond
    ((string=? name "BNRM")
@@ -1474,15 +1564,36 @@
           "const k=b>>1;"
           "if(k>=0)return (a>>(k<31?k:31))&-2;}return "
           (jgeneric-tr '$shr2 "a,b") ";};"))
-   ((string=? name "JEQN")
-    (list "const JEQN=(a,b)=>(typeof a==='number'&&typeof b==='number')"
-          "?a===b:((" (jgeneric-tr '$eq2 "a,b") ")!==FALSE);"))
-   ((string=? name "JLTN")
-    (list "const JLTN=(a,b)=>(typeof a==='number'&&typeof b==='number')"
-          "?a<b:((" (jgeneric-tr '$lt2 "a,b") ")!==FALSE);"))
-   ((string=? name "JZ")
-    (list "const JZ=(a)=>typeof a==='number'?a===0:(("
-          (jgeneric-tr '$eq2 "a,(0)") ")!==FALSE);"))
+   ;; KIND_C (jcmp!): the comparison with the name C, the operation the
+   ;; program wrote, which the prelude refuses a non-number in (ledger
+   ;; R93); only the slow path reads it
+   ((jcmp-parts name)
+    => (lambda (kc)
+         (let ((kind (car kc)) (c (cdr kc)))
+           (list "const " name "="
+                 (cond
+                  ;; the operand of fl<? or fl=?: a non-flonum is refused
+                  ;; in its name (ledger R102) where FLV would throw a
+                  ;; host TypeError
+                  ((string=? kind "FLC")
+                   (list "(x)=>{if(!(x instanceof Fl))"
+                         (jgeneric-tr '$fl-refuse (string-append c ",x")) ";return x.v;}"))
+                  ((string=? kind "JZ")
+                   (list "(a)=>typeof a==='number'?a===0:(("
+                         (jgeneric-tr '$eq2 (string-append "a,(0)," c)) ")!==FALSE)"))
+                  (else
+                   (list "(a,b)=>(typeof a==='number'&&typeof b==='number')?a"
+                         (cond ((string=? kind "JEQN") "===")
+                               ((string=? kind "JLEN") "<=")
+                               (else "<"))
+                         "b:(("
+                         (jgeneric-tr (cond ((string=? kind "JEQN") '$eq2)
+                                            ((string=? kind "JLEN") '$le2)
+                                            (else '$lt2))
+                                      (string-append "a,b," c))
+                         ")!==FALSE)")))
+                 ";"))))
+
    ((string=? name "WCH")
     ;; a generic call with the wrong number of arguments (ledger R65)
     ;; with the count f takes (tagged) and 1 when it takes more
